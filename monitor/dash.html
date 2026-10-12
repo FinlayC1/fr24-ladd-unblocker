@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FR24 monitor</title>
+<style>
+  :root { --bg:#0d1117; --panel:#161b22; --line:#30363d; --text:#e6edf3; --muted:#8b949e; --ok:#3fb950; --warn:#d29922; --bad:#f85149; --accent:#58a6ff; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+  header { display:flex; flex-wrap:wrap; gap:12px; align-items:center; justify-content:space-between; padding:14px 16px; border-bottom:1px solid var(--line); }
+  h1 { font-size:17px; margin:0; font-weight:600; }
+  .sub { color:var(--muted); font-size:12px; }
+  main { padding:16px; max-width:1200px; margin:0 auto; display:grid; gap:16px; }
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px 14px; }
+  .card h2 { margin:0 0 8px; font-size:12px; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); font-weight:600; }
+  .row { display:flex; justify-content:space-between; gap:10px; padding:2px 0; }
+  .row span:first-child { color:var(--muted); }
+  .num { font-variant-numeric:tabular-nums; }
+  .ok { color:var(--ok); } .warn { color:var(--warn); } .bad { color:var(--bad); }
+  section.tbl { background:var(--panel); border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+  section.tbl h2 { margin:0; padding:10px 14px; font-size:12px; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); font-weight:600; border-bottom:1px solid var(--line); }
+  .scroll { overflow-x:auto; max-height:340px; overflow-y:auto; }
+  table { width:100%; border-collapse:collapse; }
+  th, td { text-align:left; padding:6px 14px; border-bottom:1px solid var(--line); white-space:nowrap; font-variant-numeric:tabular-nums; }
+  th { color:var(--muted); font-weight:500; font-size:12px; position:sticky; top:0; background:var(--panel); }
+  tr:last-child td { border-bottom:0; }
+  td.path { max-width:420px; overflow:hidden; text-overflow:ellipsis; }
+  #gate { max-width:420px; margin:12vh auto; padding:0 16px; }
+  #gate input { width:100%; padding:9px 10px; background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:6px; font-size:14px; }
+  #gate button { margin-top:10px; padding:8px 16px; background:var(--accent); color:#04122a; border:0; border-radius:6px; font-weight:600; cursor:pointer; }
+  #msg { margin-top:10px; color:var(--bad); min-height:1.4em; }
+  .hidden { display:none; }
+  button.link { background:none; border:0; color:var(--accent); cursor:pointer; font-size:12px; padding:0; }
+</style>
+</head>
+<body>
+<div id="gate">
+  <h1>FR24 monitor</h1>
+  <p class="sub">Enter the monitor's secret (MON_TOKEN). It stays in this tab only.</p>
+  <input id="tok" type="password" autocomplete="off" placeholder="secret">
+  <button id="go">Open</button>
+  <div id="msg"></div>
+</div>
+
+<div id="app" class="hidden">
+  <header>
+    <div><h1>FR24 monitor</h1><div class="sub" id="upd">loading...</div></div>
+    <div class="sub"><button class="link" id="out">lock</button></div>
+  </header>
+  <main>
+    <div class="cards">
+      <div class="card"><h2>Polling</h2><div id="c-poll"></div></div>
+      <div class="card"><h2>Data held</h2><div id="c-data"></div></div>
+      <div class="card"><h2>Server</h2><div id="c-srv"></div></div>
+      <div class="card"><h2>Requests</h2><div id="c-req"></div></div>
+    </div>
+    <section class="tbl"><h2>Endpoints</h2><div class="scroll"><table id="t-ep"></table></div></section>
+    <section class="tbl"><h2>Clients</h2><div class="scroll"><table id="t-cl"></table></div></section>
+    <section class="tbl"><h2>Recent requests</h2><div class="scroll"><table id="t-rec"></table></div></section>
+  </main>
+</div>
+
+<script>
+(function () {
+  var tok = '', timer = 0, $ = function (id) { return document.getElementById(id); };
+  try { tok = sessionStorage.getItem('monTok') || ''; } catch (e) { tok = ''; }
+  function el(tag, text, cls) { var e = document.createElement(tag); if (text != null) e.textContent = text; if (cls) e.className = cls; return e; }
+  function ago(ms) { var s = Math.max(0, Math.round((Date.now() - ms) / 1000)); return s < 90 ? s + ' s ago' : s < 5400 ? Math.round(s / 60) + ' min ago' : s < 172800 ? Math.round(s / 3600) + ' h ago' : Math.round(s / 86400) + ' d ago'; }
+  function dur(s) { s = Math.round(s); var d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60); return (d ? d + 'd ' : '') + (h || d ? h + 'h ' : '') + m + 'm'; }
+  function mb(b) { return (b / 1048576).toFixed(0) + ' MB'; }
+  function fillRows(box, rows) { box.textContent = ''; rows.forEach(function (r) { var d = el('div', null, 'row'); d.appendChild(el('span', r[0])); d.appendChild(el('span', r[1], 'num ' + (r[2] || ''))); box.appendChild(d); }); }
+  function fillTable(t, head, rows) {
+    t.textContent = ''; var th = el('thead'), tr = el('tr'); head.forEach(function (h) { tr.appendChild(el('th', h)); }); th.appendChild(tr); t.appendChild(th);
+    var tb = el('tbody'); rows.forEach(function (r) { var x = el('tr'); r.forEach(function (c, i) { var td = el('td', c.t != null ? c.t : c, (c.c || '') + (head[i] === 'Request' ? ' path' : '')); x.appendChild(td); }); tb.appendChild(x); }); t.appendChild(tb);
+    if (!rows.length) { var e = el('tr'), td = el('td', 'nothing yet'); td.colSpan = head.length; td.style.color = 'var(--muted)'; e.appendChild(td); tb.appendChild(e); }
+  }
+  function show(s) {
+    $('upd').textContent = 'updated ' + new Date().toLocaleTimeString() + ' - up ' + dur(s.uptimeS);
+    var m = s.mon;
+    fillRows($('c-poll'), [['adsb.lol polls', m.polls], ['by address', m.hexPolls], ['failed', m.fails, m.fails ? 'warn' : 'ok'], ['last error', m.lastErr || 'none', m.lastErr ? 'warn' : 'ok'],
+      ['LADD list', m.laddAt ? ago(m.laddAt) : 'not yet', m.laddAt && Date.now() - m.laddAt < 120000 ? 'ok' : 'warn'], ['areas', m.areas.map(function (a) { return a.join(','); }).join('  ')]].concat(
+      Object.keys(m.paused).map(function (h) { return [h, 'paused ' + m.paused[h] + ' s', 'bad']; })));
+    fillRows($('c-data'), [['aircraft in view', m.aircraft], ['blocked aircraft', m.blocked], ['with flights', m.withLegs], ['flights kept', m.legs], ['backfill queue', m.backfillQueue]]);
+    var sv = s.srv;
+    fillRows($('c-srv'), [['memory (rss)', mb(sv.rss), sv.rss > 0.8 * sv.totalMem ? 'bad' : ''], ['heap', mb(sv.heap)], ['free memory', mb(sv.freeMem)], ['load (1/5/15 min)', sv.load.map(function (x) { return x.toFixed(2); }).join(' / ')], ['cpu cores', sv.cpus]]);
+    var r = s.req;
+    fillRows($('c-req'), [['total', r.total], ['last minute', r.lastMin], ['clients seen', r.clients], ['no / wrong secret (401)', r.unauthorized, r.unauthorized ? 'warn' : ''], ['rate limited (429)', r.limited, r.limited ? 'warn' : ''], ['errors (5xx)', r.errors, r.errors ? 'bad' : '']]);
+    fillTable($('t-ep'), ['Endpoint', 'Requests', 'Last minute', 'Avg ms', 'Errors'], s.endpoints.map(function (e) { return [e.path, e.n, e.lastMin, e.avgMs, { t: e.errors, c: e.errors ? 'bad' : '' }]; }));
+    fillTable($('t-cl'), ['Client', 'Requests', 'Last minute', 'First seen', 'Last seen', 'Most used', '401 / 429'], s.clients.map(function (c) { return [c.ip, c.n, c.lastMin, ago(c.first), ago(c.last), c.top, c.denied]; }));
+    fillTable($('t-rec'), ['Time', 'Client', 'Request', 'Status', 'ms'], s.recent.map(function (q) { return [new Date(q.t).toLocaleTimeString(), q.ip, q.path, { t: q.status, c: q.status >= 500 ? 'bad' : q.status >= 400 ? 'warn' : 'ok' }, q.ms]; }));
+  }
+  function pull() {
+    fetch('/stats', { headers: { 'X-Monitor-Token': tok }, cache: 'no-store' }).then(function (r) {
+      if (r.status === 401) { lock('Wrong secret'); return null; }
+      if (r.status === 429) { $('upd').textContent = 'rate limited - slowing down'; return null; }
+      return r.json();
+    }).then(function (s) { if (s) { $('gate').classList.add('hidden'); $('app').classList.remove('hidden'); show(s); } }).catch(function () { $('upd').textContent = 'no answer from the monitor'; });
+  }
+  function start() { clearInterval(timer); pull(); timer = setInterval(pull, 5000); }
+  function lock(msg) { clearInterval(timer); try { sessionStorage.removeItem('monTok'); } catch (e) { /* none */ } tok = ''; $('app').classList.add('hidden'); $('gate').classList.remove('hidden'); $('msg').textContent = msg || ''; }
+  $('go').onclick = function () { tok = $('tok').value.trim(); if (!tok) return; try { sessionStorage.setItem('monTok', tok); } catch (e) { /* none */ } $('msg').textContent = ''; start(); };
+  $('tok').onkeydown = function (e) { if (e.key === 'Enter') $('go').onclick(); };
+  $('out').onclick = function () { lock(''); };
+  if (tok) start();
+})();
+</script>
+</body>
+</html>

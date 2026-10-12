@@ -332,14 +332,42 @@ function flightsOfCs(cs) {
   for (const [hex, m] of legs) { if (![...m.values()].some(same)) continue; for (const l of chained(m)) if (same(l)) out.push(Object.assign({}, l, { hex, ladd: isBlocked(hex) || !!l.ladd })); }
   return out.sort((a, b) => b.tStart - a.tStart).slice(0, 200);
 }
+// ---- who asked for what: the dashboard (/dash, a page; /stats, its numbers - behind the secret like the rest) ----------
+const reqs = [], byPath = {}, byClient = new Map();
+const reqTotals = { total: 0, unauthorized: 0, limited: 0, errors: 0 };
+function noteReq(ip, path, status, ms) {
+  const t = Date.now(), p = path.split('?')[0];
+  reqs.push({ t, ip, path: path.slice(0, 120), status, ms }); if (reqs.length > 2000) reqs.splice(0, reqs.length - 2000);
+  reqTotals.total++; if (status === 401) reqTotals.unauthorized++; else if (status === 429) reqTotals.limited++; else if (status >= 500) reqTotals.errors++;
+  const e = byPath[p] || (byPath[p] = { n: 0, ms: 0, errors: 0 }); e.n++; e.ms += ms; if (status >= 400) e.errors++;
+  let c = byClient.get(ip); if (!c) { c = { n: 0, first: t, last: t, paths: {}, denied: [0, 0] }; byClient.set(ip, c); if (byClient.size > 2000) byClient.delete(byClient.keys().next().value); }
+  c.n++; c.last = t; c.paths[p] = (c.paths[p] || 0) + 1; if (status === 401) c.denied[0]++; else if (status === 429) c.denied[1]++;
+}
+function dashStats() {
+  const now = Date.now(), minAgo = now - 60000, os = require('os'), mem = process.memoryUsage(), recent = reqs.filter(r => r.t > minAgo);
+  const lastMin = (key, v) => recent.filter(r => r[key] === v).length;
+  return {
+    uptimeS: process.uptime(),
+    mon: { polls: stats.polls, hexPolls: stats.hexPolls, fails: stats.fails, lastErr: stats.lastErr, laddAt: lastLadd.at, aircraft: ac.size, blocked: blocked.size, withLegs: legs.size, legs: [...legs.values()].reduce((n, m) => n + m.size, 0), backfillQueue: backQ.length, areas: CFG.areas.concat(userAreas).map(a => a.slice(0, 2)), paused: Object.fromEntries(Object.entries(pause).filter(([, t]) => t > now).map(([h, t]) => [h, Math.round((t - now) / 1000)])) },
+    srv: { rss: mem.rss, heap: mem.heapUsed, totalMem: os.totalmem(), freeMem: os.freemem(), load: os.loadavg(), cpus: os.cpus().length },
+    req: { total: reqTotals.total, lastMin: recent.length, clients: byClient.size, unauthorized: reqTotals.unauthorized, limited: reqTotals.limited, errors: reqTotals.errors },
+    endpoints: Object.entries(byPath).map(([path, e]) => ({ path, n: e.n, lastMin: lastMin('path', path) + recent.filter(r => r.path.startsWith(path + '?')).length, avgMs: Math.round(e.ms / e.n), errors: e.errors })).sort((a, b) => b.n - a.n),
+    clients: [...byClient].map(([ip, c]) => ({ ip, n: c.n, lastMin: lastMin('ip', ip), first: c.first, last: c.last, top: Object.entries(c.paths).sort((a, b) => b[1] - a[1])[0][0], denied: c.denied[0] + ' / ' + c.denied[1] })).sort((a, b) => b.last - a.last).slice(0, 100),
+    recent: reqs.slice(-80).reverse()
+  };
+}
 function serve() {
   http.createServer((req, res) => {
-    const u = new URL(req.url, 'http://x'), nowS = Date.now() / 1000;
+    const u = new URL(req.url, 'http://x'), nowS = Date.now() / 1000, t0 = Date.now();
     let body = null;
     const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
+    res.on('finish', () => { if (u.pathname !== '/dash' && !(u.pathname === '/stats' && res.statusCode === 200)) noteReq(ip, u.pathname + u.search, res.statusCode, Date.now() - t0); });
+    // (the page itself holds no data - it asks for the numbers with the secret the visitor types in)
+    if (u.pathname === '/dash') { try { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(fs.readFileSync(path.join(DIR, 'dash.html'))); } catch (e) { res.writeHead(404); res.end(); } return; }
     if (TOKEN && req.headers['x-monitor-token'] !== TOKEN) { res.writeHead(401); res.end(); return; }
     if (limited(ip)) { res.writeHead(429, { 'Retry-After': '30' }); res.end(); return; }
     try {
+      if (u.pathname === '/stats') body = dashStats(); else
       if (u.pathname === '/status') body = { v: 2, data: 'adsb.lol (ODbL)', since: stats.since, polls: stats.polls, hexPolls: stats.hexPolls, fails: stats.fails, lastErr: stats.lastErr, aircraft: ac.size, blocked: blocked.size, withLegs: legs.size, legs: [...legs.values()].reduce((n, m) => n + m.size, 0), laddAt: lastLadd.at, backfillQueue: backQ.length, areas: CFG.areas.concat(userAreas).map(a => a.slice(0, 2)), paused: Object.fromEntries(Object.entries(pause).filter(([, t]) => t > Date.now()).map(([h, t]) => [h, Math.round((t - Date.now()) / 1000)])) };
       else if (u.pathname === '/board') body = { aircraft: boardLegs(+u.searchParams.get('ap'), +(u.searchParams.get('from') || nowS - 3 * 86400), +(u.searchParams.get('to') || nowS)) };
       else if (u.pathname === '/flights') body = { list: flightsOfCs(u.searchParams.get('cs')) };
