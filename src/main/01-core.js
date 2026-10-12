@@ -1,7 +1,7 @@
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '22.18.1';
+  const VERSION = '22.18.2';
   const NM_KM = 1.852;
   const AREA_RADIUS_NM = 220;           // aggregator "point" radius for viewport sweeps (APIs cap at 250)
   const TARGET_RADIUS_NM = 40;          // radius for the immediate lookup of the selected aircraft
@@ -435,7 +435,7 @@
   const MON_LOCAL = 'http://127.0.0.1:47524';
   const monAddr = u => { u = String(u || '').trim(); while (u.endsWith('/')) u = u.slice(0, -1); return u.startsWith('https://') && u.length > 9 && !/[/\s]/.test(u.slice(8)) ? u : ''; };
   const monRemote = () => { try { const r = store.kvGet('monRemote'), url = r && monAddr(r.url); return url && r.token ? { url, token: String(r.token) } : null; } catch (_) { return null; } };
-  let monBase = MON_LOCAL;
+  let monBase = MON_LOCAL, monErr = '';   // (monErr: why the shared monitor was not used at the last check - shown beside it)
   const monUrl = () => monBase;
   const monHdr = () => { const r = monBase !== MON_LOCAL && monRemote(); return r ? { 'X-Monitor-Token': r.token } : null; };
   let monOk = false, monCheckAt = 0;
@@ -444,7 +444,7 @@
   function monCheck(force) {
     if (!force && now() - monCheckAt < 5 * 60000) return monChecking; monCheckAt = now();
     const tryBase = (base, headers) => gmRequest(base + '/status', { timeout: 4000, headers }).then(j => { if (!(j && j.v)) throw new Error('not a monitor'); monBase = base; return j; });
-    monChecking = store.kvReady.then(() => { const r = monRemote(); if (r) HOSTS[new URL(r.url).host] = [4, 50]; return r ? tryBase(r.url, { 'X-Monitor-Token': r.token }).catch(() => tryBase(MON_LOCAL, null)) : tryBase(MON_LOCAL, null); })
+    monChecking = store.kvReady.then(() => { const r = monRemote(); if (r) HOSTS[new URL(r.url).host] = [4, 50]; monErr = ''; return r ? tryBase(r.url, { 'X-Monitor-Token': r.token }).catch(e => { monErr = String((e && e.message) || e).slice(0, 120); return tryBase(MON_LOCAL, null); }) : tryBase(MON_LOCAL, null); })
       .then(j => { monOk = !!(j && j.v); return j; }, e => { monOk = false; throw e; });
     monChecking.catch(() => {});
     return monChecking;

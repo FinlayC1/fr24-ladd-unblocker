@@ -324,7 +324,7 @@
       return `<div class="tl-pop-row"><span>${esc(name)}</span> ${st}</div>`;
     }).join('');
     const has = !!String(store.kvGet('adsbxKey') || '').trim();
-    const mr = monRemote(), monRow = `<div class="tl-pop-row" style="margin-top:8px"><span>Shared monitor</span> ${mr ? '<span class="tl-muted">' + esc(mr.url) + (monBase === mr.url ? ' - in use' : ' - not answering, own computer used') + '</span>' : '<span class="tl-muted">none</span>'}</div>
+    const mr = monRemote(), monRow = `<div class="tl-pop-row" style="margin-top:8px"><span>Shared monitor</span> ${mr ? '<span class="tl-muted">' + esc(mr.url) + (monBase === mr.url ? ' - in use' : ' - not answering' + (monErr ? ' (' + esc(monErr) + ')' : '') + ', own computer used') + '</span>' : '<span class="tl-muted">none</span>'}</div>
       <div class="tl-pop-row"><input id="tl-mon-url" autocomplete="off" placeholder="https://your-monitor.example.com" style="flex:1;min-width:0;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:4px;padding:3px 6px"> <input id="tl-mon-token" type="password" autocomplete="off" placeholder="secret" style="flex:1;min-width:0;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:4px;padding:3px 6px"> <a href="#" data-tl-act="monSave">save</a>${mr ? ' · <a href="#" data-tl-act="monClear">remove</a>' : ''}</div>
       <div class="tl-muted" style="margin-top:4px">Optional. A monitor running on a server (monitor/monitor.cjs with MON_TOKEN set), tried before the one on this computer. Kept in this browser only.</div>`;
     return rows + monRow + `<div class="tl-pop-row" style="margin-top:8px"><span>ADS-B Exchange key</span></div>
