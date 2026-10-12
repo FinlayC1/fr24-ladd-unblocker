@@ -324,7 +324,10 @@
       return `<div class="tl-pop-row"><span>${esc(name)}</span> ${st}</div>`;
     }).join('');
     const has = !!String(store.kvGet('adsbxKey') || '').trim();
-    return rows + `<div class="tl-pop-row" style="margin-top:8px"><span>ADS-B Exchange key</span></div>
+    const mr = monRemote(), monRow = `<div class="tl-pop-row" style="margin-top:8px"><span>Shared monitor</span> ${mr ? '<span class="tl-muted">' + esc(mr.url) + (monBase === mr.url ? ' - in use' : ' - not answering, own computer used') + '</span>' : '<span class="tl-muted">none</span>'}</div>
+      <div class="tl-pop-row"><input id="tl-mon-url" autocomplete="off" placeholder="https://your-monitor.example.com" style="flex:1;min-width:0;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:4px;padding:3px 6px"> <input id="tl-mon-token" type="password" autocomplete="off" placeholder="secret" style="flex:1;min-width:0;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:4px;padding:3px 6px"> <a href="#" data-tl-act="monSave">save</a>${mr ? ' · <a href="#" data-tl-act="monClear">remove</a>' : ''}</div>
+      <div class="tl-muted" style="margin-top:4px">Optional. A monitor running on a server (monitor/monitor.cjs with MON_TOKEN set), tried before the one on this computer. Kept in this browser only.</div>`;
+    return rows + monRow + `<div class="tl-pop-row" style="margin-top:8px"><span>ADS-B Exchange key</span></div>
       <div class="tl-pop-row"><input id="tl-adsbx-key" type="password" autocomplete="off" placeholder="${has ? 'saved - paste a new one to replace it' : 'paste your RapidAPI key'}" style="flex:1;min-width:0;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:4px;padding:3px 6px"> <a href="#" data-tl-act="adsbxSave">save</a>${has ? ' · <a href="#" data-tl-act="adsbxClear">remove</a>' : ''}</div>
       <div class="tl-muted" style="margin-top:4px">Optional. Your own key for the ADS-B Exchange API (rapidapi.com), which sees aircraft the free feeds miss. Used only when adsb.lol and adsb.fi cannot identify a flight or give no callsign, so a small plan lasts. Kept in this browser only.</div>
       <div class="tl-pop-row" style="margin-top:8px"><span>FAA NOTAM API key</span>${notamKey() ? ' <span class="tl-muted">saved</span>' : ''}</div>
@@ -361,6 +364,13 @@
       if (act === 'faaSave' && !(id && sec)) return;
       store.kvSet('faaNotam', act === 'faaClear' ? {} : { id, secret: sec }); deadHosts.delete('external-api.faa.gov'); notamCache.clear();
       const b = popEl && popEl.querySelector('.tl-pop-body'); if (b) b.innerHTML = sourcesHtml();
+      return;
+    }
+    if (act === 'monSave' || act === 'monClear') {
+      const url = monAddr((document.getElementById('tl-mon-url') || {}).value), token = String((document.getElementById('tl-mon-token') || {}).value || '').trim();
+      if (act === 'monSave' && !(url && token)) return;
+      store.kvSet('monRemote', act === 'monClear' ? {} : { url, token }); monBase = MON_LOCAL;
+      monCheck(true).catch(() => {}).then(() => { const b = popEl && popEl.querySelector('.tl-pop-body'); if (b) b.innerHTML = sourcesHtml(); });
       return;
     }
     if (act === 'adsbxSave' || act === 'adsbxClear') {

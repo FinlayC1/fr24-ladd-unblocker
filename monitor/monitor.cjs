@@ -21,6 +21,10 @@ const path = require('path');
 const http = require('http');
 const DIR = __dirname, DATA = process.env.MON_DATA || path.join(DIR, 'data'), STORE = process.env.MON_STORE || path.join(DIR, 'store');
 const PORT = +(process.env.PORT || process.env.MON_PORT || 47524), HOST = process.env.MON_HOST || '127.0.0.1';
+// (shared on a server: MON_TOKEN makes every request carry the secret - header X-Monitor-Token - and MON_RATE caps requests per minute
+// per address; both off by default, so the monitor on one's own computer is as before)
+const TOKEN = process.env.MON_TOKEN || '', RATE = +(process.env.MON_RATE || 0), hits = new Map();
+const limited = ip => { if (!RATE) return false; const t = Math.floor(Date.now() / 60000), h = hits.get(ip); if (!h || h.t !== t) { hits.set(ip, { t, n: 1 }); if (hits.size > 5000) hits.clear(); return false; } return ++h.n > RATE; };
 const CFG = Object.assign({ areas: [[53.8, -2.6, 250]], laddEvery: 30, areaEvery: 60, hexEvery: 120, hexBatch: 100, backWorkers: 3, userAreas: 3 }, (() => { try { return JSON.parse(fs.readFileSync(path.join(DIR, 'monitor.json'), 'utf8')); } catch (e) { return {}; } })());
 const { createRouteEngine } = require(fs.existsSync(path.join(DIR, 'engine.js')) ? path.join(DIR, 'engine.js') : '../src/engine.js');
 const E = createRouteEngine();
@@ -332,6 +336,9 @@ function serve() {
   http.createServer((req, res) => {
     const u = new URL(req.url, 'http://x'), nowS = Date.now() / 1000;
     let body = null;
+    const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
+    if (TOKEN && req.headers['x-monitor-token'] !== TOKEN) { res.writeHead(401); res.end(); return; }
+    if (limited(ip)) { res.writeHead(429, { 'Retry-After': '30' }); res.end(); return; }
     try {
       if (u.pathname === '/status') body = { v: 2, data: 'adsb.lol (ODbL)', since: stats.since, polls: stats.polls, hexPolls: stats.hexPolls, fails: stats.fails, lastErr: stats.lastErr, aircraft: ac.size, blocked: blocked.size, withLegs: legs.size, legs: [...legs.values()].reduce((n, m) => n + m.size, 0), laddAt: lastLadd.at, backfillQueue: backQ.length, areas: CFG.areas.concat(userAreas).map(a => a.slice(0, 2)), paused: Object.fromEntries(Object.entries(pause).filter(([, t]) => t > Date.now()).map(([h, t]) => [h, Math.round((t - Date.now()) / 1000)])) };
       else if (u.pathname === '/board') body = { aircraft: boardLegs(+u.searchParams.get('ap'), +(u.searchParams.get('from') || nowS - 3 * 86400), +(u.searchParams.get('to') || nowS)) };
