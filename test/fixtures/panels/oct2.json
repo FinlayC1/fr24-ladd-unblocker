@@ -1,0 +1,74 @@
+[
+ {
+  "name": "TKF1 (AW139, King's Helicopter Flight) off a private site by Cleveleys, after a stop there from Warton",
+  "hex": "4081fa",
+  "reg": "G-XXEE",
+  "type": "A139",
+  "cs": "TKF1",
+  "fid": "41f0aaa1",
+  "at": "2026-10-02T13:45:40Z",
+  "trace": "trace_4081fa_20261002.json.gz",
+  "trailFrom": "2026-10-02T13:39:00Z",
+  "expect": {
+   "from": "PVT",
+   "toNot": "nothing"
+  }
+ },
+ {
+  "name": "G-JDPB (PA-28R) off Sleap - adsb.lol lost it landing there at 12:23 after Chester -> Sleap; FR24 track not in yet",
+  "hex": "402d67",
+  "reg": "G-JDPB",
+  "type": "P28S",
+  "cs": "GJDPB",
+  "fid": "41f04171",
+  "at": "2026-10-02T14:05:30Z",
+  "trace": "trace_402d67_20261002.json.gz",
+  "noTrail": true,
+  "fr24Track": true,
+  "expect": {
+   "from": "QKV"
+  }
+ },
+ {
+  "name": "G-JDPB with FR24 track",
+  "hex": "402d67",
+  "reg": "G-JDPB",
+  "type": "P28S",
+  "cs": "GJDPB",
+  "fid": "41f04171",
+  "at": "2026-10-02T14:05:30Z",
+  "trace": "trace_402d67_20261002.json.gz",
+  "fr24Track": true,
+  "expect": {
+   "from": "QKV"
+  }
+ },
+ {
+  "name": "G-BOIR (C152) circuits at Sleap",
+  "hex": "402ac2",
+  "reg": "G-BOIR",
+  "type": "C152",
+  "cs": "GBOIR",
+  "fid": "41f065ca",
+  "at": "2026-10-02T14:56:00Z",
+  "expect": {
+   "from": "QKV",
+   "to": "QKV"
+  }
+ },
+ {
+  "name": "G-OTAY (P2006T) out of Teesside, flying away south",
+  "hex": "4062ff",
+  "reg": "G-OTAY",
+  "type": "P06T",
+  "cs": "GOTAY",
+  "fid": "41f070a1",
+  "at": "2026-10-02T15:00:00Z",
+  "trace": "trace_4062ff_20261002.json.gz",
+  "trailFrom": "2026-10-02T14:47:00Z",
+  "expect": {
+   "from": "MME",
+   "toNot": "MME"
+  }
+ }
+]

@@ -1,0 +1,305 @@
+{
+ "around:600,51.49": {
+  "elements": [
+   {
+    "type": "way",
+    "id": 1,
+    "center": {
+     "lat": 51.4967,
+     "lon": -2.5915
+    },
+    "tags": {
+     "amenity": "hospital",
+     "name": "Southmead Hospital"
+    }
+   },
+   {
+    "type": "node",
+    "id": 2,
+    "lat": 51.4937,
+    "lon": -2.5926,
+    "tags": {
+     "aeroway": "helipad"
+    }
+   }
+  ]
+ },
+ "around:80000,53.": {
+  "elements": [
+   {
+    "type": "node",
+    "id": 100,
+    "lat": 53.566,
+    "lon": -3.455,
+    "tags": {
+     "man_made": "offshore_platform"
+    }
+   },
+   {
+    "type": "node",
+    "id": 101,
+    "lat": 53.646,
+    "lon": -3.478,
+    "tags": {
+     "man_made": "offshore_platform"
+    }
+   },
+   {
+    "type": "node",
+    "id": 102,
+    "lat": 53.683,
+    "lon": -3.54,
+    "tags": {
+     "man_made": "offshore_platform"
+    }
+   },
+   {
+    "type": "node",
+    "id": 103,
+    "lat": 53.626,
+    "lon": -3.673,
+    "tags": {
+     "man_made": "offshore_platform"
+    }
+   },
+   {
+    "type": "node",
+    "id": 104,
+    "lat": 53.537,
+    "lon": -3.577,
+    "tags": {
+     "man_made": "offshore_platform"
+    }
+   },
+   {
+    "type": "node",
+    "id": 105,
+    "lat": 53.537,
+    "lon": -3.578,
+    "tags": {
+     "man_made": "offshore_platform"
+    }
+   },
+   {
+    "type": "node",
+    "id": 106,
+    "lat": 53.537,
+    "lon": -3.58,
+    "tags": {
+     "man_made": "offshore_platform"
+    }
+   },
+   {
+    "type": "node",
+    "id": 107,
+    "lat": 53.631,
+    "lon": -3.177,
+    "tags": {
+     "man_made": "offshore_platform"
+    }
+   },
+   {
+    "type": "node",
+    "id": 108,
+    "lat": 54.026,
+    "lon": -3.862,
+    "tags": {
+     "man_made": "offshore_platform"
+    }
+   },
+   {
+    "type": "node",
+    "id": 109,
+    "lat": 53.96,
+    "lon": -3.672,
+    "tags": {
+     "man_made": "offshore_platform"
+    }
+   },
+   {
+    "type": "node",
+    "id": 110,
+    "lat": 53.891,
+    "lon": -3.624,
+    "tags": {
+     "man_made": "offshore_platform"
+    }
+   },
+   {
+    "type": "node",
+    "id": 111,
+    "lat": 53.864,
+    "lon": -3.619,
+    "tags": {
+     "man_made": "offshore_platform"
+    }
+   },
+   {
+    "type": "node",
+    "id": 112,
+    "lat": 53.846,
+    "lon": -3.581,
+    "tags": {
+     "man_made": "offshore_platform"
+    }
+   },
+   {
+    "type": "node",
+    "id": 113,
+    "lat": 53.846,
+    "lon": -3.582,
+    "tags": {
+     "man_made": "offshore_platform"
+    }
+   },
+   {
+    "type": "node",
+    "id": 114,
+    "lat": 53.846,
+    "lon": -3.583,
+    "tags": {
+     "man_made": "offshore_platform"
+    }
+   }
+  ]
+ },
+ "around:80000,54.": {
+  "elements": [
+   {
+    "type": "node",
+    "id": 100,
+    "lat": 53.566,
+    "lon": -3.455,
+    "tags": {
+     "man_made": "offshore_platform"
+    }
+   },
+   {
+    "type": "node",
+    "id": 101,
+    "lat": 53.646,
+    "lon": -3.478,
+    "tags": {
+     "man_made": "offshore_platform"
+    }
+   },
+   {
+    "type": "node",
+    "id": 102,
+    "lat": 53.683,
+    "lon": -3.54,
+    "tags": {
+     "man_made": "offshore_platform"
+    }
+   },
+   {
+    "type": "node",
+    "id": 103,
+    "lat": 53.626,
+    "lon": -3.673,
+    "tags": {
+     "man_made": "offshore_platform"
+    }
+   },
+   {
+    "type": "node",
+    "id": 104,
+    "lat": 53.537,
+    "lon": -3.577,
+    "tags": {
+     "man_made": "offshore_platform"
+    }
+   },
+   {
+    "type": "node",
+    "id": 105,
+    "lat": 53.537,
+    "lon": -3.578,
+    "tags": {
+     "man_made": "offshore_platform"
+    }
+   },
+   {
+    "type": "node",
+    "id": 106,
+    "lat": 53.537,
+    "lon": -3.58,
+    "tags": {
+     "man_made": "offshore_platform"
+    }
+   },
+   {
+    "type": "node",
+    "id": 107,
+    "lat": 53.631,
+    "lon": -3.177,
+    "tags": {
+     "man_made": "offshore_platform"
+    }
+   },
+   {
+    "type": "node",
+    "id": 108,
+    "lat": 54.026,
+    "lon": -3.862,
+    "tags": {
+     "man_made": "offshore_platform"
+    }
+   },
+   {
+    "type": "node",
+    "id": 109,
+    "lat": 53.96,
+    "lon": -3.672,
+    "tags": {
+     "man_made": "offshore_platform"
+    }
+   },
+   {
+    "type": "node",
+    "id": 110,
+    "lat": 53.891,
+    "lon": -3.624,
+    "tags": {
+     "man_made": "offshore_platform"
+    }
+   },
+   {
+    "type": "node",
+    "id": 111,
+    "lat": 53.864,
+    "lon": -3.619,
+    "tags": {
+     "man_made": "offshore_platform"
+    }
+   },
+   {
+    "type": "node",
+    "id": 112,
+    "lat": 53.846,
+    "lon": -3.581,
+    "tags": {
+     "man_made": "offshore_platform"
+    }
+   },
+   {
+    "type": "node",
+    "id": 113,
+    "lat": 53.846,
+    "lon": -3.582,
+    "tags": {
+     "man_made": "offshore_platform"
+    }
+   },
+   {
+    "type": "node",
+    "id": 114,
+    "lat": 53.846,
+    "lon": -3.583,
+    "tags": {
+     "man_made": "offshore_platform"
+    }
+   }
+  ]
+ }
+}

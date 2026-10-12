@@ -1,0 +1,66 @@
+[
+ {
+  "name": "NHZ25 (AW139) out of Blackpool to a rig",
+  "hex": "4080fe",
+  "reg": "G-NHVX",
+  "type": "A139",
+  "cs": "NHZ25",
+  "fid": "41ec86d0",
+  "at": "2026-10-01T15:36:00Z",
+  "expect": {
+   "from": "BLK",
+   "toNot": "BLK"
+  }
+ },
+ {
+  "name": "G-BJAJ (AA5) out of Liverpool",
+  "hex": "401f84",
+  "reg": "G-BJAJ",
+  "type": "AA5",
+  "cs": "GBJAJ",
+  "fid": "41ec80b8",
+  "at": "2026-10-01T15:38:00Z",
+  "expect": {
+   "from": "LPL"
+  }
+ },
+ {
+  "name": "SXN39 (AW139) off London Heliport over Devon",
+  "hex": "4082d6",
+  "reg": "G-MCFC",
+  "type": "A139",
+  "cs": "SXN39",
+  "fid": "41ec987b",
+  "at": "2026-10-01T17:39:00Z",
+  "expect": {
+   "from": "EGLW",
+   "toNot": "EGLW"
+  }
+ },
+ {
+  "name": "SFY5LW (DA42) circuits at Gloucester",
+  "hex": "408309",
+  "reg": "G-SALW",
+  "type": "DA42",
+  "cs": "SFY5LW",
+  "fid": "41ecf2be",
+  "at": "2026-10-01T17:43:00Z",
+  "expect": {
+   "from": "GLO",
+   "to": "GLO"
+  }
+ },
+ {
+  "name": "HLE81 (AW169 air ambulance) off Southmead Hospital",
+  "hex": "407dfd",
+  "reg": "G-CPTZ",
+  "type": "A169",
+  "cs": "HLE81",
+  "fid": "41ec1ea1",
+  "at": "2026-10-01T17:31:00Z",
+  "expect": {
+   "from": "PVT",
+   "fromName": "Southmead Hospital"
+  }
+ }
+]
