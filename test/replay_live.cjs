@@ -276,8 +276,9 @@ const b = s => new Uint8Array(Buffer.from(s, 'base64'));
   }
   // "Recent <reg> flights": the list of the aircraft on screen is handed to the page before anyone opens the dropdown
   {
-    // (only when something is known of its flights: an aircraft with no trace today and no log yet has nothing to hand over -
-    // judged once its loads have settled, or a trace still on its way reads as nothing known)
+    // (only when something is known of its flights: an aircraft with no trace today and no log yet has nothing to hand over
+    // but the flight on screen - one row, which FR24's list skips - judged once its loads have settled, or a trace still on
+    // its way reads as nothing known)
     const hexF = (posted.find(p => p && p.__tweeksLadd === 'aircraftInfo') || {}).hex;
     for (let i = 0; i < 40 && hexF && ((L.todayCache.get(String(hexF).toLowerCase()) || {}).loading || [...L.routeState.values()].some(v => v.hex === String(hexF).toLowerCase() && v.working)); i++) await new Promise(r => setTimeout(r, 250));
     await new Promise(r => setTimeout(r, 600));
@@ -286,7 +287,7 @@ const b = s => new Uint8Array(Buffer.from(s, 'base64'));
     const warm = posted.filter(p => p && p.__tweeksLadd === 'hist' && p.reg === regF);
     if (process.env.DEBUG_HIST) console.log(JSON.stringify({ hexF, pub: [...L.pubRecs.values()].map(r => [r.id, r.hex, r.reg]), shown: L.shownId, sel: L.selectedId, rs: [...L.routeState.entries()].map(([k, v]) => [k, !!v.working, !!v.route]), today: [...L.todayCache.entries()].map(([k, v]) => [k, (v.sums || []).length, !!v.failAt]), hist: !!hexF && !!L.store.peekHist(String(hexF).toLowerCase()) }));
     const known =!!hexF && (!!((L.todayCache.get(String(hexF).toLowerCase()) || {}).sums || []).length || !!L.store.peekHist(String(hexF).toLowerCase()));
-    check('"Recent flights" list handed to the page ahead of the click (answered at once when opened)', known ? warm.length > 0 && H.hist.has(regF) : warm.every(p => !p.data || !p.data.length), { known, posts: warm.length, lens: warm.map(p => p.data ? p.data.length : null), partial: warm.map(p => !!p.partial), regs: [...H.hist.keys()] });
+    check('"Recent flights" list handed to the page ahead of the click (answered at once when opened)', known ? warm.length > 0 && H.hist.has(regF) : warm.every(p => !p.data || p.data.length <= 1), { known, posts: warm.length, lens: warm.map(p => p.data ? p.data.length : null), partial: warm.map(p => !!p.partial), regs: [...H.hist.keys()] });
   }
   // 22.10: the population tables unpack at start; METARs come in for the fields asked; the wind changes the ETA; every
   // reconstructed flight is learned with its take-off time, callsign, type and flow cells

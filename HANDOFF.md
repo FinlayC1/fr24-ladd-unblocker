@@ -1,0 +1,177 @@
+# HANDOFF - FR24 LADD unblocker (written 14 Oct 2026 for the cloud session)
+
+Read this file, then `docs/notes/user-preferences.md` (the user's standing requirements) and
+`docs/notes/fr24-internals-and-history.md` (what earlier sessions learned about FR24's internals, version by version).
+
+## 1. What this is
+
+- **Userscript** "Flightradar24 LADD / N-A Unblocker" (Tampermonkey). Source in `src/`, built into
+  `dist/fr24-ladd-unblocker.user.js` by `build.mjs`. It identifies blocked (FAA LADD, FR24-hidden, PIA, military) and
+  "N/A" flights on flightradar24.com from public ADS-B and writes identity, routes, predicted destinations, boards,
+  logs and search results straight into FR24's own UI so they look native.
+- **Permanent monitor** `monitor/monitor.cjs` (Node, no dependencies; uses `src/engine.js`). Polls adsb.lol all the
+  time, rebuilds flight legs, keeps them (90 days blocked aircraft, 4 days others) and answers the userscript over HTTP.
+
+## 2. Layout
+
+| Path | What |
+|---|---|
+| `build.mjs` | header + `src/page.js` + `src/engine.js` + tables + `src/main/NN-*.js` (sorted) -> dist |
+| `src/header.js` | userscript header: `@version`, `@connect` hosts (Tampermonkey blocks any host not listed) |
+| `src/page.js` | page-world interceptor: gRPC feed patches (LiveFeed, FollowFlight, Playback), fetch shims (search, boards, airport data pages, runways, movements), Pinia hooks |
+| `src/engine.js` | route engine, shared by userscript and monitor |
+| `src/main/01-core.js` | store, host lanes/`gmRequest`, monitor client (`monCheck`, `monGet`, shared monitor `monRemote`), `VERSION` |
+| `src/main/02-resolver.js` | identification: candidate lists, LADD/mil lists, area polls, ocean ID, monitor `/seed` `/last` `/parked` |
+| `src/main/03-data.js` | airports/airlines, `loadHistory` (aircraft logs from adsb.lol day traces), sites + OSM naming, registers |
+| `src/main/04-routes.js` | routes, "Recent flights" |
+| `src/main/05-ui.js`, `06-*.js`, `07-boot.js` | strip, pop-overs/tools, boards, log/flight pages, playback, boot + message routing + test exports (`window.__tweeksLadd`) |
+| `monitor/monitor.cjs`, `monitor/dash.html` | monitor + its dashboard page |
+| `monitor/data/` | airports.json, runways.json, runway_len.json, oa_airports.csv (monitor default data dir; tests use it too) |
+| `test/` | `unit_*.cjs`, `case_panel.cjs`, `replay_live.cjs`, `e2e.cjs`, `perf.cjs`, fixtures, `run-suite.cjs` |
+
+## 3. Build, lint, test
+
+```
+npm install
+npm run build          # dist/fr24-ladd-unblocker.user.js
+npm run lint           # must report 0 errors (warnings are fine)
+npm test               # test/run-suite.cjs: build + all unit tests + jsdom replays
+npm run test:all       # + e2e against live FR24 / adsb.lol, normal and Tampermonkey mode (TM_WRAP=1)
+node test/perf.cjs node_modules 120     # stalls over 50 ms in 2 min of map use; E2E_SRC=<other build> for an A/B
+```
+
+State at handoff (14 Oct, Windows): every unit test passes (unit_new 41/41, unit_monitor 12/12, ...), replay 26/26,
+e2e 129/129. Live-data flakes seen before (not script bugs): e2e "LADD + military list loaded" and "permanent monitor:
+its LADD list is fresh" when adsb.lol answers 429; e2e "reload: the panel has the departure airport at once" depends on
+the live aircraft picked; replay "METARs ..." when aviationweather.gov times out.
+`unit_new`, `panels*`, `replay` and e2e need outbound network (flightradar24.com, api.flightradar24.com, api.adsb.lol,
+adsb.lol, opendata.adsb.fi, globe.airplanes.live, overpass-api.de, aviationweather.gov). If the cloud environment
+blocks them, say so plainly - never report a skipped test as passed.
+
+## 4. Deployment state (14 Oct 2026)
+
+**Userscript** v22.18.3, installed by the user in Tampermonkey on Windows (file `C:\Users\finla\OneDrive\Documents\==UserScript==.txt`;
+previous versions kept as `==UserScript==.vX.Y.Z.backup.txt`). `dist/` is git-ignored. The cloud session cannot install
+it - the user does. The strip's "Data sources" pop-over has a **Shared monitor** box (kv `monRemote` = {url, token});
+it is set to the Oracle monitor and shows "in use".
+
+**Oracle Cloud VM** (Always Free, user's account), the shared monitor:
+- `VM.Standard.E2.1.Micro`: **1 GB RAM** (+2 GB swap file), small burstable CPU, 46 GB disk. Ubuntu 24.04, Node 18.19.1, git, Caddy 2.6. London AD-1.
+- Public IP `143.47.224.210`. HTTPS by Caddy at **https://143-47-224-210.sslip.io** -> `127.0.0.1:47524`. `/etc/caddy/Caddyfile`:
+  ```
+  143-47-224-210.sslip.io {
+      log
+      reverse_proxy 127.0.0.1:47524
+  }
+  ```
+- systemd `/etc/systemd/system/fr24-monitor.service`: `User=ubuntu`, `WorkingDirectory=/home/ubuntu/monitor`,
+  `Environment=MON_HOST=127.0.0.1 MON_PORT=47524 MON_TOKEN=<secret> MON_RATE=120 MON_DATA=/home/ubuntu/monitor/data MON_STORE=/home/ubuntu/monitor/store`,
+  `ExecStart=/usr/bin/node monitor.cjs`, `Restart=always`.
+- `/home/ubuntu/monitor/` holds monitor.cjs (the 22.18 version with token + rate limit, **without** /dash), engine.js,
+  dataset.cjs, data/. It is **not** a git checkout yet.
+- Ports 22/80/443 open (Oracle security list + iptables saved with netfilter-persistent).
+- **The secret (MON_TOKEN) is not in the repo. Never commit it, log it or put it in a URL** (Caddy logs URIs). The user can
+  read it on the VM: `sudo grep MON_TOKEN /etc/systemd/system/fr24-monitor.service`.
+- Verified 12 Oct: `/status` 200 with `X-Monitor-Token`, 401 without, 429 over MON_RATE; adsb.lol polling from the VM had 0 failures.
+
+**Access:** the user runs all VM commands. The cloud session has no SSH key and must not ask for the private key. Give
+exact single-line commands, one step at a time, and wait for the pasted output. The user is on Windows PowerShell
+(paste = right-click):
+`ssh -o ServerAliveInterval=30 -i "$env:USERPROFILE\Downloads\ssh-key-2026-10-12.key" ubuntu@143.47.224.210`
+
+**Home PC monitor** `C:\Users\finla\OneDrive\Documents\FR24LaddMonitor\` (monitor.cjs now the /dash version, dash.html,
+engine.js, dataset.cjs, data/, `store/` = `legs-2026-10-03.json` ... `legs-2026-10-11.json` + `state.json` with ~7,199
+known blocked aircraft, start-monitor.vbs). **Not running and not auto-started** (the user never approved a startup task).
+Its store and state should move to the VM.
+
+## 5. The user's request (14 Oct, verbatim)
+
+> remember the monitor is running by itself now, it doesn't need my computer anymore and can therefore have as much
+> resources as it needs to identify the whole world of ladd flights and rough destination calculation data, most
+> destination calculation then done in browser and only ladd identification as backup. move the script fully off a
+> computer monitor and onto the oracle one. deepthink, deepsearch and test. dont make any mistakes or bugs.
+
+Earlier the same day they asked for a dashboard of everything the monitor does and who calls it: built (`/dash` +
+`/stats`, committed, tested locally), **not yet deployed**.
+
+Be honest about "as much resources as it needs": the free VM has 1 GB RAM. The real limits are that and adsb.lol's rate
+limits, not the user's PC. The free ARM shape (A1.Flex, up to 24 GB) had no capacity in London when the VM was made.
+
+## 6. How it works today (relevant parts)
+
+- **Browser identification** (`02-resolver.js`): `refreshLists()` takes the LADD list from monitor `/ladd` when fresh
+  (< 90 s) else `api.adsb.lol/v2/ladd`, and also fetches `api.adsb.lol/v2/mil` and `opendata.adsb.fi/api/v2/mil`
+  directly; every 30 s it refreshes from monitor `/ladd`. Plus area polls of the map view, a world scan, per-flight
+  matching (`noteCands`, `resolveTargeted`), ocean ID (monitor `/last`, `matchByTraces`, heatmaps), parked aircraft
+  (monitor `/parked`). `monSeed()` sends every LADD hex the browser knows to monitor `/seed`.
+- **Destination data**: `loadHistory(hex, days)` (`03-data.js`) rebuilds an aircraft's log from adsb.lol
+  `globe_history/.../trace_full_<hex>.json` day files, one request per day (21 days, more in the background), cached in
+  IndexedDB. This is the browser's heaviest adsb.lol load. **The monitor's `/legs` (90 days, same engine, same leg
+  format) is not used by the browser yet.**
+- Boards use monitor `/board`; flight-number pages `/flights`; `/area` tells the monitor where the user looks.
+- **Monitor loop**: one adsb.lol API request at a time, at least 2 s apart (`pumpGate`): `/v2/ladd` every 30 s; areas
+  (`CFG.areas` default `[[53.8,-2.6,250]]` + up to `CFG.userAreas` = 3 from `/area`) every 60 s via `/v2/point`;
+  non-FAA blocked aircraft by hex in batches of 100 every 120 s; 3 backfill workers read adsb.lol day traces (gapFill
+  3 days). A 429 pauses that host for 120 s. Store: `legs-YYYY-MM-DD.json` per day + `state.json` (blocked list, user areas).
+
+## 7. Proposed plan (research and verify each step first; change it where evidence says so)
+
+**A. Move fully onto Oracle**
+1. Make the VM a git checkout so updates are one command: read-only deploy key on the VM
+   (`ssh-keygen -t ed25519 -f ~/.ssh/fr24_deploy -N ""`; the user adds the `.pub` as a read-only Deploy key in the
+   GitHub repo settings), clone to `~/fr24-ladd`, point the service at `~/fr24-ladd/monitor` (data comes with the repo;
+   keep `MON_STORE=/home/ubuntu/monitor/store`). Add `monitor/deploy.sh`: `git pull --ff-only`, `node --check`,
+   restart, `/status` check with the token from the unit file, roll back to the previous commit on failure.
+2. Migrate the home store + state without losing what the VM gathered since 12 Oct: write `monitor/merge-store.cjs`
+   (union legs per day by the monitor's own leg key; union blocked lists keeping the newest `heard`) **with a unit
+   test**. The user scp's `FR24LaddMonitor\store` to `~/store-home`, stops the service, runs the merge, starts it.
+3. Userscript: once a shared monitor answers, don't use `127.0.0.1` for data at all; the local monitor only when no
+   shared one is set.
+4. Caddyfile: add `encode zstd gzip`.
+
+**B. Monitor = primary worldwide identification (browser = backup)**
+5. Add worldwide lists to the monitor loop: adsb.lol `/v2/mil` and `/v2/pia` (every 60-120 s); adsb.fi `/api/v2/mil` as
+   fallback while adsb.lol is paused. Check the real endpoints, shapes and limits first (adsb.lol API docs; adsb.fi
+   opendata README). **Do not use the airplanes.live REST API** (needs approval; links to its globe are fine). Keep the
+   2 s gate and the 429 pause; stay well under ~25 adsb.lol requests/min in total.
+6. New endpoint `/live`: every blocked/LADD/PIA/mil aircraft heard in the last few minutes: hex, reg, type, cs, lat,
+   lon, alt, gs, trk, gnd, seen time, flags, current leg origin (id/code/conf) and take-off time. Compact rows.
+7. Userscript: with the monitor up, take `/live` every 15-20 s as the candidate list (feed `noteCands` exactly as
+   `refreshLists` does) and skip its own `/v2/ladd`, `/v2/mil` and adsb.fi mil requests; use them only when the monitor
+   is down or its data is older than ~90 s. Keep the browser's own area polls for ordinary N/A flights (the monitor does
+   not see the whole world's ordinary traffic).
+
+**C. Destination data from the monitor**
+8. `loadHistory`: for blocked aircraft ask monitor `/legs` first (instant; add a batched `/legs?hex=a,b,c`), merge into
+   the IndexedDB log in the existing format, and fetch adsb.lol day traces only for days the monitor lacks.
+9. Optional: a rough destination on the monitor for airborne blocked aircraft (own-history likeliest destination from
+   this origin + heading agreement), in `/live` and `/board` so airport boards anywhere list inbound LADD flights as
+   "Predicted". The browser engine still does the full prediction. Keep it cheap: 1 GB RAM.
+
+**D. Dashboard**
+10. Deploy `/dash`: https://143-47-224-210.sslip.io/dash asks for the secret and polls `/stats` every 5 s.
+
+Ship in small, tested steps: bump `@version` in `src/header.js` and `VERSION` in `src/main/01-core.js` together, run
+`npm run lint` and `npm test` before every push, A/B perf for anything on the map path, and tell the user exactly what
+to install/run. The user has to reinstall the script in Tampermonkey for header changes (new `@connect` hosts).
+
+## 8. Constraints (always)
+
+- The user's standing requirements: `docs/notes/user-preferences.md` (responsiveness first, FR24-native look, never
+  override FR24's own routes, "Confirmed" only when sure, heavy testing, honest reporting).
+- Be gentle with adsb.lol and airplanes.live; respect robots.txt; ADS-B Exchange only through the user's own RapidAPI
+  key, never its globe; API keys only ever entered by the user.
+- Registers: owner names only, never addresses. Never send the user's email address anywhere.
+- No persistent changes on the user's PC (startup tasks etc.) without explicit permission.
+- Never commit or log the monitor secret.
+
+## 9. Gotchas
+
+- jsdom does not apply FR24's CSS: a table built with class `is-user` was invisible on FR24's real page while tests
+  passed. Check visible results in a real browser where possible.
+- Tampermonkey reads `@connect` only when the script is (re)installed.
+- Old data pages (`/data/flights`, `/data/aircraft`) are jQuery pages; the map and airport pages are Vue/Inertia with
+  Pinia stores (`app.config.globalProperties.$pinia._s`): see the notes.
+- Change detection by `JSON.stringify(x).length` collides (7,497 vs 7,500 ft): use `hashStr(JSON.stringify(x))`.
+- Caddyfile blocks need the braces on their own lines.
+- `test/replay_live.cjs` and e2e pick live aircraft, so conditional checks vary from run to run.

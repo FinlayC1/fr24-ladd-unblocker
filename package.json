@@ -1,0 +1,18 @@
+{
+  "name": "fr24-ladd-unblocker",
+  "version": "22.18.3",
+  "private": true,
+  "description": "Flightradar24 LADD / N-A unblocker userscript and its permanent monitor",
+  "scripts": {
+    "build": "node build.mjs",
+    "lint": "eslint --no-eslintrc -c .eslintrc.json dist/fr24-ladd-unblocker.user.js src/page.js",
+    "test": "node test/run-suite.cjs",
+    "test:all": "node test/run-suite.cjs --e2e",
+    "monitor": "node monitor/monitor.cjs"
+  },
+  "devDependencies": {
+    "eslint": "8.57.1",
+    "fake-indexeddb": "6.2.5",
+    "jsdom": "30.1.1"
+  }
+}
