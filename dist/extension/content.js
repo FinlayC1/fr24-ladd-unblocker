@@ -5196,9 +5196,11 @@ const GM_xmlhttpRequest = (() => {
       lat, lon, alt: fin(alt) ? alt : NaN, gnd, gs: Number(ac.gs), trk: Number(ac.track), ageS: (Number(ac.seen_pos) || 0), receivedAt, dbFlags, ladd: !!(dbFlags & 8), pia: !!(dbFlags & 4), mil: !!(dbFlags & 1), src,
       cat: clean(ac.category).toUpperCase(), sq, squawk: sq ? parseInt(sq, 8) : 0, emergency: clean(ac.emergency),
       // everything the panel's own fields can show, straight from the transponder
-      vs: fin(numOr(ac.baro_rate)) ? numOr(ac.baro_rate) : numOr(ac.geom_rate), agps: numOr(ac.alt_geom), ias: numOr(ac.ias), tas: numOr(ac.tas), mach: numOr(ac.mach), oat: numOr(ac.oat), wd: numOr(ac.wd), ws: numOr(ac.ws), mcp: numOr(ac.nav_altitude_mcp), fms: numOr(ac.nav_altitude_fms), navHdg: numOr(ac.nav_heading), qnh: numOr(ac.nav_qnh), ...(gnd ? GROUND_AIRDATA : {}) };
+      vs: fin(numOr(ac.baro_rate)) ? numOr(ac.baro_rate) : numOr(ac.geom_rate), agps: numOr(ac.alt_geom), ias: numOr(ac.ias), tas: numOr(ac.tas), mach: numOr(ac.mach), oat: numOr(ac.oat), wd: numOr(ac.wd), ws: numOr(ac.ws), mcp: numOr(ac.nav_altitude_mcp), fms: numOr(ac.nav_altitude_fms), navHdg: numOr(ac.nav_heading), qnh: numOr(ac.nav_qnh),
+      // (wx: the airspeeds, Mach, wind and temperature are the monitor's estimate from a weather model, not the aircraft's)
+      wx: !gnd && ac.wx === 1, ...(gnd ? GROUND_AIRDATA : {}) };
   }
-  const telemOf = c => c ? { gnd: !!c.gnd, vr: c.vs, sq: c.squawk || 0, sqs: c.sq || '', agps: c.agps, ias: c.ias, tas: c.tas, mach: c.mach, oat: c.oat, wd: c.wd, ws: c.ws, mcp: c.mcp, fms: c.fms, cat: c.cat, emergency: c.emergency, ...firFields(c), at: c.receivedAt - (c.ageS || 0) * 1000 } : null;
+  const telemOf = c => c ? { gnd: !!c.gnd, vr: c.vs, sq: c.squawk || 0, sqs: c.sq || '', agps: c.agps, ias: c.ias, tas: c.tas, mach: c.mach, oat: c.oat, wd: c.wd, ws: c.ws, wx: !!c.wx, mcp: c.mcp, fms: c.fms, cat: c.cat, emergency: c.emergency, ...firFields(c), at: c.receivedAt - (c.ageS || 0) * 1000 } : null;
   const firFields = c => { const f = firInfo(c.lat, c.lon, c.gnd ? 0 : c.alt); return f ? { air: f.name, airId: f.code } : { air: '', airId: '' }; };
   const readsbList = j => Array.isArray(j && j.ac) ? j.ac : Array.isArray(j && j.aircraft) ? j.aircraft : [];
   // (altFn: an older address of the same query, asked when the first is not found - adsb.fi moved its area query to v3)
@@ -5252,7 +5254,7 @@ const GM_xmlhttpRequest = (() => {
       if (!c || !c.hex) continue; const p = areaCache.get(c.hex);
       // (a report without the airspeeds, Mach, wind and temperature - the networks send them only now and then, and over
       // the US not at all: the monitor's figures, its own or worked out from the weather model, kept two minutes)
-      if (p && !c.gnd && !fin(c.tas) && !fin(c.ias) && fin(p.tas) && seenAt(c) >= seenAt(p) && seenAt(c) - seenAt(p) < 120000) for (const k of ['ias', 'tas', 'mach', 'oat', 'wd', 'ws']) if (!fin(c[k]) && fin(p[k])) c[k] = p[k];
+      if (p && !c.gnd && !fin(c.tas) && !fin(c.ias) && fin(p.tas) && seenAt(c) >= seenAt(p) && seenAt(c) - seenAt(p) < 120000) { for (const k of ['ias', 'tas', 'mach', 'oat', 'wd', 'ws']) if (!fin(c[k]) && fin(p[k])) c[k] = p[k]; c.wx = !!p.wx; c.airKept = true; }
       if (!p || seenAt(c) >= seenAt(p)) areaCache.set(c.hex, c); noteLastSeen(c);
     }
     if (areaCache.size > 12000) { const cut = now() - 10 * 60000; for (const [k, v] of areaCache) if (v.receivedAt < cut) areaCache.delete(k); }
@@ -5699,7 +5701,10 @@ const GM_xmlhttpRequest = (() => {
   function noteTelOut(list) {
     for (const c of list || []) {
       if (!c || c.nonIcao || c.src === 'monitor' || !fin(c.lat) || !fin(c.lon) || now() - seenAt(c) > 60000) continue;
-      telOut.set(c.hex, [c.hex, rnd4(c.lat), rnd4(c.lon), c.gnd ? 'g' : fin(c.alt) ? Math.round(c.alt) : null, nn(c.gs), nn(c.trk), c.gnd ? 0 : nn(c.vs), c.sq || '', nn(c.agps), nn(c.ias), nn(c.tas), nn(c.mach), nn(c.oat), nn(c.wd), nn(c.ws), Math.round(seenAt(c) / 1000), c.reg || '', c.type || '', c.cs || '', c.dbFlags | 0]);
+      // (airspeeds, Mach, wind and temperature only as the aircraft sent them: never the monitor's own figures kept from an
+      // earlier report, nor its estimates - sent back, they would come back as a browser's and lose their mark)
+      const own = !c.wx && !c.airKept;
+      telOut.set(c.hex, [c.hex, rnd4(c.lat), rnd4(c.lon), c.gnd ? 'g' : fin(c.alt) ? Math.round(c.alt) : null, nn(c.gs), nn(c.trk), c.gnd ? 0 : nn(c.vs), c.sq || '', nn(c.agps), ...(own ? [nn(c.ias), nn(c.tas), nn(c.mach), nn(c.oat), nn(c.wd), nn(c.ws)] : [null, null, null, null, null, null]), Math.round(seenAt(c) / 1000), c.reg || '', c.type || '', c.cs || '', c.dbFlags | 0]);
     }
     if (telOut.size > 3000) for (const k of [...telOut.keys()].slice(0, telOut.size - 3000)) telOut.delete(k);
   }
@@ -9175,12 +9180,17 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   ];
   // the padlock: a wrapper holding only an icon (a real value always has text)
   const lockOf = cell => [...cell.children].find(c => c.tagName !== 'P' && !c.classList.contains('tl-filled') && c.querySelector('svg') && !c.querySelector('p') && !clean(c.textContent));
-  function fillLockedCell(cell, text, key) {
+  const WX_KEYS = ['ias', 'tas', 'mach', 'oat', 'wind'];
+  function fillLockedCell(cell, text, key, est) {
     let mine = cell.querySelector('.tl-filled[data-k="' + key + '"]');
     const lock = lockOf(cell);
     if (!text || !lock) { if (mine) mine.remove(); if (lock) lock.classList.remove('tl-filled-lock'); return; }
     if (!mine) { mine = document.createElement('p'); mine.className = 'tl-filled text-md leading-tight text-gray-1300'; mine.dataset.k = key; mine.title = 'From public data (LADD unblocker)'; lock.after(mine); }
     lock.classList.add('tl-filled-lock');
+    // (an estimate - the monitor's, from a weather model and the aircraft's ground speed - marked as one)
+    if (est) text = '≈ ' + text;
+    const title = est ? 'Estimated from NOAA\'s GFS weather model and the ground speed, typically within 10 kt and 2 °C (LADD unblocker)' : 'From public data (LADD unblocker)';
+    if (mine.title !== title) mine.title = title;
     if (mine.textContent !== text) mine.textContent = text;
   }
   // the newest telemetry for an aircraft: its own feed, or the area cache (every aircraft on screen, refreshed every few s)
@@ -9208,6 +9218,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       ias: fresh && fresh.ias > 0 ? spd(fresh.ias) : '', tas: fresh && fresh.tas > 0 ? spd(fresh.tas) : '',
       mach: fresh && fresh.mach > 0 ? fresh.mach.toFixed(3) : '', oat: fresh && fin(fresh.oat) ? `${Math.round(fresh.oat)} °C` : '',
       wind: fresh && fin(fresh.wd) && fin(fresh.ws) ? `${Math.round(fresh.wd)}° / ${spd(fresh.ws)}` : '',
+      est: !!(fresh && fresh.wx),
       fir: fresh && fresh.air ? (fresh.airId && fresh.airId !== fresh.air ? `${fresh.air} (${fresh.airId})` : fresh.air) : (where && fin(where.lat) ? firLabelAt(where.lat, where.lon, where.gnd ? 0 : where.alt) : '')
     };
   }
@@ -9218,7 +9229,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       const hit = LOCKED_FIELDS.find(f => f[0].test(clean(label.textContent))); if (!hit) continue;
       if (!cell.querySelector('.tl-filled') && !lockOf(cell)) continue;
       vals = vals || lockedValues(panel, rec, hx);
-      fillLockedCell(cell, vals[hit[1]], hit[1]);
+      fillLockedCell(cell, vals[hit[1]], hit[1], vals.est && WX_KEYS.includes(hit[1]));
     }
   }
   // An ordinary flight FR24 lists as "Private owner": the registered owner / operator from the registries (FAA, the Isle
