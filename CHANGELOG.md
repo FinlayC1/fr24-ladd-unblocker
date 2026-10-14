@@ -2,6 +2,18 @@
 
 All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PATCH`. The userscript and the monitor are released together.
 
+## [22.23.0] - 2026-10-14
+
+Playback names blocked flights the moment they are shown, and the monitor keeps 90 days of tracks and learns from them.
+
+### Added
+- **The monitor keeps every blocked aircraft's track for 90 days** (`trackDays`), thinned to a point a minute in the air and one every five minutes on the ground, in `tracks/YYYY-MM-DD.json.gz`. That covers the 7 days of FR24's default playback many times over.
+- **Instant playback names (`POST /pbmatch`).** The browser sends the moment and the unnamed flights it is showing in one request, and the monitor names each one from the names it gave live, or from where each blocked aircraft was heard at that moment. It names a flight from a track only when one aircraft of a fitting type alone fits it. The flight's route comes back with it, so the panel fills at once. A monitor without it falls back to `/names`.
+- **Learning over 90 days (`GET /learned`).** The monitor learns the destination engine's tables from its last 90 days of learning rows (`learnDays`) and sends them as one snapshot. The browser keeps it and applies it on the next page load, then learns only the rows the snapshot does not cover.
+
+### Changed
+- **The live LADD list stays fresh while days are rebuilt.** The rebuild workers wait while adsb.lol is paused or the LADD list is more than three polls old (`backfillWaits` in `/status`).
+
 ## [22.22.1] - 2026-10-14
 
 ### Added

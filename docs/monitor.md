@@ -92,6 +92,8 @@ Any of these can be overridden in a `monitor.json` next to `monitor.cjs` (the fi
 | `crowdNeed` | `2` | How many different browsers must send the same name or owner before a public monitor takes it, when it cannot check it itself |
 | `nearPerMin` | `30` | adsb.fi lookups a minute for places the monitor has heard little of, for all browsers together (one per 1-degree cell a minute) |
 | `telMax` | `30000` | Aircraft whose newest report is held for the padlocked figures |
+| `trackDays` | `90` | Days each blocked aircraft's track is kept (see [What it keeps](#what-it-keeps)) |
+| `learnDays` | `90` | Days of learning rows the monitor learns from itself for `/learned` |
 | `wx` | `{}` | The weather model for estimated airspeeds (`wx.cjs`): `cellDeg` (`5`), `everyS` (seconds between refreshes of a cell, `43200`), `batch` (cells a request, `20`), `gapMs` (`6000`), `minCap` / `hourCap` / `dayCap` (weighted calls a minute, an hour, a day: `450`, `4000`, `7000`; Open-Meteo allows 600, 5,000 and 10,000), `badS` (seconds a cell answered without usable levels is let go, `3600`) |
 
 For example, to poll more gently, create `monitor/monitor.json` containing `{ "apiPerMin": 12, "piaEvery": 600 }` and restart the service.
@@ -107,8 +109,12 @@ Everything is in `MON_STORE` (default `monitor/store/`):
 | `learn/YYYY-MM-DD.json` | Learning rows: every blocked aircraft's completed airport-to-airport flights of that day | For good |
 | `ident.json` | FR24's callsign-less flights and the names given to them | Life of the flight (6 h after FR24 stops drawing it) |
 | `names/YYYY-MM-DD.jsonl` | Every name given to an FR24 flight (live, or found by a browser in a playback): `[FR24 id, hex, reg, type, callsign, flags, named at]`, a withdrawn one again with no hex | For good. The last two weeks are also held in memory; an older day is read when a playback of it asks. |
+| `tracks/YYYY-MM-DD.json.gz` | Every blocked aircraft's track that day, thinned to a point a minute in the air and one every five minutes on the ground (both points of every take-off and landing kept) | 90 days (`trackDays`) |
+| `learned.json` | The destination engine's tables learnt from the last 90 days of learning rows (`learnDays`), rebuilt every 6 hours and after each day's logs | Replaced on each rebuild |
 | `owners.json` | Each looked-up aircraft's owner, operator, serial number, build year | For good; asked again after 60 days |
 | `state.json` | Blocked aircraft, watch records, pending day logs, areas, FR24 request headers | Running state |
+
+Day rebuilds give way to the live lists: while adsb.lol is paused or the LADD list is more than three polls old, the rebuild workers wait (up to 10 minutes at a time), so the live list stays fresh.
 
 Flights of the last 90 days are held in memory as well. Older ones are read from disk when a board for those days is asked for.
 
@@ -124,7 +130,7 @@ All answers are JSON. On a public monitor every endpoint answers without the sec
 
 | Endpoint | Answer |
 |---|---|
-| `GET /status` | What the monitor has and how its sources are doing: polls, failures, aircraft, blocked aircraft, flights, live list size, age of each list (`listAge`), adsb.lol requests in the last minute, day-log progress (`hist`), paused hosts |
+| `GET /status` | What the monitor has and how its sources are doing: polls, failures, aircraft, blocked aircraft, flights, live list size, age of each list (`listAge`), adsb.lol requests in the last minute, day-log progress (`hist`), paused hosts, `tracks`, `playback` (names given from `/pbmatch`), `learned` (its version and days), `backfillWaits` (times the day rebuilds waited for the live LADD list) |
 | `GET /live[?since=<ms>]` | `{ v, now, full, age: {ladd, mil, pia, hex}, ac: [...] }`: every LADD, military, PIA and blocked aircraft with a position in the last 5 minutes. Each entry is a readsb v2 row with `seen_pos` counted to `now`, plus `_from: [airportId, confidence]` and `_off` (take-off time) for a flight under way. With `since` (the `now` of the last answer, under a minute old) only the aircraft heard again since then; browsers ask every 5 s. |
 | `GET /fr24ids[?since=<ms>]` | `{ v, now, full, scanOk, rows, pos, gone }`: every FR24 flight without a callsign the monitor has named. Each row is `[FR24 id, hex, reg, type, callsign, flags (1 LADD, 2 military, 4 PIA), how named, named at, origin id, origin confidence, destination id, its chance %, worked out at, lat, lon, alt, on ground, FR24 position time, estimated arrival, departure time, owner, operator, FR24 operator id, operator ICAO]`. With `since`, only rows that changed, `pos` (`[id, lat, lon, alt, on ground, time]`) for flights that only moved, and `gone` (ids withdrawn). `scanOk` says the monitor's own FR24 scan is working. |
 | `POST /report` | A browser's report, up to 4 MB of JSON. It can contain:<br>• `hdr`: FR24's feed headers, sent only to a monitor of the user's own, never an authorization;<br>• `flights`: the callsign-less flights it sees;<br>• `ids`: `[id, hex, how]`, flights it named itself;<br>• `owners`: `[hex, {owner, operator…, regAnswered, regOwner}]`, owners it looked up itself;<br>• `pbIds`: `[id, hex, reg, type, callsign, flags, moment]`, names it found in a playback;<br>• `tel`: compact rows of its own polls of adsb.lol / adsb.fi.<br>On a public monitor all of it is checked first: see [Public mode](#public-mode). |
@@ -134,6 +140,8 @@ All answers are JSON. On a public monitor every endpoint answers without the sec
 | `GET /export/legs?day=YYYY-MM-DD` | That day's logged flights, under the ODbL (the licence named in the answer) |
 | `GET /owners?hex=a,b,…` | Up to 500 aircraft's owners and operators: rows `[hex, reg, type, description, owner, owner's city, country, country ISO, serial number, build year, FR24 operator id, operator ICAO, operator name, looked up at, registers answered]`. Only aircraft it knows are listed. |
 | `GET /airport?ap=<id>[&days=7]` | An FR24 airport's runways in full (`runway_info.json` rows), radio frequencies, and `usage` (`[runway, take-offs, landings]`) of the flights it tracked there in the last `days` (1–14), with `moves` and `withRunway` counts |
+| `POST /pbmatch` | Names for a playback at moment `t`, from where the monitor heard each blocked aircraft at that moment. Body `{ t, f: [[FR24 id, lat, lon, alt ft, ICAO type, on ground 0/1], ...] }` (up to 1,500 flights). Answer `{ v, t, list }`, rows `[id, hex, reg, type, callsign, flags, how ('live' if named live, 'track' if matched by its track), its flight]`. A flight is named from its track only when exactly one kept aircraft of a fitting type was within a few miles and that aircraft fits no other flight. |
+| `GET /learned[?have=<ver>]` | The engine's tables learnt from the last 90 days, as table operations the browser applies on its next page load. `{ v, ver, same: true }` when `have` is current; `{ v, ver: '', none: true }` before the first build. |
 | `GET /learn?from=YYYY-MM-DD` | Learning rows of the finished days after `from` (two weeks at most, not today), for the browsers' destination engine |
 | `GET /hist?hex=a,b,…` | Up to 20 blocked aircraft's finished days in the userscript's flight-log format: `{ hv, list: [{ hex, days: {'YYYY/MM/DD': flights}, legs: [...] }] }`. `0` flights means watched all day and not heard flying. Days still pending or failed are left out. |
 | `GET /legs?hex=a[,b…]` | Aircraft's flights kept here (90 days), joined and chained as logs show them |

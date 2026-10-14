@@ -22,7 +22,7 @@ jobs:
       - name: Offline tests
         run: |
           git config --global user.email "tests@example.invalid" && git config --global user.name "tests"
-          node test/run-suite.cjs --no-build --only unit_engine,unit_cases,unit_final,unit_legs,unit_monitor,unit_monitor2,unit_fr24,unit_store,unit_registry,unit_merge,unit_deploy,unit_names,unit_origin,unit_flightmsg,unit_monlive,unit_panel,unit_vectoring,unit_boards,unit_padlocks,unit_public,unit_wx
+          node test/run-suite.cjs --no-build --only unit_engine,unit_cases,unit_final,unit_legs,unit_monitor,unit_monitor2,unit_fr24,unit_store,unit_registry,unit_merge,unit_deploy,unit_names,unit_origin,unit_flightmsg,unit_monlive,unit_panel,unit_vectoring,unit_boards,unit_padlocks,unit_public,unit_wx,unit_tracks
   monitor-node18:
     runs-on: ubuntu-latest
     steps:
@@ -33,6 +33,6 @@ jobs:
       - name: Monitor tests on Node 18
         run: |
           git config --global user.email "tests@example.invalid" && git config --global user.name "tests"
-          for t in unit_monitor unit_monitor2 unit_fr24 unit_store unit_merge unit_public unit_wx; do node test/$t.cjs monitor/data > out.txt 2>&1 || { tail -30 out.txt; exit 1; }; grep -q '^FAIL' out.txt && { grep '^FAIL' out.txt; exit 1; }; echo "$t: $(grep -c '^PASS' out.txt) passed"; done
+          for t in unit_monitor unit_monitor2 unit_fr24 unit_store unit_merge unit_public unit_wx unit_tracks; do node test/$t.cjs monitor/data > out.txt 2>&1 || { tail -30 out.txt; exit 1; }; grep -q '^FAIL' out.txt && { grep '^FAIL' out.txt; exit 1; }; echo "$t: $(grep -c '^PASS' out.txt) passed"; done
           node test/unit_registry.cjs > out.txt 2>&1 || { tail -30 out.txt; exit 1; }; echo "unit_registry: $(grep -c '^PASS' out.txt) passed"
           node test/unit_deploy.cjs > out.txt 2>&1 || { tail -30 out.txt; exit 1; }; echo "unit_deploy: $(grep -c '^PASS' out.txt) passed"

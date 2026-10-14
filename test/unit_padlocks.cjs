@@ -27,6 +27,7 @@ function answer(url) {
   if (url.startsWith(MON + '/near')) { hits.near++; return [200, nowJ({ ac: [row('4ca0a1', { baro_rate: 1216, ias: 290, squawk: '2341' })] }), 0]; }
   if (url.startsWith(MON + '/tel')) { hits.tel++; return [200, nowJ({ ac: [row('4ca123', { baro_rate: -832, ias: 251, tas: 380, squawk: '7031', alt_geom: 24350 })] }), 60]; }
   if (url.startsWith(MON + '/report')) return [200, JSON.stringify({ ok: true }), 0];
+  if (url.startsWith(MON + '/pbmatch')) { hits.pbmatch = (hits.pbmatch || 0) + 1; return refuse.pbmatch ? [404, '', 0] : [200, JSON.stringify({ v: 1, list: [[0x3c00cc01, '4ca9ab', 'EI-NAM', 'C68A', 'NAM1', 1, 'track', null]] }), 0]; }
   if (url.startsWith(MON + '/names')) { hits.names = (hits.names || 0) + 1; return [200, JSON.stringify({ list: [[0x3c00cc01, '4ca9ab', 'EI-NAM', 'C68A', 'NAM1', 1, 1790000000]] }), 0]; }
   if (url.startsWith(MON)) return [200, '{}', 0];
   if (/api\.adsb\.lol\/v2\/point\//.test(url)) { hits.lolArea++; return [200, nowJ({ ac: [row('4ca0a2')] }), 0]; }
@@ -35,13 +36,13 @@ function answer(url) {
   if (/opendata\.adsb\.fi\/api\/v2\/hex\//.test(url)) { hits.fiHex++; return [200, nowJ({ aircraft: [] }), 1500]; }
   return [404, '', 0];
 }
-const posted = [], reports = [];
+const posted = [], reports = [], pbBodies = [];
 function makeWin() {
   const win = new JSDOM('<!doctype html><html><head></head><body><div id="app"></div></body></html>', { url: 'https://www.flightradar24.com/53.40,-2.85/9', runScripts: 'dangerously', pretendToBeVisual: true }).window;
   win.indexedDB = new FIDB.IDBFactory(); win.IDBKeyRange = FIDB.IDBKeyRange; win.Response = Response; win.Headers = Headers; win.AbortController = AbortController;
   win.DecompressionStream = DecompressionStream; win.Blob = Blob; win.BroadcastChannel = function () { return { postMessage() {}, close() {}, addEventListener() {}, set onmessage(f) {} }; };
   win.fetch = input => { let u = typeof input === 'string' ? input : input.url; if (u.startsWith('/')) u = 'https://www.flightradar24.com' + u; const [st, text, wait] = answer(u); return sleep(wait).then(() => new Response(text, { status: st })); };
-  win.GM_xmlhttpRequest = o => { if (String(o.url).startsWith(MON + '/report') && o.data) { try { reports.push(JSON.parse(o.data)); } catch (e) { /* not json */ } } const [st, text, wait] = answer(o.url); setTimeout(() => o.onload && o.onload({ status: st, responseText: text, response: text, finalUrl: o.url }), 2 + wait); return { abort() {} }; };
+  win.GM_xmlhttpRequest = o => { if (String(o.url).startsWith(MON + '/pbmatch') && o.data) { try { pbBodies.push(JSON.parse(o.data)); } catch (e) { /* not json */ } } if (String(o.url).startsWith(MON + '/report') && o.data) { try { reports.push(JSON.parse(o.data)); } catch (e) { /* not json */ } } const [st, text, wait] = answer(o.url); setTimeout(() => o.onload && o.onload({ status: st, responseText: text, response: text, finalUrl: o.url }), 2 + wait); return { abort() {} }; };
   win.unsafeWindow = win; win.GM_notification = () => {};
   win.postMessage = d => { posted.push(d); }; win.console.debug = () => {}; win.console.log = () => {};
   win.eval(SRC);
@@ -127,10 +128,15 @@ const send = (w, data) => w.dispatchEvent(new w.MessageEvent('message', { data, 
   { const ts = Math.round(Date.now() / 1000) - 3 * 86400, pid = 0x3c00cc01;
     L.pb.flights.set(pid, { id: pid, ts, lat: 53.3, lon: -2.8, alt: 9000, spd: 300, trk: 90, gnd: false, type: 'C68A' });
     L.pb.flights.set(pid + 1, { id: pid + 1, ts, lat: 53.4, lon: -2.9, alt: 9000, spd: 300, trk: 90, gnd: false, type: 'B738' });
-    const n = await L.pbFromMonitor(ts), rec = L.pb.named.get(pid);
-    check('playback: unnamed flights named from the monitor\'s archive (one request for the moment, unknown ones left)', n === 1 && !!rec && rec.hex === '4ca9ab' && rec.reg === 'EI-NAM' && rec.ladd === true && !L.pb.named.has(pid + 1) && hits.names === 1, { n, rec });
+    const n = await L.pbFromMonitor(ts), rec = L.pb.named.get(pid), body = pbBodies[0] || {};
+    check('playback: unnamed flights named by the monitor at once (one request with the moment and their positions and types, unknown ones left)', n === 1 && !!rec && rec.hex === '4ca9ab' && rec.reg === 'EI-NAM' && rec.ladd === true && rec.src === 'monitor (its track)' && !L.pb.named.has(pid + 1) && hits.pbmatch === 1 && !hits.names && body.t === ts && Array.isArray(body.f) && body.f.length === 2 && body.f.some(f => f[0] === pid && f[1] === 53.3 && f[2] === -2.8 && f[3] === 9000 && f[4] === 'C68A' && f[5] === 0), { n, rec, body, hits: { pbmatch: hits.pbmatch, names: hits.names } });
     const again = await L.pbFromMonitor(ts);
-    check('... not asked again for the same flights', again === 0 && hits.names === 1); }
+    check('... not asked again for the same flights', again === 0 && hits.pbmatch === 1);
+    // (an older monitor without /pbmatch: its archive of names asked instead)
+    L.pb.named.delete(pid); L.pb.monAsked.clear(); refuse.pbmatch = true;
+    const n2 = await L.pbFromMonitor(ts);
+    check('... a monitor without /pbmatch: the names it gave asked instead, and from then on', n2 === 1 && hits.pbmatch === 2 && hits.names === 1 && L.pb.monOld === true, { n2, hits: { pbmatch: hits.pbmatch, names: hits.names } });
+    refuse.pbmatch = false; L.pb.monOld = false; }
   // ---- the shared monitor gone: the next one in the list (a standby server), and back to the first when it answers
   L.MON_DEFAULTS.push(STANDBY); refuse.mon = true;
   await L.monCheck(true).catch(() => null);

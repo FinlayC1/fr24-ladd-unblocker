@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Flightradar24 LADD / N-A Unblocker (feed-level)
 // @namespace    tweeks.io
-// @version      22.22.1
+// @version      22.23.0
 // @description  Identifies every LADD / N/A / blocked military aircraft on Flightradar24 from public ADS-B, and injects callsign, registration, operator, age, country, MSN, squawk, vertical speed, GPS altitude, airspeeds, wind, photos, a reasoned origin/destination with a wind-corrected ETA (also for ordinary flights FR24 shows as N/A - military, private, GA, helicopters, with private landing sites; learned from 63 days of every aircraft worldwide, with live weather and closures), airport-board entries and a rebuilt 7-month flight log straight into FR24's own data - so it all renders like normal FR24 traffic.
 // @author       Finlay Clarke
 // @match        https://www.flightradar24.com/*
@@ -88,7 +88,7 @@
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "22.22.1";
+    var BRIDGE_V = "22.23.0";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
 
     var resolved = new Map();     // fr24 flight id -> identity record (incl. photos)
@@ -2559,7 +2559,7 @@
       }
       return [fin1, par, icpt, dnw];
     }
-    function addUsage(icao, w, kind) { if (!icao) return; kind = kind || 'use'; const m = usageRaw[kind], k = icao.toUpperCase(); m.set(k, (m.get(k) || 0) + (w || 1)); const a = byIcao.get(k); if (a) a[kind] = m.get(k); }
+    function addUsage(icao, w, kind) { if (!icao) return; kind = kind || 'use'; const m = usageRaw[kind], k = icao.toUpperCase(); m.set(k, (m.get(k) || 0) + (w || 1)); if (collecting) return; const a = byIcao.get(k); if (a) a[kind] = m.get(k); }
     // ---- airfields FR24 does not list: OurAirports small and medium airports and strips ------------------------------
     // Most European light aircraft fly from and to fields FR24's list does not have (Borkenberge, Slany, a farm strip):
     // over three weeks of European GA, 8% of landings were at such a field and more ended out of coverage near one.
@@ -3597,6 +3597,95 @@
       }
       return out;
     }
+    // ---- (22.23) learning done on the monitor ---------------------------------------------------------------------------
+    // learnRow: one completed flight in the /learn row format ([hex|take-off, from id, to id, landed, squawk blocks, FMS
+    // levels, class, military, take-off, callsign, type, flow cells]) into the tables - as the browser has always replayed
+    // its own. learnCollector: what a set of such rows adds to the tables, gathered apart from them - the monitor learns its
+    // 90 days into one, never into the tables it scores with - as a list of increments (ops). addLearnedOp: one increment
+    // added to these tables; every browser adds the monitor's list to the tables it was shipped with, once per page load.
+    let collecting = false, T2addPending = [];
+    function learnRow(x) {
+      if (!Array.isArray(x)) return false;
+      const [, fromId, toId, tEnd, sqs, fmss, cls, mil, tStart, cs, type, flow] = x, from = byId.get(fromId), to = byId.get(toId);
+      if (!from || !to) return false;
+      learnLeg({ from, to, tEnd, tStart: tStart || 0, cs: cs || '', type: type || '', flow: flow ? String(flow).split('|') : [], sqs: sqs ? String(sqs).split(',') : [], fmss: fmss ? String(fmss).split(',') : [], cls, mil: !!mil });
+      const milK = !!mil && cls !== 'heavybiz' && cls !== 'bizjet';   // (a government business jet counts as a business jet)
+      const kind = milK ? 'useMil' : cls === 'piston' || cls === 'heli' ? 'useGA' : 'use', kindC = milK ? '' : cls === 'heavybiz' || cls === 'airliner' ? 'useHB' : cls === 'bizjet' ? 'useLJ' : '';
+      for (const a of [from, to]) if (a.icao) { addUsage(a.icao, 0.25, kind); if (kindC) addUsage(a.icao, 0.25, kindC); }
+      return true;
+    }
+    const USE_KINDS = ['use', 'useGA', 'useMil', 'useHB', 'useLJ'];
+    function learnCollector() {
+      const S = { TB: { arrHour: new Array(24).fill(0) }, T2: { flow: {}, flowC: new Map(), aphAll: [0, 1, 2, 3].map(() => [0, 0, 0, 0, 0, 0]) }, OD: new Map(), ODN: new Map(), use: {}, flights: 0 };
+      for (const k of USE_KINDS) S.use[k] = new Map();
+      // (the collector's tables in place of these for one synchronous run - never across an await: the monitor scores
+      // flights with these tables between two runs)
+      function swap() {
+        let t = TB; TB = S.TB; S.TB = t; t = T2; T2 = S.T2; S.T2 = t; t = OD; OD = S.OD; S.OD = t; t = ODN; ODN = S.ODN; S.ODN = t;
+        for (const k of USE_KINDS) { t = usageRaw[k]; usageRaw[k] = S.use[k]; S.use[k] = t; }
+        collecting = !collecting;
+      }
+      function add(rows) { swap(); try { for (const x of rows || []) if (learnRow(x)) S.flights++; } finally { swap(); } return S.flights; }
+      // (the increments, numbers rounded to what they count: whole flights, quarter-weights of airport use)
+      function ops() {
+        const out = [], r = v => Math.round(v * 100) / 100, nz = a => a.some(v => v);
+        const tb = S.TB;
+        for (const tbl of ['sqBase', 'sq', 'fmsBase', 'fms']) for (const [k, v] of Object.entries(tb[tbl] || {})) if (nz(v)) out.push(['tb', tbl, k, v]);
+        if (nz(tb.arrHour)) out.push(['ah', tb.arrHour]);
+        for (const [k, v] of S.OD) if (v) out.push(['od', k, r(v)]);
+        for (const kind of USE_KINDS) for (const [k, v] of S.use[kind]) if (v) out.push(['use', kind, k, r(v)]);
+        const t2 = S.T2;
+        for (const tbl of ['od2', 'odt', 'apd']) for (const [k, v] of Object.entries(t2[tbl] || {})) if (nz(v)) out.push(['t2', tbl, k, v]);
+        for (const [k, v] of Object.entries(t2.seq || {})) if (v) out.push(['seq', k, v]);
+        for (const [ap, gs] of Object.entries(t2.aph || {})) gs.forEach((v, g) => { if (Array.isArray(v) && nz(v)) out.push(['aph', ap, g, v]); });
+        t2.aphAll.forEach((v, g) => { if (nz(v)) out.push(['aphAll', g, v]); });
+        for (const [pg, m] of Object.entries(t2.pgu || {})) for (const [ap, v] of Object.entries(m)) if (v) out.push(['pgu', pg, ap, v]);
+        for (const [cs, l] of Object.entries(t2.csr || {})) out.push(['csr', cs, l]);
+        for (const [k, v] of Object.entries(t2.flow || {})) out.push(['flow', k, v]);
+        return out;
+      }
+      return { add, ops, get flights() { return S.flights; } };
+    }
+    const addArr = (T, k, v) => { if (!Array.isArray(v)) return; const c = T[k] || (T[k] = new Array(v.length).fill(0)); for (let i = 0; i < v.length && i < c.length; i++) c[i] += +v[i] || 0; };
+    function odAddKey(k, w) {
+      const [a, b] = String(k).split('|'); if (!a || !b || !(w > 0)) return;
+      const v = (OD.get(k) || 0) + w; OD.set(k, v);
+      for (const [p, q] of [[a, b], [b, a]]) {
+        const l = ODN.get(p) || ODN.set(p, []).get(p), e = l.find(x => x[0] === q);
+        if (e) e[1] = v; else l.push([q, v]);
+        l.sort((u, x) => x[1] - u[1]);
+      }
+    }
+    function addLearnedOp(o) {
+      if (!Array.isArray(o)) return false;
+      const k = o[0];
+      if (k === 'tb') { if (!TB || !/^(sqBase|sq|fmsBase|fms)$/.test(o[1])) return false; addArr(TB[o[1]] = TB[o[1]] || {}, o[2], o[3]); return true; }
+      if (k === 'ah') { if (!TB || !Array.isArray(TB.arrHour) || TB.arrHour.length !== 24 || !Array.isArray(o[1])) return false; for (let i = 0; i < 24; i++) TB.arrHour[i] += +o[1][i] || 0; return true; }
+      if (k === 'od') { odAddKey(o[1], +o[2]); return true; }
+      if (k === 'use') { if (!USE_KINDS.includes(o[1])) return false; addUsage(String(o[2]), +o[3] || 0, o[1]); return true; }
+      // (the population tables come in after the page opens: their increments wait for them)
+      if (!T2) { T2addPending.push(o); return true; }
+      if (k === 't2') { if (!/^(od2|odt|apd)$/.test(o[1])) return false; addArr(T2[o[1]] = T2[o[1]] || {}, o[2], o[3]); return true; }
+      if (k === 'seq') { const T = T2.seq = T2.seq || {}; T[o[1]] = (T[o[1]] || 0) + (+o[2] || 0); return true; }
+      if (k === 'aph') { const T = T2.aph = T2.aph || {}, v = T[o[1]] || (T[o[1]] = [0, 0, 0, 0]), g = o[2] | 0; if (g < 0 || g > 3 || !Array.isArray(o[3])) return false; if (!v[g]) v[g] = [0, 0, 0, 0, 0, 0]; addArr(v, g, o[3]); return true; }
+      if (k === 'aphAll') { const g = o[1] | 0; if (T2.aphAll && T2.aphAll[g]) addArr(T2.aphAll, g, o[2]); return true; }
+      if (k === 'pgu') { const T = T2.pgu = T2.pgu || {}, m = T[o[1]] || (T[o[1]] = {}); m[o[2]] = (m[o[2]] || 0) + (+o[3] || 0); return true; }
+      if (k === 'csr') {
+        if (!Array.isArray(o[2])) return false;
+        const T = T2.csr = T2.csr || {}, l = T[o[1]] || (T[o[1]] = []);
+        for (let j = 0; j + 2 < o[2].length; j += 3) { const ai = o[2][j], bi = o[2][j + 1], w = +o[2][j + 2] || 0; let hit = false; for (let i = 0; i + 2 < l.length; i += 3) if (l[i] === ai && l[i + 1] === bi) { l[i + 2] += w; hit = true; break; } if (!hit) l.push(ai, bi, w); }
+        return true;
+      }
+      if (k === 'flow') {
+        const d = o[2]; if (!T2.flow || !Array.isArray(d)) return false;
+        let v = T2.flow[o[1]]; if (!v) v = T2.flow[o[1]] = [0, 0];
+        v[0] += +d[0] || 0; v[1] += +d[1] || 0;
+        for (let j = 2; j + 2 < d.length; j += 3) { const bi = d[j]; let hit = false; for (let i = 2; i + 2 < v.length; i += 3) if (v[i] === bi) { v[i + 1] += +d[j + 1] || 0; v[i + 2] += +d[j + 2] || 0; hit = true; break; } if (!hit && v.length < 2 + 3 * 24) v.push(bi, +d[j + 1] || 0, +d[j + 2] || 0); }
+        if (T2.flowC) T2.flowC.clear();
+        return true;
+      }
+      return false;
+    }
     function setTables(t) { TB = t || null; if (t) { setUsage(t.usage || {}, 'use'); setUsage(t.usageGA || {}, 'useGA'); setUsage(t.usageMil || {}, 'useMil'); setUsage(t.usageHB || {}, 'useHB'); setUsage(t.usageLJ || {}, 'useLJ'); OD = new Map(Object.entries(t.od || {})); if (t.odG) for (const [a0, s] of Object.entries(t.odG)) for (const p of String(s).split(',')) { const i = p.indexOf(':'); if (i > 0) OD.set(a0 + '|' + p.slice(0, i), +p.slice(i + 1)); } ODN = new Map(); for (const [k, v] of OD) { const [x, y] = k.split('|'); for (const [p, q] of [[x, y], [y, x]]) (ODN.get(p) || ODN.set(p, []).get(p)).push([q, v]); } for (const l of ODN.values()) l.sort((u, w) => w[1] - u[1]); } }
     const groupOf = cls => cls === 'heli' || cls === 'piston' || cls === 'fighter' ? cls : cls === 'turboprop' ? 'tprop' : 'jet';
     function tq(key, grp, bin) {
@@ -3669,7 +3758,7 @@
     // cruise speed, where its descent starts, the shortest runway it uses), and the flow field - where aircraft at a
     // place, heading and height ended up. The userscript adds what it sees itself (learn2).
     let T2 = null;
-    function setTables2(t) { T2 = t || null; if (T2) { T2.flowC = new Map(); const p = T2pending; T2pending = []; for (const o of p) learnLeg2(o); } }
+    function setTables2(t) { T2 = t || null; if (T2) { T2.flowC = new Map(); const p = T2pending; T2pending = []; for (const o of p) learnLeg2(o); const q = T2addPending; T2addPending = []; for (const o of q) addLearnedOp(o); } }
     const G6 = { bizjet: 0, heavybiz: 0, airliner: 1, turboprop: 2, piston: 3, heli: 4, fighter: 5, milheavy: 5, unknown: 1 };
     const grp6 = (cls, mil) => mil && cls !== 'bizjet' && cls !== 'heavybiz' ? 5 : (G6[cls] != null ? G6[cls] : 1);
     const grp4 = g => g === 0 || g === 2 ? 0 : g === 1 ? 1 : g === 3 || g === 4 ? 2 : 3;
@@ -4421,7 +4510,7 @@
       return res;
     }
 
-    return { setTables2, get T2() { return T2; }, fieldShortName, setApproach, approachCell, approachPath, apprGroup, apprKey, trackAgree, heatNear, heatMatch, reckon, trackErr, remotePath, flowKeysOf, pgrpOf, grp6, sunElev, airData, gsAlong, minutesTo, flowAt, pathOf, pathDev, ownerKey, parseRunwayLengths, setRunwayLengths, csvLine, SQ_NOINFO, tripBin, regionOf, learnLeg, odAdd: (x, y, w) => { const k = odKey(String(x).toUpperCase(), String(y).toUpperCase()), v = (OD.get(k) || 0) + w; if (v > 1e-9) OD.set(k, v); else OD.delete(k); }, odWeight: (x, y) => OD.get(odKey(String(x).toUpperCase(), String(y).toUpperCase())) || 0, odCount: () => OD.size, setAirports, setUsage, addUsage, setRunways, parseRunwaysCsv, runwayFit, setWeights, setTables, setLogit, calibrated, mergePoints, finalTo, longFinal, typeRangeKm, FEAT, groupOf, W, classify, isStepClimb, rangeKm, parseTrace, legsFromPoints, summarizeLeg, stitchLegs, chainLegs, histStats, inferOrigin, predict, privateSite, rwyImpossible, typeDesc, heliSpots, heliAirportAt, landedSum, localFlew, approachTo, downAndUp, landingInGap, circuits, mergeCircuits, setFields, fieldAt, placeAt, isField, nearbyFields, fieldCount: () => FL.length, airportAt, departureFromClimb, arrivalFromDescent, nearby, dist, brg, xtat, destPoint, angDiff, get airports() { return AP; }, byId: id => byId.get(id), byIcao: c => byIcao.get(String(c || '').toUpperCase()) };
+    return { setTables2, get T2() { return T2; }, fieldShortName, setApproach, approachCell, approachPath, apprGroup, apprKey, trackAgree, heatNear, heatMatch, reckon, trackErr, remotePath, flowKeysOf, pgrpOf, grp6, sunElev, airData, gsAlong, minutesTo, flowAt, pathOf, pathDev, ownerKey, parseRunwayLengths, setRunwayLengths, csvLine, SQ_NOINFO, tripBin, regionOf, learnLeg, learnRow, learnCollector, addLearnedOp, odAdd: (x, y, w) => { const k = odKey(String(x).toUpperCase(), String(y).toUpperCase()), v = (OD.get(k) || 0) + w; if (v > 1e-9) OD.set(k, v); else OD.delete(k); }, odWeight: (x, y) => OD.get(odKey(String(x).toUpperCase(), String(y).toUpperCase())) || 0, odCount: () => OD.size, setAirports, setUsage, addUsage, setRunways, parseRunwaysCsv, runwayFit, setWeights, setTables, setLogit, calibrated, mergePoints, finalTo, longFinal, typeRangeKm, FEAT, groupOf, W, classify, isStepClimb, rangeKm, parseTrace, legsFromPoints, summarizeLeg, stitchLegs, chainLegs, histStats, inferOrigin, predict, privateSite, rwyImpossible, typeDesc, heliSpots, heliAirportAt, landedSum, localFlew, approachTo, downAndUp, landingInGap, circuits, mergeCircuits, setFields, fieldAt, placeAt, isField, nearbyFields, fieldCount: () => FL.length, airportAt, departureFromClimb, arrivalFromDescent, nearby, dist, brg, xtat, destPoint, angDiff, get airports() { return AP; }, byId: id => byId.get(id), byIcao: c => byIcao.get(String(c || '').toUpperCase()) };
   }
   /* ==/ENGINE== */
 
@@ -4596,7 +4685,7 @@
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '22.22.1';
+  const VERSION = '22.23.0';
   const NM_KM = 1.852;
   const AREA_RADIUS_NM = 220;           // aggregator "point" radius for viewport sweeps (APIs cap at 250)
   const TARGET_RADIUS_NM = 40;          // radius for the immediate lookup of the selected aircraft
@@ -6582,34 +6671,38 @@
     return true;
   }
   function learnedStore() { if (!learnLoaded) learnLoad(); return learned; }
-  function replayLearned(x) {
-    const [, fromId, toId, tEnd, sqs, fmss, cls, mil, tStart, cs, type, flow] = x, from = ENGINE.byId(fromId), to = ENGINE.byId(toId); if (!from || !to) return;
-    ENGINE.learnLeg({ from, to, tEnd, tStart: tStart || 0, cs: cs || '', type: type || '', flow: flow ? String(flow).split('|') : [], sqs: sqs ? String(sqs).split(',') : [], fmss: fmss ? String(fmss).split(',') : [], cls, mil: !!mil });
-    const milK = !!mil && cls !== 'heavybiz' && cls !== 'bizjet';   // (a government business jet counts as a business jet)
-    const kind = milK ? 'useMil' : cls === 'piston' || cls === 'heli' ? 'useGA' : 'use', kindC = milK ? '' : cls === 'heavybiz' || cls === 'airliner' ? 'useHB' : cls === 'bizjet' ? 'useLJ' : '';
-    for (const a of [from, to]) if (a.icao) { ENGINE.addUsage(a.icao, 0.25, kind); if (kindC) ENGINE.addUsage(a.icao, 0.25, kindC); }
-  }
+  // (a flight of a blocked aircraft within the days the monitor's learning covers is in it already: not counted twice)
+  let srvLearned = null;   // { ver, from, asOf } of the monitor's learning added to the tables on this page
+  const srvCovers = x => { if (!srvLearned || typeof x[0] !== 'string') return false; const [hex, t] = x[0].split('|'), ts = +t || +x[8] || 0; return /^[0-9a-f]{6}$/.test(hex) && !!(store.getHex(hex) || {}).ladd && ts >= Date.parse(srvLearned.from + 'T00:00:00Z') / 1000 && ts < Date.parse(srvLearned.asOf + 'T00:00:00Z') / 1000 + 86400; };
+  function replayLearned(x) { if (!srvCovers(x)) ENGINE.learnRow(x); }
   // (read, then replayed in idle slices: 100,000 flights at once would hold the page for seconds)
   async function applyLearned() {
     if (learnedApplied || !airportsReady()) return; learnedApplied = true;
+    // (the monitor's learning kept from before: added first, so this browser's own flights it covers are not counted twice)
+    const kept = await store.getBlob('srvLearned').catch(() => null);
+    if (kept && kept.ver && Array.isArray(kept.ops)) await addSrvLearned(kept);
     try { const l = (await learnLoad()).slice(); await sliced(l, replayLearned, { ms: 8 }); if (l.length) log('learned from use', l.length, 'flights'); } catch (e) { log('learned replay', e); }
   }
-  // Every blocked aircraft's completed flights, worldwide, as the monitor rebuilt them each day (/learn): learned here as
-  // this browser's own are - where business aviation goes from where, its squawk blocks, levels and flows - so the
-  // destination engine knows today's habits of every LADD jet, not only those of the aircraft looked at here. The days
-  // not had yet, two weeks back at most, in idle moments; again every three hours.
+  async function addSrvLearned(j) {
+    srvLearned = { ver: j.ver, from: j.from, asOf: j.asOf };
+    let n = 0; await sliced(j.ops, o => { if (ENGINE.addLearnedOp(o)) n++; }, { ms: 8 });
+    log('learned on the monitor', j.flights, 'flights of', j.days, 'days (' + j.from + ' to ' + j.asOf + '),', n, 'increments');
+  }
+  // The monitor's learning: every blocked aircraft's completed flights of the last 90 days, worldwide, learned there into
+  // increments of the tables (GET /learned, a few MB, rebuilt a few times a day) - where business aviation goes from
+  // where, its squawk blocks, levels and flows, today's habits of every LADD jet. Kept here and added as the page opens; a
+  // newer one is fetched in an idle moment and used from the next page load: one already added cannot be taken out
+  // again, and this page's own flights it covers have been counted already.
   let srvLearnBusy = false;
   async function syncSrvLearn() {
     if (srvLearnBusy || !monUp() || !learnedApplied) return;
     srvLearnBusy = true;
     try {
-      const from = String(store.kvGet('srvLearnDay') || '');
-      const j = await monGet('/learn' + (from ? '?from=' + from : ''), { idle: true });
-      if (!j || !Array.isArray(j.rows) || !Array.isArray(j.days)) return;
-      let n = 0;
-      await sliced(j.rows.filter(x => Array.isArray(x) && x.length >= 12), x => { if (learnAppend(x)) { replayLearned(x); n++; } }, { ms: 8 });
-      if (j.days.length) store.kvSet('srvLearnDay', j.days[j.days.length - 1]);
-      if (n) log('learned from the monitor', n, 'flights of', j.days.length, 'days');
+      const have = srvLearned ? srvLearned.ver : String(((await store.getBlob('srvLearned').catch(() => null)) || {}).ver || '');
+      const j = await monGet('/learned?have=' + encodeURIComponent(have), { idle: true, timeout: 120000 });
+      if (!j || j.same || j.none || !j.ver || !Array.isArray(j.ops)) return;
+      await store.setBlob('srvLearned', j);
+      log('learned on the monitor: a copy of', j.flights, 'flights kept for the next page load', j.ver);
     } catch (e) { log('monitor learning', String(e && e.message || e)); }
     finally { srvLearnBusy = false; }
   }
@@ -10679,7 +10772,9 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       if (!pb.named.has(f.id)) { const c = store.getId(f.id); if (c && c.hex) pbAdopt(f.id, Object.assign({}, c), ts); }
     }
     if (pb.flights.size > 3000) for (const k of [...pb.flights.keys()].slice(0, 1000)) pb.flights.delete(k);
-    pbMatchSoon(1500);
+    // (the monitor names the whole moment in one answer: asked as soon as the frame is in; without it, the heatmap's
+    // wait as before)
+    pbMatchSoon(monUp() ? 100 : 1500);
   }
   function pbMatchSoon(ms) { if (!pb.matchT) pb.matchT = setTimeout(() => { pb.matchT = 0; pbMatch().catch(e => log('playback match', e)); }, ms); }
   // a flight named: the page labels it as FR24 would, and its route as flown follows
@@ -10690,26 +10785,33 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   }
   // Every unnamed flight of the moment against adsb.lol's heatmap of its half hour, in one pass. A file is read at most
   // every two minutes (one is ~25 MB) - at once for the flight opened in the panel - and each flight tried once a file.
-  // The monitor's archive first: every FR24 flight it named while it was live, any day it was running - the whole map's
-  // unnamed flights in one request, named at once, as they were named then
+  // The monitor first (22.23, /pbmatch): every FR24 flight it named while it was live, and every other from the tracks it
+  // keeps of the blocked aircraft (90 days) - the whole map's unnamed flights in one request, named at once, each with its
+  // flight as the monitor logged it. An older monitor: the names it gave live only (/names).
   async function pbFromMonitor(ts) {
     if (!monUp()) return 0;
-    const ids = [...pb.flights.values()].filter(f => f.ts === ts && !pb.named.has(f.id) && !pb.monAsked.has(f.id)).map(f => f.id).slice(0, 400);
-    if (!ids.length) return 0;
-    for (const id of ids) pb.monAsked.add(id);
+    const fl = [...pb.flights.values()].filter(f => f.ts === ts && !pb.named.has(f.id) && !pb.monAsked.has(f.id)).slice(0, 1500);
+    if (!fl.length) return 0;
+    for (const f of fl) pb.monAsked.add(f.id);
     if (pb.monAsked.size > 20000) pb.monAsked.clear();
-    const j = await monGet('/names?ids=' + ids.join(',') + '&t=' + Math.round(ts), { timeout: 10000 }).catch(e => { for (const id of ids) pb.monAsked.delete(id); log('playback names', String(e && e.message || e)); return null; });
+    const forget = e => { for (const f of fl) pb.monAsked.delete(f.id); log('playback names', String(e && e.message || e)); return null; };
+    let j = null;
+    if (!pb.monOld) j = await monPost('/pbmatch', { t: Math.round(ts), f: fl.map(f => [f.id, Math.round(f.lat * 1e4) / 1e4, Math.round(f.lon * 1e4) / 1e4, fin(f.alt) ? Math.round(f.alt) : 0, String(f.type || ''), f.gnd ? 1 : 0]) }).catch(e => { if (/HTTP 404/.test(String(e && e.message || e))) { pb.monOld = true; return null; } return forget(e); });
+    if (pb.monOld) j = await monGet('/names?ids=' + fl.slice(0, 400).map(f => f.id).join(',') + '&t=' + Math.round(ts), { timeout: 10000 }).catch(forget);
     let n = 0;
     for (const r of (j && Array.isArray(j.list) ? j.list : [])) {
-      const [id, hex, reg, type, cs, flags] = r;
+      const [id, hex, reg, type, cs, flags, how, leg] = r;
       if (!pb.flights.has(id) || pb.named.has(id) || !/^[0-9a-f]{6}$/.test(String(hex || ''))) continue;
-      const hx = store.getHex(hex) || {}, rec = { hex, cs: /^[A-Z0-9]{2,8}$/.test(String(cs || '')) ? cs : '', reg: reg || hx.reg || hexNNumber(hex), type: String(type || hx.type || '').toUpperCase(), desc: hx.desc || '', ladd: !!(flags & 1 || hx.ladd), mil: !!(flags & 2 || hx.mil), pia: !!(flags & 4 || hx.pia), src: 'monitor (named live)', matchedAt: now() };
+      const hx = store.getHex(hex) || {}, rec = { hex, cs: /^[A-Z0-9]{2,8}$/.test(String(cs || '')) ? cs : '', reg: reg || hx.reg || hexNNumber(hex), type: String(type || hx.type || '').toUpperCase(), desc: hx.desc || '', ladd: !!(flags & 1 || hx.ladd), mil: !!(flags & 2 || hx.mil), pia: !!(flags & 4 || hx.pia), src: how === 'track' ? 'monitor (its track)' : 'monitor (named live)', matchedAt: now() };
       store.mergeHex(hex, { reg: rec.reg, type: rec.type, ladd: rec.ladd || undefined, pia: rec.pia || undefined, mil: rec.mil || undefined });
       store.setId(id, Object.assign({ id }, rec));
+      if (leg && typeof leg === 'object') pbRouteFromLeg(id, hex, leg);
       pbAdopt(id, rec, ts); n++;
+      // (named from its track: kept on the monitor with that day, as a browser's playback name is - checked there)
+      if (how === 'track') { pbOut.set(id, [id, hex, rec.reg, rec.type, rec.cs, (rec.ladd ? 1 : 0) | (rec.mil ? 2 : 0) | (rec.pia ? 4 : 0), Math.round(ts)]); if (pbOut.size > 2000) pbOut.delete(pbOut.keys().next().value); }
       if (id === pb.sel) publicIdentity(hex, rec.reg).then(() => { pushToPage([rec]); syncPanelSoon(); }).catch(() => {});
     }
-    if (n) log('playback: named from the monitor', n);
+    if (n) log('playback: named from the monitor', n, 'of', fl.length);
     return n;
   }
   async function pbMatch() {
@@ -10765,15 +10867,27 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       if (s && !s.ended && s.tEnd > end - 900 && end < nowS() - 60) { pts = ENGINE.mergePoints(pts, await pbPoints(hex, end + 60)).sort((a, b) => a.t - b.t); end = Math.min(nowS(), end + 86400); s = pick(legsOf(pts, end)); }
       if (s && !s.startedOnGround && !s.from && s.tStart < day0 + 900) { pts = ENGINE.mergePoints(await pbPoints(hex, day0 - 60), pts).sort((a, b) => a.t - b.t); s = pick(legsOf(pts, end)); }
       if (!s) return null;
-      const end1 = (e, la, lo, down) => { const a = e ? apById(e.id) : null; const sid = (!a || a.id >= 1e7) && down ? learnSite(a ? a.lat : la, a ? a.lon : lo, { heli }) : 0; const b = sid ? apById(sid) : a; return b ? { id: fr24Ap(b.id) || 0, iata: apCode(b), city: b.city || b.name || '' } : null; };
-      const o = end1(s.from, s.startLat, s.startLon, s.startedOnGround), d = end1(s.to, s.endLat, s.endLon, s.ended);
-      const route = { hex, t0: s.tStart, t1: s.tEnd, originId: o ? o.id : 0, originIata: o ? o.iata : '', originCity: o ? o.city : '', destId: d ? d.id : 0, destIata: d ? d.iata : '', destCity: d ? d.city : '',
-        atd: s.tOff || (s.startedOnGround ? s.tStart : 0), ata: s.ended && d ? (s.tOn || s.tEnd) : 0, std: 0, sta: 0, eta: 0, landed: false, destConf: 'playback', destP: 0, progress: null, groundAirportId: 0, pb: true };
-      pb.routes.set(id, route); if (pb.routes.size > 3000) pb.routes.delete(pb.routes.keys().next().value);
-      postToPage('pbRoute', { id, route });
-      if (id === pb.sel) syncPanelSoon();
-      return route;
+      return pbRouteSet(id, pbRouteOf(hex, s, heli));
     } finally { pb.routing.delete(k); }
+  }
+  // (a flight - its summary, the engine's or the monitor's log's - as the strip and FR24's panel show a flight flown: an end
+  // away from FR24's airports, where it was seen down, is the landing place learned there)
+  function pbRouteOf(hex, s, heli) {
+    const end1 = (e, la, lo, down) => { const a = e ? apById(e.id) : null; const sid = (!a || a.id >= 1e7) && down && fin(a ? a.lat : la) ? learnSite(a ? a.lat : la, a ? a.lon : lo, { heli }) : 0; const b = sid ? apById(sid) : a; return b ? { id: fr24Ap(b.id) || 0, iata: apCode(b), city: b.city || b.name || '' } : null; };
+    const o = end1(s.from, s.startLat, s.startLon, s.startedOnGround), d = end1(s.to, s.endLat, s.endLon, s.ended);
+    return { hex, t0: s.tStart, t1: s.tEnd, originId: o ? o.id : 0, originIata: o ? o.iata : '', originCity: o ? o.city : '', destId: d ? d.id : 0, destIata: d ? d.iata : '', destCity: d ? d.city : '',
+      atd: s.tOff || (s.startedOnGround ? s.tStart : 0), ata: s.ended && d ? (s.tOn || s.tEnd) : 0, std: 0, sta: 0, eta: 0, landed: false, destConf: 'playback', destP: 0, progress: null, groundAirportId: 0, pb: true };
+  }
+  function pbRouteSet(id, route) {
+    pb.routes.set(id, route); if (pb.routes.size > 3000) pb.routes.delete(pb.routes.keys().next().value);
+    postToPage('pbRoute', { id, route });
+    if (id === pb.sel) syncPanelSoon();
+    return route;
+  }
+  // (the flight as the monitor logged it: no day trace to read - with airports loaded; otherwise read as before)
+  function pbRouteFromLeg(id, hex, leg) {
+    if (!airportsReady() || !fin(leg.tStart)) return null;
+    try { return pbRouteSet(id, pbRouteOf(hex, leg, ENGINE.classify(acOfHex(hex)) === 'heli')); } catch (e) { log('playback route', e); return null; }
   }
   // the open flight's track, for its padlocked figures as FR24 plays it: the flight's span, every report
   async function pbSendTrace(id, hex, ts) {

@@ -84,6 +84,7 @@ const sameDayFlights = l => `${l.from ? l.from.code : '?'}-${l.to ? l.to.code : 
     if (u.pathname === '/fr24ids') { const since = +(u.searchParams.get('since') || 0); idsAsked.push(since); return { status: 200, text: JSON.stringify(Object.assign({ v: 1, now: Date.now() }, since ? Object.assign({ full: false }, idsDelta) : { full: true, rows: idsRows, gone: [] }, { scanOk: idsScanOk })) }; }
     if (u.pathname === '/report') return { status: 200, text: JSON.stringify({ ok: true }) };
     if (u.pathname === '/owners') { const hs = u.searchParams.get('hex').split(','); ownersAsked.push(hs); return { status: 200, text: JSON.stringify({ list: hs.map(h => ownersKnown[h]).filter(Boolean) }) }; }
+    if (u.pathname === '/learned') { const have = u.searchParams.get('have') || '', o = M.learnedRef(); learnAsked.push(have); return { status: 200, text: !o ? JSON.stringify({ v: 1, ver: '', none: true }) : have === o.ver ? JSON.stringify({ v: 1, ver: o.ver, same: true }) : o.json }; }
     if (u.pathname === '/learn') { learnAsked.push(u.searchParams.get('from') || ''); return { status: 200, text: JSON.stringify(M.learnSince(u.searchParams.get('from') || '', Date.parse('2026-10-14T12:00:00Z') / 1000)) }; }
     return { status: 200, text: '{}' };
   };
@@ -185,12 +186,12 @@ const sameDayFlights = l => `${l.from ? l.from.code : '?'}-${l.to ? l.to.code : 
     check('... the headers only once', !!b2 && !b2.hdr);
     L.live.delete(0x7a5a5a30); L.pending.delete(0x7a5a5a30); }
   // ---- every blocked aircraft's completed flights, from the monitor, learned here --------------------------------------
-  { const want = M.learnSince('', Date.parse('2026-10-14T12:00:00Z') / 1000);
+  { const built = await M.learnedBuild(Date.parse('2026-10-14T12:00:00Z') / 1000);
     net.asked.length = 0; await L.syncSrvLearn();
-    const keys = new Set(L.learnedStore().map(x => x[0]));
-    check('the monitor\'s learning rows (M-ARNZ, 6 and 7 Oct): all in this browser\'s learned flights, the last day noted', want.rows.length >= 8 && want.rows.every(r => keys.has(r[0])) && L.store.kvGet('srvLearnDay') === '2026-10-07' && learnAsked[learnAsked.length - 1] === '' && net.asked.some(a => /mon\.test\/learn/.test(a.url) && a.headers['X-Monitor-Token'] === 'tok'), { rows: want.rows.length, day: L.store.kvGet('srvLearnDay'), asked: learnAsked });
+    const kept = await L.store.getBlob('srvLearned');
+    check('the monitor\'s learning (M-ARNZ, 6 and 7 Oct): its 90-day snapshot fetched with the secret and kept for the next page load', !!built && built.flights >= 8 && !!kept && kept.ver === built.ver && Array.isArray(kept.ops) && kept.ops.length > 0 && kept.from === '2026-10-06' && kept.asOf === '2026-10-07' && learnAsked[learnAsked.length - 1] === '' && net.asked.some(a => /mon\.test\/learned/.test(a.url) && a.headers['X-Monitor-Token'] === 'tok'), { built: built && { ver: built.ver, flights: built.flights }, kept: kept && kept.ver, asked: learnAsked });
     const n0 = L.learnedStore().length; await L.syncSrvLearn();
-    check('... next time only the days after it, nothing learned twice', learnAsked[learnAsked.length - 1] === '2026-10-07' && L.learnedStore().length === n0, learnAsked); }
+    check('... next time asked with its version, nothing fetched again, nothing learned twice', learnAsked[learnAsked.length - 1] === built.ver && L.learnedStore().length === n0 && (await L.store.getBlob('srvLearned')).ver === built.ver, learnAsked); }
   // ---- the LADD tag: always on an aircraft known to be LADD-listed ---------------------------------------------------
   { const ID6 = 0x7a5a5a60;
     L.store.mergeHex('49d698', { ladd: true }); L.store.mergeHex('49d698', { reg: 'OK-VOS', ladd: false, pia: false });
