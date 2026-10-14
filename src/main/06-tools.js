@@ -232,12 +232,15 @@
   const health = { issues: [], at: 0, t0: now() };
   function checkHealth() {
     const issues = [];
-    let B = null; try { B = pageWindow().__tweeksLaddBridge; } catch (_) { /* ignore */ }
+    // (the page part's counters: read directly where the script shares its world, otherwise - the browser extension - as
+    // the page part last sent them, and asked for again for the next check)
+    let S = null; try { const B = pageWindow().__tweeksLaddBridge; S = B && B.stats; } catch (_) { /* ignore */ }
+    if (!S) { S = bridgeStats; if (bridgeReady) postToPage('stats?'); }
     if (!bridgeReady && now() - health.t0 > 20000) issues.push('the page part of the script is not answering');
-    if (B && B.stats) {
-      if (B.stats.maskDisabled) issues.push('FR24 refused the request for the unlocked fields');
-      if (B.stats.errors > 25) issues.push(`FR24's data format may have changed (${B.stats.errors} patch errors)`);
-      if (now() - health.t0 > 90000 && !B.stats.liveFeed && !isAircraftPage) issues.push("FR24's live feed was not recognised");
+    if (S) {
+      if (S.maskDisabled) issues.push('FR24 refused the request for the unlocked fields');
+      if (S.errors > 25) issues.push(`FR24's data format may have changed (${S.errors} patch errors)`);
+      if (now() - health.t0 > 90000 && !S.liveFeed && !isAircraftPage) issues.push("FR24's live feed was not recognised");
     }
     const panel = document.querySelector(SEL.panel);
     if (panel && currentId() != null) { const missing = ['callsign', 'registration', 'depIata', 'arrIata'].filter(k => !q(panel, SEL[k])); if (missing.length >= 2) issues.push("FR24's aircraft panel changed layout"); }

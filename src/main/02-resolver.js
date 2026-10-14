@@ -626,6 +626,7 @@
   const strikes = new Map();          // fr24 id -> { n, first } consecutive failed verifications
   const msgCount = {};   // page reports received, by kind (the strip of an ordinary flight shows them)
   let shownId = null;   // the flight id the open panel is showing (worked out from the aircraft on screen)
+  let bridgeStats = null;   // (the page part's counters, as it last sent them - read by the health check)
   let selectedId = null, bridgeReady = false, feedReady = false, sweepTimer = 0, sweepRunning = false, viewCenter = null;
 
   function pageWindow() { try { return typeof unsafeWindow !== 'undefined' && unsafeWindow ? unsafeWindow : window; } catch (_) { return window; } }

@@ -53,6 +53,12 @@ if (!fs.existsSync(path.join(src, 'manifest.json'))) { console.log('FAIL  dist/e
     const iso = ctxs.find(c => c.auxData && c.auxData.type === 'isolated' && /LADD/.test(c.name));
     const ev = async expr => { const r = await cdp.send('Runtime.evaluate', { expression: expr, contextId: iso.id, awaitPromise: true, returnByValue: true }); return r.exceptionDetails ? 'EXC ' + JSON.stringify(r.exceptionDetails).slice(0, 300) : r.result.value; };
     check('... the script in the extension\'s isolated world, the same version as the page part, the two greeting each other', !!iso && await ev('__tweeksLadd.version') === man.version && await ev('__tweeksLadd.bridgeV') === man.version && await ev('__tweeksLadd.msgCount.ready >= 1'), iso && { v: await ev('__tweeksLadd.version'), bridge: await ev('__tweeksLadd.bridgeV') });
+    // (the health check: the page part's counters reach the script's world - it cannot read the page's objects)
+    await page.evaluate(() => { window.__tweeksLaddBridge.stats.maskDisabled = true; });
+    await ev('__tweeksLadd.checkHealth()'); await page.waitForTimeout(400); await ev('__tweeksLadd.checkHealth()');
+    const issues = await ev('__tweeksLadd.health.issues');
+    check('... the health check sees the page part\'s counters (FR24 refusing the unlocked fields)', Array.isArray(issues) && issues.some(x => /refused the request for the unlocked fields/.test(x)), issues);
+    await page.evaluate(() => { window.__tweeksLaddBridge.stats.maskDisabled = false; });
     check('... the page part injected once (not again by the script)', await page.evaluate(() => document.querySelectorAll('script').length) === 0);
     const gm = o => ev(`new Promise(r => { const t0 = Date.now(); const h = GM_xmlhttpRequest(Object.assign(${JSON.stringify(o)}, { onload: x => r({ status: x.status, text: x.responseText, bin: x.response instanceof ArrayBuffer ? Array.from(new Uint8Array(x.response)) : null, ms: Date.now() - t0 }), onerror: e => r({ error: e.error }), ontimeout: () => r({ timeout: true, ms: Date.now() - t0 }), onabort: () => r({ aborted: true }) })); ${o.abortAfter ? `setTimeout(() => h.abort(), ${o.abortAfter});` : ''} })`);
     const a = await gm({ url: base + '/echo?x=1', headers: { 'X-Monitor-Token': 'abc', Accept: 'application/json' } });

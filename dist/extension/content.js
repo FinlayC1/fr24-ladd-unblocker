@@ -2343,6 +2343,8 @@ const GM_xmlhttpRequest = (() => {
       else if (d.__tweeksLadd === 'osmReq') { if (d.key && /^https:\/\/overpass-api\.de\/api\/interpreter\?data=/.test(String(d.url || ''))) oFetch.call(window, d.url).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) { post('osmRes', { key: d.key, j: j }); }, function () { post('osmRes', { key: d.key, j: null }); }); }
       else if (d.__tweeksLadd === 'photosDone') acceptPhotosDone(d);
       else if (d.__tweeksLadd === 'scan') runScan(d.regions || [], d.opts || {});
+      // (the health check's figures - the extension's script runs in its own world and cannot read this one's objects)
+      else if (d.__tweeksLadd === 'stats?') post('stats', { stats: stats });
       else if (d.__tweeksLadd === 'hello') post('ready', { stats: stats, feedReady: !!feedHeaders, hdr: feedHdrPublic(), v: BRIDGE_V });
     });
     window[NS] = { resolved: resolved, routes: routes, naRecs: naRecs, naRoutes: naRoutes, telem: telem, hist: hist, lastPos: lastPos, photoCache: photoCache, psCache: psCache, stats: stats, fetchPhotos: fetchPhotos, hello: function () { post('ready', { stats: stats, feedReady: !!feedHeaders, v: BRIDGE_V }); }, v: BRIDGE_V };
@@ -5801,6 +5803,7 @@ const GM_xmlhttpRequest = (() => {
   const strikes = new Map();          // fr24 id -> { n, first } consecutive failed verifications
   const msgCount = {};   // page reports received, by kind (the strip of an ordinary flight shows them)
   let shownId = null;   // the flight id the open panel is showing (worked out from the aircraft on screen)
+  let bridgeStats = null;   // (the page part's counters, as it last sent them - read by the health check)
   let selectedId = null, bridgeReady = false, feedReady = false, sweepTimer = 0, sweepRunning = false, viewCenter = null;
 
   function pageWindow() { try { return typeof unsafeWindow !== 'undefined' && unsafeWindow ? unsafeWindow : window; } catch (_) { return window; } }
@@ -11106,12 +11109,15 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   const health = { issues: [], at: 0, t0: now() };
   function checkHealth() {
     const issues = [];
-    let B = null; try { B = pageWindow().__tweeksLaddBridge; } catch (_) { /* ignore */ }
+    // (the page part's counters: read directly where the script shares its world, otherwise - the browser extension - as
+    // the page part last sent them, and asked for again for the next check)
+    let S = null; try { const B = pageWindow().__tweeksLaddBridge; S = B && B.stats; } catch (_) { /* ignore */ }
+    if (!S) { S = bridgeStats; if (bridgeReady) postToPage('stats?'); }
     if (!bridgeReady && now() - health.t0 > 20000) issues.push('the page part of the script is not answering');
-    if (B && B.stats) {
-      if (B.stats.maskDisabled) issues.push('FR24 refused the request for the unlocked fields');
-      if (B.stats.errors > 25) issues.push(`FR24's data format may have changed (${B.stats.errors} patch errors)`);
-      if (now() - health.t0 > 90000 && !B.stats.liveFeed && !isAircraftPage) issues.push("FR24's live feed was not recognised");
+    if (S) {
+      if (S.maskDisabled) issues.push('FR24 refused the request for the unlocked fields');
+      if (S.errors > 25) issues.push(`FR24's data format may have changed (${S.errors} patch errors)`);
+      if (now() - health.t0 > 90000 && !S.liveFeed && !isAircraftPage) issues.push("FR24's live feed was not recognised");
     }
     const panel = document.querySelector(SEL.panel);
     if (panel && currentId() != null) { const missing = ['callsign', 'registration', 'depIata', 'arrIata'].filter(k => !q(panel, SEL[k])); if (missing.length >= 2) issues.push("FR24's aircraft panel changed layout"); }
@@ -11396,10 +11402,11 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       case 'feedReady': noteFeedHdr(d.hdr); if (!feedReady) { feedReady = true; log('feed headers captured'); worldScan('startup').catch(() => {}); } break;
       case 'scanDone': onScanDone(d); break;
       case 'view': { const first = !viewBox; onView(d); if (first) pollView().catch(() => {}); break; }
+      case 'stats': bridgeStats = d.stats || bridgeStats; break;
       case 'ready': {
         if (!bridgeReady) log('bridge ready', d.v || '(no version)');
         bridgeV = d.v || '?'; if (bridgeV !== VERSION) log('page bridge is another version:', bridgeV);
-        bridgeReady = true; noteFeedHdr(d.hdr); if (d.feedReady && !feedReady) { feedReady = true; worldScan('startup').catch(() => {}); }
+        bridgeReady = true; bridgeStats = d.stats || bridgeStats; noteFeedHdr(d.hdr); if (d.feedReady && !feedReady) { feedReady = true; worldScan('startup').catch(() => {}); }
         // everything known right now - the last session's snapshot included - at once, so the map, a flight opened
         // straight from the URL, boards and search are patched from FR24's very first answer; the rest of the store
         // (flight ids of the last 12 hours) once it has been read
