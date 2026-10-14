@@ -1,5 +1,4 @@
 node_modules/
-dist/
 original.user.js
 fr24-ladd.user.js
 *.log

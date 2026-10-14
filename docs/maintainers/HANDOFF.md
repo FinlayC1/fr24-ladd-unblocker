@@ -1,7 +1,7 @@
 # HANDOFF - FR24 LADD unblocker (written 14 Oct 2026 for the cloud session)
 
-Read this file, then `docs/notes/user-preferences.md` (the user's standing requirements) and
-`docs/notes/fr24-internals-and-history.md` (what earlier sessions learned about FR24's internals, version by version).
+Read this file, then `docs/maintainers/notes/user-preferences.md` (the user's standing requirements) and
+`docs/maintainers/notes/fr24-internals-and-history.md` (what earlier sessions learned about FR24's internals, version by version).
 
 ## 1. What this is
 
@@ -185,7 +185,7 @@ to install/run. The user has to reinstall the script in Tampermonkey for header 
 
 ## 8. Constraints (always)
 
-- The user's standing requirements: `docs/notes/user-preferences.md` (responsiveness first, FR24-native look, never
+- The user's standing requirements: `docs/maintainers/notes/user-preferences.md` (responsiveness first, FR24-native look, never
   override FR24's own routes, "Confirmed" only when sure, heavy testing, honest reporting).
 - Be gentle with adsb.lol and airplanes.live; respect robots.txt; ADS-B Exchange only through the user's own RapidAPI
   key, never its globe; API keys only ever entered by the user.

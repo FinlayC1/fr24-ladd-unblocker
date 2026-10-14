@@ -2,7 +2,21 @@
   "name": "fr24-ladd-unblocker",
   "version": "22.19.1",
   "private": true,
-  "description": "Flightradar24 LADD / N-A unblocker userscript and its permanent monitor",
+  "description": "Fills in what Flightradar24 hides: identity, live data, route and history of blocked (LADD) and N/A aircraft from public ADS-B - a Tampermonkey userscript and its permanent monitor service",
+  "author": "Finlay Clarke",
+  "license": "UNLICENSED",
+  "keywords": [
+    "flightradar24",
+    "ads-b",
+    "ladd",
+    "userscript",
+    "tampermonkey",
+    "aviation",
+    "flight-tracking"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "build": "node build.mjs",
     "lint": "eslint --no-eslintrc -c .eslintrc.json dist/fr24-ladd-unblocker.user.js src/page.js",

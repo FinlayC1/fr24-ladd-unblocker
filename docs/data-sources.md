@@ -1,0 +1,44 @@
+# Data sources
+
+Every external source the project uses, what for, under what terms, and how it is kept within its limits. The principle throughout: **public data only, the least load possible, and nothing that requires approval or a key the user has not entered themselves.**
+
+## ADS-B (aircraft positions)
+
+| Source | Endpoints used | Used by | Limits and etiquette | Licence |
+|---|---|---|---|---|
+| **adsb.lol** | `api.adsb.lol/v2/ladd`, `/v2/mil`, `/v2/pia`, `/v2/point`, `/v2/hex`; history files `adsb.lol/globe_history/YYYY/MM/DD/traces/xx/trace_full_<hex>.json`, today's `adsb.lol/data/traces/...`, heatmaps | Monitor (primary), browser (backup) | Dynamic rate limits. Monitor: one request at a time, at least 2 s apart, at most 20 a minute, 2-minute pause on `429`. History files about 40 days back. | ODbL |
+| **adsb.fi** | `opendata.adsb.fi/api/v2/mil`, `/api/v3/lat/<lat>/lon/<lon>/dist/<nm>` (v2 path as fallback), `/api/v2/hex/<hex>` | Monitor (backup), browser (area and hex lookups) | 1 request per second (public endpoints) | adsb.fi open data terms |
+| **OpenSky Network** | `opensky-network.org/api/states/all` | Monitor (backup), browser (last-resort area lookups) | Anonymous daily credits. Monitor: one world snapshot per 15 minutes at most, only while adsb.lol's LADD list is silent; 6-hour pause when refused. | OpenSky terms (non-commercial) |
+| **airplanes.live** | `globe.airplanes.live/globe_history/YYYY/MM/DD/traces/xx/trace_full_<hex>.json` | Monitor and browser: days another network missed, history older than 40 days | Public history files only, one at a time; 6-hour pause on `403`/`429`. **Its REST API requires approval and is not used.** | airplanes.live terms |
+| **ADS-B Exchange** | `adsbexchange-com1.p.rapidapi.com/v2/...` (official API on RapidAPI) | Browser and monitor, only with the user's own key | Paid quota. Browser: only when the free networks cannot identify a flight. Monitor: at most 150 requests a day, only when adsb.fi fails too. **Its globe is never scraped.** | ADS-B Exchange terms |
+
+Considered and not used:
+
+- **airplanes.live REST API:** requires approval.
+- **ADSB One:** no longer answers (`403`).
+- **ADSBHub and TheAirTraffic:** feed-in only, with no query API.
+- **Services that appear only on unverified aggregator pages:** not used until they can be checked.
+
+## Flightradar24
+
+The userscript runs on flightradar24.com and reads FR24's own answers to the page: the live feed, panels, boards, search, and airport and schedule data. It adds to what FR24 shows and never overrides FR24's own routes or airports. FR24's own rate limits are respected: background calls are spaced, and the script backs off for a minute after any `429`.
+
+## Aircraft and airport reference data
+
+| Source | Used for | Licence |
+|---|---|---|
+| OurAirports (`davidmegginson/ourairports-data`) | Airfields, heliports, seaplane bases, runways | Public domain |
+| tar1090-db (`wiedehopf/tar1090-db`) | ICAO type designators, aircraft classes | See the repository's licence (used as a lookup table) |
+| FAA aircraft register (MASTER / DEREG) | Build-year table by type and serial (`src/agetable.json`), US owner names | Public domain (US government) |
+| Isle of Man, UK CAA G-INFO, Swiss BAZL registers | Owner names | Public registers |
+| EUROCONTROL atlas FIR/UIR (via GitHub), VATSpy fallback | Airspace names | Public |
+| OpenStreetMap (Overpass API) | Naming hospitals' pads, offshore platforms and estates where helicopters land | ODbL |
+| JetPhotos (through FR24's own API), Planespotters API | Aircraft photos | Each photographer's copyright, shown with credit |
+| aviationweather.gov | METAR/TAF for the predicted destination | Public (US government) |
+| FAA NOTAM API | Airport closures (only with the user's own key) | Public (US government) |
+
+## Personal data
+
+- **Owner names only.** Registers are used for owner names; **addresses are never fetched, stored or shown.** Trustee and lessor names (for example "Bank of Utah Trustee") are replaced by the operator where it can be determined.
+- **Keys stay with the user.** API keys (ADS-B Exchange, FAA NOTAM) and the monitor secret are entered by the user and stored only in their browser (IndexedDB) or on their own server. They are never sent anywhere except to the service they belong to.
+- **No telemetry.** The project sends no data about its user to anyone.
