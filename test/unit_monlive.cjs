@@ -38,6 +38,7 @@ function makeNet(mon) {
     if (/flightradar24\.com\/mobile\/airports\/format/.test(url)) return { status: 200, text: AIRPORTS };
     if (/ourairports-data\/main\/airports\.csv/.test(url)) return { status: OA ? 200 : 404, text: OA };
     if (/^https:\/\/mon\.test\//.test(url)) return mon(url, headers || {}, o);
+    if (makeNet.extra) { const x = makeNet.extra(url, o); if (x) return x; }
     if (/127\.0\.0\.1:47524/.test(url)) return { status: 0, error: true };
     if (/opendata\.adsb\.fi\/api\/v3\/lat\//.test(url)) return makeNet.fiV3 ? { status: 200, text: JSON.stringify({ aircraft: [{ hex: '400fff', r: 'G-FIV3', t: 'C172', lat: 53, lon: -2, alt_baro: 2000, gs: 90, track: 10, seen_pos: 1 }] }) } : { status: 404, text: '' };
     if (/opendata\.adsb\.fi\/api\/v2\/lat\//.test(url)) return { status: 200, text: JSON.stringify({ aircraft: [{ hex: '400ff2', r: 'G-FIV2', t: 'C172', lat: 53, lon: -2, alt_baro: 2000, gs: 90, track: 10, seen_pos: 1 }] }) };
@@ -77,14 +78,16 @@ const sameDayFlights = l => `${l.from ? l.from.code : '?'}-${l.to ? l.to.code : 
     if (headers['X-Monitor-Token'] !== 'tok') return { status: 401, text: '' };
     const u = new URL(url);
     if (u.pathname === '/status') return { status: 200, text: JSON.stringify({ v: 3 }) };
-    if (u.pathname === '/live') return { status: 200, text: JSON.stringify(live) };
+    if (u.pathname === '/live') { liveAsked.push(+(u.searchParams.get('since') || 0)); return { status: 200, text: JSON.stringify(live) }; }
     if (u.pathname === '/hist') { const hs = u.searchParams.get('hex').split(','); histReq.push(hs); return { status: 200, text: JSON.stringify({ hv, list: hs.map(histOf) }) }; }
     if (u.pathname === '/ladd') return { status: 200, text: JSON.stringify({ at: 0, ac: [] }) };
     if (u.pathname === '/fr24ids') { const since = +(u.searchParams.get('since') || 0); idsAsked.push(since); return { status: 200, text: JSON.stringify(Object.assign({ v: 1, now: Date.now() }, since ? Object.assign({ full: false }, idsDelta) : { full: true, rows: idsRows, gone: [] }, { scanOk: idsScanOk })) }; }
     if (u.pathname === '/report') return { status: 200, text: JSON.stringify({ ok: true }) };
+    if (u.pathname === '/owners') { const hs = u.searchParams.get('hex').split(','); ownersAsked.push(hs); return { status: 200, text: JSON.stringify({ list: hs.map(h => ownersKnown[h]).filter(Boolean) }) }; }
+    if (u.pathname === '/learn') { learnAsked.push(u.searchParams.get('from') || ''); return { status: 200, text: JSON.stringify(M.learnSince(u.searchParams.get('from') || '', Date.parse('2026-10-14T12:00:00Z') / 1000)) }; }
     return { status: 200, text: '{}' };
   };
-  let idsRows = [], idsDelta = { rows: [], gone: [] }, idsScanOk = true; const idsAsked = [];
+  let idsRows = [], idsDelta = { rows: [], gone: [] }, idsScanOk = true; const idsAsked = [], liveAsked = [], learnAsked = [], ownersAsked = [], ownersKnown = {};
   const net = makeNet(mon), w = makeWin(net), L = w.__tweeksLadd;
   await until(() => L && L.engine.airports.length > 5000, 60000);
   check('airports loaded (from the data folder - offline)', L.engine.airports.length > 5000, L.engine.airports.length);
@@ -129,24 +132,28 @@ const sameDayFlights = l => `${l.from ? l.from.code : '?'}-${l.to ? l.to.code : 
   // (the 20-s round in between: a newer position replaces the older; the list counts as fresh, so no round of the browser's own)
   { live = Object.assign({}, live, { now: Date.now(), age: { ladd: 5, mil: 20 }, ac: live.ac.map(a => a.hex === 'a1b2c3' ? Object.assign({}, a, { lon: -109.9, seen_pos: 0 }) : a) });
     const at0 = L.globalList.at; net.asked.length = 0;
-    const moved = await until(() => { const x = L.globalList.byHex.get('a1b2c3'); return x && x.lon === -109.9; }, 30000);
-    check('every 20 s the monitor\'s live list again: the newer position taken, the list fresh, no list request of the browser\'s own', !!moved && L.globalList.at > at0 && !net.asked.some(a => /v2\/(ladd|mil)$/.test(a.url)), net.asked.map(a => a.url)); }
+    const moved = await until(() => { const x = L.globalList.byHex.get('a1b2c3'); return x && x.lon === -109.9; }, 15000);
+    check('every 5 s the monitor\'s live list again: the newer position taken, the list fresh, no list request of the browser\'s own', !!moved && L.globalList.at > at0 && !net.asked.some(a => /v2\/(ladd|mil)$/.test(a.url)), net.asked.map(a => a.url));
+    check('... asking only for what changed since its last answer', liveAsked.some(x => x > 0), liveAsked.slice(-4)); }
   { const fi = L.liveSources().find(x => x.name === 'adsb.fi');
     makeNet.fiV3 = true; net.asked.length = 0; const a = await fi.area(53, -2, 50);
     const u1 = net.asked.map(x => x.url).filter(u => /adsb\.fi/.test(u));
     makeNet.fiV3 = false; net.asked.length = 0; const b = await fi.area(53, -2, 50);
     const u2 = net.asked.map(x => x.url).filter(u => /adsb\.fi/.test(u));
     check('adsb.fi areas: its v3 query first; v2 (deprecated) only when v3 is not found', a[0].reg === 'G-FIV3' && u1.length === 1 && /\/v3\/lat\//.test(u1[0]) && b[0].reg === 'G-FIV2' && u2.length === 2 && /\/v2\/lat\//.test(u2[1]), { u1, u2 }); }
-  check('the sources pop-over figures: the live list\'s size and freshness', L.monLive.n === 3 && L.monLive.ok === true && Date.now() - L.monLive.at < 10000, L.monLive);
+  check('the sources pop-over figures: the live list\'s size and freshness', L.monLive.n === L.globalList.byHex.size && L.monLive.n >= 3 && L.monLive.ok === true && Date.now() - L.monLive.at < 10000, L.monLive);
   // ---- the monitor's names for FR24's callsign-less flights -------------------------------------------------------
   { const bwf = L.engine.byIcao('EGNL'), fab = L.engine.byIcao('EGLF'), nS = Math.floor(Date.now() / 1000);
     const ID1 = 0x7a5a5a20, ID2 = 0x7a5a5a21, ID3 = 0x7a5a5a22;
-    idsRows = [[ID1, 'a1b2c3', 'N1848T', 'C68A', '', 1, 'trail', nS - 600, bwf.id, 'ground', fab.id, 64, nS, 46.5, -40, 43000, 0, nS], [ID2, '424c62', '', 'PC24', 'VSB97', 0, 'list', nS - 60, 0, '', 0, 0, 0, 54, -3, 20000, 0, nS]];
+    idsRows = [[ID1, 'a1b2c3', 'N1848T', 'C68A', '', 1, 'trail', nS - 600, bwf.id, 'ground', fab.id, 64, nS, 46.5, -40, 43000, 0, nS, nS + 3600, nS - 1800], [ID2, '424c62', '', 'PC24', 'VSB97', 0, 'list', nS - 60, 0, '', 0, 0, 0, 54, -3, 20000, 0, nS]];
     w.__posted.length = 0; L.srvIds.since = 0;          // (as on a fresh page: the full table)
     await until(() => !L.srvIds.busy, 5000); await L.pullSrvIds();
     const res = w.__posted.filter(m => m.__tweeksLadd === 'resolve').flatMap(m => m.entries || []), e1 = res.find(e => e.id === ID1), rts = w.__posted.filter(m => m.__tweeksLadd === 'routes').flatMap(m => m.list || []), r1 = rts.find(x => x.id === ID1);
     check('the monitor\'s names: every one straight to the page (before FR24 draws the flight) - address, registration, type', !!e1 && e1.hex === 'a1b2c3' && e1.reg === 'N1848T' && e1.type === 'C68A' && res.some(e => e.id === ID2 && e.cs === 'VSB97'), res.map(e => [e.id, e.hex, e.reg]));
     check('... with its rough route (origin, predicted destination and its chance)', !!r1 && r1.route.originIata === 'BWF' && r1.route.destIata === 'FAB' && r1.route.destP === 0.64 && r1.route.destConf === 'predicted' && !r1.route.confirmed, r1 && r1.route);
+    check('... its estimated arrival and its time of departure (for the boards)', !!r1 && r1.route.eta === nS + 3600 && r1.route.atd === nS - 1800, r1 && [r1.route.eta, r1.route.atd]);
+    const ps = w.__posted.filter(m => m.__tweeksLadd === 'positions').flatMap(m => m.list || []), p1 = ps.find(x => x.id === ID1);
+    check('... and where FR24 last had each one (for the board of any airport in the world)', !!p1 && p1.pos.lat === 46.5 && p1.pos.lon === -40 && p1.pos.alt === 43000 && p1.pos.gnd === false && p1.pos.at === nS * 1000 && ps.some(x => x.id === ID2), ps);
     check('... not yet full identifications (nothing on screen)', !L.live.has(ID1) && L.srvIds.rows.size === 2);
     // FR24 draws one of them in view: identified at once - no lookup, no adsb.lol request
     net.asked.length = 0;
@@ -159,8 +166,11 @@ const sameDayFlights = l => `${l.from ? l.from.code : '?'}-${l.to ? l.to.code : 
     await sleep(50);
     check('... a world-scan find it names: left light (no matching here)', !L.live.has(ID2));
     // what changed: one withdrawn, one new
-    idsDelta = { rows: [[ID3, 'abcdef', 'N3', 'GLF5', '', 1, 'reckon', nS, 0, '', 0, 0, 0, 30, -60, 41000, 0, nS]], gone: [ID1] };
+    idsDelta = { rows: [[ID3, 'abcdef', 'N3', 'GLF5', '', 1, 'reckon', nS, 0, '', 0, 0, 0, 30, -60, 41000, 0, nS]], gone: [ID1], pos: [[ID2, 54.5, -3.2, 21000, 0, nS - 5], [0x7a5a5a99, 1, 1, 1, 0, nS]] };
     w.__posted.length = 0; await L.pullSrvIds();
+    { const pm = w.__posted.filter(m => m.__tweeksLadd === 'positions').flatMap(m => m.list || []);
+      const p2 = pm.find(x => x.id === ID2);
+      check('... a named flight that only moved: its new place to the page (an id it never named not)', !!p2 && p2.pos.lat === 54.5 && p2.pos.at === (nS - 5) * 1000 && L.srvIds.rows.get(ID2)[13] === 54.5 && pm.some(x => x.id === ID3) && !pm.some(x => x.id === 0x7a5a5a99), pm); }
     check('... then only what changed (since the last answer): a new name taken, a withdrawn one revoked here too', idsAsked[idsAsked.length - 1] > 0 && L.srvIds.rows.has(ID3) && !L.live.has(ID1) && w.__posted.some(m => m.__tweeksLadd === 'revoke' && (m.ids || []).includes(ID1)), { since: idsAsked[idsAsked.length - 1], live1: L.live.has(ID1) });
     check('... and the world scan left to the monitor while its FR24 scan works', L.srvIds.scanOk === true);
     // this browser's report: FR24's feed headers (once), the callsign-less flights it sees, its own names
@@ -174,6 +184,50 @@ const sameDayFlights = l => `${l.from ? l.from.code : '?'}-${l.to ? l.to.code : 
     const b2 = net.posts[0] && JSON.parse(net.posts[0].body);
     check('... the headers only once', !!b2 && !b2.hdr);
     L.live.delete(0x7a5a5a30); L.pending.delete(0x7a5a5a30); }
+  // ---- every blocked aircraft's completed flights, from the monitor, learned here --------------------------------------
+  { const want = M.learnSince('', Date.parse('2026-10-14T12:00:00Z') / 1000);
+    net.asked.length = 0; await L.syncSrvLearn();
+    const keys = new Set(L.learnedStore().map(x => x[0]));
+    check('the monitor\'s learning rows (M-ARNZ, 6 and 7 Oct): all in this browser\'s learned flights, the last day noted', want.rows.length >= 8 && want.rows.every(r => keys.has(r[0])) && L.store.kvGet('srvLearnDay') === '2026-10-07' && learnAsked[learnAsked.length - 1] === '' && net.asked.some(a => /mon\.test\/learn/.test(a.url) && a.headers['X-Monitor-Token'] === 'tok'), { rows: want.rows.length, day: L.store.kvGet('srvLearnDay'), asked: learnAsked });
+    const n0 = L.learnedStore().length; await L.syncSrvLearn();
+    check('... next time only the days after it, nothing learned twice', learnAsked[learnAsked.length - 1] === '2026-10-07' && L.learnedStore().length === n0, learnAsked); }
+  // ---- the LADD tag: always on an aircraft known to be LADD-listed ---------------------------------------------------
+  { const ID6 = 0x7a5a5a60;
+    L.store.mergeHex('49d698', { ladd: true }); L.store.mergeHex('49d698', { reg: 'OK-VOS', ladd: false, pia: false });
+    check('the LADD flag once known stays: a source without the flags saying false does not take it off', L.store.getHex('49d698').ladd === true && L.store.getHex('49d698').reg === 'OK-VOS');
+    // (an aircraft identified from a source without the flags, then seen with them anywhere - an area query, a list)
+    L.live.set(ID6, { id: ID6, hex: '49d697', reg: 'OK-VOT', type: 'GA6C', ladd: false, pia: false, mil: false, src: 'adsb.fi' });
+    w.__posted.length = 0;
+    const row = L.normalizeReadsb({ hex: '49d697', r: 'OK-VOT', t: 'GA6C', lat: 51.5, lon: -0.6, alt_baro: 31675, dbFlags: 8 }, 'adsb.fi', Date.now());
+    await sleep(80);
+    check('an aircraft identified without the flags, then seen with the LADD flag in any answer: its record and the panel tagged LADD at once', row.ladd === true && L.live.get(ID6).ladd === true && L.store.getHex('49d697').ladd === true && w.__posted.some(m => m.__tweeksLadd === 'resolve' && (m.entries || []).some(e => e.id === ID6)));
+    L.live.delete(ID6); }
+  // ---- owners: the monitor first ------------------------------------------------------------------------------------
+  { const nS = Math.floor(Date.now() / 1000), ID5 = 0x7a5a5a50;
+    // (a name from the monitor with its owner and operator: on the page with them, and kept here)
+    idsDelta = { rows: [[ID5, 'a1b2c6', 'N1851T', 'C68A', '', 1, 'list', nS, 0, '', 0, 0, 0, 40, -100, 41000, 0, nS, 0, 0, 'Table Owner LLC', 'Table Jets', 4321, 'TJX']], gone: [] };
+    w.__posted.length = 0; await L.pullSrvIds();
+    const e5 = w.__posted.filter(m => m.__tweeksLadd === 'resolve').flatMap(m => m.entries || []).find(e => e.id === ID5), hx5 = L.store.getHex('a1b2c6') || {};
+    check('a name from the monitor with its owner and operator: on the page with them (the name as shown: "LLC" dropped), and kept in this browser', !!e5 && e5.owner === 'Table Owner' && e5.operatorId === 4321 && hx5.owner === 'Table Owner LLC' && hx5.operatorIcao === 'TJX', e5 && { owner: e5.owner, op: e5.operatorId, name: e5.operatorName });
+    // (an aircraft the monitor knows: its answer taken, no register asked here)
+    ownersKnown.a1b2c4 = ['a1b2c4', 'N1849T', 'C68A', 'Cessna Citation Latitude', 'MONITOR OWNER LLC', 'DOVER, DELAWARE', 'United States', 'US', '680A-0200', 2016, 0, '', '', nS - 86400, 1];
+    const r4 = { id: 0x7a5a5a41, hex: 'a1b2c4', reg: 'N1849T', type: '', ladd: true, cs: '' };
+    net.asked.length = 0; ownersAsked.length = 0; await L.enrich(r4);
+    const regs = net.asked.filter(a => /hexdb|adsbdb|faa\.gov|ginfoapi/.test(a.url));
+    check('a blocked aircraft the monitor knows: its owner, city, serial number, year from the monitor - no register or database asked here', ownersAsked.some(h => h.includes('a1b2c4')) && r4.owner === 'MONITOR OWNER LLC' && r4.msn === '680A-0200' && r4.year === 2016 && r4.type === 'C68A' && regs.length === 0 && r4.faaAt > 0, { regs: regs.map(a => a.url), owner: r4.owner });
+    // (one it does not know: looked up here, and what was found goes back to the monitor)
+    makeNet.extra = url => /hexdb\.io\/api\/v1\/aircraft\/A1B2C5$/.test(url) ? { status: 200, text: JSON.stringify({ Registration: 'N1850T', ICAOTypeCode: 'C68A', RegisteredOwners: 'Private' }) }
+      : /NNumberResult\?nNumberTxt=N1850T$/.test(url) ? { status: 200, text: '<td data-label="Serial Number">680A-0300</td><td data-label="Name">FAA OWNER LLC</td><td data-label="Mfr Year">2019</td>' } : null;
+    const r5 = { id: 0x7a5a5a42, hex: 'a1b2c5', reg: '', type: '', ladd: true, cs: '' };
+    net.asked.length = 0; await L.enrich(r5);
+    check('... one it does not know: looked up here (the databases, then its register)', r5.owner === 'FAA OWNER LLC' && r5.reg === 'N1850T' && r5.msn === '680A-0300' && net.asked.some(a => /faa\.gov/.test(a.url)), { owner: r5.owner, reg: r5.reg });
+    net.posts.length = 0; await L.reportToMonitor();
+    const ob = net.posts[0] && JSON.parse(net.posts[0].body), o5 = ob && (ob.owners || []).find(x => x[0] === 'a1b2c5');
+    check('... and what was found goes to the monitor with the next report (the register\'s owner, marked so)', !!o5 && o5[1].owner === 'FAA OWNER LLC' && o5[1].regOwner === true && o5[1].regAnswered === true && o5[1].msn === '680A-0300', ob && ob.owners);
+    net.posts.length = 0; await L.reportToMonitor();
+    const ob2 = net.posts[0] && JSON.parse(net.posts[0].body);
+    check('... once', !ob2 || !(ob2.owners || []).some(x => x[0] === 'a1b2c5'));
+    makeNet.extra = null; }
   // ---- flight logs from the monitor --------------------------------------------------------------------------------
   // (back as far as the fixture days - 5 Oct 2026 - and two more; adsb.lol keeps 40 days, the browser asks airplanes.live
   // beyond: past that the log checks cannot run as they are)

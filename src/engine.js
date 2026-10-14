@@ -139,12 +139,27 @@ function createRouteEngine() {
   // Runways (OurAirports runways.csv): every landing direction as [threshold lat, lon, landing heading true] - lat/lon
   // null when only the heading is known. An aircraft lined up with a runway's extended centreline is landing there.
   let RW = new Map();
+  // One line of a CSV file, its fields (a quoted one may hold commas: OurAirports' "Turf, soft during spring thaw")
+  function csvLine(l) {
+    l = String(l || '');
+    if (l.indexOf('"') < 0) return l.split(',').map(v => v.trim());
+    const out = []; let cur = '', q = false;
+    for (let i = 0; i < l.length; i++) {
+      const c = l[i];
+      if (q) { if (c === '"') { if (l[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += c; }
+      else if (c === '"') q = true;
+      else if (c === ',') { out.push(cur.trim()); cur = ''; }
+      else cur += c;
+    }
+    out.push(cur.trim());
+    return out;
+  }
   function parseRunwaysCsv(text, keep) {
     const out = {}, lines = String(text || '').split('\n');
     const col = {}; (lines[0] || '').split(',').forEach((h, i) => { col[h.replace(/"/g, '').trim()] = i; });
     const num = v => { const x = parseFloat(v); return isFinite(x) ? x : null; };
     for (let i = 1; i < lines.length; i++) {
-      const f = lines[i].split(',').map(v => v.replace(/"/g, '').trim()); if (f.length < 19) continue;
+      const f = csvLine(lines[i]); if (f.length < 19) continue;
       const icao = (f[col.airport_ident] || '').toUpperCase(); if (!icao || (keep && !keep(icao))) continue;
       if (f[col.closed] === '1' || /^H/.test(f[col.le_ident] || '') || (num(f[col.length_ft]) || 0) < 1200) continue;
       const le = [num(f[col.le_latitude_deg]), num(f[col.le_longitude_deg]), num(f[col.le_heading_degT])];
@@ -169,7 +184,7 @@ function createRouteEngine() {
     const out = {}, lit = {}, lines = String(text || '').split('\n');
     const col = {}; (lines[0] || '').split(',').forEach((h, i) => { col[h.replace(/"/g, '').trim()] = i; });
     for (let i = 1; i < lines.length; i++) {
-      const f = lines[i].split(',').map(v => v.replace(/"/g, '').trim()); if (f.length < 8) continue;
+      const f = csvLine(lines[i]); if (f.length < 8) continue;
       const icao = (f[col.airport_ident] || '').toUpperCase(); if (!icao || (keep && !keep(icao))) continue;
       if (f[col.closed] === '1' || /^H/.test(f[col.le_ident] || '')) continue;
       const len = parseFloat(f[col.length_ft]); if (!(len > 0)) continue;
@@ -2079,7 +2094,7 @@ function createRouteEngine() {
     return res;
   }
 
-  return { setTables2, get T2() { return T2; }, fieldShortName, setApproach, approachCell, approachPath, apprGroup, apprKey, trackAgree, heatNear, heatMatch, reckon, trackErr, remotePath, flowKeysOf, pgrpOf, grp6, sunElev, airData, gsAlong, minutesTo, flowAt, pathOf, pathDev, ownerKey, parseRunwayLengths, setRunwayLengths, SQ_NOINFO, tripBin, regionOf, learnLeg, odAdd: (x, y, w) => { const k = odKey(String(x).toUpperCase(), String(y).toUpperCase()), v = (OD.get(k) || 0) + w; if (v > 1e-9) OD.set(k, v); else OD.delete(k); }, odWeight: (x, y) => OD.get(odKey(String(x).toUpperCase(), String(y).toUpperCase())) || 0, odCount: () => OD.size, setAirports, setUsage, addUsage, setRunways, parseRunwaysCsv, runwayFit, setWeights, setTables, setLogit, calibrated, mergePoints, finalTo, longFinal, typeRangeKm, FEAT, groupOf, W, classify, isStepClimb, rangeKm, parseTrace, legsFromPoints, summarizeLeg, stitchLegs, chainLegs, histStats, inferOrigin, predict, privateSite, rwyImpossible, typeDesc, heliSpots, heliAirportAt, landedSum, approachTo, downAndUp, landingInGap, circuits, mergeCircuits, setFields, fieldAt, placeAt, isField, nearbyFields, fieldCount: () => FL.length, airportAt, departureFromClimb, arrivalFromDescent, nearby, dist, brg, xtat, destPoint, angDiff, get airports() { return AP; }, byId: id => byId.get(id), byIcao: c => byIcao.get(String(c || '').toUpperCase()) };
+  return { setTables2, get T2() { return T2; }, fieldShortName, setApproach, approachCell, approachPath, apprGroup, apprKey, trackAgree, heatNear, heatMatch, reckon, trackErr, remotePath, flowKeysOf, pgrpOf, grp6, sunElev, airData, gsAlong, minutesTo, flowAt, pathOf, pathDev, ownerKey, parseRunwayLengths, setRunwayLengths, csvLine, SQ_NOINFO, tripBin, regionOf, learnLeg, odAdd: (x, y, w) => { const k = odKey(String(x).toUpperCase(), String(y).toUpperCase()), v = (OD.get(k) || 0) + w; if (v > 1e-9) OD.set(k, v); else OD.delete(k); }, odWeight: (x, y) => OD.get(odKey(String(x).toUpperCase(), String(y).toUpperCase())) || 0, odCount: () => OD.size, setAirports, setUsage, addUsage, setRunways, parseRunwaysCsv, runwayFit, setWeights, setTables, setLogit, calibrated, mergePoints, finalTo, longFinal, typeRangeKm, FEAT, groupOf, W, classify, isStepClimb, rangeKm, parseTrace, legsFromPoints, summarizeLeg, stitchLegs, chainLegs, histStats, inferOrigin, predict, privateSite, rwyImpossible, typeDesc, heliSpots, heliAirportAt, landedSum, approachTo, downAndUp, landingInGap, circuits, mergeCircuits, setFields, fieldAt, placeAt, isField, nearbyFields, fieldCount: () => FL.length, airportAt, departureFromClimb, arrivalFromDescent, nearby, dist, brg, xtat, destPoint, angDiff, get airports() { return AP; }, byId: id => byId.get(id), byIcao: c => byIcao.get(String(c || '').toUpperCase()) };
 }
 /* ==/ENGINE== */
 if (typeof module !== 'undefined') module.exports = { createRouteEngine };

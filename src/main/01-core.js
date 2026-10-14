@@ -1,7 +1,7 @@
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '22.20.0';
+  const VERSION = '22.21.0';
   const NM_KM = 1.852;
   const AREA_RADIUS_NM = 220;           // aggregator "point" radius for viewport sweeps (APIs cap at 250)
   const TARGET_RADIUS_NM = 40;          // radius for the immediate lookup of the selected aircraft
@@ -73,7 +73,10 @@
     if (k[0] === '#') { const n = k[1] === 'x' ? parseInt(k.slice(2), 16) : parseInt(k.slice(1), 10); return isFinite(n) && n > 0 ? String.fromCodePoint(n) : m; }
     return { amp: '&', quot: '"', apos: "'", lt: '<', gt: '>', nbsp: ' ' }[k] || m;
   });
-  const NAME_PLACEHOLDER = /^(registration pending|sale reported|not assigned|in question|expired|deregistered|unknown|none|n\/?a|reserved|to be determined|tbd|registered owner|private|private owner|privately owned|private individual|individual|owner)$/i;
+  // (the aircraft registers, read as the monitor reads them - src/registry.js - through this script's requests)
+  const REG = createRegistry((url, o) => gmRequest(url, o), { log: (...a) => log(...a) });
+  const NAME_PLACEHOLDER = REG.NAME_PLACEHOLDER;
+  const STICKY_FLAGS = new Set(['ladd', 'pia', 'mil', 'fr24Blocked']);
   const NAME_UPPER = new Set(['LLC', 'LLP', 'LP', 'PLC', 'USA', 'US', 'UK', 'UAE', 'AG', 'SA', 'NV', 'BV', 'SPA', 'SRL', 'SARL', 'SAS', 'AB', 'AS', 'ASA', 'OY', 'KG', 'II', 'III', 'IV', 'VI', 'DBA', 'FBO', 'MRO', 'NA', 'JSC', 'PJSC', 'LTDA', 'CV', 'SE', 'PC', 'PA', 'NJ', 'NY', 'FL', 'TX', 'CA', 'DC', 'IBM', 'FAA', 'RAF', 'NASA']);
   const NAME_FIXED = { INC: 'Inc', CORP: 'Corp', LTD: 'Ltd', CO: 'Co', GMBH: 'GmbH', INTL: 'Intl', MGMT: 'Mgmt', SVCS: 'Svcs', SVC: 'Svc', ASSN: 'Assn', BROS: 'Bros', DEPT: 'Dept', HLDGS: 'Hldgs', HOLDINGS: 'Holdings', TR: 'Tr', TRS: 'Trs', TRUSTEE: 'Trustee', MC: 'Mc', ST: 'St', MR: 'Mr', MRS: 'Mrs', DR: 'Dr', JR: 'Jr', SR: 'Sr', MT: 'Mt', FT: 'Ft', MFG: 'Mfg', PTY: 'Pty', PTE: 'Pte', CTR: 'Ctr' };
   const NAME_SMALL = new Set(['of', 'and', 'the', 'for', 'in', 'on', 'at', 'by', 'to', 'de', 'la', 'le', 'du', 'des', 'von', 'van', 'der', 'den', 'del', 'da', 'di', 'y', 'e']);
@@ -379,7 +382,9 @@
       getHex: hex => mem.hex.get(hex) || null,
       allHex: () => mem.hex,
       byReg: reg => { reg = String(reg || '').toUpperCase(); for (const h of mem.hex.values()) if (h && h.reg === reg) return h; return null; },
-      mergeHex: (hex, info) => { const cur = mem.hex.get(hex) || { hex }; for (const k of Object.keys(info)) { const v = info[k]; if (v == null || v === '' || (Array.isArray(v) && !v.length && k !== 'recent')) continue; cur[k] = v; } cur.savedAt = now(); mem.hex.set(hex, cur); touch('hex', hex); return cur; },
+      // (what an aircraft is - LADD-listed or hidden by FR24, PIA, military - once known stays known: a source without the
+      // database flags, an area query or a trail, says false where it simply does not know)
+      mergeHex: (hex, info) => { const cur = mem.hex.get(hex) || { hex }; for (const k of Object.keys(info)) { const v = info[k]; if (v == null || v === '' || (Array.isArray(v) && !v.length && k !== 'recent') || (v === false && STICKY_FLAGS.has(k) && cur[k])) continue; cur[k] = v; } cur.savedAt = now(); mem.hex.set(hex, cur); touch('hex', hex); return cur; },
       kvGet: k => mem.kv.get(k),
       kvSet: (k, v) => { mem.kv.set(k, v); touch('kv', k); },
       // full logs: { legs:[summaries], days:{'YYYY/MM/DD':true}, savedAt }

@@ -1,5 +1,5 @@
 // Names as shown: owners without their legal form (src/main/01-core.js ownerName), airfields FR24 does not list by
-// their own short name (engine fieldShortName via setFields), the Isle of Man register page parsed as fetchIom does.
+// their own short name (engine fieldShortName via setFields). (The registers' pages: test/unit_registry.cjs.)
 // usage: node test/unit_names.cjs <dataDir>
 const fs = require('fs');
 const path = require('path');
@@ -10,7 +10,8 @@ const check = (name, ok, info) => { if (!ok) fails++; console.log((ok ? 'PASS  '
 const core = fs.readFileSync(path.join(__dirname, '..', 'src', 'main', '01-core.js'), 'utf8');
 const a = core.indexOf('  const NAME_PLACEHOLDER'), b = core.indexOf('  // "LIBERTYVILLE');
 const clean = v => String(v == null ? '' : v).replace(/\s+/g, ' ').trim();
-const ownerName = new Function('clean', 'decodeEntities', core.slice(a, b) + '; return ownerName;')(clean, x => x);
+const { createRegistry } = require('../src/registry.js');
+const ownerName = new Function('clean', 'decodeEntities', 'REG', core.slice(a, b) + '; return ownerName;')(clean, x => x, createRegistry(() => Promise.reject(new Error('offline'))));
 for (const [raw, want] of [['BALLYCASTLE AVIATION LIMITED PARTNERSHIP INCORPORATED', 'Ballycastle Aviation'], ['Pad Aviation Service GmbH', 'Pad Aviation Service'], ['CTB INC', 'CTB'], ['FLEXJET LLC', 'Flexjet'],
   ['GLOBAL JET LUXEMBOURG S.A.', 'Global Jet Luxembourg'], ['Executive Jet Management, Inc.', 'Executive Jet Management'], ['GAMA AVIATION (UK) LIMITED', 'Gama Aviation'], ['AIR HAMBURG LUFTVERKEHRSGESELLSCHAFT MBH', 'Air Hamburg Luftverkehrsgesellschaft'],
   ['SKYBIRD AVIATION PTY LTD', 'Skybird Aviation'], ['LLC', 'LLC'], ['PAL Aerospace Ltd (Provincial Aerospace)', 'PAL Aerospace'], ['GAMA AVIATION (UK) LIMITED', 'Gama Aviation'], ['Acme Air Inc. (formerly Foo Jets)', 'Acme Air'], ['Private', ''], ['PRIVATE OWNER', ''], ['DEREK NEIL WATSON', 'Derek Neil Watson'], ['WELLS FARGO TRUST CO NA TRUSTEE', ''], ['TVPX AIRCRAFT SOLUTIONS INC TRUSTEE', ''], ['BANK OF UTAH TRUSTEE', ''], ['AC EXECUTIVE AIRCRAFT (2025) LIMITED', 'AC Executive Aircraft'], ['GS AVIATION (EUROPE) LTD', 'GS Aviation'], ['ARTHUR J GALLAGHER & CO (ILLINOIS)', 'Arthur J Gallagher'], ['ARTHUR J GALLAGHER (ILLINOIS)', 'Arthur J Gallagher'], ['AC EXECUTIVE AIRCRAFT (2025)', 'AC Executive Aircraft'], ['HAWKWIND HELICOPTERS LTD', 'Hawkwind Helicopters'], ['MR JOHN SMITH', 'Mr John Smith'], ['AL JABER AVIATION', 'Al Jaber Aviation'], ['ACME LEASING (NO. 2) LIMITED', 'Acme Leasing'], ['JO SMITH', 'Jo Smith']]) check(`owner "${raw}" -> "${want}"`, ownerName(raw) === want, ownerName(raw));

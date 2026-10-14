@@ -21,21 +21,43 @@ Considered and not used:
 
 ## Flightradar24
 
-The userscript runs on flightradar24.com and reads FR24's own answers to the page: the live feed, panels, boards, search, and airport and schedule data. It adds to what FR24 shows and never overrides FR24's own routes or airports. FR24's own rate limits are respected: background calls are spaced, and the script backs off for a minute after any `429`.
+**In the browser.** The extension and userscript run on flightradar24.com and read FR24's own answers to the page: the live feed, panels, boards, search, and airport and schedule data. They add to what FR24 shows and never override FR24's own routes or airports. FR24's own rate limits are respected: background calls are spaced, and the script backs off for a minute after any `429`. The airport panel's movements per day are counted from FR24's own schedule pages for that airport, at most once every 10 minutes, and only after the panel has been open for a moment.
+
+**On the monitor (optional).** The monitor reads FR24's live feed (`data-feed.flightradar24.com`, the same LiveFeed and FollowFlight requests the page makes) to find the flights FR24 draws without a callsign:
+
+- **Pace:** one world round every 2 minutes, one request every 0.4 s within it.
+- **Trails:** at most one every 20 s, for flights it cannot name otherwise and for named flights as they land.
+- **Refusals:** any refusal pauses it for 10 minutes, doubling up to 2 hours.
+- **Headers:** it uses the feed headers a browser reports (never an authorization or cookie). It uses no account.
+- **Off switch:** `"fr24Scan": false` in `monitor.json` turns it off. The browsers then do their own world scan.
+
+Automated reading of FR24's feed is the part of the project that FR24's terms are least likely to welcome; see [legal.md](legal.md#62-database-right).
 
 ## Aircraft and airport reference data
 
 | Source | Used for | Licence |
 |---|---|---|
-| OurAirports (`davidmegginson/ourairports-data`) | Airfields, heliports, seaplane bases, runways | Public domain |
+| OurAirports (`davidmegginson/ourairports-data`) | Airfields, heliports, seaplane bases, runways (each end in full), radio frequencies (`monitor/mkdata.cjs`) | Public domain |
 | tar1090-db (`wiedehopf/tar1090-db`) | ICAO type designators, aircraft classes | See the repository's licence (used as a lookup table) |
 | FAA aircraft register (MASTER / DEREG) | Build-year table by type and serial (`src/agetable.json`), US owner names | Public domain (US government) |
-| Isle of Man, UK CAA G-INFO, Swiss BAZL registers | Owner names | Public registers |
+| Isle of Man, UK CAA G-INFO, Swiss FOCA (BAZL) registers | Owner names | Public registers |
+| hexdb.io, adsbdb.com | Registration, type and owner by transponder address | Free public lookups |
 | EUROCONTROL atlas FIR/UIR (via GitHub), VATSpy fallback | Airspace names | Public |
 | OpenStreetMap (Overpass API) | Naming hospitals' pads, offshore platforms and estates where helicopters land | ODbL |
 | JetPhotos (through FR24's own API), Planespotters API | Aircraft photos | Each photographer's copyright, shown with credit |
 | aviationweather.gov | METAR/TAF for the predicted destination | Public (US government) |
 | FAA NOTAM API | Airport closures (only with the user's own key) | Public (US government) |
+
+## Owner lookups on the monitor
+
+The monitor looks up each blocked aircraft's owner once (`monitor/owners.cjs`) and keeps it, so browsers don't each ask the registers. It uses the same code as the browser (`src/registry.js`):
+
+| Site | Pace | On refusal |
+|---|---|---|
+| hexdb.io, api.adsbdb.com | one request every 1.5 s | `429`: 10 minutes; `401`/`403`: an hour |
+| registry.faa.gov, ginfoapi.caa.co.uk, ardis.iomaircraftregistry.com, app02.bazl.admin.ch | one request every 3 s | the same |
+
+It looks up one aircraft every 4 s, the ones flying now first, and asks again after 60 days. A register that did not answer is asked again an hour later. Requests say who is asking (`User-Agent: fr24-ladd-monitor …`).
 
 ## Personal data
 

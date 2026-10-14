@@ -45,7 +45,10 @@ function createIdent(env) {
       // (its positions, one every 2 minutes, the last 13 hours: its track over the ocean for the rough destination - small
       // enough for thousands of flights on a 1 GB server)
       if (!last || ts - last.t >= 120) { F.pts.push({ t: ts, lat: f.lat, lon: f.lon, alt: f.gnd ? 0 : f.alt, gs: f.spd, trk: f.trk, gnd: !!f.gnd }); if (F.pts.length > 400) F.pts.splice(0, F.pts.length - 400); }
-      const R = ids.get(f.id); if (R) { R.lat = f.lat; R.lon = f.lon; R.alt = f.alt; R.gnd = !!f.gnd; R.ts = ts; }
+      const R = ids.get(f.id); if (R && ts > (R.ts || 0)) { R.lat = f.lat; R.lon = f.lon; R.alt = f.alt; R.gnd = !!f.gnd; R.ts = ts; R.pchg = nowMs; }
+      // (a named flight down on the ground after being seen in the air: FR24's whole trail of it, for its log - taken while
+      // FR24 still draws it, a few minutes)
+      if (R && f.gnd && !F.logTrail && F.pts.some(p => !p.gnd)) { F.logTrail = 1; trailQ.unshift(f.id); }
       n++;
     }
     stats.observed += n;
@@ -204,7 +207,14 @@ function createIdent(env) {
     for (const F of flights.values()) {
       if (nowMs - F.seen > 10 * 60000) continue;
       const R = ids.get(F.id);
-      if (R) { const c = cands.get(R.hex); if (c) verify(F, R, c, nowMs); if (!ids.has(F.id)) unmatched.push(F); else continue; }
+      if (R) {
+        const c = cands.get(R.hex); if (c) verify(F, R, c, nowMs); if (!ids.has(F.id)) { unmatched.push(F); } else {
+          // (what the aircraft is, learned later - the LADD flag from a list it turned up on: added to its name, never taken off)
+          const b = env.blocked.get(R.hex) || {}, fl = R.flags | (c && c.ladd || b.faa ? FLAG.ladd : 0) | (c && c.mil ? FLAG.mil : 0) | (c && c.pia ? FLAG.pia : 0);
+          if (fl !== R.flags) { R.flags = fl; R.chg = nowMs; }
+          continue;
+        }
+      }
       if (F.src === 4) continue;                                              // (FR24's estimated positions: not to be matched on)
       const b = best(F, near(g, F.lat, F.lon), nowMs);
       if (b) { assign(F, b.c.hex, infoOf(b.c.hex, env.ac.get(b.c.hex), b.c), cache.has(b.c.hex) ? 'lookup' : 'list', nowMs); continue; }
@@ -248,8 +258,13 @@ function createIdent(env) {
     if (cache.size > 30000) { const cut = nowS - 300; for (const [h, c] of cache) if (c.t < cut) cache.delete(h); }
     return n;
   }
-  function nextTrail() { while (trailQ.length) { const id = trailQ.shift(), F = flights.get(id); if (F && !ids.has(id) && !F.trail) return F; } return null; }
-  function setTrail(id, pts, nowMs) { const F = flights.get(id); if (!F) return; F.trail = pts && pts.length ? pts : []; F.trailAt = nowMs; stats.trails++; }
+  function nextTrail() { while (trailQ.length) { const id = trailQ.shift(), F = flights.get(id); if (F && ((!ids.has(id) && !F.trail) || F.logTrail === 1)) return F; } return null; }
+  function setTrail(id, pts, nowMs) {
+    const F = flights.get(id); if (!F) return;
+    // (a landing's trail that did not come: the one kept, if any, stays)
+    if (F.logTrail === 1) { F.logTrail = 2; if (!(pts && pts.length)) return; }
+    F.trail = pts && pts.length ? pts : []; F.trailAt = nowMs; stats.trails++;
+  }
   // a browser's own identification of a flight (only where this side has none and the aircraft is not another flight's)
   function clientId(id, hex, how, nowMs) {
     hex = String(hex || '').toLowerCase(); if (!/^[0-9a-f]{6}$/.test(hex) || ids.has(id) || taken(hex, id, nowMs)) return false;
@@ -265,15 +280,21 @@ function createIdent(env) {
 
   // ---- what the browsers get ---------------------------------------------------------------------------------------
   // rows: [FR24 id, hex, reg, type, callsign, flags (1 LADD, 2 military, 4 PIA), how, named at, origin airport id, how
-  //        sure, destination airport id, its chance (%), worked out at, lat, lon, alt, on ground, FR24 position time]
+  //        sure, destination airport id, its chance (%), worked out at, lat, lon, alt, on ground, FR24 position time,
+  //        estimated arrival, departure time, owner, operator name, FR24 operator id, operator ICAO]
+  // pos (with since): [id, lat, lon, alt, on ground, FR24 position time] of the named flights that only moved
+  const r4 = v => fin(v) ? Math.round(v * 1e4) / 1e4 : null;
+  const ownerCols = hex => { const o = env.ownerOf ? env.ownerOf(hex) : null; return o ? [o.owner || '', o.opName || '', o.opId || 0, o.opIcao || ''] : ['', '', 0, '']; };
+  // (an aircraft's owner newly known: its name goes to the browsers again)
+  function touch(hex) { const id = byHex.get(hex), R = id != null ? ids.get(id) : null; if (R) { R.chg = Date.now(); return true; } return false; }
   function table(since) {
-    const rows = [];
+    const rows = [], pos = [];
     for (const [id, R] of ids) {
-      if (since && R.chg <= since) continue;
+      if (since && R.chg <= since) { if (R.pchg > since) pos.push([id, r4(R.lat), r4(R.lon), fin(R.alt) ? R.alt : null, R.gnd ? 1 : 0, R.ts || 0]); continue; }
       rows.push([id, R.hex, R.reg, R.type, R.cs, R.flags, R.how, R.at, R.origin ? R.origin.id : 0, R.origin ? R.origin.conf : '', R.dest ? R.dest.id : 0, R.dest ? Math.round(R.dest.p * 100) : 0, R.dest ? R.dest.at : 0,
-        fin(R.lat) ? Math.round(R.lat * 1e4) / 1e4 : null, fin(R.lon) ? Math.round(R.lon * 1e4) / 1e4 : null, fin(R.alt) ? R.alt : null, R.gnd ? 1 : 0, R.ts || 0]);
+        r4(R.lat), r4(R.lon), fin(R.alt) ? R.alt : null, R.gnd ? 1 : 0, R.ts || 0, R.dest && R.dest.eta || 0, R.origin && R.origin.t || 0].concat(ownerCols(R.hex)));
     }
-    return { rows, gone: since ? gone.filter(g => g.at > since).map(g => g.id) : [] };
+    return { rows, pos, gone: since ? gone.filter(g => g.at > since).map(g => g.id) : [] };
   }
   // ---- kept on disk ---------------------------------------------------------------------------------------------------
   function dump() { return { v: 1, ids: [...ids].map(([id, R]) => [id, R.hex, R.reg, R.type, R.cs, R.how, R.at, R.ver, R.flags, R.lat, R.lon, R.alt, R.gnd ? 1 : 0, R.ts, R.origin, R.dest]), flights: [...flights.values()].filter(F => ids.has(F.id)).map(F => [F.id, F.lat, F.lon, F.alt, F.trk, F.spd, F.ts, F.gnd ? 1 : 0, F.src, F.type, F.seen, F.first]) }; }
@@ -284,6 +305,6 @@ function createIdent(env) {
     for (const r of d.ids || []) { const [id, hex, reg, type, cs, how, at, ver, flags, lat, lon, alt, gnd, ts, origin, dest] = r; if (!flights.has(id)) continue; ids.set(id, { hex, reg, type, cs, how, at, ver, flags, strikes: null, chg: nowMs, lat, lon, alt, gnd: !!gnd, ts, origin: origin || null, dest: dest || null }); byHex.set(hex, id); n++; }
     return n;
   }
-  return { flights, ids, byHex, cache, gone, trailQ, stats, observe, match, lookupAreas, addLookup, nextTrail, setTrail, clientId, prune, table, dump, restore, score, best, reckon, trailMatch, parked, typeRelation, assign, unassign, candidates };
+  return { flights, ids, byHex, cache, gone, trailQ, stats, touch, observe, match, lookupAreas, addLookup, nextTrail, setTrail, clientId, prune, table, dump, restore, score, best, reckon, trailMatch, parked, typeRelation, assign, unassign, candidates };
 }
 module.exports = { createIdent, FLAG };

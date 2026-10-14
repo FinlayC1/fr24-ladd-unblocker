@@ -461,7 +461,7 @@
     const out = {}, lines = String(csv || '').split('\n'), col = {}; (lines[0] || '').split(',').forEach((h, i) => { col[h.replace(/"/g, '').trim()] = i; });
     const num = v => { const x = parseFloat(v); return isFinite(x) ? Math.round(x) : null; };
     for (let i = 1; i < lines.length; i++) {
-      const f = lines[i].split(',').map(v => v.replace(/"/g, '').trim()); if (f.length < 19) continue;
+      const f = ENGINE.csvLine(lines[i]); if (f.length < 19) continue;
       const icao = (f[col.airport_ident] || '').toUpperCase(); if (!icao || (keep && !keep(icao)) || f[col.closed] === '1') continue;
       const len = num(f[col.length_ft]), surf = surfCode(f[col.surface]);
       for (const [id, el] of [[f[col.le_ident], f[col.le_elevation_ft]], [f[col.he_ident], f[col.he_elevation_ft]]]) if (id && !/^H/i.test(id)) (out[icao] = out[icao] || []).push([id.toUpperCase(), len, num(el), surf]);
@@ -489,6 +489,23 @@
     if (!ap || !ap.icao) return [];
     const m = await loadRunwayEnds(), ends = m[String(ap.icao).toUpperCase()] || [];
     return ends.filter(e => e[1] > 0).map(e => ({ name: e[0], lengthFt: e[1], elevationFt: e[2] != null ? e[2] : Math.round(ap.alt || 0), surface: e[3] }));
+  }
+  // The map's airport panel - what FR24 locks or leaves out there: from the monitor, the airport's runways in full (each
+  // end's heading, elevation, displaced threshold; width, lighting) and radio frequencies, and the runways the flights it
+  // tracked there used; from this browser, the week's blocked flights for the movements per day (FR24's own counts are
+  // the page's). Without the monitor: the runway ends this browser reads from OurAirports itself.
+  const panelAsked = new Map();
+  async function onNeedAirportPanel(d) {
+    const code = clean(d.code).toUpperCase(); if (!/^[A-Z0-9]{3,4}$/.test(code)) return;
+    if (now() - (panelAsked.get(code) || 0) < 60000) return; panelAsked.set(code, now());
+    await loadAirports();
+    const ap = (code.length === 4 && ENGINE.byIcao(code)) || airports.byIata.get(code); if (!ap || !boardOk(ap.id)) return;
+    const full = apById(ap.id) || ap, out = { code, apId: ap.id, tz: (full.timezone && full.timezone.name) || '', days: 7, runways: null, freqs: null, usage: null, moves: 0, withRunway: 0, monitor: false };
+    routesOf(ap.id).then(list => postToPage('routesAdd', { apId: ap.id, list })).catch(e => log('routes', e));
+    const j = monUp() ? await monGet(`/airport?ap=${ap.id}&days=7`).catch(() => null) : null;
+    if (j && j.known) Object.assign(out, { runways: Array.isArray(j.runways) ? j.runways : [], freqs: Array.isArray(j.freqs) ? j.freqs : [], usage: Array.isArray(j.usage) ? j.usage : [], moves: j.moves || 0, withRunway: j.withRunway || 0, monitor: true });
+    else out.ends = await runwaysOf(ap).catch(() => []);
+    postToPage('airportPanel', out);
   }
   async function onNeedAirportData(d) {
     const apId = Number(d.apId); if (!boardOk(apId)) return;
