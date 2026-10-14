@@ -50,7 +50,7 @@ flowchart TB
   page <-- "window.postMessage" --> boot
   res --> eng
   routes --> eng
-  core -- "HTTPS + X-Monitor-Token" --> mon
+  core -- "HTTPS (shared: no secret)" --> mon
   mon --> fr
   mon --> own
   mon --> eng2
@@ -243,7 +243,15 @@ It is written atomically (temp file + rename) every 2 minutes and on `SIGTERM`/`
 
 ### 4.6 API and security
 
-Every endpoint except `/dash` requires the header `X-Monitor-Token` when `MON_TOKEN` is set. The secret is never put in a URL, because reverse proxies log URLs. Each address is limited to `MON_RATE` requests a minute. The monitor listens on `127.0.0.1` only. HTTPS (Caddy) terminates in front of it. The endpoints are listed in [monitor.md](monitor.md#api-reference).
+**A monitor is public by default.** Every copy of the script connects to the shared one, reads it without a secret and reports to it. Reports from strangers are checked before they are used ([monitor.md](monitor.md#public-mode)):
+
+- names against the monitor's own ADS-B data, or by two browsers agreeing;
+- owners by two browsers agreeing;
+- ADS-B reports for plausibility and against its own.
+
+The owner's secret (`X-Monitor-Token`) opens the dashboard's numbers and the full answers, such as private owners' names and the areas being polled. On a private monitor (`MON_PUBLIC=0`), every endpoint except `/dash` requires it. The secret is never put in a URL, because reverse proxies log URLs. Each address is limited to `MON_RATE` requests a minute (300 on a public monitor), and the owner never is. The monitor listens on `127.0.0.1` only, with HTTPS (Caddy) in front of it. The endpoints are listed in [monitor.md](monitor.md#api-reference).
+
+**Shared polling and the padlocked figures.** The monitor keeps the newest public ADS-B report of every aircraft it hears (`tel.cjs`). A browser polls its map from the monitor (`/near`) every other time and from adsb.lol / adsb.fi itself in between. It sends what its own polls found back every 30 s. For the aircraft just clicked, it asks the monitor (`/tel`) and its own source at once and draws the first answer. The page then clears every padlock FR24 draws (`page.js`, `unlockFeed`). It fills them from those reports, or with the vertical speed from FR24's own altitudes and the airspace from the FIR/UIR boundaries when no receiver has them.
 
 ## 5. Data flows
 

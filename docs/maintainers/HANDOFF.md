@@ -133,6 +133,36 @@ Its store and state should move to the VM.
   the registers' live answers (their formats as the browser's code already read them), FR24's acceptance of the
   server's scan.
 
+## 4d. 22.22.0 (14 Oct, cloud session) - built and tested offline; deploy with deploy.sh
+
+- **Public monitor, default for every copy.**
+  - `PUBLIC` comes from `"public"` or `MON_PUBLIC`; `RATE` is 300 by default when public.
+  - `admin` means the secret, or no secret set. `/stats` is admin-only.
+  - Crowd rules:
+    - `ident.clientId`: a name is checked against `candOf(hex)` as heard at that moment, else needs `crowdNeed` browsers;
+    - `owners.fromClient`: `pend` entries are dropped after 6 h;
+    - `pbNames`: confirmed by the monitor's own legs, else two browsers;
+    - `tel.addCrowd`: plausibility checks, and never over its own report of the last minute.
+  - Private owners are withheld (`owners.row(pub)` col 15).
+  - Browsers send `hdr` only to a monitor with a token.
+- **No padlocks.**
+  - `page.js` `unlockFeed` (feed record flags 13/16/17/18) and the follow-stream EFI branch (12/14/16/18).
+  - Values come from `pubTel` (keyed H/C/R) or `telem`; otherwise the vertical speed is derived (`altHist`, seeded from the trail) and the airspace comes from `airAsk`→`airRows` (the userscript's `onAirAsk`, `firInfo`).
+  - The VS flag is kept only while no VS is known.
+  - Monitor `tel.cjs`: `/tel`, and `/near` returns full rows. The userscript's view poll alternates between the monitor and its own sources. `pollTelemetry` races the monitor's `/tel` against its own source on first open. `reportTel` runs every 30 s.
+- **Data pages.**
+  - `flightPagePlayback` (`/data/flights/…` when FR24 lists rows) gets the hex from `flight-playback.json` → `fillPlaybackData`.
+  - `unlockExports` turns locked KML/CSV buttons into downloads of the public ADS-B track (`exportFile`).
+  - Selectors are defensive; FR24's real markup for the lock buttons was not available here.
+- **Boards.** `naRouteOf` requires two flying reports. Take-off is the first of them. `cameFrom` is required for an approach or landing. `ENGINE.localFlew` covers same-field flights. `boardScrub` removes old rows. `boardSig` in page.js has the same `atd>0` rule. The monitor's `boardLegs`/`fr24Leg` filter by `localFlew`, and its legs carry `maxAlt`/`pathKm`.
+- **Names archive.** `names.cjs` (STORE/names/*.jsonl, kept for good), `/names`. `pbFromMonitor` runs first in `pbMatch`; heatmap names go to `pbOut` → `pbIds`.
+- **Failover.** `MON_DEFAULTS` (one entry today). A standby needs its URL there, in header.js @connect and in build.mjs hosts.
+- **NOT verified here:** FR24 and adsb.lol are blocked by this environment's network policy (403). Not verified:
+  - FR24's rendering of a cleared flag with no value (expected "N/A", as for a subscriber);
+  - the data pages' lock-button markup;
+  - the live behaviour of `/near` with real traffic.
+- **Server recommendation given to the user:** no extra scanning servers to multiply rate limits. Move the monitor to an Always Free Ampere A1 VM (up to 4 OCPU / 24 GB); keep the micro VM as a warm standby (`MON_DEFAULTS`).
+
 ## 5. The user's request (14 Oct, verbatim)
 
 > remember the monitor is running by itself now, it doesn't need my computer anymore and can therefore have as much

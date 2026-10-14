@@ -199,7 +199,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   function renderStrip(panel, state, rec, note) {
     const el = strip(panel); el.dataset.state = state;
     let html;
-    if (state !== 'resolved') html = rowHtml('plane', gridHtml([cellHtml('Blocked aircraft' + tagHtml('LADD', 'ladd'), state === 'pending' ? '<span class="tl-spin"></span> identifying via public ADS-B…' : esc(note || 'No public ADS-B match yet.'), bridgeWarnHtml(), true)]));
+    if (state !== 'resolved') html = rowHtml('plane', gridHtml([cellHtml('Blocked aircraft' + tagHtml('LADD', 'ladd'), state === 'pending' ? '<span class="tl-spin"></span> identifying via public ADS-B…' + (note ? ` <span class="tl-muted">· ${esc(note)}</span>` : '') : esc(note || 'No public ADS-B match yet.'), bridgeWarnHtml(), true)]));
     else {
       const hx = rec.hex ? withStored(rec) : rec;
       const hexU = (hx.hex || '').toUpperCase(), links = aircraftLinks(hx);
@@ -676,7 +676,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     }
     if (!pending.has(id)) { const snap = panelSnapshot(panel, id); if (snap) pending.set(id, snap); }
     const a = attemptsFor(id);
-    if (a && a.n >= MAX_TARGET_ATTEMPTS) { renderStrip(panel, 'failed', null, 'No public ADS-B match found for this aircraft (no aggregator coverage here?).'); return; }
-    renderStrip(panel, 'pending');
+    if (a && a.n >= MAX_TARGET_ATTEMPTS) { renderStrip(panel, 'failed', null, 'No public ADS-B match found for this aircraft' + (a.said ? ` (${a.said})` : ' (no aggregator coverage here?)') + '.'); return; }
+    renderStrip(panel, 'pending', null, a && a.said ? a.said : '');
     if (pending.has(id)) resolveTargeted(id, 'panel').catch(e => log(e));
   }

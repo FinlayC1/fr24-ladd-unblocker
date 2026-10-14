@@ -7,7 +7,8 @@
   // 12:35). A named flight - and an ordinary one FR24 has no destination for - gets the flight as flown, from its ADS-B
   // track of that day: where it took off and where it landed, the strip's tag "Playback" in red. The flight open in the
   // panel gets its padlocked figures from that track, moment by moment (the page reads them from it as FR24 plays).
-  const pb = { ts: 0, at: 0, flights: new Map(), named: new Map(), routes: new Map(), sel: 0, selTs: 0, hexOf: new Map(), busy: false, heatAt: 0, tried: new Map(), routing: new Set(), traceKey: '', matchT: 0 };
+  const pbOut = new Map();   // FR24 flight id -> a name found here in a playback, for the monitor (02 reportToMonitor)
+  const pb = { ts: 0, at: 0, flights: new Map(), named: new Map(), routes: new Map(), sel: 0, selTs: 0, hexOf: new Map(), busy: false, heatAt: 0, tried: new Map(), routing: new Set(), traceKey: '', matchT: 0, monAsked: new Set() };
   function pbMode() { return /^\/\d{4}-\d\d-\d\d\/\d\d:\d\d\//.test(location.pathname); }
   const heatUrlOf = t => { const d = new Date(t * 1000); return `https://adsb.lol/globe_history/${dayStr(t * 1000)}/heatmap/${String(d.getUTCHours() * 2 + (d.getUTCMinutes() >= 30 ? 1 : 0)).padStart(2, '0')}.bin.ttf`; };
   function onPbFeed(d) {
@@ -30,9 +31,33 @@
   }
   // Every unnamed flight of the moment against adsb.lol's heatmap of its half hour, in one pass. A file is read at most
   // every two minutes (one is ~25 MB) - at once for the flight opened in the panel - and each flight tried once a file.
+  // The monitor's archive first: every FR24 flight it named while it was live, any day it was running - the whole map's
+  // unnamed flights in one request, named at once, as they were named then
+  async function pbFromMonitor(ts) {
+    if (!monUp()) return 0;
+    const ids = [...pb.flights.values()].filter(f => f.ts === ts && !pb.named.has(f.id) && !pb.monAsked.has(f.id)).map(f => f.id).slice(0, 400);
+    if (!ids.length) return 0;
+    for (const id of ids) pb.monAsked.add(id);
+    if (pb.monAsked.size > 20000) pb.monAsked.clear();
+    const j = await monGet('/names?ids=' + ids.join(',') + '&t=' + Math.round(ts), { timeout: 10000 }).catch(e => { for (const id of ids) pb.monAsked.delete(id); log('playback names', String(e && e.message || e)); return null; });
+    let n = 0;
+    for (const r of (j && Array.isArray(j.list) ? j.list : [])) {
+      const [id, hex, reg, type, cs, flags] = r;
+      if (!pb.flights.has(id) || pb.named.has(id) || !/^[0-9a-f]{6}$/.test(String(hex || ''))) continue;
+      const hx = store.getHex(hex) || {}, rec = { hex, cs: /^[A-Z0-9]{2,8}$/.test(String(cs || '')) ? cs : '', reg: reg || hx.reg || hexNNumber(hex), type: String(type || hx.type || '').toUpperCase(), desc: hx.desc || '', ladd: !!(flags & 1 || hx.ladd), mil: !!(flags & 2 || hx.mil), pia: !!(flags & 4 || hx.pia), src: 'monitor (named live)', matchedAt: now() };
+      store.mergeHex(hex, { reg: rec.reg, type: rec.type, ladd: rec.ladd || undefined, pia: rec.pia || undefined, mil: rec.mil || undefined });
+      store.setId(id, Object.assign({ id }, rec));
+      pbAdopt(id, rec, ts); n++;
+      if (id === pb.sel) publicIdentity(hex, rec.reg).then(() => { pushToPage([rec]); syncPanelSoon(); }).catch(() => {});
+    }
+    if (n) log('playback: named from the monitor', n);
+    return n;
+  }
   async function pbMatch() {
     if (pb.busy || !pb.ts) return;
     const ts = pb.ts, url = heatUrlOf(ts);
+    await pbFromMonitor(ts).catch(e => log('playback names', e));
+    if (pb.ts !== ts) { pbMatchSoon(500); return; }
     const list = [...pb.flights.values()].filter(f => f.ts === ts && !pb.named.has(f.id) && pb.tried.get(f.id) !== url && f.src !== 4 && (f.gnd || f.spd > 40 || f.alt > 1500));
     if (!list.length) return;
     const selWaiting = list.some(f => f.id === pb.sel);
@@ -56,6 +81,8 @@
         store.setId(f.id, Object.assign({ id: f.id }, rec));
         log('playback: named', f.id.toString(16), hex, rec.reg, 'at', new Date(ts * 1000).toISOString().slice(11, 16));
         pbAdopt(f.id, rec, ts);
+        // (and to the monitor: kept there for good with the day of the flight - any later playback of it, anyone's, named)
+        pbOut.set(f.id, [f.id, hex, rec.reg, rec.type, rec.cs, (rec.ladd ? 1 : 0) | (rec.mil ? 2 : 0) | (rec.pia ? 4 : 0), Math.round(ts)]); if (pbOut.size > 2000) pbOut.delete(pbOut.keys().next().value);
         if (f.id === pb.sel) publicIdentity(hex, rec.reg).then(() => { pushToPage([rec]); syncPanelSoon(); }).catch(() => {});
       }
     } finally { pb.busy = false; }

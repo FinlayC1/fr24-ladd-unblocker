@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="360" height="720" viewBox="0 0 360 720" role="img" aria-label="How it works (portrait)" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">
+<title>How it works (portrait)</title>
+<defs><symbol id="pl" viewBox="0 0 24 24"><path d="M12 1.5C11.2 1.5 10.6 2.2 10.6 3V9.2L2.5 14V16.2L10.6 13.8V19L8.3 20.8V22.5L12 21.4L15.7 22.5V20.8L13.4 19V13.8L21.5 16.2V14L13.4 9.2V3C13.4 2.2 12.8 1.5 12 1.5Z"/></symbol></defs>
+<rect width="360" height="720" rx="16" fill="#ffffff" stroke="#d0d7de"/>
+<rect x="16" y="16" width="328" height="104" rx="12" fill="#ffffff" stroke="#d0d7de"/>
+<g transform="translate(32 32)" fill="none" stroke="#1f6feb" stroke-width="1.6"><rect x="0.8" y="0.8" width="20.4" height="16.4" rx="3"/><path d="M0.8 5.6H21.2"/><circle cx="4" cy="3.2" r="0.6" fill="#1f6feb"/><circle cx="6.6" cy="3.2" r="0.6" fill="#1f6feb"/></g>
+<text x="62" y="46" font-size="15" fill="#1f2328" font-weight="700">flightradar24.com</text>
+<text x="62" y="64" font-size="12" fill="#59636e">your browser tab</text>
+<rect x="32" y="84" width="6" height="6" rx="1.5" fill="#1f6feb"/><text x="46" y="92" font-size="13" fill="#1f2328">Live map feed</text><rect x="32" y="106" width="6" height="6" rx="1.5" fill="#1f6feb"/><text x="46" y="114" font-size="13" fill="#1f2328">Aircraft panel</text>
+<rect x="180" y="84" width="6" height="6" rx="1.5" fill="#1f6feb"/><text x="194" y="92" font-size="13" fill="#1f2328">Airport boards</text><rect x="180" y="106" width="6" height="6" rx="1.5" fill="#1f6feb"/><text x="194" y="114" font-size="13" fill="#1f2328">Playback</text>
+<path d="M150 120V160" stroke="#1f6feb" stroke-width="1.5"/><polygon points="150,166 145.8,159 154.2,159" fill="#1f6feb"/>
+<path d="M210 126V166" stroke="#1f6feb" stroke-width="1.5"/><polygon points="210,120 205.8,127 214.2,127" fill="#1f6feb"/>
+<text x="140" y="147" font-size="12" fill="#59636e" text-anchor="end">FR24's data</text>
+<text x="220" y="147" font-size="12" fill="#59636e">filled in</text>
+<rect x="16" y="166" width="328" height="196" rx="12" fill="#ffffff" stroke="#d0d7de"/>
+<g transform="translate(32 182)" fill="none" stroke="#1f6feb" stroke-width="1.6" stroke-linejoin="round"><path d="M2 6h4.5a2.5 2.5 0 1 1 5 0H16v4.5a2.5 2.5 0 1 1 0 5V20H2z"/></g>
+<text x="60" y="199" font-size="15" fill="#1f2328" font-weight="700">Extension or userscript</text>
+<text x="60" y="217" font-size="12" fill="#59636e">runs inside the FR24 tab</text>
+<rect x="32" y="234" width="296" height="52" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+<text x="46" y="255" font-size="13" fill="#1f2328" font-weight="700">Page interceptor</text>
+<text x="46" y="274" font-size="12" fill="#59636e">fills in FR24's data before it is drawn</text>
+<rect x="32" y="298" width="296" height="52" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+<text x="46" y="319" font-size="13" fill="#1f2328" font-weight="700">Engine</text>
+<text x="46" y="338" font-size="12" fill="#59636e">names · routes · telemetry · UI</text>
+<path d="M150 362V402" stroke="#1f6feb" stroke-width="1.5"/><polygon points="150,408 145.8,401 154.2,401" fill="#1f6feb"/>
+<path d="M210 368V408" stroke="#1f6feb" stroke-width="1.5"/><polygon points="210,362 205.8,369 214.2,369" fill="#1f6feb"/>
+<text x="140" y="389" font-size="12" fill="#59636e" text-anchor="end">reports</text>
+<text x="220" y="389" font-size="12" fill="#59636e">names · logs</text>
+<rect x="16" y="408" width="328" height="140" rx="12" fill="#ffffff" stroke="#d0d7de"/>
+<g transform="translate(32 424)" fill="none" stroke="#1f6feb" stroke-width="1.6"><rect x="0.8" y="0.8" width="18.4" height="7.6" rx="2"/><rect x="0.8" y="11.6" width="18.4" height="7.6" rx="2"/><circle cx="5" cy="4.6" r="1" fill="#1f6feb"/><circle cx="5" cy="15.4" r="1" fill="#1f6feb"/></g>
+<text x="62" y="438" font-size="15" fill="#1f2328" font-weight="700">Shared monitor</text>
+<text x="62" y="456" font-size="12" fill="#59636e">public by default, your own, or off</text>
+<rect x="32" y="478" width="6" height="6" rx="1.5" fill="#1f6feb"/><text x="46" y="486" font-size="13" fill="#1f2328">Scans FR24</text><rect x="32" y="500" width="6" height="6" rx="1.5" fill="#1f6feb"/><text x="46" y="508" font-size="13" fill="#1f2328">Owners</text>
+<rect x="140" y="478" width="6" height="6" rx="1.5" fill="#1f6feb"/><text x="154" y="486" font-size="13" fill="#1f2328">Names</text><rect x="140" y="500" width="6" height="6" rx="1.5" fill="#1f6feb"/><text x="154" y="508" font-size="13" fill="#1f2328">Archive</text>
+<rect x="236" y="478" width="6" height="6" rx="1.5" fill="#1f6feb"/><text x="250" y="486" font-size="13" fill="#1f2328">Routes</text>
+<text x="32" y="532" font-size="12" fill="#59636e">reads FR24's whole map every 2 minutes</text>
+<path d="M180 588V560" stroke="#1f6feb" stroke-width="1.5"/><polygon points="180,554 175.8,561 184.2,561" fill="#1f6feb"/>
+<text x="192" y="577" font-size="12" fill="#59636e">polled all the time</text>
+<rect x="16" y="588" width="328" height="116" rx="12" fill="#ffffff" stroke="#d0d7de"/>
+<g transform="translate(32 604)" fill="none" stroke="#1f6feb" stroke-width="1.6" stroke-linecap="round"><path d="M10 9V21M6 21h8"/><circle cx="10" cy="7.5" r="1.6" fill="#1f6feb"/><path d="M5.6 3.4a6 6 0 0 0 0 8.2M14.4 3.4a6 6 0 0 1 0 8.2M2.6 0.8a10 10 0 0 0 0 13.4M17.4 0.8a10 10 0 0 1 0 13.4"/></g>
+<text x="64" y="618" font-size="15" fill="#1f2328" font-weight="700">Public ADS-B networks</text>
+<text x="64" y="638" font-size="12" fill="#59636e">adsb.lol · adsb.fi · airplanes.live · OpenSky</text>
+<text x="32" y="668" font-size="12" fill="#59636e">Also asked by the extension directly:</text>
+<text x="32" y="686" font-size="12" fill="#59636e">lookups, live telemetry, and as a backup.</text>
+</svg>

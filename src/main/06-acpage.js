@@ -274,6 +274,97 @@
     put(/^VERTICAL SPEED$/i, p && p.own !== false && fin(p.vr) ? (p.vr > 0 ? '+' : '') + n(p.vr) + ' <small>FPM</small>' : '–');
     put(/^SQUAWK$/i, sq ? esc(sq) : '–');
   }
+  // ---- the padlocked KML / CSV of each of FR24's own rows (an aircraft's log, a flight number's): the flight's public
+  // ADS-B track (adsb.lol / airplanes.live, under the ODbL - the files say so) made into those files here, in FR24's own
+  // two formats. Only where FR24 padlocks them: a subscriber's working buttons are left alone.
+  const lockedBtn = el => !!(el.querySelector('[class*="lock"]') || /premium|locked|disabled/i.test(el.className || '') || /upgrade|subscri|pricing|premium/i.test(el.getAttribute('href') || ''));
+  function unlockExports(tbody) {
+    let n = 0;
+    for (const tr of tbody.querySelectorAll('tr.data-row:not(.tl-adsb-row):not(.tl-live-row)')) {
+      for (const el of [...tr.querySelectorAll('a, button')]) {
+        const kind = clean(el.textContent).toUpperCase(); if ((kind !== 'KML' && kind !== 'CSV') || el.dataset.tlExport || !lockedBtn(el)) continue;
+        const a = document.createElement('a');
+        a.className = String(el.className || '').replace(/\b(premium-content|premium|locked|disabled)\b/gi, ' ').replace(/\s+/g, ' ').trim() + ' tl-export';
+        a.href = '#'; a.dataset.tlExport = kind; a.textContent = ' ' + kind + ' ';
+        a.title = `This flight's track as a ${kind} file, from public ADS-B data (adsb.lol / airplanes.live, ODbL) - LADD unblocker`;
+        el.replaceWith(a); n++;
+      }
+    }
+    return n;
+  }
+  const tsOfTd = td => (td && Number(td.dataset.timestamp)) || 0;
+  // (the flight's time: from its take-off - or its departure as scheduled, or the row's day - to its landing, else its
+  // arrival as scheduled and two hours, else twelve hours on)
+  function rowWindow(tr) {
+    const c = tr.children, off = tsOfTd(c[8]) || tsOfTd(c[7]) || Number(tr.dataset.timestamp) || 0, st = clean(c[11] && c[11].textContent);
+    const on = /Landed/i.test(st) && tsOfTd(c[11]) > off ? tsOfTd(c[11]) : tsOfTd(c[9]) > off ? tsOfTd(c[9]) + 7200 : off + 12 * 3600;
+    return { off, on: Math.min(on, Math.max(off, nowS())) };
+  }
+  // the files themselves: FR24's CSV columns, a KML trail (altitudes in metres above sea level)
+  function exportFile(kind, pts, cs, fid) {
+    const rows = (pts || []).filter(p => p && fin(p.t) && fin(p.lat) && fin(p.lon)).sort((a, b) => a.t - b.t);
+    const altFt = p => p.gnd || p.alt === 'ground' ? 0 : fin(p.alt) ? Math.round(p.alt) : '';
+    if (kind === 'CSV') {
+      const lines = ['Timestamp,UTC,Callsign,Position,Altitude,Speed,Direction'];
+      for (const p of rows) lines.push([p.t, new Date(p.t * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z'), cs || '', '"' + p.lat.toFixed(6) + ',' + p.lon.toFixed(6) + '"', altFt(p), fin(p.gs) ? Math.round(p.gs) : '', fin(p.trk) ? Math.round(p.trk) : ''].join(','));
+      return { name: `${cs || 'flight'}_${fid}.csv`, type: 'text/csv', text: lines.join('\n') + '\n' };
+    }
+    const coords = rows.map(p => `${p.lon.toFixed(6)},${p.lat.toFixed(6)},${Math.round((Number(altFt(p)) || 0) * 0.3048)}`).join(' ');
+    const x = v => String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    const text = `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>${x(cs || 'Flight')} ${x(fid)}</name><description>Track from public ADS-B data: adsb.lol / airplanes.live (Open Database License). Made by the LADD unblocker.</description><Style id="trail"><LineStyle><color>ff00b4ff</color><width>3</width></LineStyle></Style><Placemark><name>Trail</name><styleUrl>#trail</styleUrl><LineString><tessellate>1</tessellate><altitudeMode>absolute</altitudeMode><coordinates>${coords}</coordinates></LineString></Placemark></Document></kml>\n`;
+    return { name: `${cs || 'flight'}_${fid}.kml`, type: 'application/vnd.google-earth.kml+xml', text };
+  }
+  function saveFile(f) { const url = URL.createObjectURL(new Blob([f.text], { type: f.type })), a = document.createElement('a'); a.href = url; a.download = f.name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 60000); }
+  // (one click handler for every such button of the page: the row's aircraft, its day's track, the file)
+  function exportClicks(hexOfRow, csOfRow) {
+    document.addEventListener('click', ev => {
+      const a = ev.target && ev.target.closest && ev.target.closest('a.tl-export'); if (!a) return;
+      ev.preventDefault(); ev.stopImmediatePropagation();
+      const tr = a.closest('tr'), fid = (tr && tr.querySelector('[data-flight]') || { dataset: {} }).dataset.flight || ''; if (!tr) return;
+      const kind = a.dataset.tlExport, w = rowWindow(tr), was = a.textContent; a.textContent = ' … ';
+      (async () => {
+        const hex = await hexOfRow(tr, fid, w.off); if (!/^[0-9a-f]{6}$/.test(hex || '')) throw new Error('aircraft not known');
+        // (its day's track - and the next day's, for a flight over midnight UTC)
+        const ts = dayStr(w.on * 1000) !== dayStr(w.off * 1000) ? [w.off, Math.min(w.on, nowS())] : [w.off];
+        let pts = [];
+        for (const t of ts) { const more = await (pbMore(hex, t) || pbPoints(hex, t)); pts = pts.concat(more || []); }
+        pts = pts.filter(p => p.t >= w.off - 600 && p.t <= w.on + 900);
+        if (!pts.length) throw new Error('no public ADS-B track of this flight');
+        saveFile(exportFile(kind, pts, csOfRow(tr), fid || hex));
+      })().catch(e => { a.title = String(e.message || e) + ' (LADD unblocker)'; log('export', e); }).finally(() => { a.textContent = was; });
+    }, true);
+  }
+  // FR24's playback of a flight on a flight number's page (the flight in the URL's #hash): its padlocked figures as on an
+  // aircraft's page. The aircraft: FR24's own playback answer of that flight names it (its Mode S address), else its
+  // registration as the row links it, from what this script holds.
+  const fidHex = new Map();
+  function hexOfFid(fid, ts, reg) {
+    const k = String(fid || '').toLowerCase();
+    if (!fidHex.has(k)) fidHex.set(k, (k ? gmRequest(`https://api.flightradar24.com/common/v1/flight-playback.json?flightId=${encodeURIComponent(k)}&timestamp=${Math.round(ts || nowS())}`, { timeout: 15000 }) : Promise.resolve(null)).then(j => {
+      const f = j && j.result && j.result.response && j.result.response.data && j.result.response.data.flight, idn = f && f.aircraft && f.aircraft.identification;
+      const hx = clean(idn && (idn.modes || idn.modeS || idn.hex)).toLowerCase(); if (/^[0-9a-f]{6}$/.test(hx)) return hx;
+      const r = clean((idn && idn.registration) || reg).toUpperCase(), h = r && store.byReg(r); return h && h.hex ? h.hex : '';
+    }).catch(() => { const h = reg && store.byReg(clean(reg).toUpperCase()); return h && h.hex ? h.hex : ''; }));
+    return fidHex.get(k);
+  }
+  const regOfRow = tr => { const a = tr && tr.querySelector('a[href*="/data/aircraft/"]'); return a ? decodeURIComponent(((a.getAttribute('href') || '').match(/\/data\/aircraft\/([^/?#]+)/i) || [])[1] || '').toUpperCase() : ''; };
+  function flightPagePlayback(tbody, cs) {
+    let cur = '';
+    const tick = async () => {
+      const fid = (location.hash || '').replace(/^#/, '').toLowerCase(); if (!/^[0-9a-f]{6,10}$/.test(fid)) return;
+      const tr = tbody.querySelector(`[data-flight="${fid}"]`), row = tr && tr.closest('tr');
+      const hex = await hexOfFid(fid, row ? rowWindow(row).off : 0, regOfRow(row)); if (!hex) return;
+      if (hex !== cur) {
+        cur = hex; if (row) pbWarm(hex, rowWindow(row).off);
+        // (its padlocked serial number, from the public register / JetPhotos, as on an aircraft's page)
+        pageMsn = ''; publicIdentity(hex, regOfRow(row)).then(hx => { if (hx && hx.msn && cur === hex) { pageMsn = hx.msn; fillPlayback(); } }).catch(() => {});
+      }
+      await fillPlaybackData(hex);
+    };
+    setInterval(() => { tick().catch(e => log('playback data', e)); }, 400);
+    unlockExports(tbody); new MutationObserver(() => unlockExports(tbody)).observe(tbody, { childList: true, subtree: true });
+    exportClicks((tr, fid, ts) => hexOfFid(fid, ts, regOfRow(tr)), () => cs);
+  }
   // The aircraft page's own header: MSN, AGE and OPERATOR filled in, pictures on the right as FR24 shows them.
   function fillAircraftHeader(hx, reg) {
     try {
@@ -364,6 +455,9 @@
         // (the playback panel's padlocked figures, as it plays - from the start, not once the airport lists are in; the
         // tracks of the two latest flights read now, any other's as the pointer reaches its row)
         setInterval(() => { fillPlaybackData(hex0).catch(e => log('playback data', e)); }, 400);
+        // (and its rows' padlocked KML / CSV: the flight's public track as those files)
+        unlockExports(tbody); new MutationObserver(() => unlockExports(tbody)).observe(tbody, { childList: true, subtree: true });
+        exportClicks(() => Promise.resolve(hex0), tr => clean(tr.children[5] && tr.children[5].textContent).replace(/[()]/g, '').toUpperCase() || reg.replace(/-/g, ''));
         // (the days of the latest eight rows read ahead - one file a day - so their playback fills from its first moment)
         [...tbody.querySelectorAll('tr[data-timestamp]')].slice(0, 8).forEach(tr => pbWarm(hex0, Number(tr.dataset.timestamp)));
         tbody.addEventListener('pointerover', ev => { const tr = ev.target && ev.target.closest && ev.target.closest('tr[data-timestamp]'); if (tr) pbWarm(hex0, Number(tr.dataset.timestamp)); });
@@ -566,7 +660,9 @@
     await store.kvReady;
     if (document.readyState === 'loading') await new Promise(r => document.addEventListener('DOMContentLoaded', r, { once: true }));
     const sec = document.getElementById('cnt-data-content'); if (!sec) return;
-    if (document.querySelector('#tbl-datatable tbody tr.data-row')) return;   // ponytail: FR24 lists this number itself - its rows stand, ours are not merged in
+    // (FR24 lists this number itself: its rows stand, ours are not merged in - its playback's padlocked figures and its
+    // rows' padlocked files filled)
+    if (document.querySelector('#tbl-datatable tbody tr.data-row')) { flightPagePlayback(document.querySelector('#tbl-datatable tbody'), cs); return; }
     const note = [...sec.querySelectorAll('div.row')].find(d => /no data available for your request/i.test(d.textContent || ''));
     await loadAirports();
     // (no "is-user" class: FR24's stylesheet hides that table's rows until its own script takes it off - never, on ours)

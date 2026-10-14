@@ -630,7 +630,7 @@
       pubRecs.set(id, p); if (pubRecs.size > 50) pubRecs.delete(pubRecs.keys().next().value);
       const c = areaCache.get(hex); if (c && now() - (c.receivedAt - (c.ageS || 0) * 1000) < (c.gnd ? 900000 : 120000)) { telemetry.set(id, telemOf(c)); pushTelemetry(id); }
       const seed = seedFromArea(hex); if (Object.keys(seed).length) store.mergeHex(hex, Object.assign({}, seed, store.getHex(hex) || {}));
-      if (currentId() === id) telemLast = 0;                   // live telemetry now, not in three seconds
+      if (currentId() === id) { telemLast = 0; setTimeout(() => { pollTelemetry().catch(() => {}); }, 0); }   // (live telemetry now, not in a second)
       store.hexAsync(hex).then(() => publicIdentity(hex, p.reg)).then(() => syncPanelSoon()).catch(e => log('public identity', e));
     } else {
       // (made from the panel before FR24's stream named it: what the stream says now fills the gaps)
@@ -881,13 +881,15 @@
   // (a row of it onto an aircraft's record: the gaps filled, FR24's operator, its registers counted as asked when they
   // answered the monitor)
   async function applyMonOwner(rec, r) {
-    const [, reg, type, desc, owner, ownerCity, country, countryIso, msn, year, opId, opIcao, opName, at, ok] = r;
+    const [, reg, type, desc, owner, ownerCity, country, countryIso, msn, year, opId, opIcao, opName, at, ok, withheld] = r;
     let ch = false;
     const fill = (k, v) => { if (v && typeof v === 'string' && (!rec[k] || (k === 'owner' && !ownerName(rec.owner)))) { rec[k] = v; ch = true; } };
     fill('reg', reg); fill('type', type); fill('desc', desc); fill('owner', owner); fill('ownerCity', ownerCity); fill('msn', msn);
     if (year > 1900 && !rec.year) { rec.year = year; ch = true; }
     if (opId > 0 && !rec.operatorId) { rec.operatorId = opId; rec.operatorIcao = opIcao || rec.operatorIcao || ''; rec.operatorName = opName || rec.operatorName || ''; rec.fr24At = rec.fr24At || now(); ch = true; }
-    if (ok && at > 0) { rec.idAt = now(); rec.ownerAskedAt = now(); rec.ownerFailAt = 0; if (/^N\d/i.test(rec.reg || '')) rec.faaAt = rec.faaAt || now(); ch = true; }
+    // (a private person's name the public monitor does not give out: this browser asks the register itself, for its own use)
+    if (ok && at > 0 && !withheld) { rec.idAt = now(); rec.ownerAskedAt = now(); rec.ownerFailAt = 0; if (/^N\d/i.test(rec.reg || '')) rec.faaAt = rec.faaAt || now(); ch = true; }
+    else if (ok && at > 0) { rec.idAt = now(); ch = true; }
     if (!rec.countryId) {
       let iso = countryIso, name = country; const rcy = regCountry(rec.reg); if (rcy) { iso = rcy.iso; name = rcy.name; }
       if (!iso) { const c = countryOfHex(rec.hex); if (c) { iso = c.iso; name = name || c.name; } }
@@ -1589,5 +1591,18 @@
     if (f.ec) return { name: f.name || f.id, code: f.id, type: f.type, lo: f.lo, hi: f.hi };
     const code = f.base || f.id, name = firName((f.sector ? f.baseName : f.name) || f.baseName || f.name);
     return { name: name || code, code };
+  }
+  // The page's flights with no public report: their airspace (FIR / UIR) from the boundaries held here - FR24 padlocks
+  // it for a free account; worked out in idle moments, a few hundred at a time, the answer within a feed frame
+  let airBusy = false;
+  async function onAirAsk(d) {
+    if (airBusy) return;
+    if (!fir.list) { loadFir().catch(() => {}); return; }
+    airBusy = true;
+    try {
+      const out = [];
+      await sliced((d.rows || []).slice(0, 800), r => { if (!Array.isArray(r) || !fin(r[1]) || !fin(r[2])) return; const f = firInfo(r[1], r[2], fin(r[3]) ? r[3] : 0); if (f) out.push([r[0], r[1], r[2], r[3], f.name, f.code, fin(f.lo) ? f.lo : 0, fin(f.hi) ? f.hi : 999]); });
+      if (out.length) postToPage('airRows', { rows: out });
+    } finally { airBusy = false; }
   }
   function firLabelAt(lat, lon, alt) { const f = firInfo(lat, lon, alt); return f ? (f.name !== f.code ? `${f.name} (${f.code})` : f.code) : ''; }

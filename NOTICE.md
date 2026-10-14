@@ -25,7 +25,7 @@ FAA, adsb.lol, adsb.fi, OpenSky Network, airplanes.live, ADS-B Exchange, JetPhot
 | Airspace boundaries | EUROCONTROL atlas FIR/UIR, VATSpy data project | Public |
 | Photographs | JetPhotos, Planespotters | © each photographer, shown with credit |
 
-Data derived from adsb.lol and OpenStreetMap stays under the ODbL. A monitor's store is used privately by its owner's own browsers. Anyone who makes such a store, or a database derived from it, available to the public must do so under the ODbL ([docs/legal.md](docs/legal.md#4-the-data-and-its-licences)).
+Data derived from adsb.lol and OpenStreetMap stays under the ODbL. The shared monitor is publicly used, so the flights it logs are offered under the ODbL at `/export/legs?day=YYYY-MM-DD`. Anyone who makes another monitor's store, or a database derived from it, available to the public must do the same ([docs/legal.md](docs/legal.md#4-the-data-and-its-licences)).
 
 ## Software
 

@@ -27,7 +27,7 @@ The project's legal position follows from a few facts about how it works:
 
 - **It receives no radio signals.** It operates no receiver. It reads aircraft positions that community networks (adsb.lol, adsb.fi, OpenSky, airplanes.live) have already received and **published openly**, under their own published terms.
 - **It changes only what the user's own browser shows.** The extension or userscript runs in the user's own browser, on pages the user has chosen to open. It adds information from other public sources to what Flightradar24 sends that browser. It decrypts nothing, logs into nothing, and uses no paid account.
-- **It does not redistribute.** The optional monitor serves only its owner's own browsers, behind a secret. Nothing is published or sold.
+- **What it shares, it shares narrowly.** Every copy connects by default to one shared monitor run by the author (a user can point it at their own, or turn it off). That monitor gives the copies three things: which aircraft a flight Flightradar24 draws without a name really is, worked out from public ADS-B; the owner named by a public register, when that owner is an organisation; and public ADS-B reports. It sells nothing, shows no advertising, and offers the flights it logs from open data under the ODbL (section 4).
 - **It does not pretend to be anyone.** The project uses no Flightradar24 logos, claims no affiliation and does not present itself as Flightradar24.
 
 ## 2. ADS-B is a public broadcast
@@ -58,8 +58,8 @@ Flightradar24 hides LADD aircraft because it takes FAA data and has its own arra
 
 Every source is used within its published terms. The details and limits are in [data-sources.md](data-sources.md).
 
-- **adsb.lol** publishes under the **Open Database License (ODbL) 1.0**. The project credits it wherever its data is shown, as the ODbL requires. The ODbL's share-alike clause (§4.4) applies when a derivative database is *publicly used*. The monitor's store is used only by its owner's own browsers, behind a secret, so it is not publicly used. **If you ever make a monitor public, you must offer its derived data under the ODbL.**
-- **adsb.fi, OpenSky Network and airplanes.live** are used within their open or non-commercial terms. Their published rate limits are respected. Approval-gated APIs (airplanes.live's REST API) are not used, and a refusal pauses the source rather than being worked around.
+- **adsb.lol** publishes under the **Open Database License (ODbL) 1.0**. The project credits it wherever its data is shown, as the ODbL requires. The ODbL's share-alike clause (§4.4) applies when a derivative database is *publicly used*. The shared monitor is publicly used, so it offers its derived database (the flights it logs) under the ODbL, a day at a time, at `/export/legs?day=YYYY-MM-DD`. A private monitor (`"public": false`, or `MON_PUBLIC=0`) answers only its owner's browsers and is not publicly used; **anyone who makes a monitor public must do the same.**
+- **adsb.fi, OpenSky Network and airplanes.live** are used within their open or non-commercial terms. Their published rate limits are respected. Approval-gated APIs (airplanes.live's REST API) are not used, and a refusal pauses the source rather than being worked around. Sharing lowers the load rather than multiplying it: a browser polls its map from the monitor every other time, and what one browser has fetched serves the others for the minute or two it is current.
 - **ADS-B Exchange** is used only through its official API with the **user's own** key, within that key's terms. Its website is never scraped.
 - **OurAirports** is public domain. **OpenStreetMap** is ODbL and credited.
 - **Aircraft registers** (the FAA Aircraft Registry, the UK CAA's G-INFO, the Isle of Man register, the Swiss register) are public registers, published so that anyone can look up who owns an aircraft. **hexdb.io** and **adsbdb.com** are free public lookups.
@@ -70,11 +70,12 @@ Every source is used within its published terms. The details and limits are in [
 Aircraft owned by individuals bring personal data into play. In the UK and EU that means the (UK) GDPR. The project is designed accordingly:
 
 - **Names only, never addresses.** Registers are read for the owner's name. Street addresses are never fetched, stored or shown. The FAA owner's city and state are kept, as the registry publishes them.
-- **Personal use.** A person using the project for their own interest is within the GDPR's **household exemption (Article 2(2)(c))**: processing "by a natural person in the course of a purely personal or household activity".
-- **No publication.** Nothing is published. The monitor answers only browsers holding its secret.
-- **No telemetry.** The project collects nothing about its user. See [PRIVACY.md](../PRIVACY.md).
+- **Personal use.** A person using the project in their own browser, for their own interest, is within the GDPR's **household exemption (Article 2(2)(c))**: processing "by a natural person in the course of a purely personal or household activity".
+- **The shared monitor withholds private people.** The shared monitor is a service, so the household exemption does not cover it, and it is built to need as little personal data as possible. It names an owner only when the register shows an organisation: a company, trust, bank or club. When a register shows a private individual, the shared monitor withholds the name and the town. A user's own browser may then look the aircraft up in the public register itself, as anyone visiting that register can. The author relies on **legitimate interests (Article 6(1)(f))**: the registers are published so that anyone can see who owns an aircraft, and what the monitor holds is limited to that.
+- **Positions are not kept against people.** The monitor keeps the positions of a flight it names only for the life of that flight. The names archive keeps which aircraft a flight was, with no positions. The flights it logs from open data are aircraft movements, kept as any flight-tracking site keeps them.
+- **Little about its users.** The project has no accounts, cookies, analytics or advertising. What the shared monitor receives from a browser, and how long it keeps it, is listed in [PRIVACY.md](../PRIVACY.md).
 
-The household exemption ends where personal use ends. **Publishing** owners' names, running a public service, or using the data to follow or contact a person are different activities with different obligations. Don't do them with this project (section 8).
+The household exemption ends where personal use ends. Using the data to follow, locate or contact a person is never acceptable with this project (section 8).
 
 ## 6. Flightradar24
 
@@ -89,8 +90,8 @@ Aircraft positions, times, routes and runway lengths are **facts**. Copyright pr
 Under EU and UK law a database maker has a *sui generis* right against extraction or re-use of a **substantial part** of its database. It also covers **repeated and systematic** extraction of small parts that conflicts with the database's normal exploitation (**Directive 96/9/EC, Article 7(1) and 7(5)**; in the UK, the **Copyright and Rights in Databases Regulations 1997**).
 
 - **The browser extension and userscript** read what Flightradar24 sends to the user's own browser for display. That is the database's normal, intended use, and nothing is extracted from it to build anything else. The aircraft the project names are the ones Flightradar24's database **leaves blank**. Their identities come from other databases.
-- **The monitor's optional FR24 scan** is the part to weigh. It reads the positions Flightradar24 draws for the callsign-less flights, to name them from public ADS-B. It keeps them only for the life of each flight, and serves them only to its owner's own browsers. The Court of Justice has held that the right exists to protect the maker's **investment**: there is an infringement only where the use risks it, for example by building a substitute for the maker's own service (***CV-Online Latvia v Melons*, C-762/19, 3 June 2021**). A tool that makes its user *use Flightradar24 more* is not a substitute for it.
-- The scan is still the part that relies most on that argument. It can be switched off (`"fr24Scan": false` in `monitor.json`), and the project is designed to work without it.
+- **The monitor's FR24 scan** is the part to weigh. It reads the positions Flightradar24 draws for its callsign-less flights, the same answer every visitor's browser is sent, so it can name them from public ADS-B. It keeps those positions only for the life of each flight. It gives them only to copies of the tool, which are browsers that Flightradar24 is drawing the same flights for. What it keeps for good is its own work: which aircraft each flight was. The Court of Justice has held that the right exists to protect the maker's **investment**: there is an infringement only where the use risks it, for example by building a substitute for the maker's own service (***CV-Online Latvia v Melons*, C-762/19, 3 June 2021**). A tool that makes its users *use Flightradar24 more* is not a substitute for it: every name it finds is shown on Flightradar24's own map, in Flightradar24's own pages.
+- Serving many users rather than one makes the question of **repeated and systematic** extraction (Article 7(5)) more pressing for the shared monitor than for a private one. The scan is therefore gentle by design. It reads the map once every two minutes, only for flights without a name. It stops at any refusal, and never borrows a user's Flightradar24 identity: browsers send their feed headers only to a monitor of their own. It can be switched off (`"fr24Scan": false` in `monitor.json`), and the project is designed to work without it.
 
 ### 6.3 No access control is bypassed
 
@@ -126,7 +127,7 @@ How a page is shown on a user's own screen is the user's choice. That is the pri
 **It can:**
 
 - **change its website.** The project may stop working until it is adapted, which is a technical matter, not a legal one;
-- **refuse requests** from an address, such as a monitor's server. The monitor backs off on any refusal, and the browsers carry on without its scan;
+- **refuse requests** from an address, such as a monitor's server. The monitor backs off on any refusal. The browsers carry on without its scan, each looking at its own map, as before the monitor existed;
 - **end its service** to an account under its own terms.
 
 None of these reaches the user's own browser, the public broadcasts, or the open data the project is built on.
@@ -136,7 +137,7 @@ None of these reaches the user's own browser, the public broadcasts, or the open
 The project's design keeps its use personal, gentle and transparent. Users should keep it that way:
 
 - **Use it for personal interest.** Don't use it to track, follow, locate or harass a person, or to publish where a particular private individual is or goes.
-- **Don't republish.** Don't run a public monitor or publish its data. Doing so would bring in the ODbL's share-alike terms and data-protection duties that personal use does not.
+- **Don't republish.** What the shared monitor gives your browser is for the tool's own use. Running another public monitor, or publishing what one serves, brings in the ODbL's share-alike terms and the data-protection duties of a service. Whoever does it takes those duties on, and the licence requires the author's permission first ([LICENSE](../LICENSE), §2(b)).
 - **Respect refusals.** If any source, Flightradar24 included, explicitly withdraws permission (a block, a notice or a letter), stop using it in the way objected to. For Flightradar24's server-side scan, that means `"fr24Scan": false`. The project's back-off on refusals exists for this reason.
 - **Keep keys your own.** Use only API keys issued to you, within their terms.
 

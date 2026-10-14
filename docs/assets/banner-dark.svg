@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="440" viewBox="0 0 880 440" role="img" aria-label="FR24 LADD Unblocker: blocked and N/A flights on Flightradar24, named, routed and logged from public ADS-B" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">
+<title>FR24 LADD Unblocker: blocked and N/A flights on Flightradar24, named, routed and logged from public ADS-B</title>
+<defs><symbol id="pl" viewBox="0 0 24 24"><path d="M12 1.5C11.2 1.5 10.6 2.2 10.6 3V9.2L2.5 14V16.2L10.6 13.8V19L8.3 20.8V22.5L12 21.4L15.7 22.5V20.8L13.4 19V13.8L21.5 16.2V14L13.4 9.2V3C13.4 2.2 12.8 1.5 12 1.5Z"/></symbol><clipPath id="clip"><rect x="0" y="0" width="880" height="440" rx="16"/></clipPath><linearGradient id="scrim" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#0c1015" stop-opacity="0.97"/><stop offset="0.36" stop-color="#0c1015" stop-opacity="0.86"/><stop offset="0.6" stop-color="#0c1015" stop-opacity="0"/></linearGradient><linearGradient id="trail" gradientUnits="userSpaceOnUse" x1="590" y1="-10" x2="498" y2="252"><stop offset="0" stop-color="#2b8af7" stop-opacity="0"/><stop offset="1" stop-color="#2b8af7" stop-opacity="1"/></linearGradient><radialGradient id="glow" cx="498" cy="252" r="90" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#2b8af7" stop-opacity="0.28"/><stop offset="1" stop-color="#2b8af7" stop-opacity="0"/></radialGradient><filter id="sh" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#000" flood-opacity="0.5"/></filter></defs>
+<g clip-path="url(#clip)">
+<rect x="0" width="880" height="440" fill="#0c1015"/>
+<path d="M0 0H566C556 34 536 62 520 88C504 114 518 146 544 166C566 183 562 210 536 223C506 238 482 262 471 296C462 326 452 360 441 392C435 410 429 426 425 440H0Z" fill="#1a1e24" stroke="#2e343d" stroke-width="1.2"/>
+<path d="M548 318c10-6 26-4 30 5s-6 18-20 18-18-15-10-23z" fill="#1a1e24" stroke="#2e343d" stroke-width="1"/>
+<path d="M520 388c6-4 16-3 18 3s-4 11-12 11-11-9-6-14z" fill="#1a1e24" stroke="#2e343d" stroke-width="1"/>
+<path d="M575 268c5-3 12-2 13 2s-3 8-8 8-8-6-5-10z" fill="#1a1e24" stroke="#2e343d" stroke-width="1"/>
+<g fill="none" stroke="#282d35" stroke-width="1" stroke-dasharray="5 5"><path d="M0 150C120 140 250 172 360 152S470 118 512 104"/><path d="M222 0C232 80 210 160 240 250S262 380 252 440"/><path d="M360 152C372 230 420 280 470 296"/></g>
+<g stroke="#ffffff" stroke-opacity="0.035" stroke-width="1"><path d="M88 0V440"/><path d="M176 0V440"/><path d="M264 0V440"/><path d="M352 0V440"/><path d="M440 0V440"/><path d="M528 0V440"/><path d="M616 0V440"/><path d="M704 0V440"/><path d="M792 0V440"/><path d="M0 88H880"/><path d="M0 176H880"/><path d="M0 264H880"/><path d="M0 352H880"/></g>
+<circle cx="96" cy="214" r="2.2" fill="#6b7178" fill-opacity="0.7"/>
+<circle cx="300" cy="286" r="2.2" fill="#6b7178" fill-opacity="0.7"/>
+<circle cx="168" cy="96" r="2.2" fill="#6b7178" fill-opacity="0.7"/>
+<circle cx="402" cy="412" r="2.2" fill="#6b7178" fill-opacity="0.7"/>
+<circle cx="520" cy="132" r="2.2" fill="#6b7178" fill-opacity="0.7"/>
+<path d="M590 -10C574 70 548 132 530 180S506 230 498 252" fill="none" stroke="url(#trail)" stroke-width="3.5" stroke-linecap="round"/>
+<path d="M498 252C486 290 470 330 462 372S452 420 448 452" fill="none" stroke="#2b8af7" stroke-width="2" stroke-dasharray="2 7" stroke-linecap="round" stroke-opacity="0.85"/>
+<use href="#pl" x="-9" y="-9" width="18" height="18" transform="translate(382 346) rotate(15)" fill="#ffcc00" stroke="#4a3b00" stroke-width="0.9" stroke-linejoin="round"/>
+<use href="#pl" x="-9" y="-9" width="18" height="18" transform="translate(462 112) rotate(160)" fill="#ffcc00" stroke="#4a3b00" stroke-width="0.9" stroke-linejoin="round"/>
+<use href="#pl" x="-8" y="-8" width="16" height="16" transform="translate(444 178) rotate(80)" fill="#ffcc00" stroke="#4a3b00" stroke-width="0.9" stroke-linejoin="round"/>
+<use href="#pl" x="-10" y="-10" width="20" height="20" transform="translate(552 356) rotate(330)" fill="#ffcc00" stroke="#4a3b00" stroke-width="0.9" stroke-linejoin="round"/>
+<use href="#pl" x="-9" y="-9" width="18" height="18" transform="translate(470 40) rotate(110)" fill="#ffcc00" stroke="#4a3b00" stroke-width="0.9" stroke-linejoin="round"/>
+<use href="#pl" x="-8" y="-8" width="16" height="16" transform="translate(566 238) rotate(240)" fill="#ffcc00" stroke="#4a3b00" stroke-width="0.9" stroke-linejoin="round"/>
+<use href="#pl" x="-8" y="-8" width="16" height="16" transform="translate(396 22) rotate(290)" fill="#ffcc00" stroke="#4a3b00" stroke-width="0.9" stroke-linejoin="round"/>
+<use href="#pl" x="-8" y="-8" width="16" height="16" transform="translate(532 418) rotate(20)" fill="#ffcc00" stroke="#4a3b00" stroke-width="0.9" stroke-linejoin="round"/>
+<use href="#pl" x="-8" y="-8" width="16" height="16" transform="translate(420 300) rotate(135)" fill="#ffcc00" stroke="#4a3b00" stroke-width="0.9" stroke-linejoin="round"/>
+<circle cx="498" cy="252" r="23" fill="#2b8af7" fill-opacity="0.16" stroke="#2b8af7" stroke-width="1.6"/>
+<use href="#pl" x="-15" y="-15" width="30" height="30" transform="translate(498 252) rotate(200)" fill="#ffcc00" stroke="#4a3b00" stroke-width="0.8" stroke-linejoin="round"/>
+<rect width="880" height="440" fill="url(#scrim)"/>
+</g>
+<rect x="0.5" y="0.5" width="879" height="439" rx="15.5" fill="none" stroke="#2f343c"/>
+<g transform="translate(40 38) scale(0.17188)"><rect x="8" y="8" width="240" height="240" rx="56" fill="#23272e" stroke="#2f343c" stroke-width="4"/><circle cx="128" cy="128" r="80" fill="none" stroke="#2b8af7" stroke-opacity="0.55" stroke-width="10"/><circle cx="128" cy="128" r="44" fill="none" stroke="#2b8af7" stroke-opacity="0.3" stroke-width="8"/><use href="#pl" x="-60" y="-60" width="120" height="120" transform="translate(128 128) rotate(45)" fill="#ffffff"/></g>
+<text x="98" y="66" font-size="12" fill="#2b8af7" font-weight="700" letter-spacing="1.4">BROWSER EXTENSION  ·  USERSCRIPT</text>
+<text x="38" y="170" font-size="52" fill="#e8eaed" font-weight="800" letter-spacing="-1">FR24 LADD</text>
+<text x="38" y="226" font-size="52" fill="#2b8af7" font-weight="800" letter-spacing="-1">Unblocker</text>
+<text x="41" y="270" font-size="17" fill="#9aa0a6">Blocked and N/A flights on Flightradar24,</text>
+<text x="41" y="294" font-size="17" fill="#9aa0a6">named, routed and logged from public ADS-B.</text>
+<g transform="translate(596 20)">
+<rect width="264" height="400" rx="12" fill="#1b1e23" stroke="#2f343c" filter="url(#sh)"/>
+<path d="M0 12A12 12 0 0 1 12 0H252A12 12 0 0 1 264 12V72H0Z" fill="#23272e"/>
+<path d="M0 72.5H264" stroke="#2f343c"/>
+<text x="16" y="36" font-size="22" fill="#e8eaed" font-weight="800" letter-spacing="0.2">DEMO01</text>
+<rect x="120.187" y="20" width="48.6" height="18" rx="4" fill="#e3b021"/><text x="144.482" y="33.32" font-size="12" fill="#1b1b1b" font-weight="700" text-anchor="middle" letter-spacing="0.4">LADD</text>
+<text x="16" y="58" font-size="13" fill="#9aa0a6">Gulfstream G650  ·  Private</text>
+<path d="M238 20l10 10M248 20l-10 10" stroke="#6b7178" stroke-width="1.6" stroke-linecap="round"/>
+<text x="16" y="112" font-size="28" fill="#e8eaed" font-weight="800">TEB</text>
+<text x="16" y="131" font-size="12" fill="#9aa0a6">Teterboro</text>
+<text x="248" y="112" font-size="28" fill="#e8eaed" font-weight="800" text-anchor="end">PBI</text>
+<text x="248" y="131" font-size="12" fill="#9aa0a6" text-anchor="end">Palm Beach</text>
+<path d="M84 102H180" stroke="#2f343c" stroke-width="3" stroke-linecap="round"/>
+<path d="M84 102H146" stroke="#2b8af7" stroke-width="3" stroke-linecap="round"/>
+<use href="#pl" x="-8" y="-8" width="16" height="16" transform="translate(150 102) rotate(90)" fill="#e8eaed"/>
+<text x="16" y="160" font-size="12" fill="#9aa0a6">Departed 13:42</text>
+<g transform="translate(125.3 146)"><rect x="0" y="0" width="122.7" height="20" rx="4" fill="#2b8af7"/><text x="61.3591" y="14.32" font-size="12" fill="#ffffff" font-weight="700" text-anchor="middle" letter-spacing="0.4">PREDICTED 64%</text></g>
+<path d="M16 176.5H248" stroke="#2f343c"/>
+<text x="16" y="202" font-size="12" fill="#9aa0a6">Registration</text>
+<text x="16" y="221" font-size="15" fill="#e8eaed" font-weight="700">N0DEMO</text>
+<text x="140" y="202" font-size="12" fill="#9aa0a6">Squawk</text>
+<text x="140" y="221" font-size="15" fill="#e8eaed" font-weight="700">4721</text>
+<text x="16" y="246" font-size="12" fill="#9aa0a6">Altitude</text>
+<text x="16" y="265" font-size="15" fill="#e8eaed" font-weight="700">31,275 ft</text>
+<text x="140" y="246" font-size="12" fill="#9aa0a6">GPS altitude</text>
+<text x="140" y="265" font-size="15" fill="#e8eaed" font-weight="700">31,800 ft</text>
+<text x="16" y="290" font-size="12" fill="#9aa0a6">Vertical speed</text>
+<text x="16" y="309" font-size="15" fill="#e8eaed" font-weight="700">−1,920 fpm</text>
+<text x="140" y="290" font-size="12" fill="#9aa0a6">Ground speed</text>
+<text x="140" y="309" font-size="15" fill="#e8eaed" font-weight="700">448 kt</text>
+<text x="16" y="334" font-size="12" fill="#9aa0a6">Wind</text>
+<text x="16" y="353" font-size="15" fill="#e8eaed" font-weight="700">284° / 62 kt</text>
+<text x="140" y="334" font-size="12" fill="#9aa0a6">Temperature</text>
+<text x="140" y="353" font-size="15" fill="#e8eaed" font-weight="700">−43 °C</text>
+<path d="M16 370.5H248" stroke="#2f343c"/>
+<g transform="translate(16 377) scale(1.0)" fill="none" stroke="#2b8af7" stroke-width="1.6" stroke-linecap="round"><path d="M3 6V4a3.5 3.5 0 0 1 6.6-1.6"/><rect x="0.8" y="6" width="10.4" height="7.4" rx="1.6" fill="#2b8af7" fill-opacity="0.18"/></g>
+<text x="34" y="389" font-size="12" fill="#9aa0a6">Padlocks filled in from public ADS-B</text>
+</g>
+</svg>

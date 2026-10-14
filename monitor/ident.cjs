@@ -56,19 +56,23 @@ function createIdent(env) {
   }
 
   // ---- the candidates: every aircraft heard lately, newest report per address -----------------------------------------
+  // (one aircraft as a candidate, from what this side heard of it: live list, kept positions, the area lookups)
+  const fromLive = (hex, l) => { const a = l.a, fl = a.dbFlags | 0; return { hex, lat: a.lat, lon: a.lon, alt: a.alt_baro === 'ground' ? 0 : a.alt_baro, gnd: a.alt_baro === 'ground', gs: a.gs, trk: a.track, t: l.t, reg: String(a.r || '').toUpperCase(), type: String(a.t || '').toUpperCase(), ladd: !!(fl & 8) || !!(env.blocked.get(hex) || {}).faa, pia: !!(fl & 4), mil: !!(fl & 1), nonIcao: String(a.hex || '').startsWith('~'), cs: String(a.flight || '').trim() }; };
+  const fromKept = (hex, x) => { const p = x.meta && x.meta.lastPos; return p ? { hex, lat: p.lat, lon: p.lon, alt: p.alt === 'ground' ? 0 : p.alt, gnd: p.alt === 'ground', gs: p.gs, trk: p.trk, t: p.t, reg: String(x.meta.reg || '').toUpperCase(), type: String(x.meta.type || '').toUpperCase(), ladd: !!(env.blocked.get(hex) || {}).faa, pia: !!x.meta.pia, mil: !!x.meta.mil, cs: x.meta.cs || '' } : null; };
+  const usable = (c, nowS) => !!c && fin(c.lat) && fin(c.lon) && c.t > 0 && nowS - c.t <= 600;
   function candidates(nowS) {
     const out = new Map();
-    const put = c => { if (!c || !fin(c.lat) || !fin(c.lon) || !(c.t > 0) || nowS - c.t > 600) return; const p = out.get(c.hex); if (!p || c.t > p.t) out.set(c.hex, c); };
-    for (const [hex, l] of env.live) {
-      const a = l.a, fl = a.dbFlags | 0;
-      put({ hex, lat: a.lat, lon: a.lon, alt: a.alt_baro === 'ground' ? 0 : a.alt_baro, gnd: a.alt_baro === 'ground', gs: a.gs, trk: a.track, t: l.t, reg: String(a.r || '').toUpperCase(), type: String(a.t || '').toUpperCase(), ladd: !!(fl & 8) || !!(env.blocked.get(hex) || {}).faa, pia: !!(fl & 4), mil: !!(fl & 1), nonIcao: String(a.hex || '').startsWith('~'), cs: String(a.flight || '').trim() });
-    }
-    for (const [hex, x] of env.ac) {
-      const p = x.meta && x.meta.lastPos; if (!p) continue;
-      put({ hex, lat: p.lat, lon: p.lon, alt: p.alt === 'ground' ? 0 : p.alt, gnd: p.alt === 'ground', gs: p.gs, trk: p.trk, t: p.t, reg: String(x.meta.reg || '').toUpperCase(), type: String(x.meta.type || '').toUpperCase(), ladd: !!(env.blocked.get(hex) || {}).faa, pia: !!x.meta.pia, mil: !!x.meta.mil, cs: x.meta.cs || '' });
-    }
+    const put = c => { if (!usable(c, nowS)) return; const p = out.get(c.hex); if (!p || c.t > p.t) out.set(c.hex, c); };
+    for (const [hex, l] of env.live) put(fromLive(hex, l));
+    for (const [hex, x] of env.ac) put(fromKept(hex, x));
     for (const [hex, c] of cache) { if (nowS - c.t > 300) cache.delete(hex); else put(c); }
     return out;
+  }
+  // (the newest of them for one address - what a browser's name is checked against, as heard this very moment)
+  function candOf(hex, nowS) {
+    let best = null;
+    for (const c of [env.live.has(hex) ? fromLive(hex, env.live.get(hex)) : null, env.ac.has(hex) ? fromKept(hex, env.ac.get(hex)) : null, cache.get(hex)]) if (usable(c, nowS) && (!best || c.t > best.t)) best = c;
+    return best;
   }
   // (a 1-degree grid of them, for the flights' neighbourhoods)
   function grid(cands) { const g = new Map(); for (const c of cands.values()) { const k = Math.floor(c.lat) * 1000 + Math.floor(c.lon); (g.get(k) || g.set(k, []).get(k)).push(c); } return g; }
@@ -124,6 +128,7 @@ function createIdent(env) {
   function unassign(id, nowMs, why) {
     const R = ids.get(id); if (!R) return;
     ids.delete(id); if (byHex.get(R.hex) === id) byHex.delete(R.hex);
+    if (env.onUnassign) env.onUnassign(id, R, why);
     gone.push({ id, at: nowMs, why }); if (gone.length > 5000) gone.splice(0, gone.length - 5000);
     if (why === 'diverged') stats.revoked++;
   }
@@ -266,9 +271,27 @@ function createIdent(env) {
     F.trail = pts && pts.length ? pts : []; F.trailAt = nowMs; stats.trails++;
   }
   // a browser's own identification of a flight (only where this side has none and the aircraft is not another flight's)
-  function clientId(id, hex, how, nowMs) {
+  // From anyone's browser (a public monitor: reporter = the browser's address), a name is taken only when this side can
+  // check it - the aircraft heard here lately, where FR24 has the flight - or when `need` different browsers gave the
+  // same one and none gave another as often; a name this side's own positions contradict is refused.
+  const claims = new Map();       // FR24 id -> { at, by: Map(hex -> Set(reporter)) }
+  function clientId(id, hex, how, nowMs, reporter, need) {
     hex = String(hex || '').toLowerCase(); if (!/^[0-9a-f]{6}$/.test(hex) || ids.has(id) || taken(hex, id, nowMs)) return false;
     const F = flights.get(id); if (!F) return false;
+    if (reporter && (need || 2) > 1) {
+      const c = candOf(hex, nowMs / 1000);
+      if (c && Math.abs((F.ts || 0) - c.t) < 300) {
+        // (checkable: where this side last heard it, carried to FR24's moment - within 15 km and 3,000 ft, or refused)
+        const [la, lo] = project(c.lat, c.lon, c.gs, c.trk, (F.ts || 0) - c.t), d = E.dist(F.lat, F.lon, la, lo);
+        if (d > 15 || (!F.gnd && fin(F.alt) && fin(c.alt) && Math.abs(F.alt - c.alt) > 3000)) { stats.crowdRefused = (stats.crowdRefused || 0) + 1; return false; }
+      } else {
+        let k = claims.get(id); if (!k) { k = { at: nowMs, by: new Map() }; claims.set(id, k); if (claims.size > 20000) claims.delete(claims.keys().next().value); }
+        k.at = nowMs; let set = k.by.get(hex); if (!set) k.by.set(hex, set = new Set()); set.add(String(reporter));
+        const best = Math.max(...[...k.by.entries()].filter(([h]) => h !== hex).map(([, x]) => x.size), 0);
+        if (set.size < (need || 2) || best >= set.size) { stats.crowdPending = claims.size; return false; }
+        claims.delete(id);
+      }
+    }
     assign(F, hex, infoOf(hex, env.ac.get(hex)), 'client' + (how ? ':' + String(how).slice(0, 20) : ''), nowMs);
     return true;
   }
@@ -276,6 +299,7 @@ function createIdent(env) {
   function prune(nowMs) {
     for (const [id, F] of flights) if (nowMs - F.seen > C.keepFlightH * 3600e3) { flights.delete(id); unassign(id, nowMs, 'expired'); }
     for (let i = trailQ.length - 1; i >= 0; i--) if (!flights.has(trailQ[i])) trailQ.splice(i, 1);
+    for (const [id, k] of claims) if (nowMs - k.at > 30 * 60000 || ids.has(id)) claims.delete(id);
   }
 
   // ---- what the browsers get ---------------------------------------------------------------------------------------
@@ -305,6 +329,6 @@ function createIdent(env) {
     for (const r of d.ids || []) { const [id, hex, reg, type, cs, how, at, ver, flags, lat, lon, alt, gnd, ts, origin, dest] = r; if (!flights.has(id)) continue; ids.set(id, { hex, reg, type, cs, how, at, ver, flags, strikes: null, chg: nowMs, lat, lon, alt, gnd: !!gnd, ts, origin: origin || null, dest: dest || null }); byHex.set(hex, id); n++; }
     return n;
   }
-  return { flights, ids, byHex, cache, gone, trailQ, stats, touch, observe, match, lookupAreas, addLookup, nextTrail, setTrail, clientId, prune, table, dump, restore, score, best, reckon, trailMatch, parked, typeRelation, assign, unassign, candidates };
+  return { flights, ids, byHex, cache, gone, trailQ, stats, touch, observe, match, lookupAreas, addLookup, nextTrail, setTrail, clientId, prune, table, dump, restore, score, best, reckon, trailMatch, parked, typeRelation, assign, unassign, candidates, candOf };
 }
 module.exports = { createIdent, FLAG };

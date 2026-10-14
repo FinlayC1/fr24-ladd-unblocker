@@ -7,14 +7,17 @@
 - **A permanent log.** Every blocked aircraft's take-offs and landings are kept for good, including flights only FR24 sees. The log feeds airport boards anywhere in the world and the browsers' destination engine (`/learn`).
 - **Owners and operators.** Each blocked aircraft's owner is looked up once and kept (`owners.cjs`).
 - **Airports.** It serves every runway in full, the radio frequencies, and which runways the flights it tracked used (`airport.cjs`).
+- **The figures FR24 padlocks, for any aircraft.** It keeps the newest public ADS-B report of every aircraft it hears (`tel.cjs`): vertical speed, GPS altitude, airspeeds, Mach, wind, temperature, squawk. A browser asks it for the aircraft just clicked (`/tel`) and for its map every other time (`/near`). It then asks the networks itself only half as often, and what each browser fetched is shared with the rest.
+- **Shared by every copy.** A monitor is public by default: every copy of the script connects to the project's shared monitor unless its user points it elsewhere or turns it off. Reading needs no secret. Reports from strangers are checked (see [Public mode](#public-mode)), and the owner's secret still opens everything.
 
-It answers the browsers over a small authenticated HTTP API. How it fits into the whole is described in [architecture.md](architecture.md).
+It answers the browsers over a small HTTP API. How it fits into the whole is described in [architecture.md](architecture.md).
 
 - [Requirements](#requirements)
 - [Running it](#running-it)
 - [Configuration](#configuration)
 - [What it keeps](#what-it-keeps)
 - [API reference](#api-reference)
+- [Public mode](#public-mode)
 - [Airport and runway data](#airport-and-runway-data)
 - [Server setup (Oracle Cloud)](#server-setup-oracle-cloud)
 - [Updating](#updating)
@@ -39,7 +42,7 @@ It answers the browsers over a small authenticated HTTP API. How it fits into th
 node monitor/monitor.cjs
 ```
 
-By default it listens on `127.0.0.1:47524`, keeps its data in `monitor/store/` and reads airports from `monitor/data/`. On its own computer, with no secret set, it answers anyone on that computer. On a server, always set `MON_TOKEN` and put an HTTPS proxy in front of it (see [Server setup](#server-setup-oracle-cloud)).
+By default it listens on `127.0.0.1:47524`, keeps its data in `monitor/store/` and reads airports from `monitor/data/`. On its own computer, with no secret set, it answers anyone on that computer. On a server, always set `MON_TOKEN` and put an HTTPS proxy in front of it (see [Server setup](#server-setup-oracle-cloud)). For a monitor only your own browsers use, also set `MON_PUBLIC=0` (see [Public mode](#public-mode)).
 
 Stopping it with Ctrl+C or `systemctl stop` (SIGINT/SIGTERM) saves everything first.
 
@@ -51,8 +54,9 @@ Stopping it with Ctrl+C or `systemctl stop` (SIGINT/SIGTERM) saves everything fi
 |---|---|---|
 | `MON_HOST` | `127.0.0.1` | Address to listen on. Keep it local and put a proxy in front. |
 | `MON_PORT` (or `PORT`) | `47524` | Port |
-| `MON_TOKEN` | *(none)* | Shared secret. When set, every request except `/dash` must carry the header `X-Monitor-Token`. |
-| `MON_RATE` | `0` (off) | Requests per minute allowed per client address |
+| `MON_TOKEN` | *(none)* | The owner's secret, sent as the header `X-Monitor-Token`. It opens the dashboard's numbers (`/stats`) and the owner's full answers. It is never subject to the rate limit. On a private monitor, every request except `/dash` needs it. |
+| `MON_PUBLIC` | *(the `public` setting: on)* | `0`: a private monitor that answers only requests carrying the secret. `1`: public, readable by every copy of the script. |
+| `MON_RATE` | `300` on a public monitor, `0` (off) on a private one | Requests per minute allowed per client address (the owner's never limited) |
 | `MON_DATA` | `monitor/data` | Airports, runways, frequencies and airfields (`airports.json`, `runways.json`, `runway_len.json`, `runway_info.json`, `freqs.json`, `oa_airports.csv`) |
 | `MON_STORE` | `monitor/store` | Where flights, state and day logs are kept |
 | `MON_ADSBX_KEY` | *(none)* | Your own ADS-B Exchange RapidAPI key, used only as a last backup. Put it in an `EnvironmentFile` readable only by root, never in the unit itself. |
@@ -64,7 +68,7 @@ Any of these can be overridden in a `monitor.json` next to `monitor.cjs` (the fi
 | Key | Default | Meaning |
 |---|---|---|
 | `areas` | `[[53.8, -2.6, 250]]` | Areas polled for all traffic: `[lat, lon, radius nm]` |
-| `userAreas` | `3` | Extra areas taken from where the userscript looks (kept 3 days) |
+| `userAreas` | `8` | Extra areas taken from where the browsers look (kept 3 days). Every other area round is asked of adsb.fi first, so each network is asked half as often. |
 | `laddEvery` / `milEvery` / `piaEvery` | `10` / `30` / `120` | Seconds between LADD, military and PIA list polls |
 | `areaEvery` | `120` | Seconds between area rounds |
 | `hexEvery` / `coldEvery` / `hotWindow` | `30` / `600` / `2700` | Address lookups: aircraft heard in the last `hotWindow` seconds every `hexEvery` s, the rest every `coldEvery` s |
@@ -81,6 +85,11 @@ Any of these can be overridden in a `monitor.json` next to `monitor.cjs` (the fi
 | `lookupRadius` | `220` | Nautical miles of each adsb.fi area lookup around unnamed FR24 flights |
 | `owners` | `{}` | Owner lookups: `every` (ms between aircraft, `4000`), `refreshDays` (`60`), `retryMin` (`60`) |
 | `ident` / `dest` | `{}` | Fine-tuning of the naming (`keepFlightH`, `trailEvery`…) and of the rough destinations (`every`, `perRound`, `budgetMs`) |
+| `public` | `true` | Answer every copy of the script (see [Public mode](#public-mode)); `MON_PUBLIC` overrides it |
+| `rate` | `300` | A public monitor's requests per minute per client address; `MON_RATE` overrides it |
+| `crowdNeed` | `2` | How many different browsers must send the same name or owner before a public monitor takes it, when it cannot check it itself |
+| `nearPerMin` | `30` | adsb.fi lookups a minute for places the monitor has heard little of, for all browsers together (one per 1-degree cell a minute) |
+| `telMax` | `30000` | Aircraft whose newest report is held for the padlocked figures |
 
 For example, to poll more gently, create `monitor/monitor.json` containing `{ "apiPerMin": 12, "piaEvery": 600 }` and restart the service.
 
@@ -94,10 +103,13 @@ Everything is in `MON_STORE` (default `monitor/store/`):
 | `hist/<hex>.json` | A blocked aircraft's finished days, in the browser's own flight-log format | For good |
 | `learn/YYYY-MM-DD.json` | Learning rows: every blocked aircraft's completed airport-to-airport flights of that day | For good |
 | `ident.json` | FR24's callsign-less flights and the names given to them | Life of the flight (6 h after FR24 stops drawing it) |
+| `names/YYYY-MM-DD.jsonl` | Every name given to an FR24 flight (live, or found by a browser in a playback): `[FR24 id, hex, reg, type, callsign, flags, named at]`, a withdrawn one again with no hex | For good. The last two weeks are also held in memory; an older day is read when a playback of it asks. |
 | `owners.json` | Each looked-up aircraft's owner, operator, serial number, build year | For good; asked again after 60 days |
 | `state.json` | Blocked aircraft, watch records, pending day logs, areas, FR24 request headers | Running state |
 
 Flights of the last 90 days are held in memory as well. Older ones are read from disk when a board for those days is asked for.
+
+**In memory only.** The newest public ADS-B report of each aircraft, its own or a browser's, is held for 2 minutes (15 for one on the ground). The places browsers look at are held for 3 days, rounded to a degree. For counting agreeing browsers, the addresses that reported a name or an owner are held for 30 minutes (live names) or 6 hours (playback names, owners). The dashboard holds the last 2,000 requests: address, time and path, without the query on a public monitor. Nothing of this is written to disk.
 
 **Flights only FR24 sees.** A blocked flight FR24 draws that no public receiver hears (FR24's own receivers, satellites, multilateration) is logged too. Once FR24 has stopped drawing it for 15 minutes, or has had it on the ground for 15 minutes, its FR24 track is read by the same engine as an ADS-B trace. The trail is fetched as the aircraft lands. Only a flight that reads as a landing at an airport is kept. An ADS-B record of the same flight replaces it when one comes.
 
@@ -105,14 +117,18 @@ Flights of the last 90 days are held in memory as well. Older ones are read from
 
 ## API reference
 
-All answers are JSON. With `MON_TOKEN` set, send `X-Monitor-Token: <secret>` with every request; without it the monitor answers `401`. Above `MON_RATE` it answers `429` with `Retry-After: 30`.
+All answers are JSON. On a public monitor every endpoint answers without the secret except `/stats` (`401`). With the secret, `/status` and `/area` add the areas being polled, and `/owners` adds private owners' names. On a private monitor every request needs `X-Monitor-Token: <secret>`, or the answer is `401`. Above the rate limit the answer is `429` with `Retry-After: 30` (never for the owner).
 
 | Endpoint | Answer |
 |---|---|
 | `GET /status` | What the monitor has and how its sources are doing: polls, failures, aircraft, blocked aircraft, flights, live list size, age of each list (`listAge`), adsb.lol requests in the last minute, day-log progress (`hist`), paused hosts |
 | `GET /live[?since=<ms>]` | `{ v, now, full, age: {ladd, mil, pia, hex}, ac: [...] }`: every LADD, military, PIA and blocked aircraft with a position in the last 5 minutes. Each entry is a readsb v2 row with `seen_pos` counted to `now`, plus `_from: [airportId, confidence]` and `_off` (take-off time) for a flight under way. With `since` (the `now` of the last answer, under a minute old) only the aircraft heard again since then; browsers ask every 5 s. |
 | `GET /fr24ids[?since=<ms>]` | `{ v, now, full, scanOk, rows, pos, gone }`: every FR24 flight without a callsign the monitor has named. Each row is `[FR24 id, hex, reg, type, callsign, flags (1 LADD, 2 military, 4 PIA), how named, named at, origin id, origin confidence, destination id, its chance %, worked out at, lat, lon, alt, on ground, FR24 position time, estimated arrival, departure time, owner, operator, FR24 operator id, operator ICAO]`. With `since`, only rows that changed, `pos` (`[id, lat, lon, alt, on ground, time]`) for flights that only moved, and `gone` (ids withdrawn). `scanOk` says the monitor's own FR24 scan is working. |
-| `POST /report` | A browser's report, up to 4 MB of JSON: `hdr` (FR24's feed headers as its page sends them, never an authorization), `flights` (the callsign-less flights it sees), `ids` (`[id, hex, how]` it named itself), `owners` (`[hex, {owner, operator…, regAnswered, regOwner}]` it looked up itself) |
+| `POST /report` | A browser's report, up to 4 MB of JSON. It can contain:<br>• `hdr`: FR24's feed headers, sent only to a monitor of the user's own, never an authorization;<br>• `flights`: the callsign-less flights it sees;<br>• `ids`: `[id, hex, how]`, flights it named itself;<br>• `owners`: `[hex, {owner, operator…, regAnswered, regOwner}]`, owners it looked up itself;<br>• `pbIds`: `[id, hex, reg, type, callsign, flags, moment]`, names it found in a playback;<br>• `tel`: compact rows of its own polls of adsb.lol / adsb.fi.<br>On a public monitor all of it is checked first: see [Public mode](#public-mode). |
+| `GET /near?lat=&lon=&r=<km>` | Every aircraft heard within `r` km in the last two minutes, as readsb v2 rows with the padlocked figures. A place heard little of is looked up on adsb.fi first. |
+| `GET /tel?hex=a,b,…[&lat=&lon=]` | The newest report of up to 100 aircraft. One with nothing fresh, given where FR24 draws it, is looked up there first. |
+| `GET /names?ids=a,b,…&t=<s>` | The names given to these FR24 flights, for a playback at moment `t`: rows `[id, hex, reg, type, callsign, flags, named at]` (up to 2,000 ids) |
+| `GET /export/legs?day=YYYY-MM-DD` | That day's logged flights, under the ODbL (the licence named in the answer) |
 | `GET /owners?hex=a,b,…` | Up to 500 aircraft's owners and operators: rows `[hex, reg, type, description, owner, owner's city, country, country ISO, serial number, build year, FR24 operator id, operator ICAO, operator name, looked up at, registers answered]`. Only aircraft it knows are listed. |
 | `GET /airport?ap=<id>[&days=7]` | An FR24 airport's runways in full (`runway_info.json` rows), radio frequencies, and `usage` (`[runway, take-offs, landings]`) of the flights it tracked there in the last `days` (1–14), with `moves` and `withRunway` counts |
 | `GET /learn?from=YYYY-MM-DD` | Learning rows of the finished days after `from` (two weeks at most, not today), for the browsers' destination engine |
@@ -125,8 +141,27 @@ All answers are JSON. With `MON_TOKEN` set, send `X-Monitor-Token: <secret>` wit
 | `GET /ladd` | The LADD list as last polled (kept for older userscript versions) |
 | `GET /seed?hex=a,b[&front=1]` | Tell the monitor about blocked aircraft the userscript identified. They are tracked from then on and their last three days are rebuilt. |
 | `GET /area?lat=&lon=` | A place the userscript is looking at. Its traffic is polled too, for three days. |
-| `GET /stats` | The dashboard's numbers: memory, load, requests per endpoint and per client, recent requests |
+| `GET /stats` | The dashboard's numbers: memory, load, requests per endpoint and per client, recent requests. Only with the secret. |
 | `GET /dash` | The dashboard page. It contains no data and asks for the secret in the browser. |
+
+## Public mode
+
+A public monitor answers every copy of the script, so its owner is not the only one sending it reports. What a stranger's browser sends is used only when it can be trusted:
+
+- **Names** (`ids`). A name the monitor can check against its own ADS-B data is taken from one browser, but only if that aircraft was heard within 15 km and 3,000 ft of where FR24 draws the flight. If its own data says otherwise, the name is refused, however many browsers send it. A name it cannot check is taken when two different browsers send it, and no other aircraft has as many for that flight.
+- **Playback names** (`pbIds`). Taken from one browser when the monitor's own log has that aircraft in the air at that moment, otherwise when two agree. Kept for good with the day of the flight.
+- **Owners** (`owners`). Taken when two browsers send the very same findings.
+- **ADS-B reports** (`tel`). Only physically possible values and a fresh position time. Never over the monitor's own report of the last minute, and never far from where the monitor itself last heard the aircraft. Served for two minutes.
+- **FR24 positions** (`flights`). Never over a flight the monitor's own scan has.
+- **FR24's feed headers** (`hdr`). Taken only from the owner, or while the monitor's own FR24 scan is not working; only printable, header-like values. Browsers send them only to a monitor of their own.
+
+What it gives out is limited too:
+
+- private owners' names and towns are withheld (only organisations are named);
+- the areas being polled and the dashboard's numbers are for the owner only;
+- the flights it logs are offered under the ODbL at `/export/legs`.
+
+[PRIVACY.md](../PRIVACY.md) lists what it receives from browsers and how long it keeps it.
 
 ## Airport and runway data
 

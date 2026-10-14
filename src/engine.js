@@ -1575,6 +1575,20 @@ function createRouteEngine() {
     return b;
   }
   const landedSum = x => !!x && x.ended && (x.how === 'ground' || x.how === 'touch' || x.how === 'final' || (x.how === 'gap-low' && x.endAlt != null && x.endAlt < 1500));
+  // A flight that came down where it took off is one only when it flew: up long enough, high enough above the field and
+  // far enough. An airliner's taxi with its transponder saying "airborne" (EI-EVN "Liverpool -> Liverpool, landed 17:33",
+  // an hour before it left for Szczecin as RYR8SF), a take-off seen in two pieces, a hover check: not flights. Light
+  // aircraft, helicopters and fast jets fly real circuits, so less is asked of them. l: a summarised leg (from / to,
+  // tOff / tStart, tOn / tEnd, maxAlt, pathKm - those it has); cls: classify()'s class.
+  function localFlew(l, cls) {
+    if (!l || !l.from || !l.to || l.from.id == null || l.from.id !== l.to.id) return true;
+    const light = /^(piston|heli|fighter)$/.test(cls || ''), a = byId.get(l.from.id), el = a ? a.alt || 0 : 0;
+    const up = (l.tOn || l.tEnd || 0) - (l.tOff || l.tStart || 0);
+    if (!(up >= (light ? 300 : 900))) return false;
+    if (fin(l.maxAlt) && l.maxAlt > 0 && l.maxAlt - el < (light ? 300 : 1000)) return false;
+    if (fin(l.pathKm) && l.pathKm > 0 && l.pathKm < (light ? 4 : 20)) return false;
+    return true;
+  }
   // its own landing / take-off spots away from any listed airport (within 400 m counts as the same spot)
   function heliSpots(legs, t0) {
     const spots = []; let nLand = 0, nOff = 0;
@@ -2094,7 +2108,7 @@ function createRouteEngine() {
     return res;
   }
 
-  return { setTables2, get T2() { return T2; }, fieldShortName, setApproach, approachCell, approachPath, apprGroup, apprKey, trackAgree, heatNear, heatMatch, reckon, trackErr, remotePath, flowKeysOf, pgrpOf, grp6, sunElev, airData, gsAlong, minutesTo, flowAt, pathOf, pathDev, ownerKey, parseRunwayLengths, setRunwayLengths, csvLine, SQ_NOINFO, tripBin, regionOf, learnLeg, odAdd: (x, y, w) => { const k = odKey(String(x).toUpperCase(), String(y).toUpperCase()), v = (OD.get(k) || 0) + w; if (v > 1e-9) OD.set(k, v); else OD.delete(k); }, odWeight: (x, y) => OD.get(odKey(String(x).toUpperCase(), String(y).toUpperCase())) || 0, odCount: () => OD.size, setAirports, setUsage, addUsage, setRunways, parseRunwaysCsv, runwayFit, setWeights, setTables, setLogit, calibrated, mergePoints, finalTo, longFinal, typeRangeKm, FEAT, groupOf, W, classify, isStepClimb, rangeKm, parseTrace, legsFromPoints, summarizeLeg, stitchLegs, chainLegs, histStats, inferOrigin, predict, privateSite, rwyImpossible, typeDesc, heliSpots, heliAirportAt, landedSum, approachTo, downAndUp, landingInGap, circuits, mergeCircuits, setFields, fieldAt, placeAt, isField, nearbyFields, fieldCount: () => FL.length, airportAt, departureFromClimb, arrivalFromDescent, nearby, dist, brg, xtat, destPoint, angDiff, get airports() { return AP; }, byId: id => byId.get(id), byIcao: c => byIcao.get(String(c || '').toUpperCase()) };
+  return { setTables2, get T2() { return T2; }, fieldShortName, setApproach, approachCell, approachPath, apprGroup, apprKey, trackAgree, heatNear, heatMatch, reckon, trackErr, remotePath, flowKeysOf, pgrpOf, grp6, sunElev, airData, gsAlong, minutesTo, flowAt, pathOf, pathDev, ownerKey, parseRunwayLengths, setRunwayLengths, csvLine, SQ_NOINFO, tripBin, regionOf, learnLeg, odAdd: (x, y, w) => { const k = odKey(String(x).toUpperCase(), String(y).toUpperCase()), v = (OD.get(k) || 0) + w; if (v > 1e-9) OD.set(k, v); else OD.delete(k); }, odWeight: (x, y) => OD.get(odKey(String(x).toUpperCase(), String(y).toUpperCase())) || 0, odCount: () => OD.size, setAirports, setUsage, addUsage, setRunways, parseRunwaysCsv, runwayFit, setWeights, setTables, setLogit, calibrated, mergePoints, finalTo, longFinal, typeRangeKm, FEAT, groupOf, W, classify, isStepClimb, rangeKm, parseTrace, legsFromPoints, summarizeLeg, stitchLegs, chainLegs, histStats, inferOrigin, predict, privateSite, rwyImpossible, typeDesc, heliSpots, heliAirportAt, landedSum, localFlew, approachTo, downAndUp, landingInGap, circuits, mergeCircuits, setFields, fieldAt, placeAt, isField, nearbyFields, fieldCount: () => FL.length, airportAt, departureFromClimb, arrivalFromDescent, nearby, dist, brg, xtat, destPoint, angDiff, get airports() { return AP; }, byId: id => byId.get(id), byIcao: c => byIcao.get(String(c || '').toUpperCase()) };
 }
 /* ==/ENGINE== */
 if (typeof module !== 'undefined') module.exports = { createRouteEngine };

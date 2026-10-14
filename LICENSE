@@ -11,7 +11,9 @@ Copyright (c) 2026 Finlay Clarke. All rights reserved.
    (a) sell, sublicense, publish or redistribute the software, or a modified
        version of it;
    (b) offer it, or data produced by it, to others as a service (for example a
-       public monitor); or
+       public monitor). The copyright holder's own shared monitor, which the
+       software connects to by default, is offered by the copyright holder;
+       using it is personal use under section 1; or
    (c) remove or alter this notice, the attributions in NOTICE.md or the
        credits shown by the software.
 
