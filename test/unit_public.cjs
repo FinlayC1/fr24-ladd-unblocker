@@ -57,6 +57,15 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   check('... the live list and the names table: open to every copy of the script', l1.status === 200 && Array.isArray(l1.body.ac) && f1.status === 200 && Array.isArray(f1.body.rows));
   const a1 = await req('GET', '/area?lat=50&lon=1');
   check('... /area from anyone: taken, without the list of everyone\'s places', a1.status === 200 && !('areas' in a1.body));
+  // (what one stranger's address may add to the monitor's own work: a few places an hour, a few hundred aircraft)
+  { const ip = '198.51.100.20', got = [];
+    for (const [la, lo] of [[10, 10], [20, 20], [30, 30], [40, 40], [-10, -10]]) got.push((await req('GET', `/area?lat=${la}&lon=${lo}`, { ip })).body.added);
+    const own = await req('GET', '/area?lat=-20&lon=-20', Object.assign({ ip }, owner));
+    check('... one address adds at most 4 places an hour (the 5th answered, not taken); the owner always', got.join() === 'true,true,true,true,false' && own.body.added === true, got);
+    const hx = n => Array.from({ length: n }, (_, i) => 'e' + (i + 0x10000).toString(16).slice(-5)).join(',');
+    const s1 = await req('GET', '/seed?hex=' + hx(250), { ip: '198.51.100.21' }), s2 = await req('GET', '/seed?hex=' + hx(450), { ip: '198.51.100.21' });
+    const s3 = await req('GET', '/seed?hex=' + hx(450), { ip: '198.51.100.22' });
+    check('... and at most 300 aircraft not yet followed an hour (those it follows already cost nothing)', s1.body.queued === 250 && s2.body.queued === 50 && s3.body.queued === 150 && M.blocked.size >= 450, [s1.body.queued, s2.body.queued, s3.body.queued]); }
   // ---- rate per address
   // (the rate is counted per calendar minute: 45 requests across a minute's turn would be counted in two)
   { const intoMin = Date.now() % 60000; if (intoMin > 50000) await new Promise(r => setTimeout(r, 60500 - intoMin));
