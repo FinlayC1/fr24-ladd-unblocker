@@ -13,10 +13,16 @@ npm run build          # writes dist/fr24-ladd-unblocker.user.js
 1. `src/header.js` (the userscript header)
 2. `src/page.js` (the page-world interceptor)
 3. `src/engine.js` (the route engine)
-4. The learned tables in `src/*.json`, packed as gzip + base64
-5. Every `src/main/NN-*.js` module, in file-name order
+4. `src/registry.js` (the aircraft registers)
+5. The learned tables in `src/*.json`, packed as gzip + base64
+6. Every `src/main/NN-*.js` module, in file-name order
 
 The modules share one scope; they are not separate ES modules.
+
+The same build also writes the **browser extension**:
+
+- `dist/extension/` holds `manifest.json` (its hosts are the header's `@connect` list), `page.js` (in FR24's own world), `content.js` (`extension/shim.js` plus the whole script), `background.js` (the service worker making requests) and the icons from `extension/icons/` (rendered from `docs/assets/icon.svg`).
+- `dist/fr24-ladd-unblocker-extension.zip` is the same, zipped. The build is reproducible: the same sources give the same zip, byte for byte.
 
 ## Testing
 
@@ -41,7 +47,12 @@ npm run test:all       # also the live end-to-end runs (normal and Tampermonkey-
 | `unit_names` | Owner and airfield naming | – |
 | `unit_origin` | Origin inference | – |
 | `unit_flightmsg` | FR24 protobuf messages (built script in jsdom) | – |
-| `unit_monlive` | Built userscript with a shared monitor: only that monitor asked, `/live` as the list, fallbacks, `/hist` logs identical to the browser's own, batching | – |
+| `unit_fr24` | FR24 feed protobuf, the world scan's regions, naming (lists, look-ups, dead reckoning, trails, parked), withdrawing, rough destinations, `/fr24ids`, `/report` | – |
+| `unit_store` | The permanent log (old days only added to, boards from disk), `/learn`, flights only FR24 sees, runways used, `/airport`, owners on the monitor, the names table's LADD flag | – |
+| `unit_registry` | Every register's answer read (FAA, G-INFO, Isle of Man, FOCA, hexdb, adsbdb), the monitor's owner store (pace, refusals, browsers' findings, kept across restarts) | – |
+| `unit_monlive` | Built userscript with a shared monitor: only that monitor asked, `/live` as the list, the names table, positions, `/learn`, owners asked of the monitor first, the LADD flag, fallbacks, `/hist` logs identical to the browser's own | – |
+| `unit_panel` | Built userscript on an FR24-shaped airport panel: *Latest events* and the coverage plea removed, movements per day, runway usage, runways in full, frequencies | – |
+| `unit_extension` | The built extension in a real Chromium: service worker, both worlds, requests through the worker | – (needs Playwright and Chromium; skipped without them) |
 | `unit_new` | Built userscript: playback, airline/airport lists, boards, sites, routes page | FR24 |
 | `panels1`, `panels2` | Reported panels replayed through the built script | FR24, adsb.lol |
 | `replay` | Live aircraft replayed through the built script | FR24, adsb.lol, others |
@@ -76,10 +87,11 @@ The population tables and model weights in `src/*.json` are produced from adsb.l
 
 ## Release checklist
 
-1. Bump `@version` in `src/header.js`, `VERSION` in `src/main/01-core.js` and `version` in `package.json` together.
+1. Bump `@version` in `src/header.js`, `VERSION` in `src/main/01-core.js` and `version` in `package.json` (and `package-lock.json`) together.
 2. `npm run lint` (0 errors) and `npm test`. Run `npm run test:all` and `test/perf.cjs` where the network allows.
 3. Run the monitor's tests on Node 18 (the server's version).
 4. Add an entry to `CHANGELOG.md`.
-5. Commit the rebuilt `dist/fr24-ladd-unblocker.user.js` with the change.
+5. Commit the rebuilt `dist/` (userscript, extension folder and zip) with the change. Now and then, refresh the runway data (`node monitor/mkdata.cjs`) and commit it after the tests pass.
 6. Server: `bash ~/fr24-ladd/monitor/deploy.sh`.
-7. Browser: install the new build in Tampermonkey (a header change needs a reinstall), keeping the previous version as a backup.
+7. Browser: reload the extension from the new zip, or install the new userscript build in Tampermonkey (a header change needs a reinstall). Keep the previous version as a backup.
+8. Optionally tag the release (`git tag v<version> && git push origin v<version>`). The release workflow builds it and attaches the zip and userscript to a GitHub release.

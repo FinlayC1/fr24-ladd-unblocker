@@ -456,6 +456,26 @@
     if (learnedApplied || !airportsReady()) return; learnedApplied = true;
     try { const l = (await learnLoad()).slice(); await sliced(l, replayLearned, { ms: 8 }); if (l.length) log('learned from use', l.length, 'flights'); } catch (e) { log('learned replay', e); }
   }
+  // Every blocked aircraft's completed flights, worldwide, as the monitor rebuilt them each day (/learn): learned here as
+  // this browser's own are - where business aviation goes from where, its squawk blocks, levels and flows - so the
+  // destination engine knows today's habits of every LADD jet, not only those of the aircraft looked at here. The days
+  // not had yet, two weeks back at most, in idle moments; again every three hours.
+  let srvLearnBusy = false;
+  async function syncSrvLearn() {
+    if (srvLearnBusy || !monUp() || !learnedApplied) return;
+    srvLearnBusy = true;
+    try {
+      const from = String(store.kvGet('srvLearnDay') || '');
+      const j = await monGet('/learn' + (from ? '?from=' + from : ''), { idle: true });
+      if (!j || !Array.isArray(j.rows) || !Array.isArray(j.days)) return;
+      let n = 0;
+      await sliced(j.rows.filter(x => Array.isArray(x) && x.length >= 12), x => { if (learnAppend(x)) { replayLearned(x); n++; } }, { ms: 8 });
+      if (j.days.length) store.kvSet('srvLearnDay', j.days[j.days.length - 1]);
+      if (n) log('learned from the monitor', n, 'flights of', j.days.length, 'days');
+    } catch (e) { log('monitor learning', String(e && e.message || e)); }
+    finally { srvLearnBusy = false; }
+  }
+  setTimeout(() => { syncSrvLearn().catch(() => {}); }, 30000); setInterval(() => { syncSrvLearn().catch(() => {}); }, 3 * 3600e3);
   // (lx: what the monitor worked out from the positions of a flight it rebuilt - [squawk blocks, FMS levels, flow keys] -
   // for a flight this browser has the summary of only)
   function learnFromLeg(hex, raw, s, cls, mil, lx) {
@@ -526,108 +546,12 @@
   }
 
   // ---- enrichment: identity, operator, MSN, age, photos ------------------------------------------------------------
-  // Registry data for US aircraft straight from the FAA: serial number, owner, the owner's city/state and the year
-  // (or airworthiness date) that gives the age.
-  async function fetchFaa(reg, priority) {
-    if (!/^N[0-9][0-9A-Z]{0,4}$/i.test(reg)) return null;
-    const html = await gmRequest(`https://registry.faa.gov/AircraftInquiry/Search/NNumberResult?nNumberTxt=${encodeURIComponent(reg.toUpperCase())}`, { accept: 'text/html', json: false, timeout: 15000, priority: !!priority });
-    const cell = label => { const re = new RegExp('data-label="' + label.replace(/[()/]/g, m => '\\' + m) + '"[^>]*>([\\s\\S]*?)</td>', 'i'); const m = html.match(re); return m ? clean(m[1].replace(/<[^>]*>/g, ' ')) : ''; };
-    const out = { msn: cell('Serial Number'), owner: cell('Name'), city: cell('City'), state: cell('State'), country: cell('Country'), mfrYear: Number(cell('Mfr Year')) || 0, awDate: cell('A/W Date'), model: cell('Model'), maker: cell('Manufacturer Name'), hex: cell('Mode S Code (Base 16 / Hex)').toLowerCase() };
-    const aw = out.awDate.match(/(\d{4})$/); out.year = out.mfrYear || (aw ? Number(aw[1]) : 0);
-    if (/None/i.test(out.msn)) out.msn = '';
-    // "REGISTRATION PENDING" / "SALE REPORTED" is a status, not a name: the applicant listed further down is the owner
-    if (NAME_PLACEHOLDER.test(out.owner)) {
-      const names = [...html.matchAll(/data-label="Name"[^>]*>([\s\S]*?)<\/td>/gi)].map(m => clean(m[1].replace(/<[^>]*>/g, ' ')));
-      out.owner = (names.find(n => /^applicant\s+\S/i.test(n)) || '').replace(/^applicant\s+/i, '');
-    }
-    return out.msn || out.owner || out.year ? out : null;
-  }
-  // The Isle of Man register (M-): owner, serial number, type, Mode S - public pages, a search by mark and then the
-  // entry (M-WJBA: Ballycastle Aviation, 680A0466). Asked once per mark per session.
-  const iomAsked = new Map();
-  function fetchIom(reg, priority) {
-    const mark = String(reg || '').toUpperCase().replace(/^M-?/, '');
-    if (!/^[A-Z0-9]{1,6}$/.test(mark)) return Promise.resolve(null);
-    if (iomAsked.has(mark)) return iomAsked.get(mark);
-    const base = 'https://ardis.iomaircraftregistry.com/register/', o = { accept: 'text/html', json: false, timeout: 15000, priority: !!priority };
-    const p = (async () => {
-      const list = String(await gmRequest(`${base}search?prs_rm__tt=1&prs_rm__v1=${encodeURIComponent(mark)}&prs_bg__2__value=Search`, o) || '');
-      const m = list.match(new RegExp('/register/(\\d+)/view">M-' + mark + '<')); if (!m) return null;
-      const html = String(await gmRequest(`${base}${m[1]}/view`, o) || '');
-      const cell = label => { const x = html.match(new RegExp('>' + label + '</label>\\s*<span[^>]*>([^<]*)<')); return x ? clean(decodeEntities(x[1])) : ''; };
-      const owners = cell('Registered Owners'), out = { owner: owners.split(',')[0].trim(), msn: cell('Serial Number'), hex: cell('Mode S Number').toLowerCase(), model: cell('Aircraft Type'), status: cell('Aircraft Status') };
-      // (registered new - no previous registration anywhere: built the year it was registered)
-      const ry = (cell('Registered').match(/(\d{4})\s*$/) || [])[1]; if (/^new$/i.test(cell('Previous International Registration')) && ry) out.year = Number(ry);
-      return out.owner || out.msn ? out : null;
-    })();
-    iomAsked.set(mark, p); p.catch(() => iomAsked.delete(mark));
-    return p;
-  }
-  // The UK register (G-): the CAA's G-INFO, through the public API its own search page uses - a search by mark, then the
-  // entry: the AOC operator if it has one, else the registered owner (its trading name when it has one), serial number,
-  // build year, Mode S (G-WAPA, an R44 FR24 calls "Private owner"). Names only - an owner's address is never read.
-  const ginfoAsked = new Map();
-  function fetchGinfo(reg, priority) {
-    const mark = String(reg || '').toUpperCase().replace(/^G-?/, '');
-    if (!/^[A-Z0-9]{4}$/.test(mark)) return Promise.resolve(null);
-    if (ginfoAsked.has(mark)) return ginfoAsked.get(mark);
-    const base = 'https://ginfoapi.caa.co.uk/api/aircraft/', o = { timeout: 15000, priority: !!priority };
-    const p = (async () => {
-      const list = await gmRequest(base + 'search', Object.assign({ method: 'POST', body: JSON.stringify({ registration: mark }), headers: { 'Content-Type': 'application/json' } }, o));
-      const rows = (Array.isArray(list) ? list : []).filter(x => x && String(x.Mark || '').toUpperCase() === mark);
-      const hit = rows.find(x => x.RegistrationStatus === 'R') || rows[0]; if (!hit || !hit.AircraftID) return null;
-      const j = await gmRequest(base + 'details/' + encodeURIComponent(hit.AircraftID), o); if (!j || typeof j !== 'object') return null;
-      const ow = (Array.isArray(j.RegisteredAircraftOwners) ? j.RegisteredAircraftOwners : [])[0] || {}, ad = j.AircraftDetails || {}, aoc = j.AircraftOperatedByAocHolder || {};
-      const str = v => typeof v === 'string' ? clean(v) : '';
-      const out = { owner: str(aoc.OperatorTrandingAs) || str(aoc.OperatorName) || str(ow.TradingAs) || str(ow.RegisteredOwner), msn: str(ad.SerialNumber), year: Number(ad.YearBuild) || 0, hex: str(ad.ICAO24BitAircraftAddress && ad.ICAO24BitAircraftAddress.Hex).toLowerCase(), registered: hit.RegistrationStatus === 'R' };
-      return out.owner || out.msn ? out : null;
-    })();
-    ginfoAsked.set(mark, p); p.catch(() => ginfoAsked.delete(mark));
-    return p;
-  }
-  // The Swiss register (HB-): FOCA's own search API - main operator, else main owner, serial number, build year, Mode S
-  // (HB-JNA: Swiss International Air Lines). Names only - the addresses it also lists are never read.
-  const bazlAsked = new Map();
-  function fetchBazl(reg, priority) {
-    const mark = String(reg || '').toUpperCase();
-    if (!/^HB-[A-Z0-9]{3}$/.test(mark)) return Promise.resolve(null);
-    if (bazlAsked.has(mark)) return bazlAsked.get(mark);
-    const p = (async () => {
-      const body = { page_result_limit: 10, current_page_number: 1, sort_list: 'registration', language: 'en', queryProperties: { marketing: '', registration: mark, aircraftStatus: ['Registered', 'Reserved', 'Reservation Expired', 'Registration in Progress'] } };
-      const list = await gmRequest('https://app02.bazl.admin.ch/web/bazl-backend/lfr', { method: 'POST', body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' }, timeout: 15000, priority: !!priority });
-      const hit = (Array.isArray(list) ? list : []).find(x => x && String(x.registration).toUpperCase() === mark); if (!hit) return null;
-      const who = cat => ((hit.ownerOperators || []).find(o => o && o.holderCategory && o.holderCategory.categoryNames && o.holderCategory.categoryNames.en === cat) || {}).ownerOperator;
-      const d = hit.details || {}, str = v => typeof v === 'string' && !/^N\/A$/i.test(v) ? clean(v) : '';
-      const out = { owner: str(who('Main Operator')) || str(who('Main Owner')), msn: str(d.serialNumber), year: Number(d.yearOfManufacture) || 0, hex: str(d.aircraftAddresses && d.aircraftAddresses.hex).toLowerCase() };
-      return out.owner || out.msn ? out : null;
-    })();
-    bazlAsked.set(mark, p); p.catch(() => bazlAsked.delete(mark));
-    return p;
-  }
-  // hexdb, adsbdb and (for N-numbers) the FAA registry at the same time - the slowest one sets the pace, not the sum
+  // Registry data: hexdb, adsbdb and the aircraft's own register (the FAA's for N-, the UK's G-INFO, the Isle of Man's,
+  // the Swiss) at the same time - read by src/registry.js, the same code the monitor reads them with. Names only.
   async function fetchIdentity(rec, priority, bg) {
-    const hex = rec.hex.toUpperCase(), out = {}, o = { priority: !!priority, bg: !!bg };
-    const hexdb = gmRequest(`https://hexdb.io/api/v1/aircraft/${hex}`, o).then(h => { if (h && typeof h === 'object') { out.reg = clean(h.Registration).toUpperCase(); out.type = clean(h.ICAOTypeCode).toUpperCase(); out.desc = clean(h.Manufacturer && h.Type ? `${h.Manufacturer} ${h.Type}` : h.Type); out.owner = clean(h.RegisteredOwners); } }).catch(() => { /* 404 is normal */ });
-    const adsbdb = gmRequest(`https://api.adsbdb.com/v0/aircraft/${hex}`, o).then(j => { const ac = j && j.response && j.response.aircraft; if (ac) { out.reg2 = clean(ac.registration).toUpperCase(); out.type2 = clean(ac.icao_type).toUpperCase(); out.desc2 = clean(ac.manufacturer && ac.type ? `${ac.manufacturer} ${ac.type}` : ac.type); out.owner2 = clean(ac.registered_owner); out.country = clean(ac.registered_owner_country_name); out.countryIso = clean(ac.registered_owner_country_iso_name); } }).catch(() => { /* ignore */ });
-    const faaFor = reg => fetchFaa(reg, priority).then(f => { rec.faaAt = now(); out.regAnswered = true; if (f) { out.msn = f.msn; out.year = f.year; out.faaOwner = f.owner; out.ownerCity = [f.city, f.state].filter(Boolean).join(', '); } }).catch(e => { out.regFailed = true; log('faa', reg, String(e.message || e)); });
-    const faaNow = rec.reg && /^N\d/i.test(rec.reg) && !rec.faaAt ? faaFor(rec.reg) : null;
-    // (the Isle of Man register for M- marks: its current owner over the databases' copies)
-    const iomFor = reg => fetchIom(reg, priority).then(f => { out.regAnswered = true; if (f && (!f.hex || f.hex === rec.hex)) { out.iomOwner = f.owner; if (f.msn) out.msn = out.msn || f.msn; if (f.year && !out.year) out.year = f.year; if (f.owner) out.ownerCity = out.ownerCity || 'Isle of Man'; } }).catch(e => { out.regFailed = true; log('iom register', reg, String(e.message || e)); });
-    const iomNow = rec.reg && /^M-/i.test(rec.reg) ? iomFor(rec.reg) : null;
-    // (and the UK's G-INFO for G- marks: hexdb and adsbdb say only "Private" for most of them)
-    const ukFor = reg => fetchGinfo(reg, priority).then(f => { out.regAnswered = true; if (f && (!f.hex || f.hex === rec.hex.toLowerCase())) { out.ukOwner = f.owner; if (f.msn) out.msn = out.msn || f.msn; if (f.year && !out.year) out.year = f.year; } }).catch(e => { out.regFailed = true; log('g-info', reg, String(e.message || e)); });
-    const ukNow = rec.reg && /^G-/i.test(rec.reg) ? ukFor(rec.reg) : null;
-    // (and the Swiss register for HB- marks)
-    const chFor = reg => fetchBazl(reg, priority).then(f => { out.regAnswered = true; if (f && (!f.hex || f.hex === rec.hex.toLowerCase())) { out.chOwner = f.owner; if (f.msn) out.msn = out.msn || f.msn; if (f.year && !out.year) out.year = f.year; } }).catch(e => { out.regFailed = true; log('swiss register', reg, String(e.message || e)); });
-    const chNow = rec.reg && /^HB-/i.test(rec.reg) ? chFor(rec.reg) : null;
-    await Promise.all([hexdb, adsbdb, faaNow, iomNow, ukNow, chNow]);
-    out.reg = out.reg || out.reg2; out.type = out.type || out.type2; out.desc = out.desc || out.desc2; out.owner = out.faaOwner || out.iomOwner || out.ukOwner || out.chOwner || out.owner || out.owner2;
-    const reg = out.reg || rec.reg;
-    if (!faaNow && reg && /^N\d/i.test(reg) && !rec.faaAt) { await faaFor(reg); out.owner = out.faaOwner || out.owner; }
-    if (!iomNow && reg && /^M-/i.test(reg)) { await iomFor(reg); out.owner = out.iomOwner || out.owner; }
-    if (!ukNow && reg && /^G-/i.test(reg)) { await ukFor(reg); out.owner = out.ukOwner || out.owner; }
-    if (!chNow && reg && /^HB-/i.test(reg)) { await chFor(reg); out.owner = out.chOwner || out.owner; }
-    for (const k of ['reg2', 'type2', 'desc2', 'owner2', 'faaOwner', 'iomOwner', 'ukOwner', 'chOwner']) delete out[k];
+    const out = await REG.identity(rec, { priority: !!priority, bg: !!bg });
+    if (out.faaAsked) rec.faaAt = now();
+    delete out.faaAsked;
     const rcy = regCountry(out.reg || rec.reg); if (rcy) { out.countryIso = rcy.iso; out.country = rcy.name; }
     if (!out.countryIso) { const c = countryOfHex(rec.hex); if (c) { out.countryIso = c.iso; out.country = out.country || c.name; } }
     if (out.countryIso || out.country) { try { await fr24.loadCountries(); } catch (e) { /* offline */ } out.countryId = countryIdOf(out.countryIso, out.country); }
@@ -742,6 +666,7 @@
           rec.operatorId = info.operatorId || rec.operatorId || 0; rec.operatorIcao = info.operatorIcao || rec.operatorIcao || ''; rec.fr24Equip = info.equip || '';
           if (rec.operatorId) { try { await fr24.loadAirlines(); rec.operatorName = fr24.airlineName(rec.operatorId) || rec.operatorName || ''; } catch (e) { /* offline */ } }
           persist(rec);
+          if (rec.operatorId) ownerToMonitor(rec, null);
         }
       } catch (e) { log('fr24 aircraft info', rec.reg, String(e.message || e)); }
       finally { fr24InfoBusy = false; setTimeout(pumpFr24Info, 350); }
@@ -933,9 +858,62 @@
     return photos;
   }
   const photoQueue = [], photoInFlight = new Map(); let photoBusy = 0;
+  // ---- the monitor's owners -----------------------------------------------------------------------------------------
+  // The monitor looks up every blocked aircraft's owner once and keeps it (monitor/owners.cjs): asked first - many in one
+  // request - so this browser asks the registers only about an aircraft nobody has asked about; what it finds itself goes
+  // back to the monitor with its next report (and FR24's operator for the aircraft too).
+  const ownWait = new Map(); let ownT = 0;
+  function monOwner(hex) {
+    if (!monUp()) return Promise.resolve(null);
+    let w = ownWait.get(hex); if (w) return w.p;
+    w = { sent: false }; w.p = new Promise(r => { w.res = r; }); ownWait.set(hex, w);
+    if (!ownT) ownT = setTimeout(flushOwnAsk, 150);
+    return w.p;
+  }
+  async function flushOwnAsk() {
+    ownT = 0;
+    const batch = [...ownWait.entries()].filter(([, w]) => !w.sent).slice(0, 200); for (const [, w] of batch) w.sent = true;
+    let rows = []; try { const j = await monGet('/owners?hex=' + batch.map(b => b[0]).join(','), {}); rows = Array.isArray(j && j.list) ? j.list : []; } catch (e) { log('monitor owners', String(e && e.message || e)); }
+    const by = new Map(rows.filter(r => Array.isArray(r) && r.length >= 15).map(r => [String(r[0]).toLowerCase(), r]));
+    for (const [h, w] of batch) { ownWait.delete(h); w.res(by.get(h) || null); }
+    if (!ownT && [...ownWait.values()].some(w => !w.sent)) ownT = setTimeout(flushOwnAsk, 150);
+  }
+  // (a row of it onto an aircraft's record: the gaps filled, FR24's operator, its registers counted as asked when they
+  // answered the monitor)
+  async function applyMonOwner(rec, r) {
+    const [, reg, type, desc, owner, ownerCity, country, countryIso, msn, year, opId, opIcao, opName, at, ok] = r;
+    let ch = false;
+    const fill = (k, v) => { if (v && typeof v === 'string' && (!rec[k] || (k === 'owner' && !ownerName(rec.owner)))) { rec[k] = v; ch = true; } };
+    fill('reg', reg); fill('type', type); fill('desc', desc); fill('owner', owner); fill('ownerCity', ownerCity); fill('msn', msn);
+    if (year > 1900 && !rec.year) { rec.year = year; ch = true; }
+    if (opId > 0 && !rec.operatorId) { rec.operatorId = opId; rec.operatorIcao = opIcao || rec.operatorIcao || ''; rec.operatorName = opName || rec.operatorName || ''; rec.fr24At = rec.fr24At || now(); ch = true; }
+    if (ok && at > 0) { rec.idAt = now(); rec.ownerAskedAt = now(); rec.ownerFailAt = 0; if (/^N\d/i.test(rec.reg || '')) rec.faaAt = rec.faaAt || now(); ch = true; }
+    if (!rec.countryId) {
+      let iso = countryIso, name = country; const rcy = regCountry(rec.reg); if (rcy) { iso = rcy.iso; name = rcy.name; }
+      if (!iso) { const c = countryOfHex(rec.hex); if (c) { iso = c.iso; name = name || c.name; } }
+      if (iso || name) { try { await fr24.loadCountries(); } catch (e) { /* offline */ } const id = countryIdOf(iso, name); if (id) { rec.countryId = id; rec.country = rec.country || name || ''; ch = true; } }
+    }
+    return ch;
+  }
+  // (what this browser found of a blocked aircraft, for the monitor)
+  function ownerToMonitor(rec, idn) {
+    if (!rec || !rec.hex || !monUp() || !(live.has(rec.id) || rec.ladd || rec.pia || rec.srv || (store.getHex(rec.hex) || {}).ladd)) return;
+    const o = Object.assign({}, ownersOut.get(rec.hex));
+    for (const k of ['reg', 'type', 'desc', 'owner', 'ownerCity', 'country', 'countryIso', 'msn', 'year', 'operatorId', 'operatorIcao', 'operatorName']) if (rec[k]) o[k] = rec[k];
+    if (idn && idn.regAnswered) o.regAnswered = true;
+    if (idn && idn.ownerReg && rec.owner === idn.owner) o.regOwner = true;
+    ownersOut.set(rec.hex, o); if (ownersOut.size > 2000) ownersOut.delete(ownersOut.keys().next().value);
+  }
   async function enrich(rec) {
     if (!rec.hex) return;
     let changed = false;
+    // (the monitor first: an aircraft it - or any browser - already looked up is not asked about again here)
+    { const due = () => (!shownOwner(rec, rec.cs) && /^(G-|M-|HB-|N\d)/i.test(rec.reg || '') && now() - (rec.ownerAskedAt || 0) > 864e5) || ((!rec.reg || !rec.type || !rec.countryId || (/^N\d/.test(rec.reg || '') && !rec.faaAt)) && now() - (rec.idAt || 0) > 3 * 864e5) || (rec.reg && !rec.operatorId && !rec.fr24At);
+      if (monUp() && due() && now() - (rec.monOwnAt || 0) > 6 * 3600e3) {
+        rec.monOwnAt = now();
+        const r = await monOwner(rec.hex);
+        if (r && await applyMonOwner(rec, r)) changed = true;
+      } }
     // (once every few days per aircraft: a brand-new airframe no registry knows yet is not asked about on every flight)
     // (and no name to show for it yet - nothing, "Private", a trustee - where a register names one: the UK's G-INFO, the
     // Isle of Man's, the FAA's. HLL01, G-NMCF: its registration, type and country all known from the aggregators, so the
@@ -949,6 +927,7 @@
       if (ownerDue) { if (idn.regAnswered || !idn.regFailed) { rec.ownerAskedAt = now(); rec.ownerFailAt = 0; } else rec.ownerFailAt = now(); }
       for (const k of ['reg', 'type', 'desc', 'owner', 'ownerCity', 'country', 'countryIso', 'countryId', 'msn', 'year']) if ((!rec[k] || (k === 'owner' && !ownerName(rec.owner))) && idn[k] && idn[k] !== rec[k]) { rec[k] = idn[k]; changed = true; }
       if (rec.faaAt) changed = true;
+      ownerToMonitor(rec, idn);
     }
     // No registration from any database, but private flights usually fly under their tail number: FR24's own aircraft
     // search maps the callsign to a registration, accepted only when it carries this very transponder address.
@@ -1024,7 +1003,7 @@
       const upd = {}; if (m.year && !hx.year) upd.year = m.year; if (m.r && !hx.reg) upd.reg = m.r; if (m.t && !hx.type) upd.type = m.t; if (m.desc && !hx.desc) upd.desc = m.desc; if (m.ownOp && !hx.owner) upd.owner = m.ownOp;
       // readsb database flags: 1 military, 4 PIA, 8 LADD
       if (m.flags & 8 && !hx.ladd) upd.ladd = true; if (m.flags & 4 && !hx.pia) upd.pia = true; if (m.flags & 1 && !hx.mil) upd.mil = true;
-      if (Object.keys(upd).length) store.mergeHex(hex, upd);
+      if (Object.keys(upd).length) { store.mergeHex(hex, upd); if (upd.ladd || upd.pia || upd.mil) flagsLearned(hex); }
     }
     return j;
   }

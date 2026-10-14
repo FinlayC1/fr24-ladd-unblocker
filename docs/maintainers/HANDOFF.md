@@ -112,6 +112,27 @@ Its store and state should move to the VM.
   blocked; backup store-before-merge-2026-10-14T18-03-07). Updates: bash ~/fr24-ladd/monitor/deploy.sh
 - Optional rough destination on the monitor (plan step 9) NOT done.
 
+## 4c. 22.20.0 and 22.21.0 (14 Oct, cloud session) - built and tested offline; deploy with deploy.sh
+
+- 22.20.0: the monitor scans FR24's whole map (fr24.cjs, 7 regions quartered at the 1,500 limit, every 120 s), names every
+  callsign-less flight (ident.cjs), gives each a rough destination (dest.cjs); `/fr24ids` (full on connect, then deltas
+  every 20 s), `POST /report` (browser's feed headers, callsign-less flights, own names). 127.0.0.1 removed from the
+  userscript. MV3 extension built into dist/extension + zip. LADD list every 10 s, hot blocked hexes every 30 s,
+  `/live?since` deltas every 5 s.
+- 22.21.0: permanent log (legs-*.json only ever added to; boards read old days from disk), `/learn` rows fed to the
+  browser's engine, flights only FR24 sees logged (fr24Legs, trail fetched on landing), runway used per take-off and
+  landing (airport.cjs), `/airport` (runway_info.json + freqs.json from monitor/mkdata.cjs), owners looked up once on
+  the server (owners.cjs, src/registry.js shared with the browser, `/owners`, browsers report theirs), the map's airport
+  panel filled (movements per day, runway usage, runway details + frequencies; Latest events and the coverage plea
+  hidden), LADD/PIA/MIL flags sticky and learned from every source (the OK-VOS "ADS-B" tag).
+- Repository: banner/icon (docs/assets), download-style README, LICENSE (personal use), NOTICE, PRIVACY, docs/legal.md,
+  GitHub workflows (tests on push; release on tag v<version>), issue templates. `dist/` (userscript, extension, zip) is
+  committed - the zip is reproducible.
+- NOT verified here: FR24's live DOM for the airport panel (the jsdom test uses a panel shaped like the user's
+  screenshot; the promo test ids other than `airport-panel__promo-runway_details` are guessed, with a fallback by title),
+  the registers' live answers (their formats as the browser's code already read them), FR24's acceptance of the
+  server's scan.
+
 ## 5. The user's request (14 Oct, verbatim)
 
 > remember the monitor is running by itself now, it doesn't need my computer anymore and can therefore have as much

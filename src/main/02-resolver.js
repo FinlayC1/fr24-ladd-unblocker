@@ -13,6 +13,7 @@
     const gnd = ac.alt_baro === 'ground';
     const alt = gnd ? 0 : Number(ac.alt_baro);
     const dbFlags = Number(ac.dbFlags) || 0;
+    if (dbFlags & 13) noteDbFlags(hex, dbFlags);
     const sq = /^[0-7]{4}$/.test(clean(ac.squawk)) ? clean(ac.squawk) : '';
     return { hex, nonIcao, cs: clean(ac.flight).toUpperCase(), reg: clean(ac.r).toUpperCase(), type: clean(ac.t).toUpperCase(), desc: clean(ac.desc), owner: clean(ac.ownOp), year: Number(ac.year) || 0,
       lat, lon, alt: fin(alt) ? alt : NaN, gnd, gs: Number(ac.gs), trk: Number(ac.track), ageS: (Number(ac.seen_pos) || 0), receivedAt, dbFlags, ladd: !!(dbFlags & 8), pia: !!(dbFlags & 4), mil: !!(dbFlags & 1), src,
@@ -321,11 +322,14 @@
   // polled on the server) is the list: this browser asks adsb.lol / adsb.fi for none of them. Its own requests are the
   // backup - the monitor down, or its LADD list older than 90 s (its military list older than 3 min: that one only).
   const globalList = { items: [], byHex: new Map(), at: 0, loading: null, src: '' };
-  const monLive = { at: 0, n: 0, ok: false };   // (the strip's "sources" pop-over: when the monitor's list last came, how big)
-  async function takeLive(opts) {
-    const j = await monGet('/live', opts);
+  const monLive = { at: 0, n: 0, ok: false, since: 0, fullAt: 0 };   // (the strip's "sources" pop-over: when the monitor's list last came, how big)
+  // (since: only the aircraft heard again since the last answer - a few seconds' worth; everything every 2 minutes)
+  async function takeLive(opts, delta) {
+    const since = delta && monLive.since && now() - monLive.fullAt < 120000 ? monLive.since : 0;
+    const j = await monGet('/live' + (since ? '?since=' + since : ''), opts);
     const age = j && j.age, ok = !!(j && Array.isArray(j.ac) && age && age.ladd != null && age.ladd < 90);
-    monLive.at = now(); monLive.n = j && Array.isArray(j.ac) ? j.ac.length : 0; monLive.ok = ok;
+    monLive.at = now(); monLive.ok = ok;
+    if (j && Array.isArray(j.ac)) { if (!since || j.full) { monLive.n = j.ac.length; monLive.fullAt = now(); } monLive.since = j.now || 0; }
     if (!ok) return null;
     // (each row's seen_pos is counted to the monitor's "now": it came just now)
     const t = now(), got = new Map();
@@ -355,7 +359,7 @@
     })().finally(() => { globalList.loading = null; });
     return globalList.loading;
   }
-  // (with the monitor answering, its live list every 20 s in between: positions never more than a minute old to match
+  // (with the monitor answering, what changed in its live list every 5 s in between: as fresh as FR24's own map - to match
   // FR24's blocked flights against - N1848T, 517 kt over Montana, went unmatched on a list 2 minutes old. Newer reports
   // replace older ones; aircraft not heard for 10 minutes go. While it covers the military list too, this browser's own
   // list round is not needed: the list counts as fresh)
@@ -364,18 +368,18 @@
   setInterval(() => {
     if (!monUp() || globalList.loading || liveBusy) return;
     liveBusy = true;
-    takeLive({ idle: true }).then(async lv => {
+    takeLive({ idle: true }, true).then(async lv => {
       if (!lv) return;
       const got = [], cut = now() - 10 * 60000;
       for (const c of lv.got.values()) { const p = globalList.byHex.get(c.hex); if (!p || seenAt(c) > seenAt(p)) { globalList.byHex.set(c.hex, c); got.push(c); } }
       for (const [h, c] of globalList.byHex) if (seenAt(c) < cut) globalList.byHex.delete(h);
-      globalList.items = [...globalList.byHex.values()]; globalList.src = 'monitor';
+      globalList.items = [...globalList.byHex.values()]; globalList.src = 'monitor'; monLive.n = globalList.byHex.size;
       if (lv.milOk) globalList.at = now();
       const parts = []; for (let i = 0; i < got.length; i += 200) parts.push(got.slice(i, i + 200));
       await sliced(parts, part => { noteCands(part); pushPubTel(part.filter(c => !c.ladd && now() - seenAt(c) < 90000)); for (const c of part) if (c.gnd) learnParked(c); });
       await idleSlice(); verifyAgainstList();
     }).catch(() => {}).finally(() => { liveBusy = false; });
-  }, 20000);
+  }, 5000);
   // ---- the monitor's names for FR24's callsign-less flights ---------------------------------------------------------
   // The monitor scans FR24's whole map all the time and names every flight it draws without callsign or registration
   // (monitor/ident.cjs) - over oceans and deserts too, where a flight keeps the name it was given while it was heard. All of
@@ -386,29 +390,43 @@
   // rows: [id, hex, reg, type, callsign, flags (1 LADD 2 mil 4 PIA), how, named at, origin id, origin conf, dest id, dest %, ...]
   const srvIds = { rows: new Map(), since: 0, at: 0, busy: false, scanOk: false, pushed: new Set() };
   function srvRec(r) {
+    if (r[5] & 7) noteDbFlags(String(r[1] || '').toLowerCase(), (r[5] & 1 ? 8 : 0) | (r[5] & 2 ? 1 : 0) | (r[5] & 4 ? 4 : 0));
     const rec = { id: r[0], hex: String(r[1] || '').toLowerCase(), cs: r[4] || '', reg: r[2] || hexNNumber(r[1]) || '', type: r[3] || '', ladd: !!(r[5] & 1), mil: !!(r[5] & 2), pia: !!(r[5] & 4),
       src: 'monitor', sources: ['monitor (' + (r[6] || 'named') + ')'], matchedAt: (r[7] || nowS()) * 1000, verifiedAt: now(), srv: true };
     hydrate(rec);
+    // (its owner and operator, as the monitor knows them - kept here too, so they are never looked up again)
+    const own = {};
+    if (r[20] && !ownerName(rec.owner)) own.owner = rec.owner = String(r[20]);
+    if (r[22] > 0 && !rec.operatorId) { own.operatorId = rec.operatorId = r[22]; own.operatorIcao = rec.operatorIcao = String(r[23] || ''); own.operatorName = rec.operatorName = String(r[21] || ''); }
+    if (Object.keys(own).length) store.mergeHex(rec.hex, own);
     const rt = srvRoute(r); if (rt) rec.route = rt;
     return rec;
   }
   // (its rough destination, as a route of the page's kind - until this browser works out its own for a flight on screen)
   function srvRoute(r) {
     const o = r[8] ? apById(r[8]) : null, d = r[10] ? apById(r[10]) : null; if (!o && !d) return null;
-    return { originId: o ? o.id : 0, originIata: apCode(o), originCity: o ? o.city || o.name || '' : '', destId: d ? d.id : 0, destIata: apCode(d), destCity: d ? d.city || d.name || '' : '', destConf: d ? 'predicted' : '', destP: d ? Math.min(0.99, (r[11] || 0) / 100) : 0, destReason: d ? 'rough destination worked out by the monitor' : '', quick: true, computedAt: (r[12] || nowS()) * 1000 };
+    return { originId: o ? o.id : 0, originIata: apCode(o), originCity: o ? o.city || o.name || '' : '', destId: d ? d.id : 0, destIata: apCode(d), destCity: d ? d.city || d.name || '' : '', destConf: d ? 'predicted' : '', destP: d ? Math.min(0.99, (r[11] || 0) / 100) : 0, destReason: d ? 'rough destination worked out by the monitor' : '', quick: true, computedAt: (r[12] || nowS()) * 1000,
+      eta: d && r[18] > 0 ? r[18] : 0, atd: o && r[19] > 0 ? r[19] : 0, departedAt: o && r[19] > 0 ? r[19] : 0 };
   }
   // A flight FR24 is drawing now in view (or opened) that the monitor has named: identified at once, as if matched here
   function srvAdopt(id) {
     const r = srvIds.rows.get(id); if (!r || live.has(id) || revokedIds.has(id)) return false;
     adopt(srvRec(r)); return true;
   }
-  // (the page told of names: light records - id, address, callsign, registration, type - and the rough routes)
+  // (the page told of names: light records - id, address, callsign, registration, type - the rough routes, and where FR24
+  // last had each flight: so the board of any airport in the world lists the blocked flights on their way to it)
   function srvPush(list) {
-    const recs = [], rl = [];
-    for (const r of list) { if (live.has(r[0])) continue; const rec = srvRec(r); recs.push(rec); srvIds.pushed.add(r[0]); if (rec.route) rl.push({ id: rec.id, route: routeForPage(rec.route) }); }
+    const recs = [], rl = [], pos = [];
+    for (const r of list) {
+      const p = srvPos(r[0], r[13], r[14], r[15], r[16], r[17]); if (p) pos.push(p);
+      if (live.has(r[0])) continue;
+      const rec = srvRec(r); recs.push(rec); srvIds.pushed.add(r[0]); if (rec.route) rl.push({ id: rec.id, route: routeForPage(rec.route) });
+    }
     for (let i = 0; i < recs.length; i += 400) pushToPage(recs.slice(i, i + 400));
     if (rl.length) postToPage('routes', { list: rl });
+    if (pos.length) postToPage('positions', { list: pos });
   }
+  const srvPos = (id, lat, lon, alt, gnd, ts) => fin(lat) && fin(lon) && ts > 0 ? { id, pos: { lat, lon, alt: fin(alt) ? alt : null, gnd: !!gnd, at: Math.min(now(), ts * 1000) } } : null;
   function srvDrop(ids) {
     const light = [];
     for (const id of ids) {
@@ -434,6 +452,11 @@
       for (const r of rows) srvIds.rows.set(r[0], r);
       srvIds.since = j.now; srvIds.at = now();
       srvPush(rows);
+      // (named flights that only moved: their new places, for the page's boards)
+      if (Array.isArray(j.pos) && j.pos.length) {
+        const pl = []; for (const x of j.pos) { const r = srvIds.rows.get(x[0]); if (!r) continue; r[13] = x[1]; r[14] = x[2]; r[15] = x[3]; r[16] = x[4]; r[17] = x[5]; const p = srvPos(x[0], x[1], x[2], x[3], x[4], x[5]); if (p) pl.push(p); }
+        if (pl.length) postToPage('positions', { list: pl });
+      }
       // (those on screen right now: identified fully)
       for (const r of rows) { const f = pending.get(r[0]); if (f && !f.bg && now() - f.receivedAt < PENDING_TTL_MS) srvAdopt(r[0]); }
       store.kvSet('srvIds1', { at: now(), rows: [...srvIds.rows.values()].slice(-6000) });
@@ -452,6 +475,7 @@
   // own FR24 scans use them; never an authorization), the callsign-less flights it sees, and the ones it named itself
   // that the monitor has no name for (it has ways the server has not: heatmaps, ADS-B Exchange with the user's key)
   let feedHdr = null, feedHdrSent = false;
+  const ownersOut = new Map();   // hex -> what this browser found of a blocked aircraft's owner / operator, for the monitor
   function noteFeedHdr(h) { if (h && typeof h === 'object' && h['fr24-device-id']) { if (!feedHdr || JSON.stringify(feedHdr) !== JSON.stringify(h)) feedHdrSent = false; feedHdr = h; } }
   const rnd4 = v => Math.round(v * 1e4) / 1e4;
   async function reportToMonitor() {
@@ -462,10 +486,11 @@
       flights.push([f.id, rnd4(f.lat), rnd4(f.lon), fin(f.alt) ? Math.round(f.alt) : 0, fin(f.trk) ? Math.round(f.trk) : 0, fin(f.spd) ? Math.round(f.spd) : 0, Math.round(f.ts || t / 1000), f.gnd ? 1 : 0, f.src | 0, f.type || '', f.reg || '', f.icon | 0]);
       const rec = live.get(f.id); if (rec && rec.hex && !rec.srv && !srvIds.rows.has(f.id)) ids.push([f.id, rec.hex, String(rec.src || 'browser').slice(0, 20)]);
     }
-    const hdr = feedHdr && !feedHdrSent ? feedHdr : null;
-    if (!flights.length && !ids.length && !hdr) return;
-    const j = await monPost('/report', { hdr: hdr || undefined, ua: hdr ? navigator.userAgent : undefined, flights, ids }).catch(e => { log('report to monitor', String(e && e.message || e)); return null; });
+    const hdr = feedHdr && !feedHdrSent ? feedHdr : null, own = [...ownersOut].slice(0, 500);
+    if (!flights.length && !ids.length && !hdr && !own.length) return;
+    const j = await monPost('/report', { hdr: hdr || undefined, ua: hdr ? navigator.userAgent : undefined, flights, ids, owners: own.length ? own : undefined }).catch(e => { log('report to monitor', String(e && e.message || e)); return null; });
     if (j && j.ok && hdr) feedHdrSent = true;
+    if (j && j.ok) for (const [h, o] of own) if (ownersOut.get(h) === o) ownersOut.delete(h);
   }
   setInterval(() => { idleSlice().then(reportToMonitor).catch(() => {}); }, 60000);
   // Parked LADD aircraft show which fields business aviation actually uses: every sighting feeds the usage prior.
@@ -593,9 +618,9 @@
     return { cands: [...byHex.values()], used };
   }
   function recordFromMatch(f, m, used) {
-    const c = m.c;
+    const c = m.c, sx = store.getHex(c.hex.toLowerCase()) || {};
     const type = f.type && m.rel === 'family' ? f.type : (c.type || f.type || '');
-    const rec = { id: f.id, hex: c.hex.toLowerCase(), cs: c.cs || '', reg: c.reg || f.reg || hexNNumber(c.hex), type, fr24Type: f.type || '', aggType: c.type || '', desc: c.desc || '', owner: c.owner || '', year: c.year || 0, src: c.src, sources: used, dist: Math.round(m.d * 100) / 100, matchedAt: now(), verifiedAt: now(), ladd: c.ladd, pia: c.pia, mil: c.mil, cat: c.cat || '', gnd: c.gnd, squawk: c.squawk || 0 };
+    const rec = { id: f.id, hex: c.hex.toLowerCase(), cs: c.cs || '', reg: c.reg || f.reg || hexNNumber(c.hex), type, fr24Type: f.type || '', aggType: c.type || '', desc: c.desc || '', owner: c.owner || '', year: c.year || 0, src: c.src, sources: used, dist: Math.round(m.d * 100) / 100, matchedAt: now(), verifiedAt: now(), ladd: !!(c.ladd || sx.ladd), pia: !!(c.pia || sx.pia), mil: !!(c.mil || sx.mil), cat: c.cat || '', gnd: c.gnd, squawk: c.squawk || 0 };
     hydrate(rec);
     const rc = regCountry(rec.reg), ctry = rc || countryOfHex(rec.hex); if (ctry) { rec.country = rc ? rc.name : rec.country || ctry.name; rec.countryIso = ctry.iso; if (!rec.countryId || rc) rec.countryId = countryIdOf(ctry.iso, ctry.name) || rec.countryId; }
     telemetry.set(f.id, telemOf(c));
@@ -608,6 +633,22 @@
   // flight record (no owner yet, year 0) never hides a value that is stored (e.g. the owner and build year adsb.lol's
   // database gave when its trace was loaded).
   const isEmptyVal = v => v == null || v === '' || v === 0 || (Array.isArray(v) && !v.length);
+  // The readsb database's flags of an aircraft (8 LADD, 4 PIA, 1 military), from whatever source carries them - the lists,
+  // area and address queries, the monitor's live list, a day's trace: kept with the aircraft, and an aircraft identified
+  // from a source without them (OK-VOS, a Gulfstream G600 on the LADD list, matched from an area query, was tagged
+  // "ADS-B") gets its LADD tag at once
+  function noteDbFlags(hex, f) {
+    const hx = store.getHex(hex), upd = {};
+    if (f & 8 && !(hx && hx.ladd)) upd.ladd = true; if (f & 4 && !(hx && hx.pia)) upd.pia = true; if (f & 1 && !(hx && hx.mil)) upd.mil = true;
+    if (!Object.keys(upd).length) return;
+    store.mergeHex(hex, upd);
+    flagsLearned(hex);
+  }
+  function flagsLearned(hex) {
+    const hx = store.getHex(hex) || {}, recs = [];
+    for (const rec of live.values()) if (rec.hex === hex) { let ch = false; for (const k of ['ladd', 'pia', 'mil']) if (hx[k] && !rec[k]) { rec[k] = true; ch = true; } if (ch) recs.push(rec); }
+    if (recs.length) { pushToPage(recs); syncPanelSoon(); }
+  }
   // a model name written in capitals by a database ("GULFSTREAM 5", "BOEING 747-400") as a name is written; FR24's own
   // name when it has given one
   const modelName = hx => { const d = clean((hx && (hx.fr24Model || hx.desc)) || ''); return /[a-z]/.test(d) ? d : d.replace(/\b([A-Z])([A-Z]{2,})\b/g, (m, a, b) => a + b.toLowerCase()); };
@@ -615,6 +656,8 @@
     const hx = rec && rec.hex ? store.getHex(rec.hex) : null; if (!hx) return Object.assign({}, rec);
     const out = Object.assign({}, hx);
     for (const k of Object.keys(rec)) if (!isEmptyVal(rec[k]) || !(k in out)) out[k] = rec[k];
+    // (what the aircraft is: known from either - a record made from a source without the flags says false)
+    for (const k of ['ladd', 'pia', 'mil']) if (hx[k] || rec[k]) out[k] = true;
     return out;
   }
   const HYDRATE = ['reg', 'type', 'desc', 'owner', 'ownerCity', 'msn', 'year', 'operatorId', 'operatorIcao', 'operatorName', 'fr24Equip', 'fr24At', 'faaAt', 'idAt', 'ownerAskedAt', 'ownerFailAt', 'pubAt', 'countryId', 'country', 'cat', 'photos', 'photoAt', 'photoLevel', 'photoV', 'jpFailAt'];

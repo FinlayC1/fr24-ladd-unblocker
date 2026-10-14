@@ -51,6 +51,10 @@ const engineSrc = rd('src/engine.js');
 const e0 = engineSrc.indexOf('/* ==ENGINE=='), e1 = engineSrc.indexOf('/* ==/ENGINE== */');
 if (e0 < 0 || e1 < 0) throw new Error('engine markers missing');
 const engine = engineSrc.slice(e0, e1 + '/* ==/ENGINE== */'.length).split('\n').map(l => l ? '  ' + l : l).join('\n');
+const registrySrc = rd('src/registry.js');
+const r0 = registrySrc.indexOf('/* ==REGISTRY=='), r1 = registrySrc.indexOf('/* ==/REGISTRY== */');
+if (r0 < 0 || r1 < 0) throw new Error('registry markers missing');
+const registry = registrySrc.slice(r0, r1 + '/* ==/REGISTRY== */'.length).split('\n').map(l => l ? '  ' + l : l).join('\n');
 const mods = fs.readdirSync(path.join(root, 'src', 'main')).filter(f => /^\d\d-.*\.js$/.test(f)).sort().map(f => rd('src/main/' + f));
 const out = [
   rd('src/header.js'),
@@ -60,6 +64,8 @@ const out = [
   rd('src/page.js').replace("'__TL_VERSION__'", JSON.stringify((rd('src/header.js').match(/@version\s+(\S+)/) || [])[1] || '')),
   '',
   engine,
+  '',
+  registry,
   '',
   '  // Learned likelihood tables + business/military aviation airport usage (test/mktables.cjs, ~11,000 real legs)',
   '  const ROUTE_TABLES = ' + JSON.stringify(tables) + ';',
@@ -105,7 +111,8 @@ const manifest = {
   ],
   minimum_chrome_version: '111'
 };
-// a small icon: an aircraft in FR24's yellow on its dark purple, drawn pixel by pixel (no image files in the repository)
+// the icons: extension/icons/<size>.png (rendered from docs/assets/icon.svg); without them, a small one drawn pixel by
+// pixel - an aircraft in FR24's yellow on its dark purple
 function pngIcon(size) {
   const px = Buffer.alloc(size * size * 4), set = (x, y, c) => { if (x < 0 || y < 0 || x >= size || y >= size) return; const i = (y * size + x) * 4; px[i] = c[0]; px[i + 1] = c[1]; px[i + 2] = c[2]; px[i + 3] = 255; };
   const bg = [43, 26, 77], fg = [255, 205, 0], u = size / 16, r = size * 0.18;
@@ -142,7 +149,7 @@ const extFiles = [
   ['page.js', Buffer.from(pagePart)],
   ['content.js', Buffer.from(rd('extension/shim.js') + '\n' + out)],
   ['background.js', Buffer.from(rd('extension/background.js'))],
-  ['icons/16.png', pngIcon(16)], ['icons/48.png', pngIcon(48)], ['icons/128.png', pngIcon(128)]
+  ...[16, 48, 128].map(n => { const f = path.join(root, 'extension', 'icons', n + '.png'); return ['icons/' + n + '.png', fs.existsSync(f) ? fs.readFileSync(f) : pngIcon(n)]; })
 ];
 const extDir = path.join(root, 'dist', 'extension');
 fs.rmSync(extDir, { recursive: true, force: true });

@@ -1,0 +1,38 @@
+# Lint, build and every test that needs no network, on each push. The monitor's own tests also run on Node 18 - the
+# server's version. (The suites that replay live FR24 and ADS-B traffic need the network: run them locally,
+# npm run test:all.)
+name: Tests
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run lint
+      - name: Offline tests
+        run: |
+          git config --global user.email "tests@example.invalid" && git config --global user.name "tests"
+          node test/run-suite.cjs --no-build --only unit_engine,unit_cases,unit_final,unit_legs,unit_monitor,unit_monitor2,unit_fr24,unit_store,unit_registry,unit_merge,unit_deploy,unit_names,unit_origin,unit_flightmsg,unit_monlive,unit_panel
+  monitor-node18:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 18
+      - name: Monitor tests on Node 18
+        run: |
+          git config --global user.email "tests@example.invalid" && git config --global user.name "tests"
+          for t in unit_monitor unit_monitor2 unit_fr24 unit_store unit_merge; do node test/$t.cjs monitor/data > out.txt 2>&1 || { tail -30 out.txt; exit 1; }; grep -q '^FAIL' out.txt && { grep '^FAIL' out.txt; exit 1; }; echo "$t: $(grep -c '^PASS' out.txt) passed"; done
+          node test/unit_registry.cjs > out.txt 2>&1 || { tail -30 out.txt; exit 1; }; echo "unit_registry: $(grep -c '^PASS' out.txt) passed"
+          node test/unit_deploy.cjs > out.txt 2>&1 || { tail -30 out.txt; exit 1; }; echo "unit_deploy: $(grep -c '^PASS' out.txt) passed"

@@ -58,6 +58,24 @@ const rep = (hex, o) => Object.assign({ hex, lat: 53.4, lon: -2.3, alt_baro: 120
   delete lists.milStatus;
   for (let i = 0; i < 2; i++) { M.P.tP = 0; await M.step(); }
   check('... the PIA list answering 404 three times: asked hourly after that', M.piaState.off === true && M.piaState.miss >= 3, M.piaState);
+  // ---- by address: the ones heard lately first and often, the parked rest every 10 minutes --------------------------
+  { const nS = Date.now() / 1000;
+    M.markBlocked('f0a001', { reg: 'M-HOT1' }, nS); Object.assign(M.blocked.get('f0a001'), { faa: false, heard: Math.round(nS - 300) });
+    M.markBlocked('f0a002', { reg: 'M-COLD' }, nS); Object.assign(M.blocked.get('f0a002'), { faa: false, heard: Math.round(nS - 7200) });
+    const t = Date.now(); Object.assign(M.P, { tL: t, tM: t, tP: t, tA: t, tO: t, tH: 0, tC: 0, hexQ: [], coldQ: [], areaQ: [[1, 1, 1]] }); asked.length = 0;
+    await M.step();
+    const hot = asked.find(u => /\/v2\/hex\//.test(u)) || '';
+    check('by address: those heard in the last 45 minutes asked first (before the areas), the parked ones not with them', /f0a001/.test(hot) && !/f0a002/.test(hot) && asked.length === 1, asked);
+    asked.length = 0; await M.step(); await M.step();
+    check('... the areas next, then the parked ones (their slow round)', /\/v2\/point\//.test(asked[0] || '') && /f0a002/.test(asked[1] || '') && !/f0a001/.test(asked[1] || ''), asked);
+    M.P.areaQ = []; M.P.hexQ = []; M.P.coldQ = []; }
+  // ---- /live: only what was heard again since the last answer ---------------------------------------------------
+  { const t0 = Date.now(); await new Promise(r => setTimeout(r, 5));
+    M.ingest(rep('a0f001', { dbFlags: 8, r: 'N-DELTA', seen_pos: 0 }), Date.now() / 1000 + 1);
+    const full = M.answer(new URL('http://x/live'), Date.now() / 1000), d = M.answer(new URL('http://x/live?since=' + t0), Date.now() / 1000);
+    check('/live?since: only the aircraft heard again since (the full list without it)', d.full === false && d.ac.length === 1 && d.ac[0].hex === 'a0f001' && full.full === true && full.ac.length > 1, { delta: d.ac.map(a => a.hex), full: full.ac.length });
+    const old = M.answer(new URL('http://x/live?since=' + (Date.now() - 120000)), Date.now() / 1000);
+    check('... a "since" a minute old or more: everything', old.full === true && old.ac.length === full.ac.length); }
   // ---- the backups -----------------------------------------------------------------------------------------------
   { const quiet = () => { const t = Date.now(); Object.assign(M.P, { tL: t, tM: t, tP: t, tA: t, tH: t, tO: t, hexQ: [] }); };
     quiet(); M.P.areaQ = [[50, 0, 100]]; M.pause['api.adsb.lol'] = Date.now() + 60000; asked.length = 0; lists.fiArea = [rep('400777', { r: 'G-AREA', t: 'C172' })];

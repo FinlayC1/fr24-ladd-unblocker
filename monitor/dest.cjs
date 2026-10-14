@@ -60,9 +60,12 @@ function createDest(env) {
     else origin = E.inferOrigin({ ac, pos, trail, hs, now: pos.t });
     const res = E.predict({ ac, pos, trail, hs, now: pos.t, origin });
     const top = res && res.cands && res.cands[0];
-    const o = res && res.origin && res.origin.airport ? { id: res.origin.airport.id, conf: res.origin.conf || '' } : null;
+    const o = res && res.origin && res.origin.airport ? { id: res.origin.airport.id, conf: res.origin.conf || '', t: Math.round(res.origin.departedAt || trail[0].t) } : null;
     if (!top || !top.airport) return { dest: null, origin: o };
-    return { dest: { id: top.airport.id, p: Math.min(0.99, E.calibrated(top.p, res.cls)), at: Math.round(nowS), why: (top.reasons || []).slice(0, 2).join('; ') }, origin: o };
+    // (when it will be there, roughly: the distance left at its present ground speed, a little longer for the way in)
+    const A = top.airport, km = E.dist(pos.lat, pos.lon, A.lat, A.lon), gs = pos.gs > 80 ? pos.gs : 300;
+    const eta = Math.round(pos.t + km / (gs * 1.852) * 3600 * 1.06 + (km > 30 ? 420 : 120));
+    return { dest: { id: A.id, p: Math.min(0.99, E.calibrated(top.p, res.cls)), at: Math.round(nowS), eta, why: (top.reasons || []).slice(0, 2).join('; ') }, origin: o };
   }
   // A round: the named airborne flights whose destination is oldest (or none yet), each again after `every` seconds, within
   // a time budget (the server is small); a changed answer is marked so the browsers get it

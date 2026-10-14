@@ -1,4 +1,4 @@
-// FR24 LADD Unblocker 22.20.0 - the page-world part (see src/page.js)
+// FR24 LADD Unblocker 22.21.0 - the page-world part (see src/page.js)
 (function () {
   'use strict';
   // ------------------------------------------------------------------------------------------------------------
@@ -7,7 +7,7 @@
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "22.20.0";
+    var BRIDGE_V = "22.21.0";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
 
     var resolved = new Map();     // fr24 flight id -> identity record (incl. photos)
@@ -1440,25 +1440,190 @@
       var k = rwyKey(code); if (!k || rwyOf(k) || rwyAsked[k]) return; rwyAsked[k] = true;
       oFetch.call(window, 'https://api.flightradar24.com/common/v1/airport.json?code=' + encodeURIComponent(k.toLowerCase()) + '&plugin[]=details&plugin[]=runways').then(function (r) { return r.json(); }).then(function (j) { noteAirportJson(j); routesTick(); }, function () { rwyAsked[k] = false; });
     }
-    // the map's airport panel: FR24's "Runway details" upsell picture gives way to the table of the airport open now - redrawn
-    // when another is opened (the picture stays in its place, hidden, for FR24's own redraws)
+    // the map's airport panel: FR24's "Runway details" upsell picture gives way to the table of the airport open now - every
+    // runway in full where the monitor has it (OurAirports: width, lighting, each end's heading, elevation and displaced
+    // threshold) and the airport's radio frequencies, else FR24's own runway list - redrawn when another is opened (the
+    // picture stays in its place, hidden, for FR24's own redraws)
+    var SURF_NAME = { ASPH: 'Asphalt', BITU: 'Bitumen', CONC: 'Concrete', TARM: 'Tarmac', GRAS: 'Grass', TURF: 'Turf', GRVL: 'Gravel', DIRT: 'Dirt', SAND: 'Sand', CLAY: 'Clay', WATE: 'Water', SNOW: 'Snow', ICE: 'Ice', MATS: 'Mats', LATE: 'Laterite', CORL: 'Coral', UNPV: 'Unpaved', UNKN: 'Unknown' };
+    function panelCode() { return rwyKey((location.pathname.match(/^\/airport\/([a-z0-9]{3,4})(?:[/?#]|$)/i) || [])[1]); }
+    function tlTable(box, head, rows, title) {
+      var cell = 'px-1.5 py-1', tb = document.createElement('table'); tb.className = 'w-full';
+      if (title) { var cap = document.createElement('caption'); cap.className = 'px-1.5 pt-2 pb-1 text-left text-xs font-semibold uppercase text-gray-900'; cap.textContent = title; tb.appendChild(cap); }
+      var row = function (cls, tag, vals) { var tr = document.createElement('tr'); tr.className = cls; vals.forEach(function (v) { var c = document.createElement(tag); c.className = cell + (tag === 'th' ? ' text-left font-semibold' : ''); c.textContent = v == null || v === '' ? '–' : String(v); tr.appendChild(c); }); tb.appendChild(tr); };
+      row('text-xs font-semibold uppercase text-gray-900', 'th', head);
+      rows.forEach(function (v) { row('border-t border-gray-500 text-sm font-semibold text-gray-1300', 'td', v); });
+      box.appendChild(tb);
+    }
     function rwyPanel() {
       var pic = document.querySelector('[data-testid="airport-panel__promo-runway_details"]'), box = pic && (pic.closest('button') || pic);
       var old = document.querySelectorAll('.tl-rwy'); for (var i = 0; i < old.length; i++) if (!box || old[i].previousElementSibling !== box) old[i].remove();
       if (!box) return;
-      var code = rwyKey((location.pathname.match(/^\/airport\/([a-z0-9]{3,4})/i) || [])[1]), list = code ? rwyOf(code) : null;
+      var code = panelCode(), list = code ? rwyOf(code) : null, pd = code ? panelData[code] : null;
+      var ours = pd && pd.runways && pd.runways.length ? pd.runways : null, freqs = pd && pd.freqs && pd.freqs.length ? pd.freqs : null, ends = pd && pd.ends && pd.ends.length ? pd.ends : null;
       var mine = box.nextElementSibling && box.nextElementSibling.classList.contains('tl-rwy') ? box.nextElementSibling : null;
-      if (!list || !list.length) { if (mine) mine.remove(); box.style.display = ''; if (code) rwyWant(code); return; }
-      if (mine && mine.getAttribute('data-code') === code) return;
+      if (code) panelWant(code);
+      if (!ours && !(list && list.length) && !ends) { if (mine) mine.remove(); box.style.display = ''; if (code) rwyWant(code); return; }
+      if (!list && code) rwyWant(code);
+      var sig = code + ':' + (ours ? 'o' + ours.length + ':' + (freqs ? freqs.length : 0) : list && list.length ? 'f' + list.length : 'e' + ends.length);
+      if (mine && mine.getAttribute('data-sig') === sig) return;
       if (!mine) { mine = document.createElement('div'); box.after(mine); }
-      mine.className = 'tl-rwy w-full overflow-hidden rounded border border-gray-500 bg-gray-100'; mine.setAttribute('data-code', code); mine.textContent = '';
-      var n = function (v) { return fin(v) ? Number(v).toLocaleString('en-GB') : '–'; }, cell = 'px-1.5 py-1', tb = document.createElement('table'); tb.className = 'w-full';
-      var row = function (cls, tag, vals) { var tr = document.createElement('tr'); tr.className = cls; vals.forEach(function (v) { var c = document.createElement(tag); c.className = cell + (tag === 'th' ? ' text-left font-semibold' : ''); c.textContent = v; tr.appendChild(c); }); tb.appendChild(tr); };
-      row('text-xs font-semibold uppercase text-gray-900', 'th', ['Runway', 'Length (m/ft)', 'Surface']);
-      list.forEach(function (r) { row('border-t border-gray-500 text-sm font-semibold text-gray-1300', 'td', [r.name, n(r.m) + '/' + n(r.ft), r.surf || 'Unknown']); });
-      mine.appendChild(tb); box.style.display = 'none';
+      mine.className = 'tl-rwy w-full overflow-hidden rounded border border-gray-500 bg-gray-100'; mine.setAttribute('data-code', code); mine.setAttribute('data-sig', sig); mine.textContent = '';
+      var n = function (v) { return fin(v) ? Number(v).toLocaleString('en-GB') : '–'; }, m = function (ft) { return fin(ft) ? Math.round(ft * 0.3048) : null; };
+      if (ours) {
+        // [ident, other end, length ft, width ft, surface code, surface, lit, closed, then each end: elevation, heading, displaced threshold, lat, lon]
+        tlTable(mine, ['Runway', 'Length (m/ft)', 'Width (m)', 'Surface', 'Lights'], ours.map(function (r) { return [r[0] + (r[1] ? '/' + r[1] : '') + (r[7] ? ' (closed)' : ''), n(m(r[2])) + '/' + n(r[2]), n(m(r[3])), SURF_NAME[r[4]] || r[5] || 'Unknown', r[6] === 1 ? 'Yes' : r[6] === 0 ? 'No' : '–']; }));
+        var er = []; ours.forEach(function (r) { if (r[7]) return; [[r[0], 8], [r[1], 13]].forEach(function (e) { if (!e[0]) return; var b = e[1]; er.push([e[0], fin(r[b + 1]) ? Math.round(r[b + 1]) + '°' : '', fin(r[b]) ? n(r[b]) + ' ft' : '', r[b + 2] > 0 ? n(r[b + 2]) + ' ft' : 'None']); }); });
+        if (er.length) tlTable(mine, ['End', 'Heading (true)', 'Elevation', 'Displaced threshold'], er, 'Runway ends');
+        if (freqs) tlTable(mine, ['Type', 'Name', 'MHz'], freqs.map(function (f) { return [f[0], f[1], fin(f[2]) ? f[2].toFixed(3) : '']; }), 'Radio frequencies');
+      } else if (list && list.length) tlTable(mine, ['Runway', 'Length (m/ft)', 'Surface'], list.map(function (r) { return [r.name, n(r.m) + '/' + n(r.ft), r.surf || 'Unknown']; }));
+      else tlTable(mine, ['Runway end', 'Length (m/ft)', 'Elevation', 'Surface'], ends.map(function (e) { return [e.name, n(m(e.lengthFt)) + '/' + n(e.lengthFt), fin(e.elevationFt) ? n(e.elevationFt) + ' ft' : '', SURF_NAME[e.surface] || 'Unknown']; }));
+      box.style.display = 'none';
     }
-    setInterval(function () { if (document.querySelector('[data-testid="airport-panel"]') || document.querySelector('.tl-rwy')) rwyPanel(); }, 400);
+    // ---- the rest of the map's airport panel ------------------------------------------------------------------------
+    // FR24's locked pictures "Movements per day" and "Runway usage" give way to the real thing: the airport's take-offs and
+    // landings of each of the last days (FR24's own schedule, counted as on its statistics page, the week's blocked flights
+    // the userscript knows on top) and the runways the flights the monitor tracked there used (each one's take-off and
+    // landing worked out from its track). Its "Latest events" and the plea to help its ground coverage are taken out.
+    // Found by what FR24 names them or by what they say - FR24 redraws its panel, so it is done again each time.
+    var panelData = {}, panelAskedAt = {}, panelOpen = { code: '', at: 0 }, panelSigs = {};
+    var PANEL_TITLES = ['Latest events', 'Airport statistics', 'Airport movements', 'Movements per day', 'Runway usage', 'Airport & runway details', 'Runway details', 'Weather', 'Busiest routes'];
+    function panelWant(code) { if (Date.now() - (panelAskedAt[code] || 0) > 120000) { panelAskedAt[code] = Date.now(); post('needAirportPanel', { code: code }); } }
+    function textOf(el) { return String((el && el.textContent) || '').replace(/\s+/g, ' ').trim(); }
+    // (the innermost elements saying this)
+    function saying(root, re) {
+      var out = [], w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT), t;
+      while ((t = w.nextNode())) { var v = String(t.nodeValue || '').replace(/\s+/g, ' ').trim(); if (v && v.length < 160 && re.test(v)) { var e = t.parentElement; if (e && !e.closest('.tl-panel, .tl-rwy') && out.indexOf(e) < 0) out.push(e); } }
+      return out;
+    }
+    // (the part of the panel a title heads: up from it while the part above holds no other part's title, nor FR24's tabs
+    // or boards - and small, an events list or a notice, not half the panel)
+    function partOf(el, panel, title, maxLen) {
+      var cur = el;
+      while (cur.parentElement && cur.parentElement !== panel) {
+        var up = cur.parentElement, t = textOf(up), other = false;
+        for (var i = 0; i < PANEL_TITLES.length; i++) if (PANEL_TITLES[i] !== title && t.indexOf(PANEL_TITLES[i]) >= 0) { other = true; break; }
+        if (other || t.length > maxLen || up.querySelector('[data-testid^="airport-panel__tab"], [data-testid^="airport-panel__schedules"], [data-testid^="airport-panel__promo-"], .tl-panel, .tl-rwy')) break;
+        cur = up;
+      }
+      return cur;
+    }
+    function tlHide(el) { if (el && el.style.display !== 'none') { el.style.display = 'none'; el.setAttribute('data-tl-hidden', '1'); } }
+    function panelHide(panel) {
+      saying(panel, /^latest events$/i).forEach(function (e) { tlHide(partOf(e, panel, 'Latest events', 4000)); });
+      saying(panel, /help us improve|improve (our |the )?(ground )?coverage/i).forEach(function (e) { tlHide(partOf(e, panel, '', 600)); });
+    }
+    // (FR24's locked pictures: by their name, else by the title they sit under)
+    function kindNear(el, panel) {
+      var img = el.matches('img') ? el : el.querySelector('img[alt]'), alt = img ? String(img.getAttribute('alt') || '') : '';
+      if (/movements per day/i.test(alt)) return 'moves'; if (/runway usage/i.test(alt)) return 'usage';
+      for (var cur = el, i = 0; i < 4 && cur && cur !== panel; i++, cur = cur.parentElement) { var t = textOf(cur), a = /movements per day/i.test(t), b = /runway usage/i.test(t); if (a !== b) return a ? 'moves' : 'usage'; }
+      return '';
+    }
+    function lockedAfter(h, panel) {
+      for (var cur = h, up = 0; up < 3 && cur && cur !== panel; up++, cur = cur.parentElement) {
+        var sib = cur.nextElementSibling; while (sib && sib.classList.contains('tl-panel')) sib = sib.nextElementSibling;
+        if (sib && (sib.matches('picture, img, button') || sib.querySelector('picture, img'))) return sib;
+      }
+      return null;
+    }
+    function promoSlots(panel) {
+      var out = [], have = {}, ps = panel.querySelectorAll('[data-testid^="airport-panel__promo-"]');
+      for (var i = 0; i < ps.length; i++) {
+        var id = ps[i].getAttribute('data-testid') || ''; if (/runway[_-]?details/i.test(id)) continue;
+        var kind = /movement/i.test(id) ? 'moves' : /usage/i.test(id) ? 'usage' : kindNear(ps[i], panel); if (!kind || have[kind]) continue;
+        var box = ps[i].closest('button') || ps[i]; if (!panel.contains(box)) box = ps[i];
+        out.push({ kind: kind, box: box }); have[kind] = 1;
+      }
+      [['moves', /^movements per day$/i], ['usage', /^runway usage$/i]].forEach(function (k) {
+        if (have[k[0]]) return;
+        var hs = saying(panel, k[1]); for (var j = 0; j < hs.length; j++) { var b = lockedAfter(hs[j], panel); if (b) { out.push({ kind: k[0], box: b }); have[k[0]] = 1; break; } }
+      });
+      return out;
+    }
+    // (the movements of each of the last days: FR24's own counts and the blocked flights the userscript knows)
+    function panelMoves(code, d) {
+      var c = code.toLowerCase(), tz = d.tz || 'UTC', today = dayOf(Date.now() / 1000, tz);
+      var days = mvKept(c).days || {}, add = {}, inc = function (t, k) { var x = dayOf(t, tz); (add[x] = add[x] || { off: 0, on: 0 })[k]++; };
+      (routesAdd.get(d.apId) || []).forEach(function (m) { if (m.from.id === d.apId) (m.offs || []).forEach(function (t) { inc(t, 'off'); }); if (m.to.id === d.apId) (m.ons || []).forEach(function (t) { inc(t, 'on'); }); });
+      return Object.keys(days).sort().reverse().slice(0, 7).map(function (k) { var x = days[k], e = add[k] || { off: 0, on: 0 }; return { day: k, today: k === today, off: x.takeoffs + e.off, on: x.landings + e.on, blocked: e.off + e.on }; });
+    }
+    var TL_OFF = '#3d7be0', TL_ON = '#f0b429';
+    function bar(parts, max) {
+      var b = document.createElement('div'); b.style.cssText = 'display:flex;height:10px;border-radius:2px;overflow:hidden;background:rgba(127,127,127,.15);min-width:60px';
+      parts.forEach(function (p) { var s = document.createElement('div'); s.style.cssText = 'height:100%;background:' + p[1] + ';width:' + (max > 0 ? (100 * p[0] / max).toFixed(1) : 0) + '%'; b.appendChild(s); });
+      return b;
+    }
+    function legend(box, note) {
+      var l = document.createElement('div'); l.className = 'px-1.5 pb-1.5 pt-1 text-xs text-gray-900';
+      [['Take-offs', TL_OFF], ['Landings', TL_ON]].forEach(function (x) { var s = document.createElement('span'); s.style.cssText = 'display:inline-flex;align-items:center;margin-right:10px'; var dot = document.createElement('span'); dot.style.cssText = 'display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;background:' + x[1]; s.appendChild(dot); s.appendChild(document.createTextNode(x[0])); l.appendChild(s); });
+      if (note) { var nn = document.createElement('div'); nn.className = 'pt-1'; nn.textContent = note; l.appendChild(nn); }
+      box.appendChild(l);
+    }
+    function grid(box, rows, max) {
+      var tb = document.createElement('table'); tb.className = 'w-full';
+      rows.forEach(function (r) {
+        var tr = document.createElement('tr'); tr.className = 'border-t border-gray-500 text-sm font-semibold text-gray-1300';
+        var a = document.createElement('td'); a.className = 'px-1.5 py-1 whitespace-nowrap'; a.textContent = r.label; tr.appendChild(a);
+        var b = document.createElement('td'); b.className = 'px-1.5 py-1 w-full'; b.appendChild(bar([[r.off, TL_OFF], [r.on, TL_ON]], max)); tr.appendChild(b);
+        var c = document.createElement('td'); c.className = 'px-1.5 py-1 whitespace-nowrap text-right'; c.textContent = r.off + ' / ' + r.on; tr.appendChild(c);
+        tb.appendChild(tr);
+      });
+      box.appendChild(tb);
+    }
+    function dayLabel(d) { try { return new Date(d + 'T12:00:00Z').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' }); } catch (e) { return d; } }
+    function movesBlock(box, code, d) {
+      var rows = panelMoves(code, d);
+      if (!rows.length) { var p = document.createElement('div'); p.className = 'px-1.5 py-2 text-sm text-gray-900'; p.textContent = 'Counting this airport\'s flights of the last days…'; box.appendChild(p); return 'none'; }
+      var max = Math.max.apply(null, rows.map(function (r) { return r.off + r.on; }));
+      grid(box, rows.map(function (r) { return { label: dayLabel(r.day) + (r.today ? ' (so far)' : ''), off: r.off, on: r.on }; }), max);
+      var bl = rows.reduce(function (s, r) { return s + r.blocked; }, 0);
+      legend(box, 'Take-offs / landings by the airport\'s local day - FR24\'s own schedule' + (bl ? ', with ' + bl + ' blocked flight' + (bl > 1 ? 's' : '') + ' it does not show' : '') + '.');
+      return JSON.stringify(rows);
+    }
+    function usageBlock(box, d) {
+      var p;
+      if (!d.monitor) { p = document.createElement('div'); p.className = 'px-1.5 py-2 text-sm text-gray-900'; p.textContent = 'Runway use is worked out by the monitor from the flights it tracks - it is not connected.'; box.appendChild(p); return 'off'; }
+      var by = {}; (d.usage || []).forEach(function (u) { by[u[0]] = { off: u[1] || 0, on: u[2] || 0 }; });
+      (d.runways || []).forEach(function (r) { if (r[7]) return; [r[0], r[1]].forEach(function (e) { if (e && !by[e]) by[e] = { off: 0, on: 0 }; }); });
+      var rows = Object.keys(by).map(function (k) { return { label: k, off: by[k].off, on: by[k].on }; }).sort(function (a, b) { return (b.off + b.on) - (a.off + a.on) || a.label.localeCompare(b.label, 'en', { numeric: true }); });
+      if (!rows.length) { p = document.createElement('div'); p.className = 'px-1.5 py-2 text-sm text-gray-900'; p.textContent = 'No runways known for this airport.'; box.appendChild(p); return 'none'; }
+      var max = Math.max(1, Math.max.apply(null, rows.map(function (r) { return r.off + r.on; })));
+      grid(box, rows, max);
+      legend(box, d.moves ? 'Take-offs / landings of the ' + d.moves + ' movement' + (d.moves > 1 ? 's' : '') + ' the monitor tracked here in the last ' + (d.days || 7) + ' days (blocked aircraft worldwide, all traffic in its areas - not every flight); the runway was clear from the track for ' + (d.withRunway || 0) + '.' : 'The monitor tracked no flights here in the last ' + (d.days || 7) + ' days.');
+      return JSON.stringify(rows) + d.moves;
+    }
+    function panelBlock(slot, code, d) {
+      var box = slot.box, mine = box.nextElementSibling && box.nextElementSibling.classList.contains('tl-panel') && box.nextElementSibling.getAttribute('data-kind') === slot.kind ? box.nextElementSibling : null;
+      var probe = document.createElement('div'), sig = slot.kind === 'moves' ? movesBlock(probe, code, d) : usageBlock(probe, d);
+      sig = code + ':' + sig;
+      if (mine && mine.getAttribute('data-sig') === sig) { box.style.display = 'none'; return; }
+      if (!mine) { mine = document.createElement('div'); box.after(mine); }
+      mine.className = 'tl-panel w-full overflow-hidden rounded border border-gray-500 bg-gray-100'; mine.setAttribute('data-kind', slot.kind); mine.setAttribute('data-sig', sig); mine.textContent = '';
+      while (probe.firstChild) mine.appendChild(probe.firstChild);
+      box.style.display = 'none';
+    }
+    function panelTick() {
+      var panel = document.querySelector('[data-testid="airport-panel"]');
+      if (!panel) { var left = document.querySelectorAll('.tl-panel'); for (var i = 0; i < left.length; i++) left[i].remove(); if (document.querySelector('.tl-rwy')) rwyPanel(); panelOpen.code = ''; return; }
+      var code = panelCode(); if (!code) return;
+      if (panelOpen.code !== code) { panelOpen.code = code; panelOpen.at = Date.now(); }
+      panelWant(code); rwyPanel();
+      var d = panelData[code];
+      // (FR24's own counts of the last days: once the panel has been open a moment - a click through airports asks nothing)
+      if (d && Date.now() - panelOpen.at > 2500) mvCount(code.toLowerCase(), d.tz || 'UTC');
+      // (the panel as it was last done, unchanged: nothing to do)
+      if (panelSigs[code] === panelSig(panel, code, d)) return;
+      panelHide(panel);
+      if (d) promoSlots(panel).forEach(function (sl) { try { panelBlock(sl, code, d); } catch (e) { stats.errors++; stats.lastError = String(e); } });
+      panelSigs[code] = panelSig(panel, code, d);
+    }
+    function panelSig(panel, code, d) { return [panel.getElementsByTagName('*').length, textOf(panel).length, d ? d.at : 0, (lsGet('tl.mv.' + code.toLowerCase()) || '').length, ((d && routesAdd.get(d.apId)) || []).length, Math.floor(Date.now() / 60000)].join(':'); }
+    function acceptAirportPanel(d) {
+      var code = rwyKey(d.code); if (!code) return;
+      panelData[code] = { at: Date.now(), apId: Number(d.apId) || 0, tz: String(d.tz || ''), days: Number(d.days) || 7, runways: Array.isArray(d.runways) ? d.runways : null, freqs: Array.isArray(d.freqs) ? d.freqs : null, usage: Array.isArray(d.usage) ? d.usage : null, moves: Number(d.moves) || 0, withRunway: Number(d.withRunway) || 0, monitor: !!d.monitor, ends: Array.isArray(d.ends) ? d.ends : null };
+      panelSigs[code] = ''; panelTick();
+    }
+    setInterval(function () { try { panelTick(); } catch (e) { stats.errors++; stats.lastError = String(e); } }, 400);
     // an airport page's runway table: FR24's runways, each end's elevation where the userscript knows it, else the airport's
     function unlockRunways(p, apId) {
       var ap = p.airport || {}, code = ap.iata || ap.icao, fr = rwyOf(code); if (!fr) rwyWant(code);
@@ -1956,6 +2121,12 @@
       else if (d.__tweeksLadd === 'revoke') { for (var i = 0; i < (d.ids || []).length; i++) { resolved.delete(Number(d.ids[i])); routes.delete(Number(d.ids[i])); telem.delete(Number(d.ids[i])); } }
       else if (d.__tweeksLadd === 'route') { if (d.id != null) { if (d.route) routes.set(Number(d.id), d.route); else routes.delete(Number(d.id)); if (followSt && Number(d.id) === followSt.id) pushFollowSoon(); if (boardAffected([d.id])) refreshBoardSoon(); } }
       else if (d.__tweeksLadd === 'routes') { (d.list || []).forEach(function (x) { if (x && x.id != null) { if (x.route) routes.set(Number(x.id), x.route); else routes.delete(Number(x.id)); if (followSt && Number(x.id) === followSt.id) pushFollowSoon(); } }); if (boardAffected((d.list || []).map(function (x) { return x && x.id; }))) refreshBoardSoon(); }
+      // (where flights FR24 is not drawing here were last: the monitor's - the boards of every airport list them)
+      else if (d.__tweeksLadd === 'positions') {
+        var chp = [];
+        (d.list || []).forEach(function (x) { if (x && x.id != null && x.pos && fin(x.pos.lat)) { var k = Number(x.id), lp0 = lastPos.get(k); if (!lp0 || lp0.at < x.pos.at) { lastPos.set(k, x.pos); chp.push(k); } } });
+        if (chp.length && boardAffected(chp)) refreshBoardSoon();
+      }
       else if (d.__tweeksLadd === 'naBoard') {
         var ch = [];
         (d.list || []).forEach(function (x) { if (x && x.id != null && x.rec && x.route) { var k = Number(x.id); naRecs.set(k, x.rec); naRoutes.set(k, x.route); if (x.pos && (!lastPos.has(k) || lastPos.get(k).at < x.pos.at)) lastPos.set(k, x.pos); ch.push(x.id); } });
@@ -1969,6 +2140,7 @@
       else if (d.__tweeksLadd === 'pbRoute') { if (d.id != null) { if (d.route) pbRoutes.set(Number(d.id), d.route); else pbRoutes.delete(Number(d.id)); if (pbRoutes.size > 3000) pbRoutes.delete(pbRoutes.keys().next().value); } }
       else if (d.__tweeksLadd === 'pbTrace') { if (d.id != null && Array.isArray(d.pts)) { pbTrace = { id: Number(d.id), hex: d.hex || '', pts: d.pts }; pbRelease(); } }
       else if (d.__tweeksLadd === 'routesAdd') { if (d.apId) { routesAdd.set(Number(d.apId), d.list || []); keepApData(Number(d.apId)); routesTick(); } }
+      else if (d.__tweeksLadd === 'airportPanel') acceptAirportPanel(d);
       else if (d.__tweeksLadd === 'searchAdd') onSearchAdd(d);
       else if (d.__tweeksLadd === 'airportData') { if (d.apId) { var ad = apDataOf(Number(d.apId)); if (d.runways) ad.runways = d.runways; if (d.board) ad.board = d.board; keepApData(Number(d.apId)); routesTick(); } }
       else if (d.__tweeksLadd === 'hist') {
@@ -1990,7 +2162,7 @@
       else if (d.__tweeksLadd === 'hello') post('ready', { stats: stats, feedReady: !!feedHeaders, hdr: feedHdrPublic(), v: BRIDGE_V });
     });
     window[NS] = { resolved: resolved, routes: routes, naRecs: naRecs, naRoutes: naRoutes, telem: telem, hist: hist, lastPos: lastPos, photoCache: photoCache, psCache: psCache, stats: stats, fetchPhotos: fetchPhotos, hello: function () { post('ready', { stats: stats, feedReady: !!feedHeaders, v: BRIDGE_V }); }, v: BRIDGE_V };
-    if (window.__tlTestHook) try { window.__tlTestHook({ csOf: csOf, hist: hist, preloaded: function () { return preloaded; }, parse: parse, photoFits: photoFits, makerOf: makerOf, patchFollow: patchFollow, patchFlightMsg: patchFlightMsg, pushFollow: pushFollow, followSt: function () { return followSt; }, setFollowSt: function (s) { followSt = s; }, shownPhotos: shownPhotos, photoCache: photoCache, FOLLOW: FOLLOW, DETAILS: DETAILS, fLen: fLen, fStr: fStr, fVar: fVar, patchFlight: patchFlight, psState: function () { return { q: psQ.length, busy: psBusy, last: psLast, blockedFor: Math.max(0, psBlockedUntil - Date.now()), pri: Array.from(psPri), jobs: photoJobs.size, head: psQ.slice(0, 3).map(function (j) { return j.hex; }) }; }, acceptPubTel: acceptPubTel, pubTelFor: pubTelFor, fillNativeCard: fillNativeCard, regsOfCallsign: regsOfCallsign, categoryOf: categoryOf, nativeFill: nativeFill, natInfo: natInfo, telem: telem, b64Encode: b64Encode, b64DecodeInto: b64DecodeInto, frameHeader: frameHeader, concat: concat, varintInt32: varintInt32, PLAYBACK: PLAYBACK, patchPlayback: patchPlayback, patchPlaybackRequest: patchPlaybackRequest, pbRoutes: pbRoutes, pbTelAt: pbTelAt, setPbTrace: function (t) { pbTrace = t; }, patchList: patchList, acceptSites: acceptSites, listSig: listSig, mergeRoutes: mergeRoutes, applyRoutes: applyRoutes, routesAdd: routesAdd, applyAirport: applyAirport, applyBoardPage: applyBoardPage, applyStats: applyStats, mergeFlights: mergeFlights, apData: apData, telAt: telAt, noteTelem: noteTelem, pbTraceOf: function () { return pbTrace; }, logoOf: logoOf, archDetail: archDetail, tsOf: tsOf, noteAirportJson: noteAirportJson, rwyOf: rwyOf, rwyPanel: rwyPanel, unlockRunways: unlockRunways, mvRows: mvRows, mvKept: mvKept, dayOf: dayOf, pbPanelTick: pbPanelTick, logoFix: logoFix, liveEntries: liveEntries, pbPos: pbPos, lastPos: lastPos, resolved: resolved, stats: stats }); } catch (e) { /* ignore */ }
+    if (window.__tlTestHook) try { window.__tlTestHook({ csOf: csOf, hist: hist, preloaded: function () { return preloaded; }, parse: parse, photoFits: photoFits, makerOf: makerOf, patchFollow: patchFollow, patchFlightMsg: patchFlightMsg, pushFollow: pushFollow, followSt: function () { return followSt; }, setFollowSt: function (s) { followSt = s; }, shownPhotos: shownPhotos, photoCache: photoCache, FOLLOW: FOLLOW, DETAILS: DETAILS, fLen: fLen, fStr: fStr, fVar: fVar, patchFlight: patchFlight, psState: function () { return { q: psQ.length, busy: psBusy, last: psLast, blockedFor: Math.max(0, psBlockedUntil - Date.now()), pri: Array.from(psPri), jobs: photoJobs.size, head: psQ.slice(0, 3).map(function (j) { return j.hex; }) }; }, acceptPubTel: acceptPubTel, pubTelFor: pubTelFor, fillNativeCard: fillNativeCard, regsOfCallsign: regsOfCallsign, categoryOf: categoryOf, nativeFill: nativeFill, natInfo: natInfo, telem: telem, b64Encode: b64Encode, b64DecodeInto: b64DecodeInto, frameHeader: frameHeader, concat: concat, varintInt32: varintInt32, PLAYBACK: PLAYBACK, patchPlayback: patchPlayback, patchPlaybackRequest: patchPlaybackRequest, pbRoutes: pbRoutes, pbTelAt: pbTelAt, setPbTrace: function (t) { pbTrace = t; }, patchList: patchList, acceptSites: acceptSites, listSig: listSig, mergeRoutes: mergeRoutes, applyRoutes: applyRoutes, routesAdd: routesAdd, applyAirport: applyAirport, applyBoardPage: applyBoardPage, applyStats: applyStats, mergeFlights: mergeFlights, apData: apData, telAt: telAt, noteTelem: noteTelem, pbTraceOf: function () { return pbTrace; }, logoOf: logoOf, archDetail: archDetail, tsOf: tsOf, noteAirportJson: noteAirportJson, rwyOf: rwyOf, rwyPanel: rwyPanel, panelTick: panelTick, panelData: panelData, promoSlots: promoSlots, acceptAirportPanel: acceptAirportPanel, unlockRunways: unlockRunways, mvRows: mvRows, mvKept: mvKept, dayOf: dayOf, pbPanelTick: pbPanelTick, logoFix: logoFix, liveEntries: liveEntries, pbPos: pbPos, lastPos: lastPos, resolved: resolved, stats: stats }); } catch (e) { /* ignore */ }
     post('ready', { stats: stats, feedReady: false, v: BRIDGE_V });
   }
 

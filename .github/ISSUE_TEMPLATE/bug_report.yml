@@ -1,0 +1,38 @@
+name: Something isn't right
+description: A flight named wrongly, a destination far off, a part of FR24 that looks broken.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. **Never paste your monitor's secret or an API key here.**
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Shown on the strip under the aircraft's photo (for example v22.21.0).
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Installed as
+      options: [Browser extension (Chrome / Edge), Userscript (Tampermonkey)]
+    validations:
+      required: true
+  - type: input
+    id: flight
+    attributes:
+      label: Flight
+      description: The FR24 link, or the registration / callsign, and roughly when (UTC).
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Screenshots help. The sources pop-over (click "sources" on the strip) shows what the script could reach.
