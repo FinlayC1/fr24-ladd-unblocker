@@ -2,7 +2,8 @@
 // Mach, wind, temperature: over most of the US, the oceans, much of the world), worked out from a weather model and the
 // aircraft's own ground speed, track and height. The model: NOAA's GFS through Open-Meteo (free, non-commercial, CC BY
 // 4.0) - wind and temperature on nine pressure levels, for 5-degree cells, asked for only where such aircraft fly, every
-// 12 hours (two days of hourly values a time), a few dozen cells a request, gently. Estimates (typically within ten
+// 12 hours (two days of hourly values a time), a few dozen cells a request, gently - within Open-Meteo's free limits of
+// 600 weighted calls a minute, 5,000 an hour and 10,000 a day (kept under each, with a margin). Estimates (typically within ten
 // knots and two degrees): an aircraft's own figures always win.
 const LEVELS = [850, 700, 600, 500, 400, 300, 250, 200, 150];     // hPa: about FL050 to FL450
 const fin = v => typeof v === 'number' && isFinite(v);
@@ -20,10 +21,13 @@ function casOf(tas, p, tk) {
 
 function createWx(env) {
   env = env || {};
-  const cellDeg = env.cellDeg || 5, everyS = env.everyS || 12 * 3600, gapMs = env.gapMs || 6000, batch = env.batch || 40, dayCap = env.dayCap || 7000;
+  const cellDeg = env.cellDeg || 5, everyS = env.everyS || 12 * 3600, gapMs = env.gapMs || 6000, batch = env.batch || 20, dayCap = env.dayCap || 7000;
+  const minCap = env.minCap || 450, hourCap = env.hourCap || 4000, badS = env.badS || 3600;
   const cells = new Map();          // 'lat:lon' -> { at, t: [unix s], lv: [{ p, T: [], u: [], v: [] }] }
   const want = new Map();           // 'lat:lon' -> when asked for
-  const stats = { requests: 0, cells: 0, fails: 0, lastErr: '', estimated: 0, missing: 0, today: '', used: 0 };
+  const bad = new Map();            // 'lat:lon' -> unix s: a cell whose answer had no usable levels, not asked again before
+  const sent = [];                  // [ms, weight] of the requests of the last hour (the minute and hour limits)
+  const stats = { requests: 0, cells: 0, fails: 0, lastErr: '', estimated: 0, missing: 0, today: '', used: 0, held: 0, bad: 0 };
   let lastAt = 0, busy = false, pausedUntil = 0;
   const keyOf = (lat, lon) => { const a = Math.max(-85, Math.min(85, Math.round(lat / cellDeg) * cellDeg)), o = ((Math.round(lon / cellDeg) * cellDeg + 540) % 360) - 180; return a + ':' + o; };
   const vars = LEVELS.flatMap(p => [`temperature_${p}hPa`, `wind_speed_${p}hPa`, `wind_direction_${p}hPa`]);
@@ -51,17 +55,23 @@ function createWx(env) {
     nowMs = nowMs || Date.now();
     if (busy || nowMs < pausedUntil || nowMs - lastAt < gapMs || !want.size || typeof env.fetch !== 'function') return 0;
     const day = new Date(nowMs).toISOString().slice(0, 10); if (stats.today !== day) { stats.today = day; stats.used = 0; }
-    const keys = [...want.keys()].filter(k => { const c = cells.get(k); return !c || nowMs / 1000 - c.at > everyS; }).slice(0, batch);
+    for (const [k, t] of bad) if (nowMs / 1000 > t) bad.delete(k);
+    const keys = [...want.keys()].filter(k => { const c = cells.get(k); return !bad.has(k) && (!c || nowMs / 1000 - c.at > everyS); }).slice(0, batch);
     if (!keys.length) { want.clear(); return 0; }
-    if (stats.used + weight(keys.length) > dayCap) return 0;
-    busy = true; lastAt = nowMs;
+    // (the minute's and the hour's use so far: a batch that would go over either waits - it would be refused, and a
+    // refusal pauses an hour)
+    while (sent.length && nowMs - sent[0][0] > 3600e3) sent.shift();
+    const use = ms => sent.reduce((n, [t, w]) => n + (nowMs - t < ms ? w : 0), 0), w = weight(keys.length);
+    if (stats.used + w > dayCap || use(60e3) + w > minCap || use(3600e3) + w > hourCap) { stats.held++; return 0; }
+    busy = true; lastAt = nowMs; sent.push([nowMs, w]);
     try {
       const r = await env.fetch(urlOf(keys), { headers: { 'User-Agent': 'fr24-ladd-unblocker-monitor (personal use)', Accept: 'application/json' }, signal: AbortSignal.timeout(30000) });
       stats.requests++; stats.used += weight(keys.length);
       if (r.status === 429 || r.status === 403) { pausedUntil = nowMs + 3600e3; throw new Error('HTTP ' + r.status); }
       if (r.status !== 200) throw new Error('HTTP ' + r.status);
       const j = JSON.parse(await r.text()), list = Array.isArray(j) ? j : [j];
-      let n = 0; keys.forEach((k, i) => { if (keep(k, list[i], nowMs / 1000)) n++; });
+      // (a cell answered without usable levels is let go for a while, not asked for again at the head of every batch)
+      let n = 0; keys.forEach((k, i) => { if (keep(k, list[i], nowMs / 1000)) n++; else { want.delete(k); bad.set(k, nowMs / 1000 + badS); stats.bad++; } });
       stats.cells = cells.size;
       return n;
     } catch (e) { stats.fails++; stats.lastErr = String(e.message || e).slice(0, 120); return 0; }
@@ -95,6 +105,6 @@ function createWx(env) {
     stats.estimated++;
     return Object.assign({}, a, { tas: Math.round(tas), ias: Math.round(ias), mach: Math.round(mach * 1000) / 1000, oat: Math.round(w.T), wd: Math.round(w.wd) % 360, ws: Math.round(w.ws), wx: 1 });
   }
-  return { fill, at, pump, keyOf, cells, want, stats, pressureAt, casOf, LEVELS };
+  return { fill, at, pump, keyOf, cells, want, bad, stats, weight, pressureAt, casOf, LEVELS };
 }
 module.exports = { createWx, pressureAt, casOf, LEVELS };
