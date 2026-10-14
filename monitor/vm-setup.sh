@@ -15,7 +15,7 @@ DROPIN=$DROPIN_DIR/checkout.conf
 say() { echo "[setup] $*"; }
 [ -f "$REPO/monitor/monitor.cjs" ] || { say "run this from the git checkout"; exit 1; }
 NODE="$(command -v node)"; [ -n "$NODE" ] || { say "node not found"; exit 1; }
-for f in monitor/monitor.cjs monitor/fr24.cjs monitor/ident.cjs monitor/dest.cjs monitor/owners.cjs monitor/airport.cjs monitor/names.cjs monitor/tel.cjs src/engine.js src/registry.js test/dataset.cjs; do node --check "$REPO/$f" || { say "$f does not parse"; exit 1; }; done
+for f in monitor/monitor.cjs monitor/fr24.cjs monitor/ident.cjs monitor/dest.cjs monitor/owners.cjs monitor/airport.cjs monitor/names.cjs monitor/tel.cjs monitor/wx.cjs src/engine.js src/registry.js test/dataset.cjs; do node --check "$REPO/$f" || { say "$f does not parse"; exit 1; }; done
 [ -f "$REPO/monitor/data/airports.json" ] || { say "monitor/data/airports.json missing in the checkout"; exit 1; }
 sudo mkdir -p "$DROPIN_DIR"
 had_dropin=0; [ -f "$DROPIN" ] && had_dropin=1 && sudo cp "$DROPIN" "$DROPIN.prev"

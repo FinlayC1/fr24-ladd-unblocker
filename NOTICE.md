@@ -18,6 +18,7 @@ FAA, adsb.lol, adsb.fi, OpenSky Network, airplanes.live, ADS-B Exchange, JetPhot
 | History files | [airplanes.live](https://airplanes.live) | airplanes.live terms |
 | Aircraft positions (optional, user's own key) | ADS-B Exchange | ADS-B Exchange API terms |
 | Airports, airfields, heliports, runways, radio frequencies | [OurAirports](https://ourairports.com) | Public domain |
+| Wind and temperature aloft, for estimated airspeeds where no receiver has them | [Open-Meteo](https://open-meteo.com) (NOAA GFS) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) |
 | Names of landing sites | © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors | [Open Database License 1.0](https://opendatacommons.org/licenses/odbl/1-0/) |
 | Aircraft types and classes | [tar1090-db](https://github.com/wiedehopf/tar1090-db) | That repository's licence |
 | Owner names | FAA Aircraft Registry, UK CAA G-INFO, Isle of Man Aircraft Registry, Swiss FOCA register; hexdb.io, adsbdb.com | Public registers and public lookups |
