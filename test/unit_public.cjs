@@ -58,7 +58,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   const a1 = await req('GET', '/area?lat=50&lon=1');
   check('... /area from anyone: taken, without the list of everyone\'s places', a1.status === 200 && !('areas' in a1.body));
   // ---- rate per address
-  { let n429 = 0; for (let i = 0; i < 45; i++) { const r = await req('GET', '/status', { ip: '198.51.100.7' }); if (r.status === 429) n429++; }
+  // (the rate is counted per calendar minute: 45 requests across a minute's turn would be counted in two)
+  { const intoMin = Date.now() % 60000; if (intoMin > 50000) await new Promise(r => setTimeout(r, 60500 - intoMin));
+    let n429 = 0; for (let i = 0; i < 45; i++) { const r = await req('GET', '/status', { ip: '198.51.100.7' }); if (r.status === 429) n429++; }
     const other = await req('GET', '/status', { ip: '198.51.100.8' }), own = await req('GET', '/status', Object.assign({ ip: '198.51.100.7' }, owner));
     check('an address over its rate (40 a minute here): 429, other addresses and the owner unaffected', n429 >= 4 && other.status === 200 && own.status === 200, { n429 }); }
   // ---- reports from anyone
