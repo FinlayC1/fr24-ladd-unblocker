@@ -92,7 +92,7 @@ Any of these can be overridden in a `monitor.json` next to `monitor.cjs` (the fi
 | `crowdNeed` | `2` | How many different browsers must send the same name or owner before a public monitor takes it, when it cannot check it itself |
 | `nearPerMin` | `30` | adsb.fi lookups a minute for places the monitor has heard little of, for all browsers together (one per 1-degree cell a minute) |
 | `telMax` | `30000` | Aircraft whose newest report is held for the padlocked figures |
-| `wx` | `{}` | The weather model for estimated airspeeds (`wx.cjs`): `cellDeg` (`5`), `everyS` (seconds between refreshes of a cell, `43200`), `batch` (cells a request, `40`), `gapMs` (`6000`), `dayCap` (weighted calls a day, `7000`) |
+| `wx` | `{}` | The weather model for estimated airspeeds (`wx.cjs`): `cellDeg` (`5`), `everyS` (seconds between refreshes of a cell, `43200`), `batch` (cells a request, `20`), `gapMs` (`6000`), `minCap` / `hourCap` / `dayCap` (weighted calls a minute, an hour, a day: `450`, `4000`, `7000`; Open-Meteo allows 600, 5,000 and 10,000), `badS` (seconds a cell answered without usable levels is let go, `3600`) |
 
 For example, to poll more gently, create `monitor/monitor.json` containing `{ "apiPerMin": 12, "piaEvery": 600 }` and restart the service.
 

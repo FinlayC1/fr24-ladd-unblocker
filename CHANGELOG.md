@@ -9,6 +9,7 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
   - wind and temperature at the aircraft's height come from NOAA's GFS weather model, via Open-Meteo (CC BY 4.0), for 5-degree cells where such aircraft fly, refreshed every 12 hours;
   - true airspeed is the ground speed less the wind, then Mach, indicated airspeed, wind and temperature follow from it.
   - These are estimates, typically within about 10 kt and 2 °C. An aircraft's own figures always win.
+  - The weather requests keep under Open-Meteo's free limits a minute, an hour and a day (450, 4,000 and 7,000 weighted calls; 20 cells a request), so a busy moment no longer earns a refusal and an hour's pause. A cell answered without usable levels is let go for an hour instead of being asked for again at once. Tested in `unit_wx`.
 - The browser keeps the monitor's airspeed figures for two minutes when its own newer poll has none, instead of blanking them every other poll.
 
 ## [22.22.0] - 2026-10-14
