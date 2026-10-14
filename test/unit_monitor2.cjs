@@ -22,12 +22,16 @@ const dayS = d => Date.parse(d + 'T00:00:00Z') / 1000;
 // adsb.lol / adsb.fi / airplanes.live as this test answers them
 const asked = [];
 let lists = {}, apliveStatus = 404;
-global.fetch = async url => {
-  asked.push(url);
+const askedH = [];
+global.fetch = async (url, init) => {
+  asked.push(url); askedH.push({ url, headers: (init && init.headers) || {} });
+  if (/opendata\.adsb\.fi\/api\/v3\/lat\//.test(url)) return lists.fiStatus ? { status: lists.fiStatus, text: async () => '' } : { status: 200, text: async () => JSON.stringify({ now: Date.now(), aircraft: lists.fiArea || [] }) };
+  if (/adsbexchange-com1\.p\.rapidapi\.com/.test(url)) return { status: 200, text: async () => JSON.stringify({ now: Date.now(), ac: [] }) };
+  if (/opensky-network\.org\/api\/states\/all/.test(url)) return lists.oskyStatus ? { status: lists.oskyStatus, text: async () => '' } : { status: 200, text: async () => JSON.stringify({ time: Math.floor(Date.now() / 1000), states: lists.osky || [] }) };
   const ok = o => ({ status: 200, text: async () => JSON.stringify(o) });
   if (/api\.adsb\.lol\/v2\/ladd$/.test(url)) return ok({ now: Date.now(), ac: lists.ladd || [] });
   if (/api\.adsb\.lol\/v2\/mil$/.test(url)) return lists.milStatus ? { status: lists.milStatus, text: async () => '' } : ok({ now: Date.now(), ac: lists.mil || [] });
-  if (/opendata\.adsb\.fi\/api\/v2\/mil$/.test(url)) return ok({ now: Math.round(Date.now() / 1000), aircraft: lists.fi || [] });
+  if (/opendata\.adsb\.fi\/api\/v2\/mil$/.test(url)) return lists.fiStatus ? { status: lists.fiStatus, text: async () => '' } : ok({ now: Math.round(Date.now() / 1000), aircraft: lists.fi || [] });
   if (/api\.adsb\.lol\/v2\/pia$/.test(url)) return { status: 404, text: async () => 'Not Found' };
   if (/api\.adsb\.lol\/v2\/(point|hex)\//.test(url)) return ok({ now: Date.now(), ac: lists.area || [] });
   let m;
@@ -54,6 +58,43 @@ const rep = (hex, o) => Object.assign({ hex, lat: 53.4, lon: -2.3, alt_baro: 120
   delete lists.milStatus;
   for (let i = 0; i < 2; i++) { M.P.tP = 0; await M.step(); }
   check('... the PIA list answering 404 three times: asked hourly after that', M.piaState.off === true && M.piaState.miss >= 3, M.piaState);
+  // ---- the backups -----------------------------------------------------------------------------------------------
+  { const quiet = () => { const t = Date.now(); Object.assign(M.P, { tL: t, tM: t, tP: t, tA: t, tH: t, tO: t, hexQ: [] }); };
+    quiet(); M.P.areaQ = [[50, 0, 100]]; M.pause['api.adsb.lol'] = Date.now() + 60000; asked.length = 0; lists.fiArea = [rep('400777', { r: 'G-AREA', t: 'C172' })];
+    await M.step();
+    check('backup: adsb.lol paused - an area asked of adsb.fi (its v3 area query), not of adsb.lol', asked.length === 1 && /opendata\.adsb\.fi\/api\/v3\/lat\/50\/lon\/0\/dist\/100$/.test(asked[0]) && M.ac.has('400777'), asked);
+    quiet(); M.P.areaQ = [[50, 0, 100]]; lists.fiStatus = 503; asked.length = 0; M.CFG.adsbxKey = '';
+    await M.step();
+    check('... adsb.fi failing too, no ADS-B Exchange key: nothing more asked', asked.length === 1, asked);
+    M.CFG.adsbxKey = 'user-key'; M.CFG.adsbxDaily = 1; M.adsbxUse.n = 0; M.adsbxUse.day = '';
+    quiet(); M.P.areaQ = [[50, 0, 100]]; askedH.length = 0;
+    await M.step();
+    const ax = askedH.find(a => /rapidapi/.test(a.url));
+    check('... with the user\'s key: ADS-B Exchange asked, with the key and host headers', !!ax && /\/v2\/lat\/50\/lon\/0\/dist\/100\/$/.test(ax.url) && ax.headers['X-RapidAPI-Key'] === 'user-key' && ax.headers['X-RapidAPI-Host'] === 'adsbexchange-com1.p.rapidapi.com', ax);
+    quiet(); M.P.tM = 0; askedH.length = 0;
+    await M.step();
+    check('... its daily cap reached: not asked again that day (the military list, adsb.lol and adsb.fi both failing, neither)', !askedH.some(a => /rapidapi/.test(a.url)) && askedH.some(a => /adsb\.fi\/api\/v2\/mil/.test(a.url)), askedH.map(a => a.url));
+    M.CFG.adsbxDaily = 5; quiet(); M.P.tM = 0; askedH.length = 0;
+    await M.step();
+    check('... under the cap: the military list from ADS-B Exchange when adsb.lol and adsb.fi both fail', askedH.some(a => /rapidapi\.com\/v2\/mil\/$/.test(a.url)), askedH.map(a => a.url));
+    M.CFG.adsbxKey = ''; delete lists.fiStatus; delete M.pause['api.adsb.lol'];
+    // OpenSky: only while adsb.lol's LADD list has been silent 3 minutes; the blocked aircraft in it kept, the others not
+    M.markBlocked('e00001', { reg: 'N77OS', type: 'GLF5' }, Date.now() / 1000); Object.assign(M.blocked.get('e00001'), { faa: true, lad: 1234 });
+    const t = Math.floor(Date.now() / 1000);
+    lists.osky = [['e00001', 'N77OS   ', 'United States', t - 4, t - 1, -40.5, 45.2, 12500, false, 240, 75, -2.5, null, 12700, '2201', false, 0], ['abcdef', 'BAW1', 'UK', t, t, 0, 51, 10000, false, 230, 90, 0, null, 10100, null, false, 0]];
+    quiet(); M.P.tO = 0; M.lastOk.ladd = Date.now() - 60000; asked.length = 0;
+    await M.step();
+    check('OpenSky: not asked while adsb.lol\'s LADD list answers', !asked.some(u => /opensky/.test(u)), asked);
+    quiet(); M.P.tO = 0; M.lastOk.ladd = Date.now() - 200000; const since0 = M.stats.since; M.stats.since = Date.now() - 400000; asked.length = 0;
+    await M.step();
+    const o = M.live.get('e00001'), oa = o && o.a;
+    check('... silent 3 minutes: OpenSky asked; the blocked aircraft in its answer in the live list, in readsb units, marked as of the FAA list', asked.some(u => /opensky-network\.org\/api\/states\/all/.test(u)) && !!oa && oa.alt_baro === 41011 && oa.gs === 467 && oa.baro_rate === -492 && oa.flight === 'N77OS   ' && oa.dbFlags === 8 && Math.abs(o.t - (t - 4)) <= 1, oa);
+    check('... the aircraft not known as blocked left out; "seen with the LADD flag" not set from it', !M.live.has('abcdef') && M.blocked.get('e00001').lad === 1234);
+    quiet(); M.P.tO = Date.now() - 1000; asked.length = 0; await M.step();
+    check('... not asked again before openskyEvery (15 min)', !asked.some(u => /opensky/.test(u)));
+    lists.oskyStatus = 429; quiet(); M.P.tO = 0; await M.step();
+    check('... OpenSky refusing (429): left alone six hours', M.pause['opensky-network.org'] > Date.now() + 5 * 3600e3);
+    delete lists.oskyStatus; M.stats.since = since0; M.lastOk.ladd = Date.now(); }
   // ---- /live --------------------------------------------------------------------------------------------------------
   M.seed(['b00001'], false, Date.now() / 1000);
   M.ingest(rep('b00001', { r: 'M-SEED', t: 'PC24' }), Date.now() / 1000);       // (a blocked aircraft heard by address)

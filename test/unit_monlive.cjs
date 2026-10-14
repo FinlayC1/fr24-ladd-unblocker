@@ -39,6 +39,8 @@ function makeNet(mon) {
     if (/ourairports-data\/main\/airports\.csv/.test(url)) return { status: OA ? 200 : 404, text: OA };
     if (/^https:\/\/mon\.test\//.test(url)) return mon(url, headers || {});
     if (/127\.0\.0\.1:47524/.test(url)) return { status: 0, error: true };
+    if (/opendata\.adsb\.fi\/api\/v3\/lat\//.test(url)) return makeNet.fiV3 ? { status: 200, text: JSON.stringify({ aircraft: [{ hex: '400fff', r: 'G-FIV3', t: 'C172', lat: 53, lon: -2, alt_baro: 2000, gs: 90, track: 10, seen_pos: 1 }] }) } : { status: 404, text: '' };
+    if (/opendata\.adsb\.fi\/api\/v2\/lat\//.test(url)) return { status: 200, text: JSON.stringify({ aircraft: [{ hex: '400ff2', r: 'G-FIV2', t: 'C172', lat: 53, lon: -2, alt_baro: 2000, gs: 90, track: 10, seen_pos: 1 }] }) };
     if (/api\.adsb\.lol\/v2\/ladd$/.test(url)) return { status: 200, text: JSON.stringify({ now: Date.now(), ac: [{ hex: 'a0b0c0', r: 'N900OWN', t: 'GLF6', dbFlags: 8, lat: 10, lon: 10, alt_baro: 41000, gs: 480, track: 90, seen_pos: 1 }] }) };
     if (/api\.adsb\.lol\/v2\/mil$|opendata\.adsb\.fi\/api\/v2\/mil$/.test(url)) return { status: 200, text: JSON.stringify({ now: Date.now(), ac: [{ hex: 'ae1111', r: 'OWN-MIL', t: 'C17', dbFlags: 1, lat: 11, lon: 11, alt_baro: 30000, gs: 420, track: 0, seen_pos: 1 }] }) };
     if ((m = /adsb\.lol\/globe_history\/(\d{4})\/(\d\d)\/(\d\d)\/traces\/..\/trace_full_([0-9a-f]{6})\.json/.exec(url))) { const t = fxTrace(m[4], `${m[1]}-${m[2]}-${m[3]}`); return t ? { status: 200, text: t } : { status: 404, text: '' }; }
@@ -125,6 +127,12 @@ const sameDayFlights = l => `${l.from ? l.from.code : '?'}-${l.to ? l.to.code : 
     const at0 = L.globalList.at; net.asked.length = 0;
     const moved = await until(() => { const x = L.globalList.byHex.get('a1b2c3'); return x && x.lon === -109.9; }, 30000);
     check('every 20 s the monitor\'s live list again: the newer position taken, the list fresh, no list request of the browser\'s own', !!moved && L.globalList.at > at0 && !net.asked.some(a => /v2\/(ladd|mil)$/.test(a.url)), net.asked.map(a => a.url)); }
+  { const fi = L.liveSources().find(x => x.name === 'adsb.fi');
+    makeNet.fiV3 = true; net.asked.length = 0; const a = await fi.area(53, -2, 50);
+    const u1 = net.asked.map(x => x.url).filter(u => /adsb\.fi/.test(u));
+    makeNet.fiV3 = false; net.asked.length = 0; const b = await fi.area(53, -2, 50);
+    const u2 = net.asked.map(x => x.url).filter(u => /adsb\.fi/.test(u));
+    check('adsb.fi areas: its v3 query first; v2 (deprecated) only when v3 is not found', a[0].reg === 'G-FIV3' && u1.length === 1 && /\/v3\/lat\//.test(u1[0]) && b[0].reg === 'G-FIV2' && u2.length === 2 && /\/v2\/lat\//.test(u2[1]), { u1, u2 }); }
   check('the sources pop-over figures: the live list\'s size and freshness', L.monLive.n === 3 && L.monLive.ok === true && Date.now() - L.monLive.at < 10000, L.monLive);
   // ---- flight logs from the monitor --------------------------------------------------------------------------------
   // (back as far as the fixture days - 5 Oct 2026 - and two more; adsb.lol keeps 40 days, the browser asks airplanes.live

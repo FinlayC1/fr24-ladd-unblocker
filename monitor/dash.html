@@ -83,7 +83,10 @@
       ['LADD list', m.laddAt ? ago(m.laddAt) : 'not yet', m.laddAt && Date.now() - m.laddAt < 120000 ? 'ok' : 'warn']].concat(m.listAge ? [
       ['military list', m.listAge.mil != null ? m.listAge.mil + ' s ago' : m.listAge.fi != null ? 'adsb.fi ' + m.listAge.fi + ' s ago' : 'not yet', (m.listAge.mil != null && m.listAge.mil < 180) || (m.listAge.fi != null && m.listAge.fi < 180) ? 'ok' : 'warn'],
       ['PIA list', m.listAge.pia != null ? m.listAge.pia + ' s ago' : 'not yet'], ['blocked by address', m.listAge.hex != null ? m.listAge.hex + ' s ago' : 'not yet'],
-      ['adsb.lol API, last minute', m.apiLastMin + ' requests']] : []).concat([['areas', m.areas.map(function (a) { return a.join(','); }).join('  ')]]).concat(
+      ['adsb.lol API, last minute', m.apiLastMin + ' requests'],
+      ['backup: adsb.fi areas', m.listAge.fiArea != null ? m.listAge.fiArea + ' s ago' : 'not needed yet'],
+      ['backup: OpenSky', m.listAge.osky != null ? m.listAge.osky + ' s ago' : 'not needed yet'],
+      ['backup: ADS-B Exchange', m.adsbx && m.adsbx.key ? m.adsbx.today + ' / ' + m.adsbx.cap + ' today' : 'no key set']] : []).concat([['areas', m.areas.map(function (a) { return a.join(','); }).join('  ')]]).concat(
       Object.keys(m.paused).map(function (h) { return [h, 'paused ' + m.paused[h] + ' s', 'bad']; })));
     fillRows($('c-data'), [['aircraft in view', m.aircraft], ['blocked aircraft', m.blocked], ['with flights', m.withLegs], ['flights kept', m.legs], ['backfill queue', m.backfillQueue]].concat(m.hist ? [['live list (/live)', m.live], ['days rebuilt (/hist)', m.hist.built + ' with flights, ' + m.hist.empty + ' without'], ['days to rebuild', m.hist.queue], ['merged with airplanes.live', m.hist.merged], ['left to the browser', m.hist.inc + m.hist.fails, m.hist.inc + m.hist.fails ? 'warn' : '']] : []));
     var sv = s.srv;

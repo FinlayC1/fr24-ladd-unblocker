@@ -23,9 +23,10 @@
   const telemOf = c => c ? { gnd: !!c.gnd, vr: c.vs, sq: c.squawk || 0, sqs: c.sq || '', agps: c.agps, ias: c.ias, tas: c.tas, mach: c.mach, oat: c.oat, wd: c.wd, ws: c.ws, mcp: c.mcp, fms: c.fms, cat: c.cat, emergency: c.emergency, ...firFields(c), at: c.receivedAt - (c.ageS || 0) * 1000 } : null;
   const firFields = c => { const f = firInfo(c.lat, c.lon, c.gnd ? 0 : c.alt); return f ? { air: f.name, airId: f.code } : { air: '', airId: '' }; };
   const readsbList = j => Array.isArray(j && j.ac) ? j.ac : Array.isArray(j && j.aircraft) ? j.aircraft : [];
-  const readsbSource = (name, host, urlFn, hexFn) => ({
+  // (altFn: an older address of the same query, asked when the first is not found - adsb.fi moved its area query to v3)
+  const readsbSource = (name, host, urlFn, hexFn, altFn) => ({
     name, host,
-    area: (lat, lon, r) => gmRequest(urlFn(lat, lon, Math.min(250, Math.round(r)))).then(j => { const t = now(); return readsbList(j).map(a => normalizeReadsb(a, name, t)).filter(Boolean); }),
+    area: (lat, lon, r) => { const rr = Math.min(250, Math.round(r)); return gmRequest(urlFn(lat, lon, rr)).catch(e => { if (altFn && /HTTP (400|404|410)/.test(String(e))) return gmRequest(altFn(lat, lon, rr)); throw e; }).then(j => { const t = now(); return readsbList(j).map(a => normalizeReadsb(a, name, t)).filter(Boolean); }); },
     hex: hexFn ? hex => gmRequest(hexFn(hex), { timeout: 8000, priority: true }).then(j => { const t = now(); return readsbList(j).map(a => normalizeReadsb(a, name, t)).filter(Boolean)[0] || null; }) : null
   });
   // ADS-B Exchange through its official API (RapidAPI "adsbexchange-com1"): readsb v2 answers like the others, from a
@@ -43,7 +44,7 @@
   }
   const SOURCES = [
     readsbSource('adsb.lol', 'api.adsb.lol', (la, lo, r) => `https://api.adsb.lol/v2/point/${la.toFixed(4)}/${lo.toFixed(4)}/${r}`, hex => `https://api.adsb.lol/v2/hex/${hex}`),
-    readsbSource('adsb.fi', 'opendata.adsb.fi', (la, lo, r) => `https://opendata.adsb.fi/api/v2/lat/${la.toFixed(4)}/lon/${lo.toFixed(4)}/dist/${r}`, hex => `https://opendata.adsb.fi/api/v2/hex/${hex}`),
+    readsbSource('adsb.fi', 'opendata.adsb.fi', (la, lo, r) => `https://opendata.adsb.fi/api/v3/lat/${la.toFixed(4)}/lon/${lo.toFixed(4)}/dist/${r}`, hex => `https://opendata.adsb.fi/api/v2/hex/${hex}`, (la, lo, r) => `https://opendata.adsb.fi/api/v2/lat/${la.toFixed(4)}/lon/${lo.toFixed(4)}/dist/${r}`),
     // ADS-B Exchange (its own feeder network - it sees aircraft the others miss): the official API, with the user's own
     // key (Settings); without one it is simply not asked
     adsbxSource()

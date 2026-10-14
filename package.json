@@ -1,6 +1,6 @@
 {
   "name": "fr24-ladd-unblocker",
-  "version": "22.19.0",
+  "version": "22.19.1",
   "private": true,
   "description": "Flightradar24 LADD / N-A unblocker userscript and its permanent monitor",
   "scripts": {

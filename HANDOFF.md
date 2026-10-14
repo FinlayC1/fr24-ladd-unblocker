@@ -103,6 +103,13 @@ Its store and state should move to the VM.
 - Tests (offline, all pass, also on Node 18.19.1 for the monitor): unit_monitor2 33, unit_merge 16, unit_deploy 7,
   unit_monlive 24 (built userscript in jsdom: /live, fallbacks, /hist parity with the browser's own logs).
   NOT run here (network blocked in the cloud sandbox): unit_new, panels1/2, replay, e2e, perf.
+- 22.19.1 backups (monitor): adsb.fi military list + v3 area query while adsb.lol is paused/failing; ADS-B Exchange
+  (RapidAPI, only with MON_ADSBX_KEY in an EnvironmentFile, cap adsbxDaily 150/day) when adsb.fi fails too; OpenSky
+  anonymous world snapshot (blocked hexes only, every 15 min max) while the LADD list is silent > 3 min. Not used:
+  airplanes.live API (approval), ADSB One (dead), ADSBHub/TheAirTraffic (feed-only), avioadsb.org / ADSB IQ (unverified).
+  Userscript: adsb.fi area v3 first, v2 fallback.
+- Deployed 14 Oct ~18:05 UTC: VM runs ~/fr24-ladd (main-8o0480) via drop-in; home store merged (119,212 flights, 10,151
+  blocked; backup store-before-merge-2026-10-14T18-03-07). Updates: bash ~/fr24-ladd/monitor/deploy.sh
 - Optional rough destination on the monitor (plan step 9) NOT done.
 
 ## 5. The user's request (14 Oct, verbatim)
