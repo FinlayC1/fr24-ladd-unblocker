@@ -25,7 +25,7 @@
 </p>
 
 <p align="center">
-  <sub>By <b>Finlay Clarke</b> · free for personal use · no account, no tracking, no ads</sub>
+  <sub>Free for personal use · no account, no tracking, no ads</sub>
 </p>
 
 ---
