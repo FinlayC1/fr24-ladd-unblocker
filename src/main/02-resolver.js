@@ -316,21 +316,37 @@
 
   // The global LADD and military lists: every such aircraft the aggregator currently tracks, anywhere. Matching
   // against them needs no request at all, and they carry each aircraft's live telemetry.
+  // With the monitor answering, its live list (/live: the LADD, military and PIA lists and every other blocked aircraft,
+  // polled on the server) is the list: this browser asks adsb.lol / adsb.fi for none of them. Its own requests are the
+  // backup - the monitor down, or its LADD list older than 90 s (its military list older than 3 min: that one only).
   const globalList = { items: [], byHex: new Map(), at: 0, loading: null, src: '' };
+  const monLive = { at: 0, n: 0, ok: false };   // (the strip's "sources" pop-over: when the monitor's list last came, how big)
+  async function takeLive(opts) {
+    const j = await monGet('/live', opts);
+    const age = j && j.age, ok = !!(j && Array.isArray(j.ac) && age && age.ladd != null && age.ladd < 90);
+    monLive.at = now(); monLive.n = j && Array.isArray(j.ac) ? j.ac.length : 0; monLive.ok = ok;
+    if (!ok) return null;
+    // (each row's seen_pos is counted to the monitor's "now": it came just now)
+    const t = now(), got = new Map();
+    for (const a of j.ac) { const c = normalizeReadsb(a, 'monitor', t); if (c) got.set(c.hex, c); }
+    return { got, milOk: age.mil != null && age.mil < 180 };
+  }
   function refreshLists(force) {
     if (globalList.loading) return globalList.loading;
     if (!force && now() - globalList.at < LIST_REFRESH_MS) return Promise.resolve(globalList.items);
     globalList.loading = (async () => {
-      const got = new Map(); let src = '';
+      const lv = await takeLive().catch(() => null);
+      const got = lv ? lv.got : new Map(); let src = lv ? 'monitor' : '';
       for (const [name, url] of [['adsb.lol', 'https://api.adsb.lol/v2/ladd'], ['adsb.lol', 'https://api.adsb.lol/v2/mil'], ['adsb.fi', 'https://opendata.adsb.fi/api/v2/mil']]) {
-        if (/mil/.test(url) && name === 'adsb.fi' && [...got.values()].some(c => c.mil)) continue;
+        if (lv && (url.endsWith('/ladd') || lv.milOk)) continue;                 // (the monitor's list has them)
+        if (/mil/.test(url) && name === 'adsb.fi' && [...got.values()].some(c => c.mil && c.src !== 'monitor')) continue;
         for (let attempt = 0; attempt < 2; attempt++) {
-          try { const m = url.endsWith('/ladd') ? await monGet('/ladd').catch(() => null) : null, fresh = m && now() - m.at < 90000; const j = fresh ? m : await gmRequest(url, { timeout: 20000 }); const t = fresh ? m.at : now(); for (const a of readsbList(j)) { const c = normalizeReadsb(a, name, t); if (c && !got.has(c.hex)) got.set(c.hex, c); } src = src || name; break; }
+          try { const m = url.endsWith('/ladd') ? await monGet('/ladd').catch(() => null) : null, fresh = m && now() - m.at < 90000; const j = fresh ? m : await gmRequest(url, { timeout: 20000 }); const t = fresh ? m.at : now(); for (const a of readsbList(j)) { const c = normalizeReadsb(a, name, t), p = c && got.get(c.hex); if (c && (!p || (p.src === 'monitor' && seenAt(c) > seenAt(p)))) got.set(c.hex, c); } src = src || name; break; }
           catch (e) { log('list', url, String(e.message || e)); if (/429/.test(String(e)) && !attempt) { await sleep(4000); continue; } break; }
         }
       }
       if (got.size || !globalList.items.length) { globalList.items = [...got.values()]; globalList.byHex = got; globalList.at = now(); globalList.src = src || 'adsb.lol'; noteCands(globalList.items); }
-      log('LADD/military list', globalList.items.length, 'aircraft');
+      log('LADD/military list', globalList.items.length, 'aircraft', lv ? '(monitor)' : '');
       // (military aircraft FR24 does show get their padlocked fields unlocked from this data too)
       pushPubTel(globalList.items.filter(c => !c.ladd && now() - seenAt(c) < 90000));
       for (const c of globalList.items) if (c.gnd) learnParked(c);
@@ -338,16 +354,27 @@
     })().finally(() => { globalList.loading = null; });
     return globalList.loading;
   }
-  // (with the permanent monitor running, its LADD list every 30 s in between: list positions never more than a minute
-  // old to match FR24's blocked flights against - N1848T, 517 kt over Montana, went unmatched on a list 2 minutes old)
+  // (with the monitor answering, its live list every 20 s in between: positions never more than a minute old to match
+  // FR24's blocked flights against - N1848T, 517 kt over Montana, went unmatched on a list 2 minutes old. Newer reports
+  // replace older ones; aircraft not heard for 10 minutes go. While it covers the military list too, this browser's own
+  // list round is not needed: the list counts as fresh)
+  // (all of it in idle moments, a couple of hundred aircraft at a time - never while the map is dragged)
+  let liveBusy = false;
   setInterval(() => {
-    if (!monUp() || globalList.loading) return;
-    monGet('/ladd').then(m => {
-      if (!m || now() - m.at > 90000) return;
-      const got = []; for (const a of m.ac || []) { const c = normalizeReadsb(a, 'monitor', m.at), p = c && globalList.byHex.get(c.hex); if (c && (!p || seenAt(c) > seenAt(p))) { globalList.byHex.set(c.hex, c); got.push(c); } }
-      globalList.items = [...globalList.byHex.values()]; noteCands(got);
-    }).catch(() => {});
-  }, 30000);
+    if (!monUp() || globalList.loading || liveBusy) return;
+    liveBusy = true;
+    takeLive({ idle: true }).then(async lv => {
+      if (!lv) return;
+      const got = [], cut = now() - 10 * 60000;
+      for (const c of lv.got.values()) { const p = globalList.byHex.get(c.hex); if (!p || seenAt(c) > seenAt(p)) { globalList.byHex.set(c.hex, c); got.push(c); } }
+      for (const [h, c] of globalList.byHex) if (seenAt(c) < cut) globalList.byHex.delete(h);
+      globalList.items = [...globalList.byHex.values()]; globalList.src = 'monitor';
+      if (lv.milOk) globalList.at = now();
+      const parts = []; for (let i = 0; i < got.length; i += 200) parts.push(got.slice(i, i + 200));
+      await sliced(parts, part => { noteCands(part); pushPubTel(part.filter(c => !c.ladd && now() - seenAt(c) < 90000)); for (const c of part) if (c.gnd) learnParked(c); });
+      await idleSlice(); verifyAgainstList();
+    }).catch(() => {}).finally(() => { liveBusy = false; });
+  }, 20000);
   // Parked LADD aircraft show which fields business aviation actually uses: every sighting feeds the usage prior.
   const parkedSeen = new Map();
   function learnParked(c) {
@@ -561,7 +588,7 @@
     const m = cands.length ? matchFlight(f, cands) : null;
     if (!m) { const r = matchReckoned(f); if (r) { adoptReckoned(f, r); return true; } return false; }
     const fromList = globalList.byHex.get(m.c.hex) === m.c;
-    adopt(recordFromMatch(f, m, [fromList ? globalList.src + (m.c.mil && !m.c.ladd ? ' (military list)' : ' (LADD list)') : (m.c.src || 'public ADS-B') + ' (seen moments ago)']));
+    adopt(recordFromMatch(f, m, [fromList ? (m.c.src || globalList.src) + (m.c.mil && !m.c.ladd ? ' (military list)' : ' (LADD list)') : (m.c.src || 'public ADS-B') + ' (seen moments ago)']));
     return true;
   }
   async function resolveTargeted(id, reason) {

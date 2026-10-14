@@ -84,6 +84,27 @@ engine.js, dataset.cjs, data/, `store/` = `legs-2026-10-03.json` ... `legs-2026-
 known blocked aircraft, start-monitor.vbs). **Not running and not auto-started** (the user never approved a startup task).
 Its store and state should move to the VM.
 
+## 4b. 22.19.0 (14 Oct, cloud session) - built and tested offline, NOT yet deployed or installed
+
+- Monitor: polls adsb.lol `/v2/mil` (60 s) and `/v2/pia` (120 s; hourly after three 404s), adsb.fi `/api/v2/mil` while
+  adsb.lol is paused or failing; blocked non-FAA aircraft by address every 60 s; hard cap `apiPerMin` 20 adsb.lol API
+  requests/min (plus the 2 s gate). `/live` = every LADD/mil/PIA/blocked aircraft heard in 5 min (readsb rows,
+  seen_pos counted to now, `_from`/`_off` of a flight under way, `age` of each list). SIGTERM saves (systemd stop).
+- Monitor `/hist?hex=a,b` (20 max): blocked aircraft's finished days in the userscript's log format (summarizeLeg +
+  `day` + `lx` learn fields), rebuilt from adsb.lol day traces (airplanes.live merged for incomplete days, as the
+  browser does; refused -> day -1 = the browser reads it itself), one file per aircraft in `<store>/hist/`. Days the
+  lists were watched throughout (no gap > 200 s) and the aircraft not heard airborne = 0 flights (FAA-list aircraft only
+  if seen with the LADD flag within 14 days). Days close 3 h after midnight UTC; 404 retried 2-hourly for 36 h.
+- Userscript: with a shared monitor set, 127.0.0.1 is never asked; `/live` every 20 s (idle slices) is the LADD/mil
+  list - own adsb.lol/adsb.fi list requests only when the monitor's LADD list is > 90 s old (mil > 180 s: mil only);
+  `loadHistory` takes the monitor's days for blocked aircraft first (batched, HIST_V must match).
+- New: `monitor/merge-store.cjs`, `monitor/deploy.sh` (ff-only pull, node --check, restart, /status check, rollback),
+  `monitor/vm-setup.sh` (systemd drop-in to run from the checkout, 700 MB heap, Caddy `encode zstd gzip`).
+- Tests (offline, all pass, also on Node 18.19.1 for the monitor): unit_monitor2 33, unit_merge 16, unit_deploy 7,
+  unit_monlive 24 (built userscript in jsdom: /live, fallbacks, /hist parity with the browser's own logs).
+  NOT run here (network blocked in the cloud sandbox): unit_new, panels1/2, replay, e2e, perf.
+- Optional rough destination on the monitor (plan step 9) NOT done.
+
 ## 5. The user's request (14 Oct, verbatim)
 
 > remember the monitor is running by itself now, it doesn't need my computer anymore and can therefore have as much

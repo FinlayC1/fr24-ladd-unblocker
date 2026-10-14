@@ -1,7 +1,7 @@
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '22.18.3';
+  const VERSION = '22.19.0';
   const NM_KM = 1.852;
   const AREA_RADIUS_NM = 220;           // aggregator "point" radius for viewport sweeps (APIs cap at 250)
   const TARGET_RADIUS_NM = 40;          // radius for the immediate lookup of the selected aircraft
@@ -430,8 +430,8 @@
   const noteHost = (host, ok, err) => { const h = hostStat.get(host) || { ok: 0, fail: 0, lastOk: 0, lastErr: 0, err: '' }; if (ok) { h.ok++; h.lastOk = now(); } else { h.fail++; h.lastErr = now(); h.err = err || ''; } hostStat.set(host, h); };
   // The permanent monitor (monitor/monitor.cjs) on this computer: used only once it has answered a quick check - one
   // missing, or not allowed yet in the userscript manager, never holds anything up - and checked again every 5 minutes
-  // A shared monitor on a server (strip > data sources > "Shared monitor": its https address and the secret) is tried first,
-  // this computer's own after it - whichever answers its check is used, until the next check
+  // A shared monitor on a server (strip > data sources > "Shared monitor": its https address and the secret): with one set,
+  // that one only - this computer's own is not asked at all (it no longer runs there; a stale copy would answer old data)
   const MON_LOCAL = 'http://127.0.0.1:47524';
   const monAddr = u => { u = String(u || '').trim(); while (u.endsWith('/')) u = u.slice(0, -1); return u.startsWith('https://') && u.length > 9 && !/[/\s]/.test(u.slice(8)) ? u : ''; };
   const monRemote = () => { try { const r = store.kvGet('monRemote'), url = r && monAddr(r.url); return url && r.token ? { url, token: String(r.token) } : null; } catch (_) { return null; } };
@@ -444,15 +444,16 @@
   function monCheck(force) {
     if (!force && now() - monCheckAt < 5 * 60000) return monChecking; monCheckAt = now();
     const tryBase = (base, headers) => gmRequest(base + '/status', { timeout: 4000, headers }).then(j => { if (!(j && j.v)) throw new Error('not a monitor'); monBase = base; return j; });
-    monChecking = store.kvReady.then(() => { const r = monRemote(); if (r) HOSTS[new URL(r.url).host] = [4, 50]; monErr = ''; return r ? tryBase(r.url, { 'X-Monitor-Token': r.token }).catch(e => { monErr = String((e && e.message) || e).slice(0, 120); return tryBase(MON_LOCAL, null); }) : tryBase(MON_LOCAL, null); })
+    monChecking = store.kvReady.then(() => { const r = monRemote(); if (r) HOSTS[new URL(r.url).host] = [4, 50]; monErr = ''; return r ? tryBase(r.url, { 'X-Monitor-Token': r.token }).catch(e => { monErr = String((e && e.message) || e).slice(0, 120); throw e; }) : tryBase(MON_LOCAL, null); })
       .then(j => { monOk = !!(j && j.v); return j; }, e => { monOk = false; throw e; });
     monChecking.catch(() => {});
     return monChecking;
   }
   // (the first ask after the page opens waits for the monitor's check - it was refused while that was still on its way,
   // so the first board, parked lookup and routes page of every page load went without the monitor)
-  function monGet(path) {
-    const go = () => monOk ? gmRequest(monUrl() + path, { timeout: 8000, headers: monHdr() }).catch(e => { if (!/HTTP [45]|paused/.test(String(e))) monOk = false; throw e; }) : Promise.reject(new Error('monitor not running'));
+  // (opts.idle: a background answer - read in an idle moment with the map left alone)
+  function monGet(path, opts) {
+    const go = () => monOk ? gmRequest(monUrl() + path, Object.assign({ timeout: 8000 }, opts || {}, { headers: monHdr() })).catch(e => { if (!/HTTP [45]|paused/.test(String(e))) monOk = false; throw e; }) : Promise.reject(new Error('monitor not running'));
     const c = monCheck();
     return c ? c.then(go, go) : go();
   }

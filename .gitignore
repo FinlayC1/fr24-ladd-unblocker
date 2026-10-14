@@ -5,3 +5,5 @@ fr24-ladd.user.js
 *.log
 .prof/
 .claude/
+monitor/store/
+monitor/monitor.json

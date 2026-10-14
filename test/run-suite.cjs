@@ -18,8 +18,8 @@ const j = (...p) => path.join(...p);
 const runs = [
   ['unit_engine', ['test/unit_engine.cjs', j(D, 'airports.json'), j(D, 'runways.json'), j(D, 'runway_len.json'), 'src/tables.json', 'src/logit.json']],
   ['unit_cases', ['test/unit_cases.cjs', D]], ['unit_final', ['test/unit_final.cjs', D]], ['unit_legs', ['test/unit_legs.cjs', D]],
-  ['unit_monitor', ['test/unit_monitor.cjs', D]], ['unit_names', ['test/unit_names.cjs', D]], ['unit_origin', ['test/unit_origin.cjs', j(D, 'airports.json')]],
-  ['unit_flightmsg', ['test/unit_flightmsg.cjs', NM]], ['unit_new', ['test/unit_v2215.cjs', NM, D]],
+  ['unit_monitor', ['test/unit_monitor.cjs', D]], ['unit_monitor2', ['test/unit_monitor2.cjs', D]], ['unit_merge', ['test/unit_merge.cjs', D]], ['unit_deploy', ['test/unit_deploy.cjs']], ['unit_names', ['test/unit_names.cjs', D]], ['unit_origin', ['test/unit_origin.cjs', j(D, 'airports.json')]],
+  ['unit_flightmsg', ['test/unit_flightmsg.cjs', NM]], ['unit_new', ['test/unit_v2215.cjs', NM, D]], ['unit_monlive', ['test/unit_monlive.cjs', NM, D]],
   ['panels1', ['test/case_panel.cjs', NM, 'test/fixtures/panels/oct1.json']], ['panels2', ['test/case_panel.cjs', NM, 'test/fixtures/panels/oct2.json']],
   ['replay', ['test/replay_live.cjs', NM]]
 ];
