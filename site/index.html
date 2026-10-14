@@ -66,11 +66,8 @@
   <section class="hero" id="top">
     <div class="wrap hero-in">
       <div class="hero-copy">
-        <a class="pill-link" href="https://github.com/FinlayC1/fr24-ladd-unblocker/blob/main/CHANGELOG.md">
-          <span class="pill-new">22.22.0</span> Shared monitor on by default <span aria-hidden="true">→</span>
-        </a>
-        <h1>Flightradar24 hides some aircraft. <span class="accent">Their transponders don't.</span></h1>
-        <p class="lead">Blocked and "N/A" flights on Flightradar24 get their name, owner, live data, destination and history back. It is all built from public ADS-B and drawn inside FR24's own interface, so it looks like it was always there.</p>
+        <h1>FR24 LADD Unblocker</h1>
+        <p class="lead">A browser extension for Flightradar24. It names the flights FR24 hides or shows as "N/A", adds their route, owner and history, and fills in the figures FR24 keeps behind a padlock, all from public ADS-B data.</p>
         <div class="cta-row">
           <a class="btn btn-primary btn-lg" href="https://github.com/FinlayC1/fr24-ladd-unblocker/releases/latest/download/fr24-ladd-unblocker-extension.zip">
             <svg class="ico ico-lg" aria-hidden="true"><use href="#i-download"/></svg>
@@ -81,12 +78,6 @@
             <span class="btn-text"><strong>Install the userscript</strong><small>Tampermonkey · Violentmonkey</small></span>
           </a>
         </div>
-        <ul class="ticks" aria-label="At a glance">
-          <li><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg>Free for personal use</li>
-          <li><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg>No account</li>
-          <li><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg>No tracking</li>
-          <li><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg>No ads</li>
-        </ul>
         <p class="byline">By Finlay Clarke · version 22.22.0 · <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/releases">all releases</a></p>
       </div>
       <figure class="hero-art">
@@ -99,21 +90,10 @@
     </div>
   </section>
 
-  <!-- Numbers -->
-  <section class="stats" aria-label="In numbers">
-    <div class="wrap stats-in">
-      <div class="stat"><b>2&nbsp;min</b><span>per monitor round over FR24's whole map</span></div>
-      <div class="stat"><b>99.8%</b><span>of "Confirmed" destinations right, on held-out data</span></div>
-      <div class="stat"><b>63&nbsp;days</b><span>of worldwide traffic behind the route engine</span></div>
-      <div class="stat"><b>9,446</b><span>runways in full, at 6,352 airports</span></div>
-    </div>
-  </section>
-
   <!-- Features -->
   <section class="section" id="features">
     <div class="wrap">
-      <p class="eyebrow">Features</p>
-      <h2>Everything FR24 leaves blank, filled in</h2>
+      <h2>Features</h2>
       <p class="sub">Written into FR24's own data before FR24 draws it, so blocked aircraft look like ordinary traffic.</p>
       <div class="grid cards">
         <article class="card">
@@ -139,11 +119,6 @@
           <p class="tags"><span class="tag tag-ladd">LADD</span><span class="tag tag-ladd">PIA</span><span class="tag tag-ladd">MIL</span></p>
         </article>
         <article class="card">
-          <span class="card-ico"><svg aria-hidden="true"><use href="#i-person"/></svg></span>
-          <h3>Owners and operators</h3>
-          <p>Names from public registers: the FAA, the UK's G-INFO, the Isle of Man, Switzerland. Looked up once on the server and kept. Names only, never addresses.</p>
-        </article>
-        <article class="card">
           <span class="card-ico"><svg aria-hidden="true"><use href="#i-board"/></svg></span>
           <h3>Airports, filled in</h3>
           <p>Blocked flights on arrival and departure boards worldwide, without false "same-airport" flights from taxiing aircraft. Movements per day, runway usage, every runway in full and the radio frequencies, where FR24 shows a padlock.</p>
@@ -153,39 +128,20 @@
           <h3>Live telemetry, no padlocks</h3>
           <p>The fields FR24 shows behind padlocks, filled from public ADS-B for any aircraft: vertical speed, squawk, GPS altitude, airspeeds, Mach, wind, temperature and airspace. The server and the browser share the polling.</p>
         </article>
-        <article class="card">
-          <span class="card-ico"><svg aria-hidden="true"><use href="#i-camera"/></svg></span>
-          <h3>Photos</h3>
-          <p>JetPhotos first, then Planespotters, credited and cropped to FR24's frame.</p>
-        </article>
-        <article class="card">
-          <span class="card-ico"><svg aria-hidden="true"><use href="#i-spark"/></svg></span>
-          <h3>A cleaner FR24</h3>
-          <p>Advertisements and the advert sidebar removed, seamlessly. The map never stutters: background work waits for idle moments.</p>
-        </article>
       </div>
 
-      <div class="new">
-        <div class="new-head">
-          <span class="pill-new">New</span>
-          <h3>In version 22.22.0</h3>
-          <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/blob/main/CHANGELOG.md">Changelog <span aria-hidden="true">→</span></a>
-        </div>
-        <ul class="new-list">
-          <li><svg class="ico" aria-hidden="true"><use href="#i-server"/></svg><span>Every copy of the script connects to the shared public monitor by default. Turn it off, or point it at your own, in the <b>sources</b> menu.</span></li>
-          <li><svg class="ico" aria-hidden="true"><use href="#i-lock"/></svg><span>Padlocked telemetry (vertical speed, GPS altitude, airspeeds, wind, temperature, squawk, airspace) filled from public ADS-B for any aircraft, the server and the browser sharing the polling.</span></li>
-          <li><svg class="ico" aria-hidden="true"><use href="#i-play"/></svg><span>Playback names blocked flights from the monitor's archive of names.</span></li>
-          <li><svg class="ico" aria-hidden="true"><use href="#i-runway"/></svg><span>Airport boards no longer show false "same-airport" flights from taxiing aircraft.</span></li>
-        </ul>
-      </div>
+      <ul class="also">
+        <li>Owners and operators from public registers (FAA, UK G-INFO, Isle of Man, Switzerland): names only, never addresses.</li>
+        <li>Photos from JetPhotos and Planespotters, credited.</li>
+        <li>FR24's adverts removed; background work waits for idle moments, so the map never stutters.</li>
+      </ul>
     </div>
   </section>
 
   <!-- How it works -->
   <section class="section section-alt" id="how">
     <div class="wrap">
-      <p class="eyebrow">How it works</p>
-      <h2>A server for the whole world, a browser for what you see</h2>
+      <h2>How it works</h2>
       <p class="sub">The shared monitor listens all the time and worldwide, which a browser tab cannot do. Your browser reacts instantly to what is on screen, which the server cannot.</p>
       <figure class="diagram">
         <picture>
@@ -239,8 +195,7 @@
   <!-- Install -->
   <section class="section" id="install">
     <div class="wrap">
-      <p class="eyebrow">Install</p>
-      <h2>Pick one: extension or userscript</h2>
+      <h2>Install</h2>
       <p class="sub">Use one or the other, not both at once. If you switch to the extension, turn the userscript off in your userscript manager.</p>
 
       <div class="tabs">
@@ -324,8 +279,7 @@ bash monitor/deploy.sh          # later: update, verify, roll back automatically
   <!-- FAQ -->
   <section class="section section-alt" id="faq">
     <div class="wrap narrow">
-      <p class="eyebrow">FAQ</p>
-      <h2>Questions</h2>
+      <h2>FAQ</h2>
       <div class="faq">
         <details>
           <summary>Does it need a Flightradar24 account or subscription?</summary>
@@ -359,24 +313,6 @@ bash monitor/deploy.sh          # later: update, verify, roll back automatically
     </div>
   </section>
 
-  <!-- Closing call to action -->
-  <section class="section closing">
-    <div class="wrap closing-in">
-      <img src="assets/icon.svg" width="64" height="64" alt="">
-      <h2>See what FR24 leaves blank</h2>
-      <p class="sub">Free for personal use. No account, no tracking, no ads.</p>
-      <div class="cta-row center">
-        <a class="btn btn-primary btn-lg" href="https://github.com/FinlayC1/fr24-ladd-unblocker/releases/latest/download/fr24-ladd-unblocker-extension.zip">
-          <svg class="ico ico-lg" aria-hidden="true"><use href="#i-download"/></svg>
-          <span class="btn-text"><strong>Download the extension</strong><small>Chrome · Edge · Brave · .zip</small></span>
-        </a>
-        <a class="btn btn-secondary btn-lg" href="https://github.com/FinlayC1/fr24-ladd-unblocker/raw/main/dist/fr24-ladd-unblocker.user.js">
-          <svg class="ico ico-lg ico-accent" aria-hidden="true"><use href="#i-code"/></svg>
-          <span class="btn-text"><strong>Install the userscript</strong><small>Tampermonkey · Violentmonkey</small></span>
-        </a>
-      </div>
-    </div>
-  </section>
 </main>
 
 <footer class="footer">

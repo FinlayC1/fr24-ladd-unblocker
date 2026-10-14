@@ -303,3 +303,7 @@ ul.dots b { color: var(--text); }
 .legal a { color: var(--muted); text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 2px; }
 .legal a:hover { color: var(--text); }
 .legal .credits { font-size: 12.5px; }
+
+/* the short list under the feature cards */
+.also{margin:28px 0 0;padding:0 0 0 18px;color:var(--muted);display:grid;gap:6px;max-width:760px}
+.also li{line-height:1.55}
