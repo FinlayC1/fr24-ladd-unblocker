@@ -347,8 +347,10 @@ async function mapMode() {
   }
   // the permanent monitor (monitor/monitor.cjs) when it runs on this computer: its flights at an airport join the board
   {
+    // (the monitor on a server, when given: MON_URL=https://... MON_TOKEN=...)
+    if (process.env.MON_URL && process.env.MON_TOKEN) { await L.store.kvReady; L.store.kvSet('monRemote', { url: process.env.MON_URL, token: process.env.MON_TOKEN }); await L.monCheck(true).catch(() => {}); }
     const st = await L.monGet('/status').catch(() => null);
-    if (!st) console.log('(permanent monitor not running: its checks skipped)');
+    if (!st) console.log('(no monitor answering - MON_URL / MON_TOKEN not given: its checks skipped)');
     else {
       let hit = null;
       for (const c of ['EGLL', 'EGKK', 'EGCC', 'EGGP', 'EIDW', 'KTEB', 'KLAS', 'KJFK', 'KVNY', 'KPBI', 'KHPN', 'KDAL', 'KAPA', 'KBED']) { const a = L.engine.byIcao(c); if (!a) continue; const j = await L.monGet(`/board?ap=${a.id}`).catch(() => null); if (j && j.aircraft && j.aircraft.some(x => x.legs.some(l => l.to && l.to.id === a.id && l.ended))) { hit = { a, x: j.aircraft.find(x => x.legs.some(l => l.to && l.to.id === a.id && l.ended)) }; break; } }

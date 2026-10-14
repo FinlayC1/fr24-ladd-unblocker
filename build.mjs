@@ -79,3 +79,73 @@ fs.mkdirSync(path.join(root, 'dist'), { recursive: true });
 const dest = path.join(root, 'dist', 'fr24-ladd-unblocker.user.js');
 fs.writeFileSync(dest, out);
 console.log('built', dest, (out.length / 1024).toFixed(0) + ' KB', out.split('\n').length, 'lines');
+
+// ---- the browser extension (Chrome / Edge, Manifest V3): the same script, without a userscript manager ---------------
+//   dist/extension/manifest.json  hosts = the userscript's @connect list (each as https://host/*; sslip.io with its subdomains)
+//   dist/extension/page.js        the page-world part (src/page.js), in FR24's own world at document start
+//   dist/extension/content.js     extension/shim.js (GM_xmlhttpRequest through the service worker) + the whole script
+//   dist/extension/background.js  the service worker that makes those requests
+//   dist/fr24-ladd-unblocker-extension.zip   the same, packed
+const header = rd('src/header.js'), meta = k => (header.match(new RegExp('@' + k + '\\s+(.+)')) || [])[1] || '';
+const version = meta('version').trim();
+const hosts = [...header.matchAll(/@connect\s+(\S+)/g)].map(m => m[1]).filter(h => /\./.test(h));
+const hostPerm = h => h === 'sslip.io' ? ['https://*.sslip.io/*'] : ['https://' + h + '/*'];
+const manifest = {
+  manifest_version: 3,
+  name: 'FR24 LADD Unblocker',
+  version,
+  description: 'Names blocked (LADD) and N/A aircraft on Flightradar24 from public ADS-B, with routes, predicted destinations and flight history.',
+  author: meta('author').trim(),
+  icons: { 16: 'icons/16.png', 48: 'icons/48.png', 128: 'icons/128.png' },
+  background: { service_worker: 'background.js' },
+  host_permissions: [...new Set(hosts.flatMap(hostPerm))],
+  content_scripts: [
+    { matches: ['https://www.flightradar24.com/*', 'https://flightradar24.com/*'], js: ['page.js'], run_at: 'document_start', world: 'MAIN', all_frames: false },
+    { matches: ['https://www.flightradar24.com/*', 'https://flightradar24.com/*'], js: ['content.js'], run_at: 'document_start', all_frames: false }
+  ],
+  minimum_chrome_version: '111'
+};
+// a small icon: an aircraft in FR24's yellow on its dark purple, drawn pixel by pixel (no image files in the repository)
+function pngIcon(size) {
+  const px = Buffer.alloc(size * size * 4), set = (x, y, c) => { if (x < 0 || y < 0 || x >= size || y >= size) return; const i = (y * size + x) * 4; px[i] = c[0]; px[i + 1] = c[1]; px[i + 2] = c[2]; px[i + 3] = 255; };
+  const bg = [43, 26, 77], fg = [255, 205, 0], u = size / 16, r = size * 0.18;
+  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+    const cx = Math.min(x, size - 1 - x), cy = Math.min(y, size - 1 - y), out = cx < r && cy < r && Math.hypot(r - cx, r - cy) > r;
+    if (out) { px[(y * size + x) * 4 + 3] = 0; continue; }
+    const X = x / u, Y = y / u, plane = (Math.abs(X - 8) < 1.1 && Y > 2 && Y < 14) || (Y > 6.5 && Y < 9 && Math.abs(X - 8) < 6.5 - (Y - 6.5) * 0.6) || (Y > 12 && Y < 13.6 && Math.abs(X - 8) < 3);
+    set(x, y, plane ? fg : bg);
+  }
+  const raw = Buffer.alloc((size * 4 + 1) * size); for (let y = 0; y < size; y++) { raw[y * (size * 4 + 1)] = 0; px.copy(raw, y * (size * 4 + 1) + 1, y * size * 4, (y + 1) * size * 4); }
+  const chunk = (type, data) => { const len = Buffer.alloc(4); len.writeUInt32BE(data.length); const td = Buffer.concat([Buffer.from(type), data]), crc = Buffer.alloc(4); crc.writeUInt32BE(crc32(td)); return Buffer.concat([len, td, crc]); };
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(size, 0); ihdr.writeUInt32BE(size, 4); ihdr[8] = 8; ihdr[9] = 6; ihdr[10] = 0; ihdr[11] = 0; ihdr[12] = 0;
+  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(raw, { level: 9 })), chunk('IEND', Buffer.alloc(0))]);
+}
+const CRC = (() => { const t = new Int32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c; } return t; })();
+function crc32(b) { let c = -1; for (let i = 0; i < b.length; i++) c = CRC[(c ^ b[i]) & 255] ^ (c >>> 8); return (c ^ -1) >>> 0; }
+// (a zip of the folder, for installing or sending - deflated, with a central directory; no tool needed)
+// (every file dated the build day, 00:00 - DOS time in the low half, date in the high half)
+const DOS_DATE = (() => { const d = new Date(); return (((d.getFullYear() - 1980) << 9 | (d.getMonth() + 1) << 5 | d.getDate()) << 16) >>> 0; })();
+function zip(files) {
+  const locals = [], central = []; let off = 0;
+  for (const [name, data] of files) {
+    const nb = Buffer.from(name), comp = zlib.deflateRawSync(data, { level: 9 }), crc = crc32(data);
+    const lh = Buffer.alloc(30); lh.writeUInt32LE(0x04034b50, 0); lh.writeUInt16LE(20, 4); lh.writeUInt16LE(0x0800, 6); lh.writeUInt16LE(8, 8); lh.writeUInt32LE(DOS_DATE, 10); lh.writeUInt32LE(crc, 14); lh.writeUInt32LE(comp.length, 18); lh.writeUInt32LE(data.length, 22); lh.writeUInt16LE(nb.length, 26); lh.writeUInt16LE(0, 28);
+    const ch = Buffer.alloc(46); ch.writeUInt32LE(0x02014b50, 0); ch.writeUInt16LE(20, 4); ch.writeUInt16LE(20, 6); ch.writeUInt16LE(0x0800, 8); ch.writeUInt16LE(8, 10); ch.writeUInt32LE(DOS_DATE, 12); ch.writeUInt32LE(crc, 16); ch.writeUInt32LE(comp.length, 20); ch.writeUInt32LE(data.length, 24); ch.writeUInt16LE(nb.length, 28); ch.writeUInt32LE(0, 30); ch.writeUInt32LE(0, 34); ch.writeUInt32LE(0, 38); ch.writeUInt32LE(off, 42);
+    locals.push(lh, nb, comp); central.push(ch, nb); off += 30 + nb.length + comp.length;
+  }
+  const cd = Buffer.concat(central), end = Buffer.alloc(22); end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(files.length, 8); end.writeUInt16LE(files.length, 10); end.writeUInt32LE(cd.length, 12); end.writeUInt32LE(off, 16);
+  return Buffer.concat([...locals, cd, end]);
+}
+const pagePart = '// FR24 LADD Unblocker ' + version + ' - the page-world part (see src/page.js)\n(function () {\n  \'use strict\';\n' + rd('src/page.js').replace("'__TL_VERSION__'", JSON.stringify(version)) + '\n  pageInterceptor();\n})();\n';
+const extFiles = [
+  ['manifest.json', Buffer.from(JSON.stringify(manifest, null, 2) + '\n')],
+  ['page.js', Buffer.from(pagePart)],
+  ['content.js', Buffer.from(rd('extension/shim.js') + '\n' + out)],
+  ['background.js', Buffer.from(rd('extension/background.js'))],
+  ['icons/16.png', pngIcon(16)], ['icons/48.png', pngIcon(48)], ['icons/128.png', pngIcon(128)]
+];
+const extDir = path.join(root, 'dist', 'extension');
+fs.rmSync(extDir, { recursive: true, force: true });
+for (const [name, data] of extFiles) { fs.mkdirSync(path.dirname(path.join(extDir, name)), { recursive: true }); fs.writeFileSync(path.join(extDir, name), data); }
+fs.writeFileSync(path.join(root, 'dist', 'fr24-ladd-unblocker-extension.zip'), zip(extFiles));
+console.log('built', extDir, '(+ zip),', manifest.host_permissions.length, 'hosts');

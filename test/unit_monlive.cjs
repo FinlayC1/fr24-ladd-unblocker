@@ -31,13 +31,13 @@ global.fetch = async url => { const m = /globe_history\/(\d{4})\/(\d\d)\/(\d\d)\
 
 // ---- what each window's network answers (nothing leaves this process)
 function makeNet(mon) {
-  const asked = [];
-  const answer = (url, headers) => {
+  const asked = [], posts = [];
+  const answer = (url, headers, o) => {
     asked.push({ url, headers: headers || {} });
     let m;
     if (/flightradar24\.com\/mobile\/airports\/format/.test(url)) return { status: 200, text: AIRPORTS };
     if (/ourairports-data\/main\/airports\.csv/.test(url)) return { status: OA ? 200 : 404, text: OA };
-    if (/^https:\/\/mon\.test\//.test(url)) return mon(url, headers || {});
+    if (/^https:\/\/mon\.test\//.test(url)) return mon(url, headers || {}, o);
     if (/127\.0\.0\.1:47524/.test(url)) return { status: 0, error: true };
     if (/opendata\.adsb\.fi\/api\/v3\/lat\//.test(url)) return makeNet.fiV3 ? { status: 200, text: JSON.stringify({ aircraft: [{ hex: '400fff', r: 'G-FIV3', t: 'C172', lat: 53, lon: -2, alt_baro: 2000, gs: 90, track: 10, seen_pos: 1 }] }) } : { status: 404, text: '' };
     if (/opendata\.adsb\.fi\/api\/v2\/lat\//.test(url)) return { status: 200, text: JSON.stringify({ aircraft: [{ hex: '400ff2', r: 'G-FIV2', t: 'C172', lat: 53, lon: -2, alt_baro: 2000, gs: 90, track: 10, seen_pos: 1 }] }) };
@@ -46,7 +46,7 @@ function makeNet(mon) {
     if ((m = /adsb\.lol\/globe_history\/(\d{4})\/(\d\d)\/(\d\d)\/traces\/..\/trace_full_([0-9a-f]{6})\.json/.exec(url))) { const t = fxTrace(m[4], `${m[1]}-${m[2]}-${m[3]}`); return t ? { status: 200, text: t } : { status: 404, text: '' }; }
     return { status: 404, text: '' };
   };
-  return { asked, answer };
+  return { asked, answer, posts };
 }
 function makeWin(net, idb) {
   const win = new JSDOM('<!doctype html><html><head></head><body><div id="app"></div></body></html>', { url: 'https://www.flightradar24.com/53.40,-2.60/9', runScripts: 'dangerously', pretendToBeVisual: true }).window;
@@ -54,12 +54,13 @@ function makeWin(net, idb) {
   win.DecompressionStream = DecompressionStream; win.Blob = Blob; win.BroadcastChannel = function () { return { postMessage() {}, close() {}, addEventListener() {}, set onmessage(f) {} }; };
   win.fetch = (input, init) => { let u = typeof input === 'string' ? input : input.url; if (u.startsWith('/')) u = 'https://www.flightradar24.com' + u; const a = net.answer(u, init && init.headers); return Promise.resolve(new Response(a.text || '', { status: a.status || 404 })); };
   win.GM_xmlhttpRequest = o => {
-    const a = net.answer(o.url, o.headers);
+    if (o.method === 'POST') net.posts.push({ url: o.url, headers: o.headers || {}, body: o.data });
+    const a = net.answer(o.url, o.headers, o);
     setTimeout(() => { if (a.error) o.onerror && o.onerror({ error: 'refused' }); else o.onload && o.onload({ status: a.status, responseText: a.text, response: a.text }); }, 2);
     return { abort() {} };
   };
   win.unsafeWindow = win; win.GM_notification = () => {};
-  win.postMessage = () => {};
+  win.__posted = []; win.postMessage = data => { win.__posted.push(data); };
   win.console.debug = () => {}; win.console.log = () => {};
   win.eval(SRC);
   return win;
@@ -79,8 +80,11 @@ const sameDayFlights = l => `${l.from ? l.from.code : '?'}-${l.to ? l.to.code : 
     if (u.pathname === '/live') return { status: 200, text: JSON.stringify(live) };
     if (u.pathname === '/hist') { const hs = u.searchParams.get('hex').split(','); histReq.push(hs); return { status: 200, text: JSON.stringify({ hv, list: hs.map(histOf) }) }; }
     if (u.pathname === '/ladd') return { status: 200, text: JSON.stringify({ at: 0, ac: [] }) };
+    if (u.pathname === '/fr24ids') { const since = +(u.searchParams.get('since') || 0); idsAsked.push(since); return { status: 200, text: JSON.stringify(Object.assign({ v: 1, now: Date.now() }, since ? Object.assign({ full: false }, idsDelta) : { full: true, rows: idsRows, gone: [] }, { scanOk: idsScanOk })) }; }
+    if (u.pathname === '/report') return { status: 200, text: JSON.stringify({ ok: true }) };
     return { status: 200, text: '{}' };
   };
+  let idsRows = [], idsDelta = { rows: [], gone: [] }, idsScanOk = true; const idsAsked = [];
   const net = makeNet(mon), w = makeWin(net), L = w.__tweeksLadd;
   await until(() => L && L.engine.airports.length > 5000, 60000);
   check('airports loaded (from the data folder - offline)', L.engine.airports.length > 5000, L.engine.airports.length);
@@ -134,6 +138,42 @@ const sameDayFlights = l => `${l.from ? l.from.code : '?'}-${l.to ? l.to.code : 
     const u2 = net.asked.map(x => x.url).filter(u => /adsb\.fi/.test(u));
     check('adsb.fi areas: its v3 query first; v2 (deprecated) only when v3 is not found', a[0].reg === 'G-FIV3' && u1.length === 1 && /\/v3\/lat\//.test(u1[0]) && b[0].reg === 'G-FIV2' && u2.length === 2 && /\/v2\/lat\//.test(u2[1]), { u1, u2 }); }
   check('the sources pop-over figures: the live list\'s size and freshness', L.monLive.n === 3 && L.monLive.ok === true && Date.now() - L.monLive.at < 10000, L.monLive);
+  // ---- the monitor's names for FR24's callsign-less flights -------------------------------------------------------
+  { const bwf = L.engine.byIcao('EGNL'), fab = L.engine.byIcao('EGLF'), nS = Math.floor(Date.now() / 1000);
+    const ID1 = 0x7a5a5a20, ID2 = 0x7a5a5a21, ID3 = 0x7a5a5a22;
+    idsRows = [[ID1, 'a1b2c3', 'N1848T', 'C68A', '', 1, 'trail', nS - 600, bwf.id, 'ground', fab.id, 64, nS, 46.5, -40, 43000, 0, nS], [ID2, '424c62', '', 'PC24', 'VSB97', 0, 'list', nS - 60, 0, '', 0, 0, 0, 54, -3, 20000, 0, nS]];
+    w.__posted.length = 0; L.srvIds.since = 0;          // (as on a fresh page: the full table)
+    await until(() => !L.srvIds.busy, 5000); await L.pullSrvIds();
+    const res = w.__posted.filter(m => m.__tweeksLadd === 'resolve').flatMap(m => m.entries || []), e1 = res.find(e => e.id === ID1), rts = w.__posted.filter(m => m.__tweeksLadd === 'routes').flatMap(m => m.list || []), r1 = rts.find(x => x.id === ID1);
+    check('the monitor\'s names: every one straight to the page (before FR24 draws the flight) - address, registration, type', !!e1 && e1.hex === 'a1b2c3' && e1.reg === 'N1848T' && e1.type === 'C68A' && res.some(e => e.id === ID2 && e.cs === 'VSB97'), res.map(e => [e.id, e.hex, e.reg]));
+    check('... with its rough route (origin, predicted destination and its chance)', !!r1 && r1.route.originIata === 'BWF' && r1.route.destIata === 'FAB' && r1.route.destP === 0.64 && r1.route.destConf === 'predicted' && !r1.route.confirmed, r1 && r1.route);
+    check('... not yet full identifications (nothing on screen)', !L.live.has(ID1) && L.srvIds.rows.size === 2);
+    // FR24 draws one of them in view: identified at once - no lookup, no adsb.lol request
+    net.asked.length = 0;
+    w.dispatchEvent(new w.MessageEvent('message', { data: { __tweeksLadd: 'feed', flights: [{ id: ID1, lat: 46.5, lon: -40, alt: 43000, spd: 480, trk: 90, ts: nS, gnd: false, src: 5, type: 'C68A', reg: '' }], na: [], at: Date.now(), bg: false }, origin: 'https://www.flightradar24.com', source: w }));
+    await sleep(50);
+    const lr = L.live.get(ID1);
+    check('FR24 draws a named flight in view (satellite, mid-Atlantic): identified at once from the monitor\'s name, nothing asked of adsb.lol', !!lr && lr.hex === 'a1b2c3' && lr.srv === true && /monitor \(trail\)/.test((lr.sources || []).join()) && !net.asked.some(a => /adsb\.lol|adsb\.fi/.test(a.url)), lr && { hex: lr.hex, sources: lr.sources });
+    // a world-scan find the monitor names: not matched here (no queue), the page already has it
+    w.dispatchEvent(new w.MessageEvent('message', { data: { __tweeksLadd: 'feed', flights: [{ id: ID2, lat: 54, lon: -3, alt: 20000, spd: 300, trk: 180, ts: nS, gnd: false, src: 0, type: 'PC24', reg: '' }], na: [], at: Date.now(), bg: true }, origin: 'https://www.flightradar24.com', source: w }));
+    await sleep(50);
+    check('... a world-scan find it names: left light (no matching here)', !L.live.has(ID2));
+    // what changed: one withdrawn, one new
+    idsDelta = { rows: [[ID3, 'abcdef', 'N3', 'GLF5', '', 1, 'reckon', nS, 0, '', 0, 0, 0, 30, -60, 41000, 0, nS]], gone: [ID1] };
+    w.__posted.length = 0; await L.pullSrvIds();
+    check('... then only what changed (since the last answer): a new name taken, a withdrawn one revoked here too', idsAsked[idsAsked.length - 1] > 0 && L.srvIds.rows.has(ID3) && !L.live.has(ID1) && w.__posted.some(m => m.__tweeksLadd === 'revoke' && (m.ids || []).includes(ID1)), { since: idsAsked[idsAsked.length - 1], live1: L.live.has(ID1) });
+    check('... and the world scan left to the monitor while its FR24 scan works', L.srvIds.scanOk === true);
+    // this browser's report: FR24's feed headers (once), the callsign-less flights it sees, its own names
+    w.dispatchEvent(new w.MessageEvent('message', { data: { __tweeksLadd: 'feedReady', hdr: { 'fr24-device-id': 'web-xyz', 'fr24-platform': 'web-26.41' } }, origin: 'https://www.flightradar24.com', source: w }));
+    L.pending.set(0x7a5a5a30, { id: 0x7a5a5a30, lat: 51.1, lon: -1.2, alt: 9000, trk: 10, spd: 250, ts: nS, gnd: false, src: 0, type: 'BE20', reg: '', icon: 3, receivedAt: Date.now() });
+    L.live.set(0x7a5a5a30, { id: 0x7a5a5a30, hex: '400aaa', src: 'adsb.fi' });
+    net.posts.length = 0; await L.reportToMonitor();
+    const body = net.posts[0] && JSON.parse(net.posts[0].body);
+    check('report to the monitor: FR24\'s feed headers, the callsign-less flights seen, this browser\'s own names - with the secret', !!body && body.hdr['fr24-device-id'] === 'web-xyz' && body.flights.some(r => r[0] === 0x7a5a5a30 && r[9] === 'BE20') && body.ids.some(r => r[0] === 0x7a5a5a30 && r[1] === '400aaa') && net.posts[0].headers['X-Monitor-Token'] === 'tok' && /\/report$/.test(net.posts[0].url), body && { hdr: body.hdr, n: body.flights.length, ids: body.ids });
+    net.posts.length = 0; await L.reportToMonitor();
+    const b2 = net.posts[0] && JSON.parse(net.posts[0].body);
+    check('... the headers only once', !!b2 && !b2.hdr);
+    L.live.delete(0x7a5a5a30); L.pending.delete(0x7a5a5a30); }
   // ---- flight logs from the monitor --------------------------------------------------------------------------------
   // (back as far as the fixture days - 5 Oct 2026 - and two more; adsb.lol keeps 40 days, the browser asks airplanes.live
   // beyond: past that the log checks cannot run as they are)

@@ -1,7 +1,7 @@
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '22.19.1';
+  const VERSION = '22.20.0';
   const NM_KM = 1.852;
   const AREA_RADIUS_NM = 220;           // aggregator "point" radius for viewport sweeps (APIs cap at 250)
   const TARGET_RADIUS_NM = 40;          // radius for the immediate lookup of the selected aircraft
@@ -399,7 +399,7 @@
   // ---- HTTP: per-host concurrency + spacing ------------------------------------------------------------------------------
   // Aggregator APIs answer 429 to more than ~1 request/second; adsb.lol's static trace files take a few in parallel.
   // (adsb.lol's history files are static: eight at a time; airplanes.live's older history more gently)
-  const HOSTS = { '127.0.0.1:47524': [4, 0], 'opendata.adsb.fi': [1, 1100], 'adsbexchange-com1.p.rapidapi.com': [1, 1200], 'api.adsb.lol': [1, 1500], 'adsb.lol': [8, 30], 'globe.adsb.lol': [5, 60], 'globe.airplanes.live': [4, 120], 'aviationweather.gov': [2, 300], 'www.jetphotos.com': [1, 1500], 'hexdb.io': [2, 250], 'api.adsbdb.com': [2, 250], 'opensky-network.org': [1, 3000], 'registry.faa.gov': [1, 800], 'api.planespotters.net': [2, 250], 'api.flightradar24.com': [3, 350], 'api.flightradar24.com#bg': [1, 2000], 'www.airport-data.com': [1, 500], 'ardis.iomaircraftregistry.com': [1, 800], 'ginfoapi.caa.co.uk': [1, 1500], 'overpass-api.de': [1, 1500] };
+  const HOSTS = { 'opendata.adsb.fi': [1, 1100], 'adsbexchange-com1.p.rapidapi.com': [1, 1200], 'api.adsb.lol': [1, 1500], 'adsb.lol': [8, 30], 'globe.adsb.lol': [5, 60], 'globe.airplanes.live': [4, 120], 'aviationweather.gov': [2, 300], 'www.jetphotos.com': [1, 1500], 'hexdb.io': [2, 250], 'api.adsbdb.com': [2, 250], 'opensky-network.org': [1, 3000], 'registry.faa.gov': [1, 800], 'api.planespotters.net': [2, 250], 'api.flightradar24.com': [3, 350], 'api.flightradar24.com#bg': [1, 2000], 'www.airport-data.com': [1, 500], 'ardis.iomaircraftregistry.com': [1, 800], 'ginfoapi.caa.co.uk': [1, 1500], 'overpass-api.de': [1, 1500] };
   const lanes = new Map();
   // `front`: what the user is looking at right now (the selected aircraft) jumps the queue. `bg`: background work (logs
   // of other aircraft, prefetching) never takes the last two slots of a host, so a click is never stuck behind it.
@@ -428,24 +428,28 @@
   const deadHosts = new Map();    // host -> until (a host answering 403 to everything is left alone for a while)
   const hostStat = new Map();     // host -> { ok, fail, lastOk, lastErr, err } (the strip's "sources" pop-over)
   const noteHost = (host, ok, err) => { const h = hostStat.get(host) || { ok: 0, fail: 0, lastOk: 0, lastErr: 0, err: '' }; if (ok) { h.ok++; h.lastOk = now(); } else { h.fail++; h.lastErr = now(); h.err = err || ''; } hostStat.set(host, h); };
-  // The permanent monitor (monitor/monitor.cjs) on this computer: used only once it has answered a quick check - one
-  // missing, or not allowed yet in the userscript manager, never holds anything up - and checked again every 5 minutes
-  // A shared monitor on a server (strip > data sources > "Shared monitor": its https address and the secret): with one set,
-  // that one only - this computer's own is not asked at all (it no longer runs there; a stale copy would answer old data)
-  const MON_LOCAL = 'http://127.0.0.1:47524';
+  // The monitor (monitor/monitor.cjs) on a server: strip > sources > "Monitor" - its https address and the secret. It watches
+  // FR24's whole map and public ADS-B all the time; this browser asks it first for everything it has. Only that one: no
+  // monitor on this computer is ever asked (127.0.0.1 is not even among the hosts this script may reach). Used once it has
+  // answered a quick check - one missing never holds anything up - and checked again every 5 minutes.
+  const MON_DEFAULT_URL = 'https://143-47-224-210.sslip.io';
   const monAddr = u => { u = String(u || '').trim(); while (u.endsWith('/')) u = u.slice(0, -1); return u.startsWith('https://') && u.length > 9 && !/[/\s]/.test(u.slice(8)) ? u : ''; };
   const monRemote = () => { try { const r = store.kvGet('monRemote'), url = r && monAddr(r.url); return url && r.token ? { url, token: String(r.token) } : null; } catch (_) { return null; } };
-  let monBase = MON_LOCAL, monErr = '';   // (monErr: why the shared monitor was not used at the last check - shown beside it)
+  let monBase = '', monErr = '';   // (monErr: why the monitor was not used at the last check - shown beside it)
   const monUrl = () => monBase;
-  const monHdr = () => { const r = monBase !== MON_LOCAL && monRemote(); return r ? { 'X-Monitor-Token': r.token } : null; };
+  const monHdr = () => { const r = monRemote(); return r && monBase === r.url ? { 'X-Monitor-Token': r.token } : null; };
   let monOk = false, monCheckAt = 0;
   const monUp = () => monOk;
   let monChecking = null;
   function monCheck(force) {
     if (!force && now() - monCheckAt < 5 * 60000) return monChecking; monCheckAt = now();
-    const tryBase = (base, headers) => gmRequest(base + '/status', { timeout: 4000, headers }).then(j => { if (!(j && j.v)) throw new Error('not a monitor'); monBase = base; return j; });
-    monChecking = store.kvReady.then(() => { const r = monRemote(); if (r) HOSTS[new URL(r.url).host] = [4, 50]; monErr = ''; return r ? tryBase(r.url, { 'X-Monitor-Token': r.token }).catch(e => { monErr = String((e && e.message) || e).slice(0, 120); throw e; }) : tryBase(MON_LOCAL, null); })
-      .then(j => { monOk = !!(j && j.v); return j; }, e => { monOk = false; throw e; });
+    monChecking = store.kvReady.then(() => {
+      const r = monRemote(); monErr = '';
+      if (!r) { monBase = ''; throw new Error('no monitor set'); }
+      HOSTS[new URL(r.url).host] = [4, 50];
+      return gmRequest(r.url + '/status', { timeout: 4000, headers: { 'X-Monitor-Token': r.token } }).then(j => { if (!(j && j.v)) throw new Error('not a monitor'); monBase = r.url; return j; })
+        .catch(e => { monErr = String((e && e.message) || e).slice(0, 120); throw e; });
+    }).then(j => { monOk = !!(j && j.v); return j; }, e => { monOk = false; throw e; });
     monChecking.catch(() => {});
     return monChecking;
   }
@@ -453,7 +457,13 @@
   // so the first board, parked lookup and routes page of every page load went without the monitor)
   // (opts.idle: a background answer - read in an idle moment with the map left alone)
   function monGet(path, opts) {
-    const go = () => monOk ? gmRequest(monUrl() + path, Object.assign({ timeout: 8000 }, opts || {}, { headers: monHdr() })).catch(e => { if (!/HTTP [45]|paused/.test(String(e))) monOk = false; throw e; }) : Promise.reject(new Error('monitor not running'));
+    const go = () => monOk && monBase ? gmRequest(monUrl() + path, Object.assign({ timeout: 8000 }, opts || {}, { headers: monHdr() })).catch(e => { if (!/HTTP [45]|paused/.test(String(e))) monOk = false; throw e; }) : Promise.reject(new Error('monitor not running'));
+    const c = monCheck();
+    return c ? c.then(go, go) : go();
+  }
+  // (a report to the monitor: JSON in the body)
+  function monPost(path, obj) {
+    const go = () => monOk && monBase ? gmRequest(monUrl() + path, { method: 'POST', body: JSON.stringify(obj), timeout: 15000, headers: Object.assign({ 'Content-Type': 'application/json' }, monHdr() || {}) }) : Promise.reject(new Error('monitor not running'));
     const c = monCheck();
     return c ? c.then(go, go) : go();
   }

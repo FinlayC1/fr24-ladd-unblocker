@@ -25,6 +25,8 @@
       if (live.has(f.id)) { noteSeen(live.get(f.id), f, d.at || t); continue; }
       const c = store.getId(f.id);
       if (c && c.hex) { hydrate(c); noteSeen(c, f, d.at || t); live.set(f.id, c); cachedHits.push(c); continue; }
+      // (named by the monitor: in view, a full identification at once; a world-scan find stays light - the page has its name)
+      if (srvIds.rows.has(f.id)) { if (!d.bg) srvAdopt(f.id); continue; }
       if (d.bg) { bgMatchQ.add(f.id); continue; }       // (world scan finds: matched in idle slices)
       if (!skipFlight(f) && matchAgainstList(pending.get(f.id))) continue;
       if (!prev) fresh++;
@@ -61,6 +63,7 @@
     const id = Number(d.id) || null;
     if (id && id !== selectedId) { selectedId = id; telemLast = 0; syncPanelSoon(); }
     if (id && !live.has(id)) { const c = store.getId(id); if (c && c.hex) live.set(id, hydrate(c)); }
+    if (id && !live.has(id)) srvAdopt(id);       // (named by the monitor)
     if (id && !live.has(id)) pubPrime(id);   // an ordinary flight reopened: its reasoned route, before the first frame
     if (id && live.has(id)) {
       const rec = live.get(id);
@@ -120,18 +123,19 @@
       case 'osmRes': onOsmRes(d); break;
       case 'aircraftInfo': onAircraftInfo(d); break;
       case 'sched': onSched(d); break;
-      case 'feedReady': if (!feedReady) { feedReady = true; log('feed headers captured'); worldScan('startup').catch(() => {}); } break;
+      case 'feedReady': noteFeedHdr(d.hdr); if (!feedReady) { feedReady = true; log('feed headers captured'); worldScan('startup').catch(() => {}); } break;
       case 'scanDone': onScanDone(d); break;
       case 'view': { const first = !viewBox; onView(d); if (first) pollView().catch(() => {}); break; }
       case 'ready': {
         if (!bridgeReady) log('bridge ready', d.v || '(no version)');
         bridgeV = d.v || '?'; if (bridgeV !== VERSION) log('page bridge is another version:', bridgeV);
-        bridgeReady = true; if (d.feedReady && !feedReady) { feedReady = true; worldScan('startup').catch(() => {}); }
+        bridgeReady = true; noteFeedHdr(d.hdr); if (d.feedReady && !feedReady) { feedReady = true; worldScan('startup').catch(() => {}); }
         // everything known right now - the last session's snapshot included - at once, so the map, a flight opened
         // straight from the URL, boards and search are patched from FR24's very first answer; the rest of the store
         // (flight ids of the last 12 hours) once it has been read
         if (isDataPage || isAircraftPage || isFlightPage) break;
         pushKnown(false);
+        if (srvIds.rows.size) srvPush([...srvIds.rows.values()]);     // (the monitor's names, before FR24's first answer)
         if (bootArea.length) { pushPubTel(bootArea.filter(c => now() - seenAt(c) < 90000)); bootArea = []; }
         store.ready.then(() => { pushKnown(true); return pushAllPubIds(); }).catch(e => log('pubIds', e));
         store.kvReady.then(pushSites).catch(() => {});          // (the landing places learned, for FR24's airport list)
@@ -226,6 +230,14 @@
 
   // ---- install the interceptor into the page's main world -----------------------------------------------------
   function installBridge() {
+    // (the browser extension: its manifest put the page part in the page's own world at document start - it only has to
+    // be greeted, and greeted again until it answers)
+    if (typeof TL_EXTENSION === 'boolean') {
+      postToPage('hello');
+      const again = n => setTimeout(() => { if (!bridgeReady && n < 20) { postToPage('hello'); again(n + 1); } }, 250);
+      again(0);
+      return;
+    }
     const src = '(' + pageInterceptor.toString() + ')();';
     const pw = pageWindow();
     try { if (pw.__tweeksLaddBridge) { pw.__tweeksLaddBridge.hello(); return; } } catch (_) { /* ignore */ }
@@ -303,5 +315,5 @@
     };
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true }); else start();
   }
-  try { (pageWindow()).__tweeksLadd = { version: VERSION, msgCount, schedOf, trailFor, get shownId() { return shownId; }, posStats, get bridgeV() { return bridgeV; }, hexOfId, currentPos, idHex, engine: ENGINE, live, pending, telemetry, store, routeState, planState, globalList, fr24, todayCache, sweep, resolveTargeted, routeFor, composeRoute, worldScan, refreshLists, quickRouteAll, historyPump, histPumped, learnedStore, regCountry, fr24Sched, pubRouted, pubRecs, privatePlace, loadSites, siteNear, sites, onSched, pubMem: () => pubMem, publishRoute, syncPanel, normalizeReadsb, telemOf, noteCands, csOfRec, warmHist, hostStat, loadT2, wantWx, wxMap, wantNotams, closedMap, estimateEta, nNumberHex, watchList, pollWatch, accStore, accNote, statsHtml, fleetList, checkHealth, health, exportCsv, predictForHex, verifyAgainstList, strikes, revokedIds, loadHistory, loadToday, fetchJetphotos, loadRunways, knownLegs, areaCache, pollView, saveSnapshot, boardNoteLegs, boardNoteFlight, boardNoteSched, matchParked, matchByTraces, boardDrain, boardMem, onNeedBoard, operatorOf, shownOwner, enrich, userConfirm, userDestOf, loadApprTable, monGet, monCheck, monLive, monUp, liveSources, boardMonFill, natRowOf, fnRows, buildSnapshot, bootHold, firAt, loadFir, pb, onPbFeed, onPbFollow, onPbHex, pbRouteFor, pbMatch, onNeedRoutes, onNeedAirportData, liveBoardRows, runwaysOf, parseRunwayEnds, flightsOfCallsign, bootFlightPage, onNeedSearch, osmPick, wantOsmPlace, osmPlaceAt, learnSite, siteIdAt, siteBk, operatorIdOf, airlineIdByName, fr24Cat, onHistElsewhere, get viewBox() { return viewBox; }, get selectedId() { return currentId(); } }; } catch (_) { /* ignore */ }
+  try { (pageWindow()).__tweeksLadd = { version: VERSION, msgCount, schedOf, trailFor, get shownId() { return shownId; }, posStats, get bridgeV() { return bridgeV; }, hexOfId, currentPos, idHex, engine: ENGINE, live, pending, telemetry, store, routeState, planState, globalList, fr24, todayCache, sweep, resolveTargeted, routeFor, composeRoute, worldScan, refreshLists, quickRouteAll, historyPump, histPumped, learnedStore, regCountry, fr24Sched, pubRouted, pubRecs, privatePlace, loadSites, siteNear, sites, onSched, pubMem: () => pubMem, publishRoute, syncPanel, normalizeReadsb, telemOf, noteCands, csOfRec, warmHist, hostStat, loadT2, wantWx, wxMap, wantNotams, closedMap, estimateEta, nNumberHex, watchList, pollWatch, accStore, accNote, statsHtml, fleetList, checkHealth, health, exportCsv, predictForHex, verifyAgainstList, strikes, revokedIds, loadHistory, loadToday, fetchJetphotos, loadRunways, knownLegs, areaCache, pollView, saveSnapshot, boardNoteLegs, boardNoteFlight, boardNoteSched, matchParked, matchByTraces, boardDrain, boardMem, onNeedBoard, operatorOf, shownOwner, enrich, userConfirm, userDestOf, loadApprTable, monGet, monPost, monCheck, monLive, monUp, liveSources, srvIds, pullSrvIds, srvAdopt, reportToMonitor, get feedHdr() { return feedHdr; }, boardMonFill, natRowOf, fnRows, buildSnapshot, bootHold, firAt, loadFir, pb, onPbFeed, onPbFollow, onPbHex, pbRouteFor, pbMatch, onNeedRoutes, onNeedAirportData, liveBoardRows, runwaysOf, parseRunwayEnds, flightsOfCallsign, bootFlightPage, onNeedSearch, osmPick, wantOsmPlace, osmPlaceAt, learnSite, siteIdAt, siteBk, operatorIdOf, airlineIdByName, fr24Cat, onHistElsewhere, get viewBox() { return viewBox; }, get selectedId() { return currentId(); } }; } catch (_) { /* ignore */ }
   log('loaded v' + VERSION);

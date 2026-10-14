@@ -376,6 +376,98 @@
       await idleSlice(); verifyAgainstList();
     }).catch(() => {}).finally(() => { liveBusy = false; });
   }, 20000);
+  // ---- the monitor's names for FR24's callsign-less flights ---------------------------------------------------------
+  // The monitor scans FR24's whole map all the time and names every flight it draws without callsign or registration
+  // (monitor/ident.cjs) - over oceans and deserts too, where a flight keeps the name it was given while it was heard. All of
+  // it comes here the moment FR24 opens (/fr24ids: everything, then every 20 s what changed), and goes straight to the page:
+  // FR24's very first frame of any of those flights is drawn named. A flight on screen becomes a full identification at once
+  // (photos, owner, the browser's own route); the rest stay light until they are on screen. This browser's own
+  // identification stays the backup: flights the monitor has no name for are matched here as before.
+  // rows: [id, hex, reg, type, callsign, flags (1 LADD 2 mil 4 PIA), how, named at, origin id, origin conf, dest id, dest %, ...]
+  const srvIds = { rows: new Map(), since: 0, at: 0, busy: false, scanOk: false, pushed: new Set() };
+  function srvRec(r) {
+    const rec = { id: r[0], hex: String(r[1] || '').toLowerCase(), cs: r[4] || '', reg: r[2] || hexNNumber(r[1]) || '', type: r[3] || '', ladd: !!(r[5] & 1), mil: !!(r[5] & 2), pia: !!(r[5] & 4),
+      src: 'monitor', sources: ['monitor (' + (r[6] || 'named') + ')'], matchedAt: (r[7] || nowS()) * 1000, verifiedAt: now(), srv: true };
+    hydrate(rec);
+    const rt = srvRoute(r); if (rt) rec.route = rt;
+    return rec;
+  }
+  // (its rough destination, as a route of the page's kind - until this browser works out its own for a flight on screen)
+  function srvRoute(r) {
+    const o = r[8] ? apById(r[8]) : null, d = r[10] ? apById(r[10]) : null; if (!o && !d) return null;
+    return { originId: o ? o.id : 0, originIata: apCode(o), originCity: o ? o.city || o.name || '' : '', destId: d ? d.id : 0, destIata: apCode(d), destCity: d ? d.city || d.name || '' : '', destConf: d ? 'predicted' : '', destP: d ? Math.min(0.99, (r[11] || 0) / 100) : 0, destReason: d ? 'rough destination worked out by the monitor' : '', quick: true, computedAt: (r[12] || nowS()) * 1000 };
+  }
+  // A flight FR24 is drawing now in view (or opened) that the monitor has named: identified at once, as if matched here
+  function srvAdopt(id) {
+    const r = srvIds.rows.get(id); if (!r || live.has(id) || revokedIds.has(id)) return false;
+    adopt(srvRec(r)); return true;
+  }
+  // (the page told of names: light records - id, address, callsign, registration, type - and the rough routes)
+  function srvPush(list) {
+    const recs = [], rl = [];
+    for (const r of list) { if (live.has(r[0])) continue; const rec = srvRec(r); recs.push(rec); srvIds.pushed.add(r[0]); if (rec.route) rl.push({ id: rec.id, route: routeForPage(rec.route) }); }
+    for (let i = 0; i < recs.length; i += 400) pushToPage(recs.slice(i, i + 400));
+    if (rl.length) postToPage('routes', { list: rl });
+  }
+  function srvDrop(ids) {
+    const light = [];
+    for (const id of ids) {
+      srvIds.rows.delete(id);
+      const rec = live.get(id); if (rec && rec.srv) { revoke(id, 'the monitor withdrew it'); continue; }
+      // (kept from an earlier page: not to come back from disk on the next load)
+      const kept = store.getId(id); if (kept && kept.srv && !live.has(id)) store.delId(id);
+      if (srvIds.pushed.delete(id) && !live.has(id)) light.push(id);
+    }
+    if (light.length) postToPage('revoke', { ids: light });
+  }
+  async function pullSrvIds() {
+    if (srvIds.busy || !monUp()) return;
+    srvIds.busy = true;
+    try {
+      const j = await monGet('/fr24ids' + (srvIds.since ? '?since=' + srvIds.since : ''), { idle: true });
+      if (!j || !Array.isArray(j.rows)) return;
+      srvIds.scanOk = !!j.scanOk;
+      const rows = j.rows.filter(r => Array.isArray(r) && r[0] > 0 && /^[0-9a-f]{6}$/i.test(String(r[1] || '')));
+      // (everything: what the monitor no longer names is withdrawn here too)
+      if (j.full) { const keep = new Set(rows.map(r => r[0])); srvDrop([...srvIds.rows.keys()].filter(id => !keep.has(id))); }
+      else if (Array.isArray(j.gone) && j.gone.length) srvDrop(j.gone.filter(id => srvIds.rows.has(id) || (live.get(id) || {}).srv));
+      for (const r of rows) srvIds.rows.set(r[0], r);
+      srvIds.since = j.now; srvIds.at = now();
+      srvPush(rows);
+      // (those on screen right now: identified fully)
+      for (const r of rows) { const f = pending.get(r[0]); if (f && !f.bg && now() - f.receivedAt < PENDING_TTL_MS) srvAdopt(r[0]); }
+      store.kvSet('srvIds1', { at: now(), rows: [...srvIds.rows.values()].slice(-6000) });
+    } catch (e) { log('monitor names', String(e && e.message || e)); }
+    finally { srvIds.busy = false; }
+  }
+  // (the last names kept from before a reload: on the page before FR24's first answer; the monitor's full table follows)
+  store.kvReady.then(() => {
+    const o = store.kvGet('srvIds1'); if (!o || !Array.isArray(o.rows) || now() - (o.at || 0) > 6 * 3600e3) return;
+    const rows = o.rows.filter(r => Array.isArray(r) && !srvIds.rows.has(r[0])); for (const r of rows) srvIds.rows.set(r[0], r);
+    if (bridgeReady) srvPush(rows);
+  }).catch(() => {});
+  setTimeout(() => { pullSrvIds().catch(() => {}); }, 300);
+  setInterval(() => { if (!document.hidden || now() - srvIds.at > 120000) pullSrvIds().catch(() => {}); }, 20000);
+  // This browser's report to the monitor, every minute: FR24's feed headers as its page sends them (once - the monitor's
+  // own FR24 scans use them; never an authorization), the callsign-less flights it sees, and the ones it named itself
+  // that the monitor has no name for (it has ways the server has not: heatmaps, ADS-B Exchange with the user's key)
+  let feedHdr = null, feedHdrSent = false;
+  function noteFeedHdr(h) { if (h && typeof h === 'object' && h['fr24-device-id']) { if (!feedHdr || JSON.stringify(feedHdr) !== JSON.stringify(h)) feedHdrSent = false; feedHdr = h; } }
+  const rnd4 = v => Math.round(v * 1e4) / 1e4;
+  async function reportToMonitor() {
+    if (!monUp()) return;
+    const t = now(), flights = [], ids = [];
+    for (const f of pending.values()) {
+      if (t - f.receivedAt > 180000 || !fin(f.lat) || !fin(f.lon) || flights.length >= 5000) continue;
+      flights.push([f.id, rnd4(f.lat), rnd4(f.lon), fin(f.alt) ? Math.round(f.alt) : 0, fin(f.trk) ? Math.round(f.trk) : 0, fin(f.spd) ? Math.round(f.spd) : 0, Math.round(f.ts || t / 1000), f.gnd ? 1 : 0, f.src | 0, f.type || '', f.reg || '', f.icon | 0]);
+      const rec = live.get(f.id); if (rec && rec.hex && !rec.srv && !srvIds.rows.has(f.id)) ids.push([f.id, rec.hex, String(rec.src || 'browser').slice(0, 20)]);
+    }
+    const hdr = feedHdr && !feedHdrSent ? feedHdr : null;
+    if (!flights.length && !ids.length && !hdr) return;
+    const j = await monPost('/report', { hdr: hdr || undefined, ua: hdr ? navigator.userAgent : undefined, flights, ids }).catch(e => { log('report to monitor', String(e && e.message || e)); return null; });
+    if (j && j.ok && hdr) feedHdrSent = true;
+  }
+  setInterval(() => { idleSlice().then(reportToMonitor).catch(() => {}); }, 60000);
   // Parked LADD aircraft show which fields business aviation actually uses: every sighting feeds the usage prior.
   const parkedSeen = new Map();
   function learnParked(c) {
@@ -727,6 +819,8 @@
   async function worldScan(reason) {
     if (!bridgeReady || !feedReady || scanPending || isAircraftPage) return;
     if (document.hidden && now() - lastScanAt < 15 * 60000) return;
+    // (the monitor scans FR24's whole map itself and its names are fresh: this browser need not)
+    if (srvIds.scanOk && now() - srvIds.at < 180000) return;
     scanPending = true; lastScanAt = now();
     try {
       await refreshLists(true);

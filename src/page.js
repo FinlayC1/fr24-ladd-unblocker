@@ -692,7 +692,7 @@
       try {
         if (/fr24\.feed\.api\.v1\.Feed\/LiveFeed(?:$|\?)/.test(url)) {
           if (!this.__tlOwn) {
-            if (this.__tlHeaders && this.__tlHeaders['fr24-device-id'] && !feedHeaders) { feedHeaders = Object.assign({}, this.__tlHeaders); post('feedReady', {}); }
+            if (this.__tlHeaders && this.__tlHeaders['fr24-device-id'] && !feedHeaders) { feedHeaders = Object.assign({}, this.__tlHeaders); post('feedReady', { hdr: feedHdrPublic() }); }
             if (this.responseType === 'arraybuffer') {
               installBinary(this, function (b) { return patchLiveFeed(b, false); });
               try { sendBody = patchLiveFeedRequest(body); } catch (e) { sendBody = body; }
@@ -741,6 +741,9 @@
       return oSend.call(this, sendBody);
     };
 
+    // (the headers of FR24's feed requests the monitor may use for its own scans of FR24: its device id, platform and
+    // grpc-web markers - never an authorization, cookie or anything else)
+    function feedHdrPublic() { var o = {}; if (!feedHeaders) return o; for (var k in feedHeaders) if (Object.prototype.hasOwnProperty.call(feedHeaders, k) && /^(fr24-[a-z0-9-]+|x-grpc-web|x-user-agent|content-type)$/i.test(k)) o[k] = String(feedHeaders[k]); return o; }
     // ---- background LiveFeed queries (world scan), same headers as FR24's own requests -------------------------
     function liveFeedQuery(q) {
       return new Promise(function (resolve, reject) {
@@ -1981,7 +1984,7 @@
       else if (d.__tweeksLadd === 'osmReq') { if (d.key && /^https:\/\/overpass-api\.de\/api\/interpreter\?data=/.test(String(d.url || ''))) oFetch.call(window, d.url).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) { post('osmRes', { key: d.key, j: j }); }, function () { post('osmRes', { key: d.key, j: null }); }); }
       else if (d.__tweeksLadd === 'photosDone') acceptPhotosDone(d);
       else if (d.__tweeksLadd === 'scan') runScan(d.regions || [], d.opts || {});
-      else if (d.__tweeksLadd === 'hello') post('ready', { stats: stats, feedReady: !!feedHeaders, v: BRIDGE_V });
+      else if (d.__tweeksLadd === 'hello') post('ready', { stats: stats, feedReady: !!feedHeaders, hdr: feedHdrPublic(), v: BRIDGE_V });
     });
     window[NS] = { resolved: resolved, routes: routes, naRecs: naRecs, naRoutes: naRoutes, telem: telem, hist: hist, lastPos: lastPos, photoCache: photoCache, psCache: psCache, stats: stats, fetchPhotos: fetchPhotos, hello: function () { post('ready', { stats: stats, feedReady: !!feedHeaders, v: BRIDGE_V }); }, v: BRIDGE_V };
     if (window.__tlTestHook) try { window.__tlTestHook({ csOf: csOf, hist: hist, preloaded: function () { return preloaded; }, parse: parse, photoFits: photoFits, makerOf: makerOf, patchFollow: patchFollow, patchFlightMsg: patchFlightMsg, pushFollow: pushFollow, followSt: function () { return followSt; }, setFollowSt: function (s) { followSt = s; }, shownPhotos: shownPhotos, photoCache: photoCache, FOLLOW: FOLLOW, DETAILS: DETAILS, fLen: fLen, fStr: fStr, fVar: fVar, patchFlight: patchFlight, psState: function () { return { q: psQ.length, busy: psBusy, last: psLast, blockedFor: Math.max(0, psBlockedUntil - Date.now()), pri: Array.from(psPri), jobs: photoJobs.size, head: psQ.slice(0, 3).map(function (j) { return j.hex; }) }; }, acceptPubTel: acceptPubTel, pubTelFor: pubTelFor, fillNativeCard: fillNativeCard, regsOfCallsign: regsOfCallsign, categoryOf: categoryOf, nativeFill: nativeFill, natInfo: natInfo, telem: telem, b64Encode: b64Encode, b64DecodeInto: b64DecodeInto, frameHeader: frameHeader, concat: concat, varintInt32: varintInt32, PLAYBACK: PLAYBACK, patchPlayback: patchPlayback, patchPlaybackRequest: patchPlaybackRequest, pbRoutes: pbRoutes, pbTelAt: pbTelAt, setPbTrace: function (t) { pbTrace = t; }, patchList: patchList, acceptSites: acceptSites, listSig: listSig, mergeRoutes: mergeRoutes, applyRoutes: applyRoutes, routesAdd: routesAdd, applyAirport: applyAirport, applyBoardPage: applyBoardPage, applyStats: applyStats, mergeFlights: mergeFlights, apData: apData, telAt: telAt, noteTelem: noteTelem, pbTraceOf: function () { return pbTrace; }, logoOf: logoOf, archDetail: archDetail, tsOf: tsOf, noteAirportJson: noteAirportJson, rwyOf: rwyOf, rwyPanel: rwyPanel, unlockRunways: unlockRunways, mvRows: mvRows, mvKept: mvKept, dayOf: dayOf, pbPanelTick: pbPanelTick, logoFix: logoFix, liveEntries: liveEntries, pbPos: pbPos, lastPos: lastPos, resolved: resolved, stats: stats }); } catch (e) { /* ignore */ }
