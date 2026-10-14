@@ -1,12 +1,18 @@
-# A release: push a tag v<version> (the version in package.json) and this builds the extension and the userscript and
-# publishes them as a GitHub release, with that version's changelog entry as its notes.
-#   git tag v22.21.0 && git push origin v22.21.0
+# A release: a tag v<version> (the version in package.json) - pushed, or made on GitHub's Releases page ("Draft a new
+# release", a new tag, Publish) - and this builds the extension and the userscript and attaches them to the release, with
+# that version's changelog entry as its notes.
+#   git tag v22.22.0 && git push origin v22.22.0
 name: Release
 on:
   push:
     tags: ['v*']
+  release:
+    types: [published]
 permissions:
   contents: write
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -31,4 +37,11 @@ jobs:
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/fr24-ladd-unblocker-extension.zip dist/fr24-ladd-unblocker.user.js --title "FR24 LADD Unblocker $GITHUB_REF_NAME" --notes-file notes.md
+        run: |
+          # (a release already made on GitHub's page for this tag: the files and notes added to it; otherwise made here)
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/fr24-ladd-unblocker-extension.zip dist/fr24-ladd-unblocker.user.js --clobber
+            gh release edit "$GITHUB_REF_NAME" --title "FR24 LADD Unblocker $GITHUB_REF_NAME" --notes-file notes.md
+          else
+            gh release create "$GITHUB_REF_NAME" dist/fr24-ladd-unblocker-extension.zip dist/fr24-ladd-unblocker.user.js --title "FR24 LADD Unblocker $GITHUB_REF_NAME" --notes-file notes.md
+          fi
