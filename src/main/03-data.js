@@ -456,7 +456,9 @@
     if (learnedApplied || !airportsReady()) return; learnedApplied = true;
     try { const l = (await learnLoad()).slice(); await sliced(l, replayLearned, { ms: 8 }); if (l.length) log('learned from use', l.length, 'flights'); } catch (e) { log('learned replay', e); }
   }
-  function learnFromLeg(hex, raw, s, cls, mil) {
+  // (lx: what the monitor worked out from the positions of a flight it rebuilt - [squawk blocks, FMS levels, flow keys] -
+  // for a flight this browser has the summary of only)
+  function learnFromLeg(hex, raw, s, cls, mil, lx) {
     if (!s || !s.from || !s.to || s.from.id === s.to.id || !['ground', 'low'].includes(s.from.conf) || !['ground', 'low'].includes(s.to.conf) || s.tEnd - s.tStart < 480) return;
     // (ordinary airliners - cargo, charters FR24 shows without a route - would teach business-jet habits nothing)
     if (cls === 'airliner' && !(store.getHex(hex) || {}).ladd) return;
@@ -470,8 +472,8 @@
       if (p.alt > 1500 && p.sq && /^[0-7]{4}$/.test(p.sq) && !ENGINE.SQ_NOINFO.test(p.sq)) sq.add(p.sq.slice(0, 2));
       if (p.fms > 5000 && !(p.vr < -500)) fm.add(Math.round(p.fms / 2000));
     }
-    const flow = ENGINE.flowKeysOf((raw && raw.pts) || [], ENGINE.byId(s.to.id)).slice(0, 16).join('|');
-    const x = [key, s.from.id, s.to.id, Math.round(s.tEnd), [...sq].join(','), [...fm].join(','), cls, mil ? 1 : 0, Math.round(s.tStart), s.cs || '', (acOfHex(hex).type || ''), flow];
+    const ok = Array.isArray(lx) && lx.length === 3, flow = ok ? String(lx[2] || '') : ENGINE.flowKeysOf((raw && raw.pts) || [], ENGINE.byId(s.to.id)).slice(0, 16).join('|');
+    const x = [key, s.from.id, s.to.id, Math.round(s.tEnd), ok ? String(lx[0] || '') : [...sq].join(','), ok ? String(lx[1] || '') : [...fm].join(','), cls, mil ? 1 : 0, Math.round(s.tStart), s.cs || '', (acOfHex(hex).type || ''), flow];
     if (learnAppend(x) && learnedApplied) replayLearned(x);
   }
 
@@ -1055,6 +1057,23 @@
     for (const h of fleetMates(hex)) for (const l of compactToLegs((store.getHex(h) || {}).recent || [])) if (l.from && l.to && l.from.id !== l.to.id && l.tEnd < t0 && t0 - l.tEnd < 60 * 86400) { m.set(l.from.id, (m.get(l.from.id) || 0) + 1); m.set(l.to.id, (m.get(l.to.id) || 0) + 1); }
     return m.size ? m : null;
   }
+  // A blocked aircraft's finished days as the monitor rebuilt them (/hist: adsb.lol's day traces through the same engine,
+  // in this log's format - and the days it was watched throughout and not heard flying, with no flights). Asked for
+  // together: the aircraft of the next 60 ms in one request (20 at most). null: no monitor, or nothing of it there. Only
+  // for blocked aircraft (the monitor keeps no others' days); right after the page opens, once its check has answered.
+  const histAsk = { q: new Map(), t: 0 };
+  function monHist(hex) {
+    if (!(store.getHex(hex) || {}).ladd) return Promise.resolve(null);
+    const c = monCheck();
+    return Promise.resolve(c && c.catch(() => null)).then(() => !monUp() ? null : new Promise(res => { const l = histAsk.q.get(hex) || []; l.push(res); histAsk.q.set(hex, l); if (!histAsk.t) histAsk.t = setTimeout(flushMonHist, 60); }));
+  }
+  function flushMonHist() {
+    histAsk.t = 0; const all = [...histAsk.q]; histAsk.q.clear();
+    for (let i = 0; i < all.length; i += 20) {
+      const part = all.slice(i, i + 20), give = by => { for (const [h, rs] of part) for (const r of rs) r((by && by.get(h)) || null); };
+      monGet('/hist?hex=' + part.map(x => x[0]).join(',')).then(j => give(new Map(((j && j.hv === HIST_V && Array.isArray(j.list)) ? j.list : []).filter(x => x && x.hex && x.days).map(x => [x.hex, x]))), () => give(null));
+    }
+  }
   const historyJobs = new Map();
   // Loads today's trace and up to `maxDays` of history (newest first, several days in parallel), keeps the full log in
   // IndexedDB and a compact recent summary in memory. onProgress fires as days arrive.
@@ -1081,8 +1100,8 @@
         h.vm = HIST_VM;
       }
       const upTo = bgWork ? Math.min(maxDays, LOL_DAYS) : maxDays;
-      const todo = [], backOf = {}; for (let back = 1; back <= upTo; back++) { const d = dayStr(now() - back * 864e5); if (!h.days[d]) { todo.push(d); backOf[d] = back; } }
-      let done = 0, dirty = false;
+      let todo = []; const backOf = {}; for (let back = 1; back <= upTo; back++) { const d = dayStr(now() - back * 864e5); if (!h.days[d]) { todo.push(d); backOf[d] = back; } }
+      let done = 0, dirty = false, monDays = 0;
       const flush = () => {
         if (!dirty) return; dirty = false;
         h.legs.sort((a, b) => b.tStart - a.tStart); h.legs = h.legs.slice(0, 1500);
@@ -1094,6 +1113,20 @@
         if (onProgress) { try { onProgress(h, done, todo.length); } catch (e) { log('history progress', e); } }
       };
       const ac0 = acOfHex(hex), cls0 = ENGINE.classify(ac0), heli = cls0 === 'heli', patrol = cls0 === 'fighter' || cls0 === 'milheavy';
+      // (the days the monitor has: taken as they are - no request to adsb.lol for them; only a day whose flights all came
+      // with it, and never one it could not complete)
+      if (todo.length) {
+        const mh = await monHist(hex).catch(() => null);
+        if (mh && mh.days && typeof mh.days === 'object') {
+          const byDay = new Map(); for (const l of Array.isArray(mh.legs) ? mh.legs : []) if (l && l.day && fin(l.tStart)) (byDay.get(l.day) || byDay.set(l.day, []).get(l.day)).push(l);
+          const have = todo.filter(d => Number.isInteger(mh.days[d]) && mh.days[d] >= 0 && (byDay.get(d) || []).length === mh.days[d]);
+          for (const d of have) {
+            const legs = (byDay.get(d) || []).map(l => { const s = Object.assign({}, l), lx = s.lx; delete s.lx; s.day = d; learnFromLeg(hex, null, s, cls0, ac0.mil, lx); return s; });
+            h.days[d] = true; h.legs = h.legs.filter(l => l.day !== d).concat(legs); dirty = true;
+          }
+          if (have.length) { const got = new Set(have); todo = todo.filter(d => !got.has(d)); monDays = have.length; flush(); }
+        }
+      }
       const legsOf = (pts, day) => ENGINE.legsFromPoints(pts, { heli, patrol, cls: cls0, type: ac0.type, rangeKm: ENGINE.typeRangeKm(ac0), dataEnd: dayEndS(day) });
       // A day with a flight whose landing or take-off was not heard (lost low, ended in a hole, only a guess at the
       // field) - or no trace at all while the user is looking: the other network's trace of that day too, merged. Each
@@ -1135,7 +1168,7 @@
       for (let i = 0; i < todo.length; i += 8) { await Promise.all(todo.slice(i, i + 8).map(one)); if (bgWork && !st.front) await idleSlice(); flush(); }
       flush();
       // (the other FR24 tabs - the map, a log page - read it again: one log, one answer, wherever it is shown)
-      if (done) { store.flushNow(); setTimeout(() => { try { if (routeChan) routeChan.postMessage({ hist: hex }); } catch (e) { /* closed */ } }, 1500); }
+      if (done || monDays) { store.flushNow(); setTimeout(() => { try { if (routeChan) routeChan.postMessage({ hist: hex }); } catch (e) { /* closed */ } }, 1500); }
       return h;
     })().finally(() => { st.running = false; });
     historyJobs.set(hex, st);

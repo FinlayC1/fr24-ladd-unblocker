@@ -1,7 +1,9 @@
 node_modules/
-dist/
 original.user.js
 fr24-ladd.user.js
 *.log
 .prof/
 .claude/
+monitor/store/
+monitor/monitor.json
+dist/fr24-ladd-unblocker-extension.zip

@@ -23,7 +23,7 @@ const pbFx = JSON.parse(fs.readFileSync(path.join(FX, 'playback_1235.json'), 'ut
 const heatBuf = zlib.gunzipSync(fs.readFileSync(path.join(FX, 'heat_20261009_25_slice.bin.gz')));
 let L = null, H = null;
 const ids = {};
-// (the permanent monitor, as the routes page asks it: M-ARNZ's two flights of 9 Oct at Barrow)
+// (the monitor, as the routes page asks it: M-ARNZ's two flights of 9 Oct at Barrow)
 function monStub(url) {
   if (/\/board\?ap=/.test(url) && ids.bwf && ids.fab) return { aircraft: [{ hex: '424c60', reg: 'M-ARNZ', type: 'PC24', ladd: true, legs: [
     { from: { id: ids.bwf, code: 'BWF', conf: 'ground' }, to: { id: ids.fab, code: 'FAB', conf: 'ground' }, tStart: ids.t - 9000, tOff: ids.t - 8900, tEnd: ids.t - 6200, tOn: ids.t - 6300, ended: true, startedOnGround: true, startLat: 54.13, startLon: -3.26, endLat: 51.28, endLon: -0.77 },
@@ -57,7 +57,7 @@ function gmLocal(url) {
   if (/globe\.airplanes\.live\/globe_history|adsb\.lol\/data\/traces/.test(url)) return { status: 404, text: '' };
   if (/adsb\.lol\/globe_history\/2026\/10\/09\/heatmap\/25\.bin\.ttf/.test(url)) return { status: 200, bin: heatBuf };
   if (/adsb\.lol\/globe_history\/.*\/heatmap\//.test(url)) return { status: 404, text: '' };
-  if (/127\.0\.0\.1:47524/.test(url)) return { status: 200, text: JSON.stringify(monStub(url)) };
+  if (/^https:\/\/mon\.test\//.test(url)) return { status: 200, text: JSON.stringify(monStub(url)) };
   if (/api\.adsb\.lol|opendata\.adsb\.fi|hexdb|adsbdb|planespotters|jetphotos|ginfoapi|faa\.gov|opensky|aviationweather/.test(url)) return { status: 404, text: '' };
   return null;
 }
@@ -93,6 +93,8 @@ const until = async (f, ms) => { for (let i = 0; i < ms / 100; i++) { const v = 
   L = w.__tweeksLadd;
   await until(() => L.engine.airports.length > 5000, 60000);
   check('airports loaded', L.engine.airports.length > 5000, L.engine.airports.length);
+  // (the monitor on a server - made up here: kept in the shared store, so the later pages have it too)
+  await L.store.kvReady; L.store.kvSet('monRemote', { url: 'https://mon.test', token: 'tok' }); L.store.flushNow(); await L.monCheck(true).catch(() => {});
   ids.bwf = L.engine.byIcao('EGNL').id; ids.fab = L.engine.byIcao('EGLF').id; ids.lpl = L.engine.byIcao('EGGP').id; ids.man = L.engine.byIcao('EGCC').id; ids.t = Math.floor(Date.now() / 1000);
 
   // ---- FR24's airline list: BAE Systems' airlines get their logo; one FR24 has stays as it is

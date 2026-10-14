@@ -1,0 +1,15 @@
+# Line endings: scripts that run on the Linux server stay LF even when checked out on Windows
+* text=auto
+*.sh text eol=lf
+*.cjs text eol=lf
+*.mjs text eol=lf
+*.js text eol=lf
+
+# The built userscript and packed data are generated: collapsed in diffs and left out of language statistics
+dist/*.user.js linguist-generated=true -diff
+src/tables*.json linguist-generated=true
+src/logit.json linguist-generated=true
+src/approach.json linguist-generated=true
+src/agetable.json linguist-generated=true
+*.gz binary
+*.bin binary

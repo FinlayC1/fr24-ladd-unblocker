@@ -51,6 +51,7 @@
   </header>
   <main>
     <div class="cards">
+      <div class="card"><h2>FR24 - every blocked flight</h2><div id="c-fr24"></div></div>
       <div class="card"><h2>Polling</h2><div id="c-poll"></div></div>
       <div class="card"><h2>Data held</h2><div id="c-data"></div></div>
       <div class="card"><h2>Server</h2><div id="c-srv"></div></div>
@@ -80,9 +81,20 @@
     $('upd').textContent = 'updated ' + new Date().toLocaleTimeString() + ' - up ' + dur(s.uptimeS);
     var m = s.mon;
     fillRows($('c-poll'), [['adsb.lol polls', m.polls], ['by address', m.hexPolls], ['failed', m.fails, m.fails ? 'warn' : 'ok'], ['last error', m.lastErr || 'none', m.lastErr ? 'warn' : 'ok'],
-      ['LADD list', m.laddAt ? ago(m.laddAt) : 'not yet', m.laddAt && Date.now() - m.laddAt < 120000 ? 'ok' : 'warn'], ['areas', m.areas.map(function (a) { return a.join(','); }).join('  ')]].concat(
+      ['LADD list', m.laddAt ? ago(m.laddAt) : 'not yet', m.laddAt && Date.now() - m.laddAt < 120000 ? 'ok' : 'warn']].concat(m.listAge ? [
+      ['military list', m.listAge.mil != null ? m.listAge.mil + ' s ago' : m.listAge.fi != null ? 'adsb.fi ' + m.listAge.fi + ' s ago' : 'not yet', (m.listAge.mil != null && m.listAge.mil < 180) || (m.listAge.fi != null && m.listAge.fi < 180) ? 'ok' : 'warn'],
+      ['PIA list', m.listAge.pia != null ? m.listAge.pia + ' s ago' : 'not yet'], ['blocked by address', m.listAge.hex != null ? m.listAge.hex + ' s ago' : 'not yet'],
+      ['adsb.lol API, last minute', m.apiLastMin + ' requests'],
+      ['backup: adsb.fi areas', m.listAge.fiArea != null ? m.listAge.fiArea + ' s ago' : 'not needed yet'],
+      ['backup: OpenSky', m.listAge.osky != null ? m.listAge.osky + ' s ago' : 'not needed yet'],
+      ['backup: ADS-B Exchange', m.adsbx && m.adsbx.key ? m.adsbx.today + ' / ' + m.adsbx.cap + ' today' : 'no key set']] : []).concat([['areas', m.areas.map(function (a) { return a.join(','); }).join('  ')]]).concat(
       Object.keys(m.paused).map(function (h) { return [h, 'paused ' + m.paused[h] + ' s', 'bad']; })));
-    fillRows($('c-data'), [['aircraft in view', m.aircraft], ['blocked aircraft', m.blocked], ['with flights', m.withLegs], ['flights kept', m.legs], ['backfill queue', m.backfillQueue]]);
+    fillRows($('c-data'), [['aircraft in view', m.aircraft], ['blocked aircraft', m.blocked], ['with flights', m.withLegs], ['flights kept', m.legs], ['backfill queue', m.backfillQueue]].concat(m.hist ? [['live list (/live)', m.live], ['days rebuilt (/hist)', m.hist.built + ' with flights, ' + m.hist.empty + ' without'], ['days to rebuild', m.hist.queue], ['merged with airplanes.live', m.hist.merged], ['left to the browser', m.hist.inc + m.hist.fails, m.hist.inc + m.hist.fails ? 'warn' : '']] : []));
+    if (m.fr24) { var f = m.fr24; fillRows($('c-fr24'), [['FR24 scans', f.scanning ? f.scans + (f.last ? ' (last ' + ago(f.last.at) + ', ' + f.last.requests + ' requests, ' + f.last.flights + ' flights)' : '') : 'off', f.lastOkAgo != null && f.lastOkAgo < 300 ? 'ok' : 'warn'],
+      ['FR24 headers', f.headersFrom === 'browser' ? 'from a browser' : 'default (no browser yet)', f.headersFrom === 'browser' ? 'ok' : 'warn'], ['FR24 paused', f.paused ? f.paused + ' s' : 'no', f.paused ? 'bad' : ''], ['last FR24 error', f.lastErr || 'none', f.lastErr ? 'warn' : 'ok'],
+      ['callsign-less flights', f.flights], ['named', f.named, 'ok'], ['not named yet', f.unnamed, f.unnamed ? 'warn' : ''],
+      ['named by', Object.keys(f.matched).map(function (k) { return k + ' ' + f.matched[k]; }).join(', ')], ['withdrawn', f.revoked], ['area lookups', f.lookups], ['FR24 trails', f.trails + ' (' + f.trailQueue + ' waiting)'],
+      ['destinations worked out', f.dest.done + (f.dest.failed ? ', failed ' + f.dest.failed : '') + ' (last round ' + f.dest.ms + ' ms)']]); }
     var sv = s.srv;
     fillRows($('c-srv'), [['memory (rss)', mb(sv.rss), sv.rss > 0.8 * sv.totalMem ? 'bad' : ''], ['heap', mb(sv.heap)], ['free memory', mb(sv.freeMem)], ['load (1/5/15 min)', sv.load.map(function (x) { return x.toFixed(2); }).join(' / ')], ['cpu cores', sv.cpus]]);
     var r = s.req;

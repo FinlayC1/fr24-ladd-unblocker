@@ -1,0 +1,65 @@
+{
+  "manifest_version": 3,
+  "name": "FR24 LADD Unblocker",
+  "version": "22.20.0",
+  "description": "Names blocked (LADD) and N/A aircraft on Flightradar24 from public ADS-B, with routes, predicted destinations and flight history.",
+  "author": "Finlay Clarke",
+  "icons": {
+    "16": "icons/16.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "host_permissions": [
+    "https://api.adsb.lol/*",
+    "https://adsb.lol/*",
+    "https://globe.adsb.lol/*",
+    "https://opendata.adsb.fi/*",
+    "https://globe.airplanes.live/*",
+    "https://adsbexchange-com1.p.rapidapi.com/*",
+    "https://aviationweather.gov/*",
+    "https://external-api.faa.gov/*",
+    "https://opensky-network.org/*",
+    "https://api.adsbdb.com/*",
+    "https://hexdb.io/*",
+    "https://api.planespotters.net/*",
+    "https://www.jetphotos.com/*",
+    "https://api.flightradar24.com/*",
+    "https://registry.faa.gov/*",
+    "https://ardis.iomaircraftregistry.com/*",
+    "https://ginfoapi.caa.co.uk/*",
+    "https://app02.bazl.admin.ch/*",
+    "https://overpass-api.de/*",
+    "https://overpass.private.coffee/*",
+    "https://*.sslip.io/*",
+    "https://raw.githubusercontent.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.flightradar24.com/*",
+        "https://flightradar24.com/*"
+      ],
+      "js": [
+        "page.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "all_frames": false
+    },
+    {
+      "matches": [
+        "https://www.flightradar24.com/*",
+        "https://flightradar24.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ],
+  "minimum_chrome_version": "111"
+}

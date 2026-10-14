@@ -23,9 +23,10 @@
   const telemOf = c => c ? { gnd: !!c.gnd, vr: c.vs, sq: c.squawk || 0, sqs: c.sq || '', agps: c.agps, ias: c.ias, tas: c.tas, mach: c.mach, oat: c.oat, wd: c.wd, ws: c.ws, mcp: c.mcp, fms: c.fms, cat: c.cat, emergency: c.emergency, ...firFields(c), at: c.receivedAt - (c.ageS || 0) * 1000 } : null;
   const firFields = c => { const f = firInfo(c.lat, c.lon, c.gnd ? 0 : c.alt); return f ? { air: f.name, airId: f.code } : { air: '', airId: '' }; };
   const readsbList = j => Array.isArray(j && j.ac) ? j.ac : Array.isArray(j && j.aircraft) ? j.aircraft : [];
-  const readsbSource = (name, host, urlFn, hexFn) => ({
+  // (altFn: an older address of the same query, asked when the first is not found - adsb.fi moved its area query to v3)
+  const readsbSource = (name, host, urlFn, hexFn, altFn) => ({
     name, host,
-    area: (lat, lon, r) => gmRequest(urlFn(lat, lon, Math.min(250, Math.round(r)))).then(j => { const t = now(); return readsbList(j).map(a => normalizeReadsb(a, name, t)).filter(Boolean); }),
+    area: (lat, lon, r) => { const rr = Math.min(250, Math.round(r)); return gmRequest(urlFn(lat, lon, rr)).catch(e => { if (altFn && /HTTP (400|404|410)/.test(String(e))) return gmRequest(altFn(lat, lon, rr)); throw e; }).then(j => { const t = now(); return readsbList(j).map(a => normalizeReadsb(a, name, t)).filter(Boolean); }); },
     hex: hexFn ? hex => gmRequest(hexFn(hex), { timeout: 8000, priority: true }).then(j => { const t = now(); return readsbList(j).map(a => normalizeReadsb(a, name, t)).filter(Boolean)[0] || null; }) : null
   });
   // ADS-B Exchange through its official API (RapidAPI "adsbexchange-com1"): readsb v2 answers like the others, from a
@@ -43,7 +44,7 @@
   }
   const SOURCES = [
     readsbSource('adsb.lol', 'api.adsb.lol', (la, lo, r) => `https://api.adsb.lol/v2/point/${la.toFixed(4)}/${lo.toFixed(4)}/${r}`, hex => `https://api.adsb.lol/v2/hex/${hex}`),
-    readsbSource('adsb.fi', 'opendata.adsb.fi', (la, lo, r) => `https://opendata.adsb.fi/api/v2/lat/${la.toFixed(4)}/lon/${lo.toFixed(4)}/dist/${r}`, hex => `https://opendata.adsb.fi/api/v2/hex/${hex}`),
+    readsbSource('adsb.fi', 'opendata.adsb.fi', (la, lo, r) => `https://opendata.adsb.fi/api/v3/lat/${la.toFixed(4)}/lon/${lo.toFixed(4)}/dist/${r}`, hex => `https://opendata.adsb.fi/api/v2/hex/${hex}`, (la, lo, r) => `https://opendata.adsb.fi/api/v2/lat/${la.toFixed(4)}/lon/${lo.toFixed(4)}/dist/${r}`),
     // ADS-B Exchange (its own feeder network - it sees aircraft the others miss): the official API, with the user's own
     // key (Settings); without one it is simply not asked
     adsbxSource()
@@ -316,21 +317,37 @@
 
   // The global LADD and military lists: every such aircraft the aggregator currently tracks, anywhere. Matching
   // against them needs no request at all, and they carry each aircraft's live telemetry.
+  // With the monitor answering, its live list (/live: the LADD, military and PIA lists and every other blocked aircraft,
+  // polled on the server) is the list: this browser asks adsb.lol / adsb.fi for none of them. Its own requests are the
+  // backup - the monitor down, or its LADD list older than 90 s (its military list older than 3 min: that one only).
   const globalList = { items: [], byHex: new Map(), at: 0, loading: null, src: '' };
+  const monLive = { at: 0, n: 0, ok: false };   // (the strip's "sources" pop-over: when the monitor's list last came, how big)
+  async function takeLive(opts) {
+    const j = await monGet('/live', opts);
+    const age = j && j.age, ok = !!(j && Array.isArray(j.ac) && age && age.ladd != null && age.ladd < 90);
+    monLive.at = now(); monLive.n = j && Array.isArray(j.ac) ? j.ac.length : 0; monLive.ok = ok;
+    if (!ok) return null;
+    // (each row's seen_pos is counted to the monitor's "now": it came just now)
+    const t = now(), got = new Map();
+    for (const a of j.ac) { const c = normalizeReadsb(a, 'monitor', t); if (c) got.set(c.hex, c); }
+    return { got, milOk: age.mil != null && age.mil < 180 };
+  }
   function refreshLists(force) {
     if (globalList.loading) return globalList.loading;
     if (!force && now() - globalList.at < LIST_REFRESH_MS) return Promise.resolve(globalList.items);
     globalList.loading = (async () => {
-      const got = new Map(); let src = '';
+      const lv = await takeLive().catch(() => null);
+      const got = lv ? lv.got : new Map(); let src = lv ? 'monitor' : '';
       for (const [name, url] of [['adsb.lol', 'https://api.adsb.lol/v2/ladd'], ['adsb.lol', 'https://api.adsb.lol/v2/mil'], ['adsb.fi', 'https://opendata.adsb.fi/api/v2/mil']]) {
-        if (/mil/.test(url) && name === 'adsb.fi' && [...got.values()].some(c => c.mil)) continue;
+        if (lv && (url.endsWith('/ladd') || lv.milOk)) continue;                 // (the monitor's list has them)
+        if (/mil/.test(url) && name === 'adsb.fi' && [...got.values()].some(c => c.mil && c.src !== 'monitor')) continue;
         for (let attempt = 0; attempt < 2; attempt++) {
-          try { const m = url.endsWith('/ladd') ? await monGet('/ladd').catch(() => null) : null, fresh = m && now() - m.at < 90000; const j = fresh ? m : await gmRequest(url, { timeout: 20000 }); const t = fresh ? m.at : now(); for (const a of readsbList(j)) { const c = normalizeReadsb(a, name, t); if (c && !got.has(c.hex)) got.set(c.hex, c); } src = src || name; break; }
+          try { const m = url.endsWith('/ladd') ? await monGet('/ladd').catch(() => null) : null, fresh = m && now() - m.at < 90000; const j = fresh ? m : await gmRequest(url, { timeout: 20000 }); const t = fresh ? m.at : now(); for (const a of readsbList(j)) { const c = normalizeReadsb(a, name, t), p = c && got.get(c.hex); if (c && (!p || (p.src === 'monitor' && seenAt(c) > seenAt(p)))) got.set(c.hex, c); } src = src || name; break; }
           catch (e) { log('list', url, String(e.message || e)); if (/429/.test(String(e)) && !attempt) { await sleep(4000); continue; } break; }
         }
       }
       if (got.size || !globalList.items.length) { globalList.items = [...got.values()]; globalList.byHex = got; globalList.at = now(); globalList.src = src || 'adsb.lol'; noteCands(globalList.items); }
-      log('LADD/military list', globalList.items.length, 'aircraft');
+      log('LADD/military list', globalList.items.length, 'aircraft', lv ? '(monitor)' : '');
       // (military aircraft FR24 does show get their padlocked fields unlocked from this data too)
       pushPubTel(globalList.items.filter(c => !c.ladd && now() - seenAt(c) < 90000));
       for (const c of globalList.items) if (c.gnd) learnParked(c);
@@ -338,16 +355,119 @@
     })().finally(() => { globalList.loading = null; });
     return globalList.loading;
   }
-  // (with the permanent monitor running, its LADD list every 30 s in between: list positions never more than a minute
-  // old to match FR24's blocked flights against - N1848T, 517 kt over Montana, went unmatched on a list 2 minutes old)
+  // (with the monitor answering, its live list every 20 s in between: positions never more than a minute old to match
+  // FR24's blocked flights against - N1848T, 517 kt over Montana, went unmatched on a list 2 minutes old. Newer reports
+  // replace older ones; aircraft not heard for 10 minutes go. While it covers the military list too, this browser's own
+  // list round is not needed: the list counts as fresh)
+  // (all of it in idle moments, a couple of hundred aircraft at a time - never while the map is dragged)
+  let liveBusy = false;
   setInterval(() => {
-    if (!monUp() || globalList.loading) return;
-    monGet('/ladd').then(m => {
-      if (!m || now() - m.at > 90000) return;
-      const got = []; for (const a of m.ac || []) { const c = normalizeReadsb(a, 'monitor', m.at), p = c && globalList.byHex.get(c.hex); if (c && (!p || seenAt(c) > seenAt(p))) { globalList.byHex.set(c.hex, c); got.push(c); } }
-      globalList.items = [...globalList.byHex.values()]; noteCands(got);
-    }).catch(() => {});
-  }, 30000);
+    if (!monUp() || globalList.loading || liveBusy) return;
+    liveBusy = true;
+    takeLive({ idle: true }).then(async lv => {
+      if (!lv) return;
+      const got = [], cut = now() - 10 * 60000;
+      for (const c of lv.got.values()) { const p = globalList.byHex.get(c.hex); if (!p || seenAt(c) > seenAt(p)) { globalList.byHex.set(c.hex, c); got.push(c); } }
+      for (const [h, c] of globalList.byHex) if (seenAt(c) < cut) globalList.byHex.delete(h);
+      globalList.items = [...globalList.byHex.values()]; globalList.src = 'monitor';
+      if (lv.milOk) globalList.at = now();
+      const parts = []; for (let i = 0; i < got.length; i += 200) parts.push(got.slice(i, i + 200));
+      await sliced(parts, part => { noteCands(part); pushPubTel(part.filter(c => !c.ladd && now() - seenAt(c) < 90000)); for (const c of part) if (c.gnd) learnParked(c); });
+      await idleSlice(); verifyAgainstList();
+    }).catch(() => {}).finally(() => { liveBusy = false; });
+  }, 20000);
+  // ---- the monitor's names for FR24's callsign-less flights ---------------------------------------------------------
+  // The monitor scans FR24's whole map all the time and names every flight it draws without callsign or registration
+  // (monitor/ident.cjs) - over oceans and deserts too, where a flight keeps the name it was given while it was heard. All of
+  // it comes here the moment FR24 opens (/fr24ids: everything, then every 20 s what changed), and goes straight to the page:
+  // FR24's very first frame of any of those flights is drawn named. A flight on screen becomes a full identification at once
+  // (photos, owner, the browser's own route); the rest stay light until they are on screen. This browser's own
+  // identification stays the backup: flights the monitor has no name for are matched here as before.
+  // rows: [id, hex, reg, type, callsign, flags (1 LADD 2 mil 4 PIA), how, named at, origin id, origin conf, dest id, dest %, ...]
+  const srvIds = { rows: new Map(), since: 0, at: 0, busy: false, scanOk: false, pushed: new Set() };
+  function srvRec(r) {
+    const rec = { id: r[0], hex: String(r[1] || '').toLowerCase(), cs: r[4] || '', reg: r[2] || hexNNumber(r[1]) || '', type: r[3] || '', ladd: !!(r[5] & 1), mil: !!(r[5] & 2), pia: !!(r[5] & 4),
+      src: 'monitor', sources: ['monitor (' + (r[6] || 'named') + ')'], matchedAt: (r[7] || nowS()) * 1000, verifiedAt: now(), srv: true };
+    hydrate(rec);
+    const rt = srvRoute(r); if (rt) rec.route = rt;
+    return rec;
+  }
+  // (its rough destination, as a route of the page's kind - until this browser works out its own for a flight on screen)
+  function srvRoute(r) {
+    const o = r[8] ? apById(r[8]) : null, d = r[10] ? apById(r[10]) : null; if (!o && !d) return null;
+    return { originId: o ? o.id : 0, originIata: apCode(o), originCity: o ? o.city || o.name || '' : '', destId: d ? d.id : 0, destIata: apCode(d), destCity: d ? d.city || d.name || '' : '', destConf: d ? 'predicted' : '', destP: d ? Math.min(0.99, (r[11] || 0) / 100) : 0, destReason: d ? 'rough destination worked out by the monitor' : '', quick: true, computedAt: (r[12] || nowS()) * 1000 };
+  }
+  // A flight FR24 is drawing now in view (or opened) that the monitor has named: identified at once, as if matched here
+  function srvAdopt(id) {
+    const r = srvIds.rows.get(id); if (!r || live.has(id) || revokedIds.has(id)) return false;
+    adopt(srvRec(r)); return true;
+  }
+  // (the page told of names: light records - id, address, callsign, registration, type - and the rough routes)
+  function srvPush(list) {
+    const recs = [], rl = [];
+    for (const r of list) { if (live.has(r[0])) continue; const rec = srvRec(r); recs.push(rec); srvIds.pushed.add(r[0]); if (rec.route) rl.push({ id: rec.id, route: routeForPage(rec.route) }); }
+    for (let i = 0; i < recs.length; i += 400) pushToPage(recs.slice(i, i + 400));
+    if (rl.length) postToPage('routes', { list: rl });
+  }
+  function srvDrop(ids) {
+    const light = [];
+    for (const id of ids) {
+      srvIds.rows.delete(id);
+      const rec = live.get(id); if (rec && rec.srv) { revoke(id, 'the monitor withdrew it'); continue; }
+      // (kept from an earlier page: not to come back from disk on the next load)
+      const kept = store.getId(id); if (kept && kept.srv && !live.has(id)) store.delId(id);
+      if (srvIds.pushed.delete(id) && !live.has(id)) light.push(id);
+    }
+    if (light.length) postToPage('revoke', { ids: light });
+  }
+  async function pullSrvIds() {
+    if (srvIds.busy || !monUp()) return;
+    srvIds.busy = true;
+    try {
+      const j = await monGet('/fr24ids' + (srvIds.since ? '?since=' + srvIds.since : ''), { idle: true });
+      if (!j || !Array.isArray(j.rows)) return;
+      srvIds.scanOk = !!j.scanOk;
+      const rows = j.rows.filter(r => Array.isArray(r) && r[0] > 0 && /^[0-9a-f]{6}$/i.test(String(r[1] || '')));
+      // (everything: what the monitor no longer names is withdrawn here too)
+      if (j.full) { const keep = new Set(rows.map(r => r[0])); srvDrop([...srvIds.rows.keys()].filter(id => !keep.has(id))); }
+      else if (Array.isArray(j.gone) && j.gone.length) srvDrop(j.gone.filter(id => srvIds.rows.has(id) || (live.get(id) || {}).srv));
+      for (const r of rows) srvIds.rows.set(r[0], r);
+      srvIds.since = j.now; srvIds.at = now();
+      srvPush(rows);
+      // (those on screen right now: identified fully)
+      for (const r of rows) { const f = pending.get(r[0]); if (f && !f.bg && now() - f.receivedAt < PENDING_TTL_MS) srvAdopt(r[0]); }
+      store.kvSet('srvIds1', { at: now(), rows: [...srvIds.rows.values()].slice(-6000) });
+    } catch (e) { log('monitor names', String(e && e.message || e)); }
+    finally { srvIds.busy = false; }
+  }
+  // (the last names kept from before a reload: on the page before FR24's first answer; the monitor's full table follows)
+  store.kvReady.then(() => {
+    const o = store.kvGet('srvIds1'); if (!o || !Array.isArray(o.rows) || now() - (o.at || 0) > 6 * 3600e3) return;
+    const rows = o.rows.filter(r => Array.isArray(r) && !srvIds.rows.has(r[0])); for (const r of rows) srvIds.rows.set(r[0], r);
+    if (bridgeReady) srvPush(rows);
+  }).catch(() => {});
+  setTimeout(() => { pullSrvIds().catch(() => {}); }, 300);
+  setInterval(() => { if (!document.hidden || now() - srvIds.at > 120000) pullSrvIds().catch(() => {}); }, 20000);
+  // This browser's report to the monitor, every minute: FR24's feed headers as its page sends them (once - the monitor's
+  // own FR24 scans use them; never an authorization), the callsign-less flights it sees, and the ones it named itself
+  // that the monitor has no name for (it has ways the server has not: heatmaps, ADS-B Exchange with the user's key)
+  let feedHdr = null, feedHdrSent = false;
+  function noteFeedHdr(h) { if (h && typeof h === 'object' && h['fr24-device-id']) { if (!feedHdr || JSON.stringify(feedHdr) !== JSON.stringify(h)) feedHdrSent = false; feedHdr = h; } }
+  const rnd4 = v => Math.round(v * 1e4) / 1e4;
+  async function reportToMonitor() {
+    if (!monUp()) return;
+    const t = now(), flights = [], ids = [];
+    for (const f of pending.values()) {
+      if (t - f.receivedAt > 180000 || !fin(f.lat) || !fin(f.lon) || flights.length >= 5000) continue;
+      flights.push([f.id, rnd4(f.lat), rnd4(f.lon), fin(f.alt) ? Math.round(f.alt) : 0, fin(f.trk) ? Math.round(f.trk) : 0, fin(f.spd) ? Math.round(f.spd) : 0, Math.round(f.ts || t / 1000), f.gnd ? 1 : 0, f.src | 0, f.type || '', f.reg || '', f.icon | 0]);
+      const rec = live.get(f.id); if (rec && rec.hex && !rec.srv && !srvIds.rows.has(f.id)) ids.push([f.id, rec.hex, String(rec.src || 'browser').slice(0, 20)]);
+    }
+    const hdr = feedHdr && !feedHdrSent ? feedHdr : null;
+    if (!flights.length && !ids.length && !hdr) return;
+    const j = await monPost('/report', { hdr: hdr || undefined, ua: hdr ? navigator.userAgent : undefined, flights, ids }).catch(e => { log('report to monitor', String(e && e.message || e)); return null; });
+    if (j && j.ok && hdr) feedHdrSent = true;
+  }
+  setInterval(() => { idleSlice().then(reportToMonitor).catch(() => {}); }, 60000);
   // Parked LADD aircraft show which fields business aviation actually uses: every sighting feeds the usage prior.
   const parkedSeen = new Map();
   function learnParked(c) {
@@ -561,7 +681,7 @@
     const m = cands.length ? matchFlight(f, cands) : null;
     if (!m) { const r = matchReckoned(f); if (r) { adoptReckoned(f, r); return true; } return false; }
     const fromList = globalList.byHex.get(m.c.hex) === m.c;
-    adopt(recordFromMatch(f, m, [fromList ? globalList.src + (m.c.mil && !m.c.ladd ? ' (military list)' : ' (LADD list)') : (m.c.src || 'public ADS-B') + ' (seen moments ago)']));
+    adopt(recordFromMatch(f, m, [fromList ? (m.c.src || globalList.src) + (m.c.mil && !m.c.ladd ? ' (military list)' : ' (LADD list)') : (m.c.src || 'public ADS-B') + ' (seen moments ago)']));
     return true;
   }
   async function resolveTargeted(id, reason) {
@@ -699,6 +819,8 @@
   async function worldScan(reason) {
     if (!bridgeReady || !feedReady || scanPending || isAircraftPage) return;
     if (document.hidden && now() - lastScanAt < 15 * 60000) return;
+    // (the monitor scans FR24's whole map itself and its names are fresh: this browser need not)
+    if (srvIds.scanOk && now() - srvIds.at < 180000) return;
     scanPending = true; lastScanAt = now();
     try {
       await refreshLists(true);

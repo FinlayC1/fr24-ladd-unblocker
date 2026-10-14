@@ -3,6 +3,7 @@
 // usage: node test/unit_monitor.cjs <dataDir>
 const fs = require('fs'), path = require('path'), zlib = require('zlib');
 process.env.MON_DATA = process.argv[2];
+process.env.MON_STORE = fs.mkdtempSync(path.join(require('os').tmpdir(), 'monstore-'));
 const M = require('../monitor/monitor.cjs');
 M.loadEngine();
 const E = M.E;
