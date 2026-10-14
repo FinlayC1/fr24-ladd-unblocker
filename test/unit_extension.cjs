@@ -77,6 +77,16 @@ if (!fs.existsSync(path.join(src, 'manifest.json'))) { console.log('FAIL  dist/e
     // rules apply, and the server sends no permission for them)
     const before = seen.length, off = await gm({ url: base.replace('127.0.0.1', 'localhost') + '/echo' });
     check('... a host the manifest does not grant: its answer withheld from the script (the same server under another name)', !!off.error && !off.status, { off, served: seen.length - before });
+    // (a monitor of the user's own at an address the manifest does not list: the browser's page to allow it opens; one it
+    // lists needs nothing)
+    const listed = await ev('TL_HOST_ACCESS("https://api.adsb.lol")');
+    const tabP = ctx.waitForEvent('page', { timeout: 5000 }).catch(() => null), other = await ev('TL_HOST_ACCESS("https://monitor.example.org")'), tab = await tabP;
+    if (tab) await tab.waitForLoadState().catch(() => {});
+    const shown = tab ? await tab.evaluate(() => ({ origin: document.getElementById('origin').textContent, button: !document.getElementById('allow').disabled })).catch(e => String(e)) : null;
+    check('own monitor: an address the manifest lists is reachable as it is; another opens the extension\'s page asking the user to allow it', listed === true && other === false && !!tab && /grant\.html#/.test(tab.url()) && shown && shown.origin === 'https://monitor.example.org' && shown.button === true, { listed, other, url: tab && tab.url(), shown });
+    const bad = await ev('TL_HOST_ACCESS("http://monitor.example.org")');
+    check('... nothing asked for an address that is not https', bad === false && ctx.pages().filter(x => /grant\.html/.test(x.url())).length === 1);
+    check('manifest: any https address only as an optional host (asked for, never granted at install)', JSON.stringify(built.optional_host_permissions) === '["https://*/*"]' && !built.host_permissions.includes('https://*/*'));
     check('no errors from the extension on the page', errors.length === 0, errors.slice(0, 5));
   } finally { await ctx.close(); srv.close(); }
   console.log(fails ? `\n${fails} failed` : '\nall passed');

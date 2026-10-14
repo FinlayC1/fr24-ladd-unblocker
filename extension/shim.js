@@ -37,3 +37,6 @@ const GM_xmlhttpRequest = (() => {
     return { abort() { if (pending.delete(id)) { try { if (port) port.postMessage({ abort: id }); } catch (e) { /* closed */ } try { if (o.onabort) o.onabort({}); } catch (e) { /* the caller's */ } } } };
   };
 })();
+// (a monitor of the user's own at an address the manifest does not list: may the extension reach it? - asked of the
+// service worker, which opens the page where the user allows it when not; resolves true when it is allowed already)
+const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendMessage({ tlGrant: origin }, ok => { void chrome.runtime.lastError; res(!!ok); }); } catch (e) { res(false); } });

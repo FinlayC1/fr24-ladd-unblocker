@@ -144,7 +144,7 @@ All answers are JSON. On a public monitor every endpoint answers without the sec
 | `GET /parked?ap=<id>&type=<icao type>` | Aircraft of that type whose last flight in 14 days ended at that airport |
 | `GET /last` | Where each blocked jet (and each other business jet cruising) was last heard in 14 hours, used for ocean identification |
 | `GET /ladd` | The LADD list as last polled (kept for older userscript versions) |
-| `GET /seed?hex=a,b[&front=1]` | Tell the monitor about blocked aircraft the userscript identified. They are tracked from then on and their last three days are rebuilt. |
+| `GET /seed?hex=a,b[&front=1]` | Tell the monitor about blocked aircraft the userscript identified. They are tracked from then on and their last three days are rebuilt. On a public monitor, other people's browsers add at most `seedPerHour` new aircraft an hour each. |
 | `GET /area?lat=&lon=` | A place the userscript is looking at. Its traffic is polled too, for three days. On a public monitor, other people's browsers add at most `areaPerHour` new places an hour each. |
 | `GET /stats` | The dashboard's numbers: memory, load, requests per endpoint and per client, recent requests. Only with the secret. |
 | `GET /dash` | The dashboard page. It contains no data and asks for the secret in the browser. |
