@@ -9,6 +9,7 @@ process.env.MON_DATA = process.argv[2] || path.join(__dirname, '../monitor/data'
 process.env.MON_STORE = fs.mkdtempSync(path.join(os.tmpdir(), 'monfr24-'));
 process.env.MON_PORT = String(41000 + Math.floor(Math.random() * 8000));
 process.env.MON_TOKEN = 'test-secret';
+process.env.MON_PUBLIC = '0';   // (a private monitor: everything needs the secret - test/unit_public.cjs has the public one)
 const FR = require('../monitor/fr24.cjs'), { createIdent } = require('../monitor/ident.cjs'), { createDest } = require('../monitor/dest.cjs');
 const M = require('../monitor/monitor.cjs');
 M.loadEngine();

@@ -1,113 +1,135 @@
-<p align="center">
-  <img src="docs/assets/banner.svg" alt="FR24 LADD Unblocker: every blocked aircraft on Flightradar24, named, routed and logged from public ADS-B" width="100%">
-</p>
+<div align="center">
 
-<p align="center">
-  <a href="CHANGELOG.md"><img alt="Version 22.21.0" src="https://img.shields.io/badge/version-22.21.0-f5b301?style=for-the-badge&labelColor=1f1833"></a>
-  <a href="#install-the-browser-extension"><img alt="Chrome and Edge extension" src="https://img.shields.io/badge/Chrome%20%7C%20Edge-extension-f5b301?style=for-the-badge&logo=googlechrome&logoColor=white&labelColor=1f1833"></a>
-  <a href="#or-the-userscript"><img alt="Tampermonkey userscript" src="https://img.shields.io/badge/Tampermonkey-userscript-f5b301?style=for-the-badge&logo=tampermonkey&logoColor=white&labelColor=1f1833"></a>
-  <a href="docs/monitor.md"><img alt="Monitor: Node 18+" src="https://img.shields.io/badge/monitor-Node%2018%2B-f5b301?style=for-the-badge&logo=nodedotjs&logoColor=white&labelColor=1f1833"></a>
-</p>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/banner-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="docs/assets/banner-light.svg">
+  <img src="docs/assets/banner-dark.svg" alt="FR24 LADD Unblocker: blocked and N/A flights on Flightradar24, named, routed and logged from public ADS-B" width="100%">
+</picture>
 
-<h3 align="center">Flightradar24 hides some aircraft. Their transponders don't.</h3>
+<br><br>
 
-<p align="center">
-  Blocked and "N/A" flights on Flightradar24 get their name, owner, live data, destination and history back.<br>
-  It is all built from public ADS-B and drawn inside FR24's own interface, so it looks like it was always there.
-</p>
+<a href="CHANGELOG.md"><img alt="Version 22.22.0" src="https://img.shields.io/badge/version-22.22.0-1f6feb?style=flat&labelColor=23272e"></a>
+<a href="#install"><img alt="Browsers: Chrome, Edge, Brave, Firefox (userscript)" src="https://img.shields.io/badge/browsers-Chrome%20%7C%20Edge%20%7C%20Brave%20%7C%20Firefox%20(userscript)-1f6feb?style=flat&labelColor=23272e"></a>
+<a href="LICENSE"><img alt="Licence: personal use" src="https://img.shields.io/badge/licence-personal%20use-1f6feb?style=flat&labelColor=23272e"></a>
+<a href="PRIVACY.md"><img alt="Privacy: no tracking" src="https://img.shields.io/badge/privacy-no%20tracking-1f6feb?style=flat&labelColor=23272e"></a>
+<a href="https://github.com/FinlayC1/fr24-ladd-unblocker/actions/workflows/tests.yml"><img alt="Tests" src="https://github.com/FinlayC1/fr24-ladd-unblocker/actions/workflows/tests.yml/badge.svg"></a>
 
-<p align="center">
-  <a href="dist/fr24-ladd-unblocker-extension.zip"><img alt="Download for Chrome / Edge" src="https://img.shields.io/badge/%E2%AC%87%20Download-for%20Chrome%20%2F%20Edge-f5b301?style=for-the-badge&labelColor=2d2150"></a>
-  &nbsp;
-  <a href="dist/fr24-ladd-unblocker.user.js"><img alt="Install the userscript" src="https://img.shields.io/badge/%E2%AC%87%20Install-userscript-f5b301?style=for-the-badge&labelColor=2d2150"></a>
-  &nbsp;
-  <a href="docs/monitor.md"><img alt="Run your own monitor" src="https://img.shields.io/badge/%E2%98%81%20Run-your%20own%20monitor-f5b301?style=for-the-badge&labelColor=2d2150"></a>
-</p>
+<h3>Flightradar24 hides some aircraft. Their transponders don't.</h3>
 
-<p align="center">
-  <sub>By <b>Finlay Clarke</b> · free for personal use · no account, no tracking, no ads</sub>
-</p>
+Blocked and "N/A" flights on Flightradar24 get their name, owner, live data, destination and history back.<br>
+It is all built from public ADS-B and drawn inside FR24's own interface, so it looks like it was always there.
 
----
+<br>
 
-## ✨ What you get
+<a href="https://github.com/FinlayC1/fr24-ladd-unblocker/releases/latest/download/fr24-ladd-unblocker-extension.zip"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/button-extension-dark.svg"><source media="(prefers-color-scheme: light)" srcset="docs/assets/button-extension-light.svg"><img src="docs/assets/button-extension-dark.svg" alt="Download the extension for Chrome, Edge and Brave (.zip)" width="300"></picture></a>&nbsp;&nbsp;<a href="https://github.com/FinlayC1/fr24-ladd-unblocker/raw/main/dist/fr24-ladd-unblocker.user.js"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/button-userscript-dark.svg"><source media="(prefers-color-scheme: light)" srcset="docs/assets/button-userscript-light.svg"><img src="docs/assets/button-userscript-dark.svg" alt="Install the userscript (Tampermonkey or Violentmonkey)" width="300"></picture></a>
 
-| | | |
-|:--|:--|:--|
-| 🛩️ **Every blocked flight, named**<br><sub>Anonymous FR24 flights are matched to the transponder they really are. A server watches FR24's whole map, so flights over oceans, deserts and on the ground are named before you even look.</sub> | 🧭 **Where it's going**<br><sub>The take-off airport comes from the track. The destination is predicted by an explainable engine, with a probability and the reasons. It is only "Confirmed" when the aircraft is lined up on a runway.</sub> | 📒 **Every flight, logged**<br><sub>Each blocked aircraft's departures and arrivals are kept for good. They appear in FR24's own "Recent flights", its aircraft pages and its playback.</sub> |
-| 🏷️ **The LADD tag**<br><sub>A yellow **LADD**, **PIA** or **MIL** tag on every aircraft it applies to: in the panel, in search and on airport boards.</sub> | 🏢 **Owners and operators**<br><sub>Names from public registers: the FAA, the UK's G-INFO, the Isle of Man, Switzerland. Looked up once on the server and kept. Names only, never addresses.</sub> | 🛬 **Airports, filled in**<br><sub>Blocked flights on arrival and departure boards worldwide. Movements per day, runway usage, every runway in full and the radio frequencies, where FR24 shows a padlock.</sub> |
-| 📡 **Live telemetry**<br><sub>The padlocked fields filled from the transponder: vertical speed, squawk, GPS altitude, airspeeds, Mach, wind and temperature.</sub> | 📷 **Photos**<br><sub>JetPhotos first, then Planespotters, credited and cropped to FR24's frame.</sub> | 🧹 **A cleaner FR24**<br><sub>Advertisements and the advert sidebar removed, seamlessly. The map never stutters: background work waits for idle moments.</sub> |
+<sub>By <b>Finlay Clarke</b> · free for personal use · no account, no tracking, no ads</sub><br>
+<sub><a href="https://finlayc1.github.io/fr24-ladd-unblocker/">Website</a> · <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/releases">All releases</a> · <a href="CHANGELOG.md">What's new</a> · <a href="#legal-and-privacy">Legal and privacy</a></sub>
 
-## 📥 Download and install
+<br>
 
-Every version is also on the [Releases](../../releases) page, with its notes, once it is tagged.
+[Download](#download) · [Features](#features) · [How it works](#how-it-works) · [Install](#install) · [FAQ](#faq) · [Your own monitor](#run-your-own-monitor) · [Development](#development)
 
-### Install the browser extension
+</div>
 
-For **Google Chrome** and **Microsoft Edge** (and other Chromium browsers, version 111 or later).
+<br>
 
-1. **Download** [`fr24-ladd-unblocker-extension.zip`](dist/fr24-ladd-unblocker-extension.zip) (click **Download raw file**) and unzip it to a folder you'll keep.
-2. Open `chrome://extensions` (or `edge://extensions`) and switch on **Developer mode**.
-3. Click **Load unpacked** and choose the unzipped folder.
-4. Open [flightradar24.com](https://www.flightradar24.com). That's it.
+> [!NOTE]
+> **New in 22.22.0**
+> - Every copy of the script connects to the shared public monitor by default. You can turn it off, or point it at your own, in the **sources** menu.
+> - The telemetry FR24 shows behind padlocks (vertical speed, GPS altitude, airspeeds, wind, temperature, squawk, airspace) is filled from public ADS-B for any aircraft. The server and the browser share the polling.
+> - Playback names blocked flights from the monitor's archive of names.
+> - Airport boards no longer show false "same-airport" flights from taxiing aircraft.
+>
+> Full history in the [changelog](CHANGELOG.md).
 
-### …or the userscript
+## Download
 
-For any browser with [Tampermonkey](https://www.tampermonkey.net/).
+<table>
+  <tr>
+    <th width="50%" align="left">Browser extension</th>
+    <th width="50%" align="left">Userscript</th>
+  </tr>
+  <tr>
+    <td valign="top">For <b>Google Chrome</b>, <b>Microsoft Edge</b>, <b>Brave</b> and other Chromium browsers, version 111 or later.</td>
+    <td valign="top">For any browser with a userscript manager such as <a href="https://www.tampermonkey.net/">Tampermonkey</a> or <a href="https://violentmonkey.github.io/">Violentmonkey</a>, Firefox included.</td>
+  </tr>
+  <tr>
+    <td valign="top"><b><a href="https://github.com/FinlayC1/fr24-ladd-unblocker/releases/latest/download/fr24-ladd-unblocker-extension.zip">fr24-ladd-unblocker-extension.zip</a></b><br><sub>from the latest release · also in the repository as <a href="dist/fr24-ladd-unblocker-extension.zip"><code>dist/</code></a></sub></td>
+    <td valign="top"><b><a href="https://github.com/FinlayC1/fr24-ladd-unblocker/raw/main/dist/fr24-ladd-unblocker.user.js">fr24-ladd-unblocker.user.js</a></b><br><sub>opens in your userscript manager, ready to install</sub></td>
+  </tr>
+  <tr>
+    <td valign="top"><a href="#browser-extension">Install steps</a></td>
+    <td valign="top"><a href="#userscript">Install steps</a></td>
+  </tr>
+</table>
 
-1. Open [`dist/fr24-ladd-unblocker.user.js`](dist/fr24-ladd-unblocker.user.js) and click **Raw**. Tampermonkey offers to install it.
-2. Open flightradar24.com and allow the data hosts when Tampermonkey asks (once each).
+Every version is also on the [Releases](https://github.com/FinlayC1/fr24-ladd-unblocker/releases) page, with its notes, once it is tagged. Use **one or the other**, not both at once.
 
-> Use **one or the other**, not both at once. If you switch to the extension, turn the userscript off in Tampermonkey.
+## Features
 
-### Connect your monitor
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/features-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="docs/assets/features-light.svg">
+  <img src="docs/assets/features-dark.svg" alt="Six feature cards: blocked flights named; routes and destinations with a predicted probability; blocked flights on airport boards; padlocked telemetry filled in; playback named from the monitor's archive; a blocked aircraft's flights logged in Recent flights" width="100%">
+</picture>
 
-The extension works on its own. With a [monitor](docs/monitor.md) behind it, it knows every blocked flight worldwide from the moment FR24 opens, along with each aircraft's history.
+<table>
+  <tr>
+    <td width="33%" valign="top"><b>Every blocked flight, named</b><br><sub>Anonymous FR24 flights are matched to the transponder they really are. The shared monitor watches FR24's whole map, so flights over oceans, deserts and on the ground are named before you even look.</sub></td>
+    <td width="33%" valign="top"><b>Where it's going</b><br><sub>The take-off airport comes from the track. The destination is predicted by an explainable engine, with a probability and the reasons. It is only "Confirmed" when the aircraft is lined up on a runway.</sub></td>
+    <td width="33%" valign="top"><b>Their flights, logged</b><br><sub>Each blocked aircraft's departures and arrivals are kept for good. They appear in FR24's own "Recent flights", its aircraft pages and its playback, where blocked flights are named from the monitor's archive.</sub></td>
+  </tr>
+  <tr>
+    <td valign="top"><b>The LADD tag</b><br><sub>A yellow <b>LADD</b>, <b>PIA</b> or <b>MIL</b> tag on every aircraft it applies to: in the panel, in search and on airport boards.</sub></td>
+    <td valign="top"><b>Owners and operators</b><br><sub>Names from public registers: the FAA, the UK's G-INFO, the Isle of Man, Switzerland. Looked up once on the server and kept. Names only, never addresses.</sub></td>
+    <td valign="top"><b>Airports, filled in</b><br><sub>Blocked flights on arrival and departure boards worldwide, without false "same-airport" flights from taxiing aircraft. Movements per day, runway usage, every runway in full and the radio frequencies, where FR24 shows a padlock.</sub></td>
+  </tr>
+  <tr>
+    <td valign="top"><b>Live telemetry, no padlocks</b><br><sub>The fields FR24 shows behind padlocks, filled from public ADS-B for any aircraft: vertical speed, squawk, GPS altitude, airspeeds, Mach, wind, temperature and airspace. The server and the browser share the polling.</sub></td>
+    <td valign="top"><b>Photos</b><br><sub>JetPhotos first, then Planespotters, credited and cropped to FR24's frame.</sub></td>
+    <td valign="top"><b>A cleaner FR24</b><br><sub>Advertisements and the advert sidebar removed, seamlessly. The map never stutters: background work waits for idle moments.</sub></td>
+  </tr>
+</table>
 
-Open any aircraft's panel, click **sources** on the strip under the photo, and enter your monitor's `https://` address and secret under **Shared monitor**. Both stay in your browser.
+## How it works
 
-### Updating
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/how-it-works-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="docs/assets/how-it-works-light.svg">
+  <img src="docs/assets/how-it-works-dark.svg" alt="Diagram: flightradar24.com in your browser tab exchanges data with the extension or userscript (a page interceptor and an engine). The extension exchanges reports, names and logs with the shared monitor. Public ADS-B networks (adsb.lol, adsb.fi, airplanes.live, OpenSky) feed both. The monitor also reads FR24's whole map every 2 minutes." width="100%">
+</picture>
 
-Download the new zip, replace the folder's contents, and click **↻ Reload** on the extension's card. For the userscript, open the new file and click **Raw** again. What's new is in the [changelog](CHANGELOG.md).
+<table>
+  <tr>
+    <th width="50%" align="left">The monitor: continuous and worldwide</th>
+    <th width="50%" align="left">The browser: what you are looking at</th>
+  </tr>
+  <tr>
+    <td valign="top">
+      <i>A small always-on server. Every copy of the script uses the shared public one by default.</i>
+      <ul>
+        <li>It follows adsb.lol's worldwide <b>LADD</b>, <b>military</b> and <b>PIA</b> lists (every 10 seconds to 2 minutes), and every known blocked aircraft by address.</li>
+        <li>It reads FR24's whole map every two minutes and names every flight FR24 shows without a callsign, from public ADS-B. Each named flight gets a rough destination.</li>
+        <li>It logs every blocked aircraft's take-offs and landings for good, including flights only FR24 can see, with the runway used.</li>
+        <li>It looks up each aircraft's owner once, and serves runway and frequency data for every airport.</li>
+      </ul>
+    </td>
+    <td valign="top">
+      <i>The extension or userscript, inside the FR24 tab.</i>
+      <ul>
+        <li>It takes the monitor's whole names table the moment FR24 opens, so FR24's very first frame of any blocked flight is drawn named.</li>
+        <li>It works out the full destination prediction for whatever is on screen.</li>
+        <li>It writes everything into FR24's own data before FR24 draws it.</li>
+        <li>If the monitor is unreachable, it identifies flights from public ADS-B on its own.</li>
+      </ul>
+    </td>
+  </tr>
+</table>
 
-## 🔍 How it works
-
-```mermaid
-flowchart LR
-  subgraph Server["Your monitor (a small always-on server)"]
-    M["monitor.cjs<br/>public ADS-B · FR24 scan · names<br/>destinations · log · owners · runways"]
-    S[("Store<br/>flights kept for good · names · owners")]
-    M <--> S
-  end
-  subgraph Browser["Your browser"]
-    P["Page part<br/>page.js"]
-    U["Extension / userscript<br/>resolver · route engine · UI"]
-    F["flightradar24.com"]
-    F -- "feed, panels, boards" --> P
-    P <--> U
-    P -- "filled-in data" --> F
-  end
-  A["Public ADS-B<br/>adsb.lol · adsb.fi · OpenSky"] --> M
-  R["Public registers"] --> M
-  A -. "backup when the monitor is down" .-> U
-  M -- "names · live list · logs · boards · owners · airports" --> U
-```
-
-**The monitor** runs all the time on a small server and does everything that has to be continuous and worldwide:
-
-- It follows adsb.lol's worldwide **LADD**, **military** and **PIA** lists (every 10 seconds to 2 minutes), and every known blocked aircraft by address.
-- It reads FR24's whole map every two minutes and names every flight FR24 shows without a callsign, from public ADS-B. Each named flight gets a rough destination.
-- It logs every blocked aircraft's take-offs and landings for good, including flights only FR24 can see, with the runway used.
-- It looks up each aircraft's owner once, and serves runway and frequency data for every airport.
-
-**The browser** reacts to what you are looking at:
-
-- It takes the monitor's whole names table the moment FR24 opens, so FR24's very first frame of any blocked flight is drawn named.
-- It works out the full destination prediction for whatever is on screen.
-- It writes everything into FR24's own data before FR24 draws it.
-- If the monitor is unreachable, it identifies flights from public ADS-B on its own.
-
-### How the destination is worked out
+<details>
+<summary><b>How the destination is worked out</b></summary>
+<br>
 
 The engine scores **every plausible airport**, plus the hypothesis "a local flight returning home", on transparent, weighted evidence:
 
@@ -118,8 +140,46 @@ The engine scores **every plausible airport**, plus the hypothesis "a local flig
 - **Live conditions:** weather (METAR/TAF) and airport closures (NOTAMs, with an optional FAA key).
 
 The result is a probability per airport, with the reasons in the tooltip. "Confirmed" is reserved for an aircraft established on a runway's final approach, which is right 99.8% of the time on held-out data. Full details are in [docs/architecture.md](docs/architecture.md).
+</details>
 
-## ☁️ Run your own monitor
+## Install
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/install-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="docs/assets/install-light.svg">
+  <img src="docs/assets/install-dark.svg" alt="Install in three steps: 1, download the zip and unzip it; 2, in chrome://extensions switch on Developer mode and click Load unpacked; 3, open Flightradar24" width="100%">
+</picture>
+
+### Browser extension
+
+For **Google Chrome**, **Microsoft Edge** and **Brave** (and other Chromium browsers, version 111 or later).
+
+1. **Download** [`fr24-ladd-unblocker-extension.zip`](https://github.com/FinlayC1/fr24-ladd-unblocker/releases/latest/download/fr24-ladd-unblocker-extension.zip) from the latest release and unzip it to a folder you'll keep.<br><sub>Before the first release is tagged, take it from the repository instead: [`dist/fr24-ladd-unblocker-extension.zip`](dist/fr24-ladd-unblocker-extension.zip), then click **Download raw file**.</sub>
+2. Open <kbd>chrome://extensions</kbd> (or <kbd>edge://extensions</kbd>, <kbd>brave://extensions</kbd>) and switch on **Developer mode**.
+3. Click **Load unpacked** and choose the unzipped folder.
+4. Open [flightradar24.com](https://www.flightradar24.com). That's it.
+
+### Userscript
+
+For any browser with a userscript manager such as [Tampermonkey](https://www.tampermonkey.net/) or [Violentmonkey](https://violentmonkey.github.io/).
+
+1. Open [`fr24-ladd-unblocker.user.js`](https://github.com/FinlayC1/fr24-ladd-unblocker/raw/main/dist/fr24-ladd-unblocker.user.js). Your userscript manager offers to install it.
+2. Open flightradar24.com. If your manager asks you to allow the data hosts, allow them (once each).
+
+> [!IMPORTANT]
+> Use **one or the other**, not both at once. If you switch to the extension, turn the userscript off in your userscript manager.
+
+### The monitor
+
+Every copy of the script connects to the shared public monitor by default, so it knows every blocked flight worldwide from the moment FR24 opens, along with each aircraft's history. There is nothing to set up.
+
+To turn it off, or point it at [your own monitor](#run-your-own-monitor), open any aircraft's panel, click **sources** on the strip under the photo, and use the **Monitor** row. An address and secret you enter there stay in your browser. Turned off, your browser identifies what it sees on its own.
+
+### Updating
+
+Download the new zip, replace the folder's contents, and click **↻ Reload** on the extension's card. For the userscript, open the new file again. What's new is in the [changelog](CHANGELOG.md).
+
+## Run your own monitor
 
 The monitor is a single Node.js program (version 18 or later) with **no dependencies**. A free Oracle Cloud VM with 1 GB of RAM is enough.
 
@@ -136,68 +196,58 @@ bash monitor/deploy.sh          # later: update to the newest commit, verify, ro
 
 Its dashboard is at `/dash`. Configuration, every endpoint, and day-to-day operation: [docs/monitor.md](docs/monitor.md).
 
-## ❓ FAQ
+## FAQ
 
 <details>
 <summary><b>Does it need a Flightradar24 account or subscription?</b></summary>
+<br>
 
 No. It works with a free account or none at all. It uses no paid feature and no one's login.
 </details>
 
 <details>
 <summary><b>Why does a destination say "Predicted 64%"?</b></summary>
+<br>
 
 Blocked flights have no public flight plan. The destination is worked out from the evidence and shown with its probability. It turns "Confirmed" only on final approach to a runway. The tooltip lists the reasons.
 </details>
 
 <details>
 <summary><b>Will it slow Flightradar24 down?</b></summary>
+<br>
 
 No. Background work runs in short slices while the browser is idle, and pauses while you drag or zoom the map. Main-thread stalls are measured on every change to the map path.
 </details>
 
 <details>
-<summary><b>What if my monitor is down?</b></summary>
+<summary><b>Do I need to run a monitor?</b></summary>
+<br>
+
+No. Every copy connects to the shared public monitor by default. You can turn it off, or use your own instead, in the **sources** menu (see [The monitor](#the-monitor)).
+</details>
+
+<details>
+<summary><b>What if the monitor is down?</b></summary>
+<br>
 
 The extension carries on by itself, asking adsb.lol and adsb.fi directly. It keeps the last names it was given for six hours.
 </details>
 
 <details>
 <summary><b>Does it work on a phone?</b></summary>
+<br>
 
-It is made for desktop browsers (Chrome, Edge, or any browser with Tampermonkey). It has not been tested on phones.
+It is made for desktop browsers (Chrome, Edge, Brave, or any browser with a userscript manager). It has not been tested on phones.
 </details>
 
 <details>
 <summary><b>Is this legal?</b></summary>
+<br>
 
 It is built to be. Aircraft broadcast ADS-B openly, by law. The project uses only data that community networks and public registers already publish. It changes only what your own browser shows you. The reasoning, and its limits, are in [docs/legal.md](docs/legal.md).
 </details>
 
-## 🗂️ Data sources and responsible use
-
-| Source | Used for | Access |
-|---|---|---|
-| [adsb.lol](https://adsb.lol) | Live positions, LADD / military / PIA lists, day traces | Free API, [ODbL](https://opendatacommons.org/licenses/odbl/) |
-| [adsb.fi](https://adsb.fi) | Backup positions and military list, area lookups | Free open-data API |
-| [OpenSky Network](https://opensky-network.org) | Backup worldwide positions | Anonymous API, limited credits |
-| [airplanes.live](https://airplanes.live) | History files for days another network missed | Public history files (not its REST API) |
-| ADS-B Exchange | Optional backup | Only with **your own** API key |
-| Flightradar24 | The page you are looking at; the monitor's map scan | Public pages and feed, no account |
-| [OurAirports](https://ourairports.com) | Airfields, runways, radio frequencies | Public domain |
-| FAA, UK CAA G-INFO, Isle of Man, Swiss FOCA registers; hexdb.io, adsbdb.com | Owner names | Public registers; **names only, never addresses** |
-| aviationweather.gov, FAA NOTAM API | Weather and closures | Public; NOTAMs only with your own key |
-| OpenStreetMap | Names of private landing sites | [ODbL](https://www.openstreetmap.org/copyright) |
-
-The project is built to be a **good citizen** of the free services it depends on:
-
-- **Limits are respected.** The monitor sends at most 20 adsb.lol requests a minute and backs off on any refusal. Each register and database is asked at its own gentle pace.
-- **Load is centralised.** One monitor asks once instead of every viewer asking.
-- **No approval-gated APIs, no scraping of sites that ask scripts to stay away, and keys are always the user's own.**
-
-Please use it for personal interest. Don't use it to track, follow or harass anyone. Every source, its terms and limits: [docs/data-sources.md](docs/data-sources.md).
-
-## 🛠️ Development
+## Development
 
 ```bash
 npm install
@@ -234,12 +284,13 @@ Test conventions, fixtures and the release checklist: [docs/development.md](docs
 │   └── data/                airports, runways, frequencies, airfields
 ├── dist/                    the built extension (folder and zip) and userscript: install these
 ├── test/                    unit tests, jsdom replays, end-to-end, offline training pipeline
-├── docs/                    architecture, monitor, data sources, development, legal
+├── docs/                    architecture, monitor, data sources, development, legal; assets/ holds the graphics
+├── site/                    the project website (GitHub Pages)
 └── build.mjs                assembles the userscript and the extension
 ```
 </details>
 
-## 📚 Documentation
+### Documentation
 
 | Document | Contents |
 |---|---|
@@ -253,12 +304,41 @@ Test conventions, fixtures and the release checklist: [docs/development.md](docs
 
 ---
 
-## ⚖️ Legal
+## Legal and privacy
 
-Copyright © 2026 Finlay Clarke. Free to download and use for personal, non-commercial purposes under the [licence](LICENSE). Third-party data and trademarks are credited in [NOTICE.md](NOTICE.md). What the software does and doesn't do with data is in [PRIVACY.md](PRIVACY.md): in short, it collects nothing about you.
+| [Licence](LICENSE) | [Privacy](PRIVACY.md) | [Notices](NOTICE.md) | [Legal notes](docs/legal.md) | [Data sources](docs/data-sources.md) | [Security](SECURITY.md) |
+|:-:|:-:|:-:|:-:|:-:|:-:|
+| Personal, non-commercial use | No tracking, no accounts | Credits and trademarks | Why it is built to be lawful | Every source and its terms | Secrets and reporting |
+
+Copyright © 2026 Finlay Clarke. Free to download and use for personal, non-commercial purposes under the [licence](LICENSE). Third-party data and trademarks are credited in [NOTICE.md](NOTICE.md). What the software does and doesn't do with data is in [PRIVACY.md](PRIVACY.md). In short: no tracking, no accounts and no advertising. The shared monitor receives only what it needs to answer your map, and you can turn it off.
 
 **Independent project.** Not affiliated with, endorsed by or connected to Flightradar24 AB, the FAA or any data provider named here. "Flightradar24" is a trademark of Flightradar24 AB, used only to say which website this works with.
 
-**Why it is built to be lawful.** ADS-B is an unencrypted broadcast that aircraft are required by law to transmit. LADD is a programme governing the data the FAA itself hands to industry, not the broadcast. This project receives no radio, uses data that open networks and public registers already publish under their own terms, and changes only what its user's own browser shows. It decrypts, bypasses and republishes nothing, and it backs off whenever a source refuses. [docs/legal.md](docs/legal.md) sets out the reasoning in detail: broadcast law, LADD, data licences, privacy, Flightradar24's rights, and what it can and cannot do.
+**Why it is built to be lawful.** ADS-B is an unencrypted broadcast that aircraft are required by law to transmit. LADD is a programme governing the data the FAA itself hands to industry, not the broadcast. This project receives no radio, uses data that open networks and public registers already publish under their own terms, and changes only what its user's own browser shows. It decrypts and bypasses nothing. Its shared monitor passes on only names, public-register owners (organisations only) and open ADS-B data, and the flights it logs are offered under the ODbL. It backs off whenever a source refuses. [docs/legal.md](docs/legal.md) sets out the reasoning in detail: broadcast law, LADD, data licences, privacy, Flightradar24's rights, and what it can and cannot do.
+
+## Data sources and credits
+
+| Source | Used for | Access |
+|---|---|---|
+| [adsb.lol](https://adsb.lol) | Live positions, LADD / military / PIA lists, day traces | Free API, [ODbL](https://opendatacommons.org/licenses/odbl/) |
+| [adsb.fi](https://adsb.fi) | Backup positions and military list, area lookups | Free open-data API |
+| [OpenSky Network](https://opensky-network.org) | Backup worldwide positions | Anonymous API, limited credits |
+| [airplanes.live](https://airplanes.live) | History files for days another network missed | Public history files (not its REST API) |
+| ADS-B Exchange | Optional backup | Only with **your own** API key |
+| Flightradar24 | The page you are looking at; the monitor's map scan | Public pages and feed, no account |
+| [OurAirports](https://ourairports.com) | Airfields, runways, radio frequencies | Public domain |
+| FAA, UK CAA G-INFO, Isle of Man, Swiss FOCA registers; hexdb.io, adsbdb.com | Owner names | Public registers; **names only, never addresses** |
+| aviationweather.gov, FAA NOTAM API | Weather and closures | Public; NOTAMs only with your own key |
+| OpenStreetMap | Names of private landing sites | [ODbL](https://www.openstreetmap.org/copyright) |
+
+The project is built to be a **good citizen** of the free services it depends on:
+
+- **Limits are respected.** The monitor sends at most 20 adsb.lol requests a minute and backs off on any refusal. Each register and database is asked at its own gentle pace.
+- **Load is centralised.** One monitor asks once instead of every viewer asking.
+- **No approval-gated APIs, no scraping of sites that ask scripts to stay away, and keys are always the user's own.**
+
+Please use it for personal interest. Don't use it to track, follow or harass anyone. Every source, its terms and limits: [docs/data-sources.md](docs/data-sources.md).
 
 <sub>ADS-B data © <a href="https://adsb.lol">adsb.lol</a> contributors (ODbL), <a href="https://adsb.fi">adsb.fi</a>, <a href="https://opensky-network.org">OpenSky Network</a>, <a href="https://airplanes.live">airplanes.live</a>. Airport, runway and frequency data: <a href="https://ourairports.com">OurAirports</a> (public domain). Map features © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors. Aircraft types: <a href="https://github.com/wiedehopf/tar1090-db">tar1090-db</a>. Not legal advice; the software comes with no warranty.</sub>
+
+<sub>The aircraft, registration and flight shown in this page's illustrations (DEMO01, N0DEMO) are made up.</sub>

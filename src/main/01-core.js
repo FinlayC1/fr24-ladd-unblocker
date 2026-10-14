@@ -1,7 +1,7 @@
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '22.21.0';
+  const VERSION = '22.22.0';
   const NM_KM = 1.852;
   const AREA_RADIUS_NM = 220;           // aggregator "point" radius for viewport sweeps (APIs cap at 250)
   const TARGET_RADIUS_NM = 40;          // radius for the immediate lookup of the selected aircraft
@@ -433,16 +433,23 @@
   const deadHosts = new Map();    // host -> until (a host answering 403 to everything is left alone for a while)
   const hostStat = new Map();     // host -> { ok, fail, lastOk, lastErr, err } (the strip's "sources" pop-over)
   const noteHost = (host, ok, err) => { const h = hostStat.get(host) || { ok: 0, fail: 0, lastOk: 0, lastErr: 0, err: '' }; if (ok) { h.ok++; h.lastOk = now(); } else { h.fail++; h.lastErr = now(); h.err = err || ''; } hostStat.set(host, h); };
-  // The monitor (monitor/monitor.cjs) on a server: strip > sources > "Monitor" - its https address and the secret. It watches
-  // FR24's whole map and public ADS-B all the time; this browser asks it first for everything it has. Only that one: no
-  // monitor on this computer is ever asked (127.0.0.1 is not even among the hosts this script may reach). Used once it has
-  // answered a quick check - one missing never holds anything up - and checked again every 5 minutes.
+  // The monitor (monitor/monitor.cjs) on a server. It watches FR24's whole map and public ADS-B all the time; this browser
+  // asks it first for everything it has. Every copy of the script uses the project's own public monitor from the start -
+  // nothing to set up; strip > sources > "Monitor" sets another one, the owner's secret (the full answers), or turns it
+  // off. Only a monitor on a server: none on this computer is ever asked (127.0.0.1 is not among the hosts this script may
+  // reach). Used once it has answered a quick check - one missing never holds anything up - and checked again every 5 minutes.
   const MON_DEFAULT_URL = 'https://143-47-224-210.sslip.io';
+  // (the shared monitors in order: the first that answers is used, the next when it stops answering - a standby server
+  // goes here, and in the hosts this script may reach: header.js @connect, build.mjs's extension hosts)
+  const MON_DEFAULTS = [MON_DEFAULT_URL];
   const monAddr = u => { u = String(u || '').trim(); while (u.endsWith('/')) u = u.slice(0, -1); return u.startsWith('https://') && u.length > 9 && !/[/\s]/.test(u.slice(8)) ? u : ''; };
-  const monRemote = () => { try { const r = store.kvGet('monRemote'), url = r && monAddr(r.url); return url && r.token ? { url, token: String(r.token) } : null; } catch (_) { return null; } };
+  // (kv monRemote: { url, token } set here, { off: true } turned off; nothing set - the public monitor, no secret)
+  const monRemote = () => { try { const r = store.kvGet('monRemote') || {}; if (r.off) return null; const url = monAddr(r.url) || MON_DEFAULT_URL; return { url, token: url === monAddr(r.url) ? String(r.token || '') : '', dflt: !monAddr(r.url) }; } catch (_) { return { url: MON_DEFAULT_URL, token: '', dflt: true }; } };
+  // (with the owner's secret: it; without: which script is asking - not a secret, the monitor's request counts by version)
+  const monAuth = r => r && r.token ? { 'X-Monitor-Token': r.token } : { 'X-Monitor-Client': 'fr24-ladd/' + VERSION };
   let monBase = '', monErr = '';   // (monErr: why the monitor was not used at the last check - shown beside it)
   const monUrl = () => monBase;
-  const monHdr = () => { const r = monRemote(); return r && monBase === r.url ? { 'X-Monitor-Token': r.token } : null; };
+  const monHdr = () => { const r = monRemote(); return r && (monBase === r.url || (r.dflt && MON_DEFAULTS.includes(monBase))) ? monAuth(r) : null; };
   let monOk = false, monCheckAt = 0;
   const monUp = () => monOk;
   let monChecking = null;
@@ -450,11 +457,12 @@
     if (!force && now() - monCheckAt < 5 * 60000) return monChecking; monCheckAt = now();
     monChecking = store.kvReady.then(() => {
       const r = monRemote(); monErr = '';
-      if (!r) { monBase = ''; throw new Error('no monitor set'); }
-      HOSTS[new URL(r.url).host] = [4, 50];
-      return gmRequest(r.url + '/status', { timeout: 4000, headers: { 'X-Monitor-Token': r.token } }).then(j => { if (!(j && j.v)) throw new Error('not a monitor'); monBase = r.url; return j; })
-        .catch(e => { monErr = String((e && e.message) || e).slice(0, 120); throw e; });
-    }).then(j => { monOk = !!(j && j.v); return j; }, e => { monOk = false; throw e; });
+      if (!r) { monBase = ''; throw new Error('turned off'); }
+      // (the shared one: each of them in turn, the one in use first; one set here: that one)
+      const urls = r.dflt ? [monBase].filter(u => MON_DEFAULTS.includes(u)).concat(MON_DEFAULTS.filter(u => u !== monBase)) : [r.url];
+      const ask = i => { const u = urls[i]; HOSTS[new URL(u).host] = [4, 50]; return gmRequest(u + '/status', { timeout: 4000, headers: monAuth(r) }).then(j => { if (!(j && j.v)) throw new Error('not a monitor'); monBase = u; return j; }).catch(e => { if (i + 1 < urls.length) return ask(i + 1); throw e; }); };
+      return ask(0).catch(e => { monErr = String((e && e.message) || e).slice(0, 120); throw e; });
+    }).then(j => { monOk = !!(j && j.v); return j; }, e => { monOk = false; monCheckAt = now() - 5 * 60000 + 30000; throw e; });
     monChecking.catch(() => {});
     return monChecking;
   }
@@ -462,7 +470,8 @@
   // so the first board, parked lookup and routes page of every page load went without the monitor)
   // (opts.idle: a background answer - read in an idle moment with the map left alone)
   function monGet(path, opts) {
-    const go = () => monOk && monBase ? gmRequest(monUrl() + path, Object.assign({ timeout: 8000 }, opts || {}, { headers: monHdr() })).catch(e => { if (!/HTTP [45]|paused/.test(String(e))) monOk = false; throw e; }) : Promise.reject(new Error('monitor not running'));
+    // (no answer at all - not a refusal: looked at again in 30 s, the next shared monitor if this one is gone)
+    const go = () => monOk && monBase ? gmRequest(monUrl() + path, Object.assign({ timeout: 8000 }, opts || {}, { headers: monHdr() })).catch(e => { if (!/HTTP [45]|paused/.test(String(e))) { monOk = false; monCheckAt = Math.min(monCheckAt, now() - 5 * 60000 + 30000); } throw e; }) : Promise.reject(new Error('monitor not running'));
     const c = monCheck();
     return c ? c.then(go, go) : go();
   }

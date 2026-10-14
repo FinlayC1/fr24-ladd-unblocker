@@ -14,6 +14,9 @@
 const fs = require('fs'), path = require('path');
 
 const FIELDS = ['reg', 'type', 'desc', 'owner', 'ownerCity', 'country', 'countryIso', 'msn', 'year', 'opId', 'opIcao', 'opName'];
+// (a name that is a company, trust, bank, operator, club or public body - not a private person's)
+const ORG = /\b(LLC|L\s?L\s?C|INC|INCORPORATED|CORP|CORPORATION|CO|COMPANY|LTD|LIMITED|LP|LLP|PLC|GMBH|AG|SA|SAS|SARL|SRL|SPA|BV|NV|AB|AS|ASA|APS|OY|OYJ|KG|KFT|SRO|PTY|PTE|LTDA|BHD|KK|TRUST|TRUSTEES?|BANK|BANCORP|AVIATION|AVIATIONS|AERO|AEROSPACE|AIR|AIRLINES?|AIRWAYS|JETS?|FLIGHT|FLIGHTS|FLYING|HOLDINGS?|LEASING|LEASE|CAPITAL|FINANCE|FINANCIAL|FUND|GROUP|SERVICES?|MANAGEMENT|MGMT|PARTNERS|PARTNERSHIP|INVESTMENTS?|ENTERPRISES?|INDUSTRIES|FOUNDATION|UNIVERSITY|COLLEGE|SCHOOL|ACADEMY|INSTITUTE|COUNTY|STATE|CITY|DEPARTMENT|DEPT|GOVERNMENT|POLICE|SHERIFF|FIRE|RESCUE|AMBULANCE|HOSPITAL|MEDICAL|HEALTH|FORCE|NAVY|ARMY|MINISTRY|AGENCY|AUTHORITY|COUNCIL|COMMISSION|HELICOPTERS?|HELI|CHARTER|CLUB|ASSOCIATION|SOCIETY|CHURCH|MINISTRIES|DEVELOPMENT|PROPERTIES|PROPERTY|VENTURES?|SYSTEMS|TECHNOLOGIES|TECHNOLOGY|INTERNATIONAL|INTL|GLOBAL|SOLUTIONS|ASSETS|EQUIPMENT|MOTORS|ENERGY|OIL|GAS|MINING|CONSTRUCTION|FARMS?|RANCH|AIRCRAFT|OPERATIONS|LOGISTICS|EXPRESS|TRANSPORT|CARGO|FSB|ESTATE|ESTATES|INVEST|ASSOCIATES|CONSULTING|MEDIA|SPORTS|RACING|TEAM|LABS?)\b/i;
+const orgName = s => ORG.test(String(s || ''));
 const str = (v, n) => typeof v === 'string' ? v.replace(/\s+/g, ' ').trim().slice(0, n || 120) : '';
 
 function createOwners(env) {
@@ -96,11 +99,23 @@ function createOwners(env) {
   // A browser's own findings: [hex, { reg, type, desc, owner, ownerCity, country, countryIso, msn, year, operatorId,
   // operatorIcao, operatorName, regAnswered, regOwner }] - the gaps filled, FR24's operator taken, its register's owner
   // taken when this side has none from a register
-  function fromClient(list) {
-    let n = 0;
+  // From anyone's browser (a public monitor: reporter = the browser's address): taken once `need` different browsers sent
+  // the very same findings for the aircraft - two honest ones reading the same registers agree; one alone is held a while.
+  const pend = new Map();         // hex -> { at, by: Map(findings key -> Set(reporter)) }
+  const keyOf = o => JSON.stringify(['reg', 'type', 'desc', 'owner', 'ownerCity', 'country', 'countryIso', 'msn', 'year', 'operatorId', 'operatorIcao', 'operatorName', 'regOwner'].map(k => o[k] == null ? '' : String(o[k]).trim().toUpperCase()));
+  function fromClient(list, reporter, need) {
+    let n = 0; const t = Date.now();
+    // (findings waiting for a second browser - and the addresses that sent them - kept six hours at most)
+    for (const [h, p] of pend) if (t - p.at > 6 * 3600e3) pend.delete(h);
     for (const x of (Array.isArray(list) ? list : []).slice(0, 2000)) {
       if (!Array.isArray(x) || !x[1] || typeof x[1] !== 'object') continue;
       const hex = String(x[0] || '').toLowerCase(), o = x[1]; if (!/^[0-9a-f]{6}$/.test(hex)) continue;
+      if (reporter && (need || 2) > 1) {
+        let p = pend.get(hex); if (!p) { p = { at: t, by: new Map() }; pend.set(hex, p); if (pend.size > 20000) pend.delete(pend.keys().next().value); }
+        p.at = t; const k = keyOf(o); let set = p.by.get(k); if (!set) p.by.set(k, set = new Set()); set.add(String(reporter));
+        if (set.size < (need || 2)) { stats.crowdPending = pend.size; continue; }
+        pend.delete(hex);
+      }
       const r = db.get(hex) || {}, before = JSON.stringify(r);
       for (const k of ['reg', 'type', 'desc', 'ownerCity', 'country', 'countryIso', 'msn']) { const v = str(o[k]); if (v && !r[k]) r[k] = k === 'reg' || k === 'type' ? v.toUpperCase() : v; }
       if (o.year > 1900 && o.year < 2100 && !r.year) r.year = Math.round(o.year);
@@ -117,11 +132,14 @@ function createOwners(env) {
     return n;
   }
   // rows: [hex, reg, type, desc, owner, owner's city, country, country ISO, serial number, build year, FR24 operator id,
-  //        operator ICAO, operator name, looked up at, registers answered (1/0)]
-  const row = (hex, r) => [hex, r.reg || '', r.type || '', r.desc || '', r.owner || '', r.ownerCity || '', r.country || '', r.countryIso || '', r.msn || '', r.year || 0, r.opId || 0, r.opIcao || '', r.opName || '', r.at || 0, r.ok ? 1 : 0];
-  function rows(hexes) { const out = []; for (const h of hexes) { const hex = String(h || '').toLowerCase(), r = db.get(hex); if (r) out.push(row(hex, r)); } return out; }
-  // (for the names table: who it is - the owner, the operator)
-  function short(hex) { const r = db.get(hex); return r ? { owner: named(r.owner) ? r.owner : '', opName: r.opName || '', opId: r.opId || 0, opIcao: r.opIcao || '' } : null; }
+  //        operator ICAO, operator name, looked up at, registers answered (1/0), owner withheld (1/0)]
+  // To anyone but the monitor's owner (opts.public), a private person's name is withheld - and their city with it: a
+  // company, trust, bank, operator, club or public body is named, a person is not (each browser can still look a person
+  // up in the register itself, for its own use). Personal data served to the public needs a reason a name does not have.
+  const row = (hex, r, pub) => { const wh = !!pub && named(r.owner) && !orgName(r.owner); return [hex, r.reg || '', r.type || '', r.desc || '', wh ? '' : r.owner || '', wh ? '' : r.ownerCity || '', r.country || '', r.countryIso || '', r.msn || '', r.year || 0, r.opId || 0, r.opIcao || '', r.opName || '', r.at || 0, r.ok ? 1 : 0, wh ? 1 : 0]; };
+  function rows(hexes, opts) { const out = [], pub = !!(opts && opts.public); for (const h of hexes) { const hex = String(h || '').toLowerCase(), r = db.get(hex); if (r) out.push(row(hex, r, pub)); } return out; }
+  // (for the names table, which every browser gets: who it is - the owner if not a private person, the operator)
+  function short(hex) { const r = db.get(hex); return r ? { owner: named(r.owner) && orgName(r.owner) ? r.owner : '', opName: r.opName || '', opId: r.opId || 0, opIcao: r.opIcao || '' } : null; }
 
   // ---- kept on disk ---------------------------------------------------------------------------------------------------
   function save(dir) {
@@ -139,6 +157,6 @@ function createOwners(env) {
     return db.size;
   }
   function status() { let withOwner = 0, withOp = 0; for (const r of db.values()) { if (named(r.owner)) withOwner++; if (r.opId || r.opName) withOp++; } return Object.assign({ known: db.size, withOwner, withOperator: withOp, queue: q.length, paused: Object.fromEntries([...paused].filter(([, t]) => t > Date.now()).map(([h, t]) => [h, Math.round((t - Date.now()) / 1000)])) }, stats); }
-  return { C, db, q, want, due, pumpOne, fromLookup, fromClient, rows, short, save, load, status, stats, REG, ask };
+  return { C, db, q, want, due, pumpOne, fromLookup, fromClient, rows, short, save, load, status, stats, REG, ask, pend, orgName };
 }
 module.exports = { createOwners };

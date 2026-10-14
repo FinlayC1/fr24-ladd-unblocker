@@ -2,6 +2,53 @@
 
 All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PATCH`. The userscript and the monitor are released together.
 
+## [22.22.0] - 2026-10-14
+
+Every copy now shares one monitor, padlocks are gone, and airport boards no longer invent flights.
+
+### Added
+- **Every copy connects to the shared monitor by default.** It needs no setup and no secret. The strip's *Sources* menu can point it at your own monitor, or turn it off.
+  - A monitor is public unless set otherwise (`"public": false` or `MON_PUBLIC=0`). Reading needs no secret; the owner's secret opens the dashboard's numbers and the full answers. Each address gets 300 requests a minute; the owner is never limited.
+  - Reports from strangers are checked before they are used:
+    - A name is taken from one browser only when the monitor's own ADS-B data puts that aircraft where FR24 draws the flight. If its own data says otherwise, the name is refused however many browsers send it. Otherwise two browsers must agree.
+    - Owners need two browsers sending the very same findings.
+    - A stranger's FR24 positions never overwrite the monitor's own scan.
+  - The shared monitor names an owner only when the register shows an organisation. Private individuals' names and towns are withheld.
+  - The flights it logs are offered under the ODbL (`/export/legs?day=`).
+- **No padlocks.** Every padlock FR24 draws for a free account is cleared, on any aircraft: vertical speed, GPS altitude, airspeeds, Mach, wind, temperature, squawk and airspace.
+  - The values come from public ADS-B. The monitor keeps the newest report of every aircraft it hears (`monitor/tel.cjs`, `/tel`, and full figures in `/near`).
+  - An aircraft clicked is asked of the monitor and of the browser's own source at once, and the first answer is drawn.
+  - With no public report, the vertical speed is worked out from FR24's own altitudes (seeded from the panel's trail), and the airspace from the FIR/UIR boundaries. Nothing is made up: a vertical speed nothing tells yet stays FR24's own for a flight's first seconds.
+  - On FR24's flight-history pages (`/data/aircraft/…` and now `/data/flights/…`), the playback panel's padlocked figures and serial number are filled in. The padlocked **KML** and **CSV** buttons become working downloads of the flight's public ADS-B track (adsb.lol / airplanes.live, ODbL), in FR24's own CSV columns.
+- **Shared polling (50/50).**
+  - The map's view is polled from the monitor every other time, halving each browser's own requests to adsb.lol and adsb.fi.
+  - What a browser's own polls found goes back to the monitor every 30 s and serves every other browser. Rows are checked: physical values only, fresh, never over the monitor's own report of the last minute, never far from where the monitor heard the aircraft.
+  - The monitor's own area polls alternate between adsb.lol and adsb.fi, and it follows 8 of the places browsers look at (was 3).
+- **Names found in playback are kept for good.** A browser that names an FR24 flight in playback reports it. The monitor keeps it with the day of the flight (`names/YYYY-MM-DD.jsonl`), and any later playback of it, by anyone, is named from the archive at once. It is taken from one browser when the monitor's own log has the aircraft in the air then, otherwise from two.
+- **A standby monitor**, ready for one: the browser uses the first shared monitor that answers, and moves to the next when it stops answering.
+- Dashboard rows for public mode, names from browsers, the names archive and the figures held.
+- Tests: `unit_boards`, `unit_padlocks`, `unit_public`, `unit_vectoring`.
+
+### Changed
+- A monitor that stops answering is looked at again after 30 s, not 5 minutes.
+- Browsers send FR24's feed headers (its device id for that browser) only to a monitor of their own, never to the shared one.
+- A public monitor's dashboard keeps request paths without their query, so where a map was and which aircraft was opened are not kept against an address. Reporters' addresses are kept in memory for 30 minutes (live names) or 6 hours (playback names, owners) at most.
+- `deploy.sh` limits the server's system log, including the web server's access log, to 14 days.
+- [PRIVACY.md](PRIVACY.md), [docs/legal.md](docs/legal.md), [LICENSE](LICENSE) §2(b) and [docs/monitor.md](docs/monitor.md) describe the shared monitor.
+- **The GitHub page:** a new download-style README with light and dark graphics in FR24's own charcoal and blue, a GitHub Pages site (`site/`, `.github/workflows/pages.yml`) and new extension icons.
+
+### Fixed
+- **False "Liverpool → Liverpool, landed" flights on airport boards.** EI-EVN, as RYR8SF at 17:33, an hour before it left for Szczecin, was one of many. FR24's own flights with an origin but no destination yet sat through a long taxi. On the take-off roll FR24's ground flag flickered: "airborne" at 110 kt, then "on the ground" again. The take-off time had been taken from the second report of the taxi, so the roll passed for an approach to the field being left and the flicker for a landing there. The same-field check then let it through because its take-off time was 0. Now:
+  - a flight is routed only once it has been seen flying, at least two reports off the ground at flying speed;
+  - its take-off is the first of them;
+  - an approach or a landing must come in from further out;
+  - a flight back where it began needs a seen take-off and a real flight: up long enough, high enough, far enough (`ENGINE.localFlew`; light aircraft, helicopters and fast jets can fly real circuits);
+  - rows an older version kept of such flights are removed when the board is read;
+  - the monitor's own boards apply the same rule.
+- **"Possible destination: RAF Valley" while N99GY was being vectored for Dublin.** The alternatives' odds were scaled up when the shown odds of the destination were capped, which turned a hundredth of a percent into 10%. That scaling is now capped, alternatives under 2% are never offered, and a destination held at 90% or more on the way down is kept while the aircraft is vectored round for its runway.
+- The monitor's check of a browser's name used a list of aircraft up to 10 s old, so an aircraft heard in between was not checked at all. Each name is now checked against the aircraft as heard at that moment.
+- Owner findings waiting for a second browser were never let go. They are now dropped after 6 hours.
+
 ## [22.21.0] - 2026-10-14
 
 ### Added

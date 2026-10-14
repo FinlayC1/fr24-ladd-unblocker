@@ -36,9 +36,22 @@
     if (b) return b.loading || Promise.resolve(b);
     b = { arr: {}, dep: {}, dirty: false }; boardMem.set(apId, b);
     // (only once the store is open: read before that, an airport's kept rows would look empty - and be written over)
-    b.loading = Promise.resolve(store.kvReady).then(() => { b.noDisk = store.mode() !== 'idb'; return store.getBoard(apId); }).then(v => { if (v && (v.v === BOARD_V || v.v === 1)) { Object.assign(b.arr, v.arr || {}); Object.assign(b.dep, v.dep || {}); } }).catch(() => { /* none kept */ }).then(() => { b.loading = null; return b; });
+    b.loading = Promise.resolve(store.kvReady).then(() => { b.noDisk = store.mode() !== 'idb'; return store.getBoard(apId); }).then(v => { if (v && (v.v === BOARD_V || v.v === 1)) { Object.assign(b.arr, v.arr || {}); Object.assign(b.dep, v.dep || {}); boardScrub(apId, b); } }).catch(() => { /* none kept */ }).then(() => { b.loading = null; return b; });
     if (boardMem.size > 120) for (const [k, x] of boardMem) { if (boardMem.size <= 100) break; if (!x.loading && !x.dirty && !boardAsked.has(k)) boardMem.delete(k); }
     return b.loading;
+  }
+  // (rows an older build kept of a "flight" back where it began that never flew - an airliner taxiing with its transponder
+  // saying "airborne", its take-off never seen: Liverpool's arrivals were full of "Liverpool -> Liverpool, landed")
+  function boardScrub(apId, b) {
+    let n = 0;
+    for (const k of Object.keys(b.arr)) {
+      const r = b.arr[k]; if (!r || r.drop || r.ap !== apId || !(r.src === 'live' || r.src === 'log')) continue;
+      const d = b.dep[k], light = /^(piston|heli|fighter)$/.test(ENGINE.classify({ hex: r.hex || '', type: r.ty || '', reg: r.reg || '', cs: r.cs || '' }));
+      if (d ? !d.drop && r.t - d.t >= (light ? 300 : 900) : r.src === 'log') continue;
+      delete b.arr[k]; if (d && d.ap === apId && d.src === r.src) delete b.dep[k]; n++;
+    }
+    if (n) b.dirty = true;
+    return n;
   }
   // one flight's row: what a better source says wins, what it lacks is kept from the other
   function boardMerge(b, kind, row) {
@@ -205,18 +218,21 @@
     if (!rec || !route || !id) return;
     const fid = Number(id).toString(16), who = boardWho(rec.hex, rec), cs = csOfRec(rec) || rec.cs || '';
     const dep = route.atd || route.departedAt || 0, from = route.originId, to = route.destId;
-    if (route.landed && from === to && !(route.ata - dep >= 600)) { for (const [ap, kind] of [[from, 'departures'], [to, 'arrivals']]) if (boardOk(ap)) boardPut(ap, kind, { k: 'f' + fid, src: 'live', t: route.ata || dep || nowS(), drop: true }); return; }
+    // (down where it took off: a flight only when its take-off was seen and it was up long enough - an airliner's taxi with
+    // its transponder saying "airborne" is not one: EI-EVN "Liverpool -> Liverpool, landed 17:33")
+    const light = /^(piston|heli|fighter)$/.test(ENGINE.classify({ hex: rec.hex || '', type: who.ty, reg: who.reg, cs }));
+    if (route.landed && from && from === to && !(dep > 0 && route.ata - dep >= (light ? 300 : 900))) { for (const [ap, kind] of [[from, 'departures'], [to, 'arrivals']]) if (boardOk(ap)) boardPut(ap, kind, { k: 'f' + fid, src: 'live', t: route.ata || dep || nowS(), drop: true }); return; }
     if (!route.landed && route.groundAirportId) return;              // (on the ground, not off yet)
     // (down away from FR24's airports - a strip, a private site: the landing place learned there)
     const ds = route.landed && !boardOk(to) ? (to && apById(to)) || route.destSite : null;
     const site = ds && fin(ds.lat) ? learnSite(ds.lat, ds.lon, { heli: ENGINE.classify({ type: who.ty }) === 'heli' }) : 0;
-    if (boardOk(from) && dep > 0 && route.originConf !== 'history') boardPut(from, 'departures', Object.assign({ k: 'f' + fid, src: 'live', fid, cs, t: dep, sch: route.std || dep, est: dep, st: 'departed', col: 'green', ap: boardOk(to) && (route.landed || ['filed', 'confirmed', 'landed'].includes(route.destConf)) ? to : site }, who));
-    if (boardOk(to) && route.landed && route.ata > 0) boardPut(to, 'arrivals', Object.assign({ k: 'f' + fid, src: 'live', fid, cs, t: route.ata, sch: route.sta || route.ata, est: route.ata, st: 'landed', col: 'green', ap: boardOk(from) ? from : 0 }, who));
+    if (boardOk(from) && dep > 0 && route.originConf !== 'history') boardPut(from, 'departures', Object.assign({ k: 'f' + fid, src: 'live', drop: false, fid, cs, t: dep, sch: route.std || dep, est: dep, st: 'departed', col: 'green', ap: boardOk(to) && (route.landed || ['filed', 'confirmed', 'landed'].includes(route.destConf)) ? to : site }, who));
+    if (boardOk(to) && route.landed && route.ata > 0) boardPut(to, 'arrivals', Object.assign({ k: 'f' + fid, src: 'live', drop: false, fid, cs, t: route.ata, sch: route.sta || route.ata, est: route.ata, st: 'landed', col: 'green', ap: boardOk(from) ? from : 0 }, who));
   }
   // An aircraft's rebuilt log: its flights of the last three days, at both ends
   function boardNoteLegs(hex, legs, rec) {
     if (!hex || !legs || !legs.length) return;
-    const lo = nowS() - BOARD_BACK, who = boardWho(hex, rec || null), heli = ENGINE.classify({ type: who.ty }) === 'heli';
+    const lo = nowS() - BOARD_BACK, who = boardWho(hex, rec || null), cls = ENGINE.classify({ hex, type: who.ty, reg: who.reg }), heli = cls === 'heli';
     // (the other end when it is no airport of FR24's - a strip it does not list, a field, a pad - and the aircraft was
     // seen down there: the landing place learned there, by name, not "N/A")
     const placeOf = (id, la, lo2) => { const a = id ? apById(id) : null; return a ? learnSite(a.lat, a.lon, { heli }) : learnSite(la, lo2, { heli }); };
@@ -227,6 +243,9 @@
       // (no take-off seen, first heard within 10 km of where it landed: a local flight from there - not "N/A")
       const local = !from && !!to && fin(l.startLat) && (a => !!a && ENGINE.dist(l.startLat, l.startLon, a.lat, a.lon) < 10)(apById(to));
       if (local) from = to;
+      // (back where it began without having flown - a taxi with the transponder saying "airborne", a take-off seen in two
+      // pieces: no flight, and a row an older build kept of it goes)
+      if (from && from === to && !ENGINE.localFlew(Object.assign({}, l, { from: { id: from }, to: { id: to } }), cls)) { if (boardOk(from)) { boardPut(from, 'departures', { k, src: 'log', t: off, drop: true }); boardPut(to, 'arrivals', { k, src: 'log', t: l.tOn || l.tEnd || off, drop: true }); } continue; }
       // (lost from view on the ground or low beside a field, and silent for 20 minutes since: down there - a light aircraft
       // landing below coverage, G-BOIL at -125 ft, 49 kt beside its strip, was "N/A" all evening)
       const quietLow = !l.ended && !!to && /^(ground|low)$/.test(l.to.conf || '') && nowS() - (l.tEnd || 0) > 1200;

@@ -19,12 +19,12 @@ const root = path.join(__dirname, '..'), work = path.join(T, 'work'), origin = p
 // (a repository with the files deploy.sh checks)
 fs.mkdirSync(work);
 git(work, 'init', '-q', '-b', 'main');
-for (const f of ['monitor/monitor.cjs', 'monitor/fr24.cjs', 'monitor/ident.cjs', 'monitor/dest.cjs', 'monitor/owners.cjs', 'monitor/airport.cjs', 'monitor/merge-store.cjs', 'monitor/deploy.sh', 'src/engine.js', 'src/registry.js', 'test/dataset.cjs']) { fs.mkdirSync(path.join(work, path.dirname(f)), { recursive: true }); fs.copyFileSync(path.join(root, f), path.join(work, f)); }
+for (const f of ['monitor/monitor.cjs', 'monitor/fr24.cjs', 'monitor/ident.cjs', 'monitor/dest.cjs', 'monitor/owners.cjs', 'monitor/airport.cjs', 'monitor/names.cjs', 'monitor/tel.cjs', 'monitor/merge-store.cjs', 'monitor/deploy.sh', 'src/engine.js', 'src/registry.js', 'test/dataset.cjs']) { fs.mkdirSync(path.join(work, path.dirname(f)), { recursive: true }); fs.copyFileSync(path.join(root, f), path.join(work, f)); }
 git(work, 'add', '-A'); git(work, 'commit', '-q', '-m', 'v1');
 execFileSync('git', ['clone', '-q', '--bare', work, origin]);
 execFileSync('git', ['clone', '-q', origin, vm]);
 git(work, 'remote', 'add', 'origin', origin);
-const run = (...args) => { fs.writeFileSync(logf, ''); const r = spawnSync('bash', [path.join(vm, 'monitor/deploy.sh'), ...args], { encoding: 'utf8', env: Object.assign({}, process.env, { PATH: bin + ':' + process.env.PATH, DEPLOY_WAIT: '8' }), timeout: 300000 }); return { code: r.status, out: r.stdout + r.stderr, calls: fs.readFileSync(logf, 'utf8') }; };
+const run = (...args) => { fs.writeFileSync(logf, ''); const r = spawnSync('bash', [path.join(vm, 'monitor/deploy.sh'), ...args], { encoding: 'utf8', env: Object.assign({}, process.env, { FR24_JOURNALD_DIR: path.join(T, 'journald.conf.d'), PATH: bin + ':' + process.env.PATH, DEPLOY_WAIT: '8' }), timeout: 300000 }); return { code: r.status, out: r.stdout + r.stderr, calls: fs.readFileSync(logf, 'utf8') }; };
 const commit = (msg, edit) => { edit(); git(work, 'commit', '-q', '-am', msg); git(work, 'push', '-q', 'origin', 'main'); return git(work, 'rev-parse', 'HEAD'); };
 const head = () => git(vm, 'rev-parse', 'HEAD');
 const v1 = head();
@@ -35,6 +35,7 @@ const v2 = commit('v2', () => fs.appendFileSync(path.join(work, 'monitor/monitor
 r = run();
 check('a new commit: fast-forwarded, restarted, checked with the service\'s secret', r.code === 0 && head() === v2 && /systemctl restart fr24-monitor/.test(r.calls) && /curl X-Monitor-Token: s3cr3t-token/.test(r.calls) && /OK - the monitor answers/.test(r.out), r.out);
 check('... the secret never printed', !/s3cr3t/.test(r.out));
+check('... the system log limited to 14 days (once)', fs.readFileSync(path.join(T, 'journald.conf.d', 'fr24-retention.conf'), 'utf8').includes('MaxRetentionSec=14day') && /systemctl restart systemd-journald/.test(r.calls));
 fs.unlinkSync(okf);
 const v3 = commit('v3', () => fs.appendFileSync(path.join(work, 'monitor/monitor.cjs'), '\n// v3\n'));
 r = run();

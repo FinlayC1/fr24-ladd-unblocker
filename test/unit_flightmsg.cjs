@@ -57,7 +57,8 @@ const followBody = cat([H.fLen(1, one(realBody, 1).val), H.fLen(5, efiReal)]);
 const out0 = H.patchFlightMsg(followBody, { id }, H.FOLLOW);
 const info = posted.find(p => p && p.__tweeksLadd === 'aircraftInfo');
 check('ordinary aircraft: identity reported for public data', !!info && info.hex === '4ca9aa' && info.reg === 'EI-HAY' && info.cs === 'RYR4758', info);
-check('ordinary aircraft without telemetry: message untouched', out0 === followBody);
+{ const e0 = one(out0, 5).val;
+  check('ordinary aircraft without telemetry: FR24\'s padlocks off (figures, squawk, airspace) and nothing made up - the vertical speed\'s kept while nothing tells it', !one(e0, 12) && !one(e0, 14) && !one(e0, 18) && !!one(e0, 16) && !one(e0, 13) && num(e0, 15) === undefined && num(e0, 17) === undefined && num(e0, 5) === 24500, H.parse(e0).map(f => f.fn)); }
 B.telem.set(id, { at: Date.now(), vr: 1216, sq: 0o2341, agps: 24800, ias: 290, tas: 410, mach: 0.66, oat: -20, wd: 250, ws: 40 });
 const out1 = H.patchFlightMsg(followBody, { id }, H.FOLLOW), efi1 = one(out1, 5).val;
 check('ordinary aircraft: vertical speed unlocked (value, no availability flag)', num(efi1, 17) === 1216 && !one(efi1, 16), { vs: num(efi1, 17) });
@@ -161,7 +162,26 @@ check('ordinary aircraft: FR24 data kept (registration, callsign, photos)', str(
   const flight = cat([H.fVar(1, uid), H.fVar(5, 25025), H.fStr(11, 'UAL444'), H.fLen(13, extra)]);
   B.telem.clear();
   const same = H.patchFlight(flight, [], true, Date.now());
-  check('ordinary LiveFeed record untouched without telemetry', same === flight);
+  { const ex0 = one(same, 13).val;
+    check('ordinary LiveFeed record without telemetry: the EMS, squawk and airspace padlocks off, no figure made up (the vertical speed\'s kept: nothing tells it yet)', !one(ex0, 13) && !one(ex0, 16) && !one(ex0, 18) && !!one(ex0, 17) && !one(ex0, 6) && !one(ex0, 12) && !one(ex0, 5) && str(ex0, 2) === 'N73276', H.parse(ex0).map(f => f.fn)); }
+  // (FR24's own altitudes, two reports half a minute apart: its vertical speed; then its airspace from the boundaries)
+  { const tsN = Math.round(Date.now() / 1000), f32b = (fn, v) => { const b = new Uint8Array(5); b[0] = fn * 8 + 5; new DataView(b.buffer).setFloat32(1, v, true); return b; };
+    const at = (alt, ts) => cat([H.fVar(1, uid + 7), f32b(2, 51.5), f32b(3, -0.5), H.fVar(5, alt), H.fVar(9, ts), H.fStr(11, 'UAL445'), H.fLen(13, extra)]);
+    H.patchFlight(at(19000, tsN - 30), [], false, Date.now());
+    const exV = one(H.patchFlight(at(20000, tsN), [], false, Date.now()), 13).val;
+    check('no public report: the vertical speed from FR24\'s own altitudes (+1,000 ft in 30 s = +2,000 fpm), its padlock off', num(exV, 6) === 2000 && !one(exV, 17), H.parse(exV).map(f => f.fn + (f.wt === 0 ? '=' + f.val : '')));
+    const asked = H.airWant().slice(); H.flushAir();
+    const askMsg = posted.filter(p => p && p.__tweeksLadd === 'airAsk').pop();
+    check('... its airspace asked of the userscript (the flights in view with no public report)', asked.some(r => r[0] === uid + 7) && !!askMsg && askMsg.rows.some(r => r[0] === uid + 7), asked);
+    w.dispatchEvent(new w.MessageEvent('message', { data: { __tweeksLadd: 'airRows', rows: [[uid + 7, 51.5, -0.5, 20000, 'London', 'EGTT', 0, 245]] }, source: w }));
+    const exA = one(H.patchFlight(at(20100, tsN + 10), [], false, Date.now()), 13).val;
+    check('... and given: the airspace in the record, its padlock off', str(exA, 11) === 'London' && str(exA, 19) === 'EGTT' && !one(exA, 18), H.parse(exA).map(f => f.fn));
+    const exU = one(H.patchFlight(at(30000, tsN + 400), [], false, Date.now()), 13).val;
+    check('... not above the band the boundary is for (FL300 in an FIR up to FL245)', str(exU, 11) !== 'London', str(exU, 11));
+    // (on the ground: level - a "0" that is true)
+    const g = cat([H.fVar(1, uid + 8), H.fVar(5, 0), H.fVar(9, tsN), H.fVar(10, 1), H.fStr(11, 'UAL446'), H.fLen(13, extra)]);
+    const exG = one(H.patchFlight(g, [], false, Date.now()), 13).val;
+    check('... on the ground: vertical speed 0, no padlock', num(exG, 6) === 0 && !one(exG, 17), H.parse(exG).map(f => f.fn)); }
   B.telem.set(uid, { at: Date.now(), vr: -64, sq: 0o7035, agps: 26125, ias: 280 });
   const out = H.patchFlight(flight, [], true, Date.now()), ex2 = one(out, 13).val;
   check('ordinary LiveFeed record: vertical speed / EMS locks dropped, public values in', !one(ex2, 17) && !one(ex2, 13) && !!one(ex2, 6) && !!one(ex2, 12) && num(one(ex2, 12).val, 8) === 26125, H.parse(ex2).map(f => f.fn));
@@ -176,7 +196,8 @@ check('ordinary aircraft: FR24 data kept (registration, callsign, photos)', str(
   check('the matched telemetry is kept for the panel of that flight', !!H.telem.get(uid) && H.telem.get(uid).air === 'Oakland' && H.telem.get(uid).airId === 'KZOA');
   B.telem.clear();
   const outFar = H.patchFlight(placed(51.5, -0.1), [], false, Date.now());
-  check('same callsign far from where FR24 draws the flight: not used', outFar.length === placed(51.5, -0.1).length && !one(one(outFar, 13).val, 6));
+  { const exF = one(outFar, 13).val;
+    check('same callsign far from where FR24 draws the flight: not used (no vertical speed, figures or airspace of the other)', !one(exF, 6) && !one(exF, 12) && str(exF, 11) !== 'Oakland' && !one(exF, 13), H.parse(exF).map(f => f.fn)); }
   // the panel of that flight: airspace (FIR/UIR) as text in its extended info
   B.telem.set(id, { at: Date.now(), vr: 500, agps: 30000, air: 'Shannon', airId: 'EISN' });
   const outA = H.patchFlightMsg(followBody, { id }, H.FOLLOW), efiA = one(outA, 5).val;

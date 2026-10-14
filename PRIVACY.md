@@ -1,6 +1,6 @@
 # Privacy
 
-**The short version:** the FR24 LADD Unblocker collects nothing about you. It has no analytics, no tracking and no accounts. Nothing is sold or shared. What it keeps, it keeps in your own browser or on your own server.
+**The short version:** the FR24 LADD Unblocker has no analytics, no tracking, no advertising and no accounts, and sells nothing. What it learns about aircraft is kept in your own browser and on the shared monitor, the project's server, which every copy connects to by default. You can turn that off, or use your own monitor instead. What the shared monitor receives from your browser, and how long it is kept, is set out below.
 
 This policy covers the browser extension, the userscript and the monitor.
 
@@ -24,14 +24,44 @@ To fill in what Flightradar24 leaves blank, your browser makes requests to publi
 
 On flightradar24.com the extension works inside the page you opened. It reads Flightradar24's answers to that page in order to add to them. It does not read your Flightradar24 account details, cookies or passwords, and sends nothing from them anywhere.
 
-## Your monitor
+## The shared monitor
 
-If you connect a monitor (your own server), your browser sends it:
+Every copy connects to the project's shared monitor by default. You can change this in the strip's **Sources** menu: point it at your own monitor, or turn it off. With it off, nothing below is sent.
 
-- requests for the data it holds;
-- a report every minute: the flights without a callsign your Flightradar24 page shows, names your browser found, owners it looked up, and, once, Flightradar24's feed headers as your page sends them, with your browser's version string. The headers are a device id and platform string, **never** an authorization, cookie or login. The monitor needs them to make its own requests to Flightradar24's feed in the form the feed expects.
+**What your browser sends it**
 
-The monitor is yours. It keeps what it gathers on your server ([docs/monitor.md](docs/monitor.md#what-it-keeps)) and answers only browsers that hold its secret. The author of this project receives nothing from it.
+- **Requests for what it holds:**
+  - the area your map shows (its centre and radius), for the aircraft there;
+  - the aircraft you open, for their live figures;
+  - the airport boards you open;
+  - the playback moments you play;
+  - the place your map is looking at, so the monitor can follow it (it keeps that place rounded to a whole degree).
+- **A report every minute:**
+  - the flights without a callsign your Flightradar24 page shows (Flightradar24's flight id, position, type);
+  - the names your browser found for them, in live view and in playback;
+  - the owners it looked up in public registers.
+- **Every 30 seconds:** the public ADS-B reports your browser fetched from adsb.lol and adsb.fi around your map, so other browsers need not fetch them again.
+
+**What it never receives:** your Flightradar24 account, cookies, password or e-mail address, anything typed into a page, or Flightradar24's device id for your browser. That id is sent only to a monitor of your own (one you gave a secret).
+
+**What it keeps, and for how long**
+
+- **About aircraft:** names of flights, owners of aircraft and flight logs, as described in [docs/monitor.md](docs/monitor.md#what-it-keeps). Owners who are private individuals are never served from it (see [docs/legal.md](docs/legal.md#5-personal-data)). What browsers send is checked before it is passed on:
+  - a name or an owner is used only when two browsers agree, or the monitor's own data confirms it;
+  - an ADS-B report is used only when its values are physically possible and it does not contradict the monitor's own data. It is passed on only while it is current, about two minutes.
+- **About you:**
+  - **Your IP address, with each request,** in three places:
+    - the web server's access log, which also records the request, including the area or aircraft asked about. It is kept for 14 days at most;
+    - the monitor's rate limit, for one minute;
+    - its dashboard, without the request's details, in memory until the next restart. Only the owner of the server sees it.
+  - **For a name or owner your browser reported,** your address is kept with it in memory, for six hours at most. That lets the monitor count how many different browsers agree.
+  - **The places maps look at,** rounded to a degree, are kept for three days. They are not linked to any address.
+
+The author runs the shared monitor and receives nothing else from it: no profile, no history of what you looked at.
+
+## Your own monitor
+
+If you point the extension at your own monitor (with its secret), the same things go to it and nowhere else. Your browser then also sends Flightradar24's feed headers once, so your monitor can read Flightradar24's map in the form the feed expects. Those headers are a device id and a platform string, plus your browser's version string, **never** an authorisation, cookie or login. What your monitor keeps stays on your server ([docs/monitor.md](docs/monitor.md#what-it-keeps)), and the author of this project receives nothing from it.
 
 ## About aircraft owners
 

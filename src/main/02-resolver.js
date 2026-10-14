@@ -43,7 +43,19 @@
       area: (lat, lon, r) => gmRequest(`https://${ADSBX_HOST}/v2/lat/${lat.toFixed(4)}/lon/${lon.toFixed(4)}/dist/${Math.min(250, Math.round(r))}/`, { headers: hdr() }).then(list),
       hex: hex => gmRequest(`https://${ADSBX_HOST}/v2/hex/${hex}/`, { headers: hdr(), timeout: 8000, priority: true }).then(j => list(j)[0] || null) };
   }
+  // The monitor, when it answers: every aircraft it heard around the point in the last two minutes - its live list, the
+  // positions it keeps, a lookup of the area made through its own gates. Asked first, as well as the others: this
+  // browser's own requests to adsb.lol and adsb.fi can be refused or rate-limited, and then a blocked jet in plain view
+  // stayed "identifying" (M-HERI over the Channel, 14 Oct)
+  const MONITOR_SOURCE = { name: 'monitor', host: '', enabled: () => monUp(),
+    area: (lat, lon, r) => monGet(`/near?lat=${lat.toFixed(3)}&lon=${lon.toFixed(3)}&r=${Math.round(Math.min(250, r) * NM_KM)}`, { timeout: 12000 }).then(j => { const t = now(); return readsbList(j).map(a => normalizeReadsb(a, 'monitor', t)).filter(Boolean); }),
+    // (an aircraft's latest report, with the figures FR24 padlocks - looked up where FR24 draws it when the monitor has
+    // nothing fresh of it)
+    hex: (hex, at) => monGet(`/tel?hex=${hex}${at && fin(at.lat) && fin(at.lon) ? `&lat=${at.lat.toFixed(3)}&lon=${at.lon.toFixed(3)}` : ''}`, { timeout: 8000 }).then(j => { const t = now(); return readsbList(j).map(a => normalizeReadsb(a, 'monitor', t)).filter(Boolean)[0] || null; }) };
+  // (the first of several lookups to find something; null when none does)
+  const firstOf = ps => new Promise(res => { let left = ps.length; if (!left) { res(null); return; } for (const p of ps) Promise.resolve(p).then(v => { if (v) res(v); else if (!--left) res(null); }, () => { if (!--left) res(null); }); });
   const SOURCES = [
+    MONITOR_SOURCE,
     readsbSource('adsb.lol', 'api.adsb.lol', (la, lo, r) => `https://api.adsb.lol/v2/point/${la.toFixed(4)}/${lo.toFixed(4)}/${r}`, hex => `https://api.adsb.lol/v2/hex/${hex}`),
     readsbSource('adsb.fi', 'opendata.adsb.fi', (la, lo, r) => `https://opendata.adsb.fi/api/v3/lat/${la.toFixed(4)}/lon/${lo.toFixed(4)}/dist/${r}`, hex => `https://opendata.adsb.fi/api/v2/hex/${hex}`, (la, lo, r) => `https://opendata.adsb.fi/api/v2/lat/${la.toFixed(4)}/lon/${lo.toFixed(4)}/dist/${r}`),
     // ADS-B Exchange (its own feeder network - it sees aircraft the others miss): the official API, with the user's own
@@ -51,7 +63,7 @@
     adsbxSource()
   ].filter(Boolean);
   const usable = s => (!s.enabled || s.enabled()) && (deadHosts.get(s.host) || 0) < now();
-  const liveSources = () => { const l = SOURCES.filter(s => !s.fallback && usable(s)); return l.length ? l : SOURCES.slice(0, 1); };
+  const liveSources = () => { const l = SOURCES.filter(s => !s.fallback && usable(s)); return l.length ? l : SOURCES.filter(s => s !== MONITOR_SOURCE).slice(0, 1); };
   const fallbackSources = () => SOURCES.filter(s => s.fallback && usable(s));
   // Everything the aggregators have reported around the map (area sweeps, the view poll, the LADD/military lists, hex
   // lookups): live telemetry and database facts for EVERY aircraft on screen, ordinary ones included - so opening any of
@@ -486,13 +498,34 @@
       flights.push([f.id, rnd4(f.lat), rnd4(f.lon), fin(f.alt) ? Math.round(f.alt) : 0, fin(f.trk) ? Math.round(f.trk) : 0, fin(f.spd) ? Math.round(f.spd) : 0, Math.round(f.ts || t / 1000), f.gnd ? 1 : 0, f.src | 0, f.type || '', f.reg || '', f.icon | 0]);
       const rec = live.get(f.id); if (rec && rec.hex && !rec.srv && !srvIds.rows.has(f.id)) ids.push([f.id, rec.hex, String(rec.src || 'browser').slice(0, 20)]);
     }
-    const hdr = feedHdr && !feedHdrSent ? feedHdr : null, own = [...ownersOut].slice(0, 500);
-    if (!flights.length && !ids.length && !hdr && !own.length) return;
-    const j = await monPost('/report', { hdr: hdr || undefined, ua: hdr ? navigator.userAgent : undefined, flights, ids, owners: own.length ? own : undefined }).catch(e => { log('report to monitor', String(e && e.message || e)); return null; });
+    // (FR24's feed headers - its device id for this browser - only to a monitor of the user's own, one with its secret:
+    // never to the shared one, which would then ask FR24 under this browser's device id)
+    const mine = (r => !!(r && r.token))(monRemote());
+    const hdr = mine && feedHdr && !feedHdrSent ? feedHdr : null, own = [...ownersOut].slice(0, 500), pbIds = [...pbOut.values()].slice(0, 500);
+    if (!flights.length && !ids.length && !hdr && !own.length && !pbIds.length) return;
+    const j = await monPost('/report', { hdr: hdr || undefined, ua: hdr ? navigator.userAgent : undefined, flights, ids, owners: own.length ? own : undefined, pbIds: pbIds.length ? pbIds : undefined }).catch(e => { log('report to monitor', String(e && e.message || e)); return null; });
     if (j && j.ok && hdr) feedHdrSent = true;
-    if (j && j.ok) for (const [h, o] of own) if (ownersOut.get(h) === o) ownersOut.delete(h);
+    if (j && j.ok) { for (const [h, o] of own) if (ownersOut.get(h) === o) ownersOut.delete(h); for (const r of pbIds) if (pbOut.get(r[0]) === r) pbOut.delete(r[0]); }
   }
   setInterval(() => { idleSlice().then(reportToMonitor).catch(() => {}); }, 60000);
+  // What this browser's own polls of adsb.lol / adsb.fi found around its map, to the monitor every 30 s: every other
+  // browser has it from there at once (each one's requests to the networks shared by all). The newest of each aircraft
+  // since the last time, never what came from the monitor itself; the monitor checks every row.
+  const telOut = new Map();   // hex -> compact row
+  const nn = v => fin(v) ? Math.round(v * 1000) / 1000 : null;
+  function noteTelOut(list) {
+    for (const c of list || []) {
+      if (!c || c.nonIcao || c.src === 'monitor' || !fin(c.lat) || !fin(c.lon) || now() - seenAt(c) > 60000) continue;
+      telOut.set(c.hex, [c.hex, rnd4(c.lat), rnd4(c.lon), c.gnd ? 'g' : fin(c.alt) ? Math.round(c.alt) : null, nn(c.gs), nn(c.trk), c.gnd ? 0 : nn(c.vs), c.sq || '', nn(c.agps), nn(c.ias), nn(c.tas), nn(c.mach), nn(c.oat), nn(c.wd), nn(c.ws), Math.round(seenAt(c) / 1000), c.reg || '', c.type || '', c.cs || '', c.dbFlags | 0]);
+    }
+    if (telOut.size > 3000) for (const k of [...telOut.keys()].slice(0, telOut.size - 3000)) telOut.delete(k);
+  }
+  async function reportTel() {
+    if (!monUp() || !telOut.size || document.hidden) return;
+    const rows = [...telOut.values()].filter(r => now() / 1000 - r[15] < 90).slice(-1500); telOut.clear();
+    if (rows.length) await monPost('/report', { tel: rows }).catch(e => log('report to monitor', String(e && e.message || e)));
+  }
+  setInterval(() => { idleSlice().then(reportTel).catch(() => {}); }, 30000);
   // Parked LADD aircraft show which fields business aviation actually uses: every sighting feeds the usage prior.
   const parkedSeen = new Map();
   function learnParked(c) {
@@ -737,15 +770,18 @@
     // Exchange with the user's own key among them, from the first try)
     const sources = a.n <= 2 && !f.gnd ? liveSources() : [...liveSources(), ...fallbackSources(), OPENSKY];
     log('targeted lookup', reason, id.toString(16), 'attempt', a.n);
-    const all = new Map(); const used = []; let adopted = false;
+    const all = new Map(); const used = [], said = []; let adopted = false;
     await Promise.allSettled(sources.map(s => s.area(f.lat, f.lon, TARGET_RADIUS_NM).then(list => {
       used.push(s.name); mergeCands(all, list); noteCands(list);
+      said.push(`${s.name} ${list.filter(c => dist(c.lat, c.lon, f.lat, f.lon) < 60).length} near`);
       if (adopted || live.has(id)) return;
       const fresh = pending.get(id) || f;
       const m = matchFlight(fresh, [...all.values()]);
       if (m && (m.rel === 'same' || (m.rel === 'unknown' && !fresh.type))) { adopted = true; adopt(recordFromMatch(fresh, m, used.slice())); }
-    }).catch(e => log('source failed', s.name, String(e)))));
+    }).catch(e => { said.push(`${s.name} ${whyFailed(e)}`); log('source failed', s.name, String(e)); })));
     if (adopted || live.has(id)) return;
+    // (what each source said, for the panel - a flight still "identifying" says why)
+    a.said = `try ${a.n}: ${said.join(', ')}${used.length ? ' - none fits its type and position' : ''}`;
     // (no source answered - rate-limited, offline: not an attempt; "no match" is only said of sources that answered)
     if (!used.length) { a.n = Math.max(0, a.n - 1); a.last = now() + 10000; return; }
     const fresh = pending.get(id) || f;
@@ -753,6 +789,7 @@
     if (m) adopt(recordFromMatch(fresh, m, used));
     else { const r = matchReckoned(fresh); if (r) adoptReckoned(fresh, r); else { log('no match yet', id.toString(16), 'candidates', all.size); syncPanelSoon(); if (a.n >= 2) (fresh.gnd ? matchParked(fresh) : matchByTraces(fresh)).catch(e => log('track match', e)); } }
   }
+  const whyFailed = e => { const m = String((e && e.message) || e); return /429/.test(m) ? 'rate-limited' : /paused/.test(m) ? 'paused (refused)' : /40[13]/.test(m) ? 'refused' : /timeout|no response/.test(m) ? 'no answer' : /not running/.test(m) ? 'not connected' : 'failed'; };
   function clusterUnresolved() {
     const t = now();
     const list = [...pending.values()].filter(f => !live.has(f.id) && !f.bg && t - f.receivedAt < PENDING_TTL_MS && !skipFlight(f))
@@ -830,10 +867,13 @@
     if (!rec || !rec.hex || telemBusy || document.hidden || now() - telemLast < TELEMETRY_MS - 200 || pbMode()) return;   // (in FR24's playback: its figures come from the track)
     telemBusy = true; telemLast = now();
     try {
-      const srcs = liveSources().filter(s => s.hex);
-      // alternate between the aggregators; if the first has nothing for this address, ask the other straight away
+      const srcs = liveSources().filter(s => s.hex), at = currentPos(id);
       let c = null;
-      for (let k = 0; k < Math.min(2, srcs.length) && !c; k++) { const src = srcs[(telemRot + k) % Math.min(2, srcs.length)]; try { c = await src.hex(rec.hex); } catch (e) { /* next */ } }
+      // (just opened: the monitor and this browser's own source asked at once, the first answer shown - the padlocked
+      // figures in the time of one request)
+      if (srcs.length > 1 && now() - (rec.telFirstAt || 0) > 120000) { rec.telFirstAt = now(); c = await firstOf(srcs.slice(0, 2).map(src => src.hex(rec.hex, at))); }
+      // then in turn - the monitor, this browser's own: each asked half as often; if one has nothing, the other at once
+      for (let k = 0; k < Math.min(2, srcs.length) && !c; k++) { const src = srcs[(telemRot + k) % Math.min(2, srcs.length)]; try { c = await src.hex(rec.hex, at); } catch (e) { /* next */ } }
       telemRot++;
       if ((!c || !c.cs) && now() - (rec.adsbxAt || 0) > 60000) for (const src of fallbackSources()) { rec.adsbxAt = now(); try { const x = await src.hex(rec.hex); if (x) { c = c && !x.cs ? c : x; break; } } catch (e) { /* none */ } }
       // (both refused - a rate limit - or silent: its latest report from the map's view poll or the LADD list, while fresh.
@@ -930,12 +970,15 @@
       // (adsb.lol already carries the LADD lists, sweeps and telemetry: the view poll goes to the others while they answer)
       // A refusal (rate limit, outage) moves straight on to the next source - adsb.lol last - instead of leaving the
       // map without public data until the next poll.
-      const all = liveSources(), others = all.filter(x => x.host !== 'api.adsb.lol'), start = viewRot++;
-      const order = others.map((_, i) => others[(start + i) % others.length]).concat(all.filter(x => x.host === 'api.adsb.lol'));
+      // Every other poll from the monitor (every aircraft it heard around the view, with the figures FR24 padlocks): this
+      // browser's own requests to the networks halved, the monitor's shared by all. Either refused: the other at once.
+      const all = liveSources(), own = all.filter(x => x !== MONITOR_SOURCE), others = own.filter(x => x.host !== 'api.adsb.lol'), start = viewRot++;
+      const mine = others.map((_, i) => others[(start + i) % others.length]).concat(own.filter(x => x.host === 'api.adsb.lol'));
+      const order = all.includes(MONITOR_SOURCE) ? (start % 2 ? [MONITOR_SOURCE].concat(mine) : mine.concat([MONITOR_SOURCE])) : mine;
       for (const src of order) {
         try {
           const list = await src.area(c.lat, c.lon, c.r);
-          noteCands(list); pushPubTel(list);
+          noteCands(list); pushPubTel(list); noteTelOut(list);
           prefetchRegistry(list, c);
           break;
         } catch (e) { log('view poll', src.name, String(e.message || e)); }

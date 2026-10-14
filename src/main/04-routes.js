@@ -191,6 +191,38 @@
   // summary and today's track) are read back from disk - a few ms - so nothing is recomputed from less than before.
   const bootHold = new Set();   // hex
   // One route answer from everything known right now. Pure computation - no requests - so it can run on every update.
+  // The alternatives shown with a predicted destination: the next three, each with at least 2% of the engine's own odds
+  // and 4% once scaled to what the shown odds leave (scaled: the top airport's odds were shown as they turn out, topP the
+  // engine's own, destP the shown %). Never above the airport shown - D-CLUB was "Rotterdam 38%, also Amsterdam 44%".
+  function altsOf(cands, destId, topP, destP, scaled) {
+    const altK = scaled ? Math.min(3, Math.max(0, (1 - destP / 100) / (1 - topP))) : 1, altCap = destP ? Math.max(1, destP - 1) : 99;
+    return cands.filter(c => c.airport.id !== destId).slice(0, 3).filter(c => c.p >= 0.02 && c.p * altK >= 0.04).map(c => ({ iata: apCode(c.airport), city: c.airport.city, p: Math.min(altCap, Math.round(c.p * altK * 100)) }));
+  }
+  // Vectored for an airport: the destination it was descending into, sure of it, minutes ago is not dropped because the
+  // aircraft turned away onto a downwind leg or levelled off to be sequenced. N99GY, vectored round the east of Dublin
+  // for runway 28, went from "Dublin 99%" to 74% levelling at 7,000 ft heading out over the Irish Sea, with Manchester
+  // ahead. Held for 15 minutes from the last moment it was descending into it at 90% or more - while it stays within
+  // 80 km and below 12,000 ft over it and is not climbing away (a go-around or a diversion lets it go).
+  const termHold = new Map();      // flight id -> { apId, p, t }
+  function holdTerminal(id, pos, pred, o) {
+    const cands = pred && Array.isArray(pred.cands) ? pred.cands.slice() : [];
+    if (!cands.length || o.heli || o.planned || /^(piston|fighter|milheavy)$/.test(o.cls || '')) return cands;
+    const agl = a => fin(pos.alt) && a ? pos.alt - (a.alt || 0) : NaN, top = cands[0];
+    if (top.p >= 0.9 && top.dist < 80 && agl(top.airport) < 12000 && pred.phase === 'descent') {
+      // (the surest it has been in this spell)
+      const h0 = termHold.get(id), same = h0 && h0.apId === top.airport.id && pos.t - h0.t <= 900 && pos.t >= h0.t;
+      termHold.set(id, { apId: top.airport.id, p: same ? Math.max(h0.p, top.p) : top.p, t: pos.t });
+      if (termHold.size > 3000) termHold.delete(termHold.keys().next().value);
+    }
+    const h = termHold.get(id); if (!h) return cands;
+    if (pos.t - h.t > 900 || pos.t < h.t || (fin(pos.vr) && pos.vr > 500) || pos.gnd) { termHold.delete(id); return cands; }
+    const i = cands.findIndex(c => c.airport.id === h.apId), c = cands[i];
+    if (!c || c.dist > 80 || !(agl(c.airport) < 12000)) return cands;
+    // (as sure as it was, less a little for each minute since)
+    const want = Math.min(0.995, h.p - 0.003 * (pos.t - h.t) / 60); if (c.p >= want) return cands;
+    const k = (1 - want) / Math.max(1e-9, 1 - c.p);
+    return cands.map((x, j) => Object.assign({}, x, { p: j === i ? want : x.p * k })).sort((a, b) => b.p - a.p);
+  }
   function composeRoute(id, hex, opts) {
     try { return composeRoute0(id, hex, opts); } catch (e) { const rr = live.get(id) || pubRecs.get(id); if (rr) rr.routeErr = String((e && e.message) || e).slice(0, 160); log('route failed', id, e); return null; }
   }
@@ -315,7 +347,7 @@
     if (rec.cs && !pos.cs) pos.cs = rec.cs;
     const pred = ENGINE.predict({ ac, pos, trail, hs, now: pos.t, origin: siteOrigin || heliFromSite ? { airport: null, conf: heliFromSite ? 'ground' : 'low', note: '', departedAt: r.departedAt || t0p.t - 60 } : origin, plan, fleet: fleetVisits(hex, legStart), wx: wxMap, closed: closedMap });
     r.phase = pred ? pred.phase : '';
-    const cands = pred && pred.cands || [];
+    const cands = holdTerminal(id, pos, pred, { heli, cls, planned: !!(plan && (plan.destId || plan.divertedToId)) });
     // (the weather and any closure at the likeliest fields of the aircraft being looked at - the route is worked out
     // again when they come in)
     if (onScreen(id) && cands.length && !pos.gnd) { const ics = cands.slice(0, 6).map(c => c.airport.icao).filter(Boolean); wantWx(ics, () => scheduleReplan(id, 50)); wantNotams(ics.slice(0, 3), () => scheduleReplan(id, 50)); }
@@ -393,12 +425,12 @@
       setD(top.airport, sure ? 'confirmed' : CONF_OF(pShown), sure ? `descending into ${apCode(top.airport)} - no other airport fits` : [circTxt, whyOf(top)].filter(Boolean).join(', '));
       r.destP = sure ? 100 : Math.min(99, Math.round(pShown * 100));
     }
-    // (the others share what the shown odds leave)
-    const altK = top && !planDest && !finalAp && r.destP < 100 && top.p < 0.999 ? Math.max(0, (1 - r.destP / 100) / (1 - top.p)) : 1;
-    // (never above the airport shown: the odds shown for it are those it turns out to have, the others share the rest -
-    // D-CLUB was "Rotterdam 38%, also Amsterdam 44%")
-    const altCap = r.destP ? Math.max(1, r.destP - 1) : 99;
-    r.alternatives = cands.filter(c => c.airport.id !== r.destId).slice(0, 3).filter(c => c.p * altK >= 0.04).map(c => ({ iata: apCode(c.airport), city: c.airport.city, p: Math.min(altCap, Math.round(c.p * altK * 100)) }));
+    // (the others share what the shown odds leave - at most three times their own: with the top airport at all but 100%
+    // and shown lower, as this browser's own record of hits and misses has it, an airport the engine gave a hundredth of
+    // a percent was multiplied hundreds of times - N99GY, vectored round the east of Dublin for its runway 28, showed
+    // "also possible: Anglesey". And one the engine itself gives under 2% is never offered)
+    // (never above the airport shown: the odds shown for it are those it turns out to have, the others share the rest)
+    r.alternatives = altsOf(cands, r.destId, top ? top.p : 0, r.destP, !!top && !planDest && !finalAp && r.destP < 100 && top.p < 0.999);
     // Helicopters: an airport, or a private landing site (a third of their landings)? Its own record decides most.
     if (heli && !planDest && !finalAp && !circ) {
       const ps = ENGINE.privateSite({ pos, legs: hist, cands, legStart, start: t0p ? { lat: t0p.lat, lon: t0p.lon, gnd: !!t0p.gnd } : null, heliport: heliportNear });
@@ -642,33 +674,52 @@
     naHs.set(hex, { at: now(), hs }); if (naHs.size > 500) naHs.delete(naHs.keys().next().value);
     return hs;
   }
+  // (on the ground as the engine counts it - FR24 says so, or a fixed-wing aircraft under 40 kt: an airliner taxiing with
+  // its transponder saying "airborne" - and flying: off the ground at flying speed)
+  const naGnd = (p, heli) => !!p.gnd || (!heli && fin(p.gs) && p.gs < 40 && !(fin(p.alt) && p.alt > 12000));
+  const naFlying = (p, cls) => !naGnd(p, cls === 'heli') && fin(p.gs) && p.gs >= (cls === 'heli' ? 20 : cls === 'piston' ? 45 : 60);
   function naRouteOf(e) {
-    const f = e.f, pos = e.trail[e.trail.length - 1]; if (!pos) return null;
+    const f = e.f, trail = e.trail.slice(), pos = trail[trail.length - 1]; if (!pos) return null;
     const hex = f.hex ? Number(f.hex).toString(16).padStart(6, '0') : '';
     const ac = { hex, type: f.type || '', reg: f.reg || '', cs: f.cs || '' }, cls = ENGINE.classify(ac), heli = cls === 'heli';
+    if (naGnd(pos, heli) && e.pub && e.pub.landed) return e.pub;
+    // (only a flight seen flying - two reports at flying speed, off the ground - is routed, or put on a board, at all: EI-EVN
+    // taxiing at Liverpool as RYR8SF was "Liverpool -> Liverpool, landed" on its arrivals)
+    const fly = trail.filter(p => naFlying(p, cls)); if (fly.length < 2) return null;
+    const i0 = trail.indexOf(fly[0]), startGnd = i0 > 0 && trail.slice(0, i0).some(p => naGnd(p, heli));
+    // (its take-off: the first report at flying speed after it was seen on the ground)
+    const departedAt = startGnd ? fly[0].t : 0;
     const fromAp = f.from ? airports.byIata.get(String(f.from).toUpperCase()) : null;
-    const origin = fromAp ? { airport: fromAp, conf: 'fr24', departedAt: e.trail[0] && e.trail[0].gnd && e.trail[1] ? e.trail[1].t : 0 } : null;
-    if (pos.gnd) {
-      // down: landed where it was going (kept on the arrivals board as landed), or still on the ground where it began
-      const prev = e.pub; const here = heli ? ENGINE.heliAirportAt(pos.lat, pos.lon) : ENGINE.placeAt(pos.lat, pos.lon, 7, 2);
-      if (prev && here && here.airport.id === prev.destId && !prev.landed) return Object.assign({}, prev, { landed: true, ata: pos.t, phase: 'landed' });
-      return prev && prev.landed ? prev : null;
+    const origin = fromAp ? { airport: fromAp, conf: 'fr24', departedAt } : null;
+    // (where it began - FR24's origin, else the field it was seen on the ground at - and back there only after a real flight)
+    const g0 = startGnd ? trail[i0 - 1] : null, home = fromAp || (g0 ? ((h => h && h.airport)(heli ? ENGINE.heliAirportAt(g0.lat, g0.lon) : ENGINE.placeAt(g0.lat, g0.lon, 7, 2)) || null) : null);
+    let pathKm = 0; for (let i = 1; i < fly.length; i++) pathKm += ENGINE.dist(fly[i - 1].lat, fly[i - 1].lon, fly[i].lat, fly[i].lon);
+    const backOk = ap => !home || !ap || home.id !== ap.id || ENGINE.localFlew({ from: { id: ap.id }, to: { id: ap.id }, tOff: departedAt || fly[0].t, tOn: pos.t, maxAlt: Math.max(0, ...fly.map(p => fin(p.alt) ? p.alt : 0)), pathKm }, cls);
+    // (an arrival comes in from further out: a take-off roll - FR24's ground flag flickering "airborne" at 110 kt, then
+    // "on the ground" - is no approach to, and no landing at, the field it is leaving)
+    const cameFrom = ap => { const d0 = ENGINE.dist(pos.lat, pos.lon, ap.lat, ap.lon); return fly.some(p => ENGINE.dist(p.lat, p.lon, ap.lat, ap.lon) >= d0 + 3); };
+    if (naGnd(pos, heli)) {
+      // down: landed where it was going - just down from flying, and not back where it began without having flown
+      const prev = e.pub, here = heli ? ENGINE.heliAirportAt(pos.lat, pos.lon) : ENGINE.placeAt(pos.lat, pos.lon, 7, 2);
+      if (prev && here && here.airport.id === prev.destId && !prev.landed && pos.t - fly[fly.length - 1].t <= 900 && backOk(here.airport) && cameFrom(here.airport)) return Object.assign({}, prev, { landed: true, ata: pos.t, phase: 'landed' });
+      return null;
     }
-    const trail = e.trail.slice(), hs = naHistStats(hex, pos.t) || ENGINE.histStats([], pos.t);
+    const hs = naHistStats(hex, pos.t) || ENGINE.histStats([], pos.t);
     // (flying circuits - a light aircraft in the pattern of a field: that field, as for one opened)
     const circ = /^(piston|fighter|heli)$/.test(cls) ? ENGINE.circuits(trail, pos, { heli }) : null;
-    if (circ && circ.airport.id < 1e7) return { originId: fromAp ? fromAp.id : circ.airport.id, originIata: apCode(fromAp || circ.airport), originCity: (fromAp || circ.airport).city, destId: circ.airport.id, destIata: apCode(circ.airport), destCity: circ.airport.city,
-      destConf: 'confirmed', destP: 100, eta: 0, atd: origin && origin.departedAt || 0, std: 0, sta: 0, landed: false, phase: 'circuits', circuits: circ.laps };
+    if (circ && circ.airport.id < 1e7) return backOk(circ.airport) ? { originId: fromAp ? fromAp.id : circ.airport.id, originIata: apCode(fromAp || circ.airport), originCity: (fromAp || circ.airport).city, destId: circ.airport.id, destIata: apCode(circ.airport), destCity: circ.airport.city,
+      destConf: 'confirmed', destP: 100, eta: 0, atd: departedAt, std: 0, sta: 0, landed: false, phase: 'circuits', circuits: circ.laps } : null;
     const r = ENGINE.predict({ ac, pos, trail, hs, now: pos.t, origin, wx: wxMap, closed: closedMap }); if (!r || !r.cands.length) return null;
-    const top = r.cands[0], elapsed = origin && origin.departedAt ? (pos.t - origin.departedAt) / 60 : null;
+    const top = r.cands[0], elapsed = departedAt ? (pos.t - departedAt) / 60 : null;
     const lfOk = !heli && !/^(piston|milheavy|fighter)$/.test(cls), rwyOk = a => !ENGINE.rwyImpossible(a, cls, ac.type);
-    const pathOk = ap => !!ap && r.cands.some(c => c.airport.id === ap.airport.id && c.p >= 0.02) && rwyOk(ap.airport) && !(fromAp && fromAp.id === ap.airport.id && elapsed != null && elapsed < 15) ? ap : null;
-    const appr = r.phase !== 'climb' ? (ENGINE.approachTo(pos, { heli, origin: origin && origin.airport, elapsedMin: elapsed, rwyOk }) || (lfOk ? (lf => lf && lf.airport.id === top.airport.id ? lf : null)(ENGINE.longFinal(pos, trail, { origin: origin && origin.airport, elapsedMin: elapsed, rwyOk })) : null) || pathOk(ENGINE.approachPath(pos, trail, cls))) : null;
+    const pathOk = ap => !!ap && r.cands.some(c => c.airport.id === ap.airport.id && c.p >= 0.02) && rwyOk(ap.airport) && !(home && home.id === ap.airport.id && elapsed != null && elapsed < 15) ? ap : null;
+    const appr = r.phase !== 'climb' ? (a => a && cameFrom(a.airport) ? a : null)(ENGINE.approachTo(pos, { heli, origin: home, elapsedMin: elapsed, rwyOk }) || (lfOk ? (lf => lf && lf.airport.id === top.airport.id ? lf : null)(ENGINE.longFinal(pos, trail, { origin: home, elapsedMin: elapsed, rwyOk })) : null) || pathOk(ENGINE.approachPath(pos, trail, cls))) : null;
     const dest = appr ? appr.airport : top.airport, p = appr ? 1 : calibP(ENGINE.calibrated(top.p, cls));
     if (!appr && p < 0.6) return null;
-    if (dest.id >= 1e7 || (fromAp && fromAp.id === dest.id && !appr)) return null;     // (a field FR24 has no board for; a local flight)
+    // (a field FR24 has no board for; back where it began - guessed, or without a real flight first)
+    if (dest.id >= 1e7 || (home && home.id === dest.id && (!appr || !backOk(dest)))) return null;
     return { originId: fromAp ? fromAp.id : 0, originIata: fromAp ? apCode(fromAp) : '', originCity: fromAp ? fromAp.city : '', destId: dest.id, destIata: apCode(dest), destCity: dest.city,
-      destConf: appr ? 'confirmed' : CONF_OF(p), destP: Math.round(p * 100), eta: estimateEta(pos, dest, cls) || 0, atd: origin && origin.departedAt || 0, std: 0, sta: 0, landed: false, phase: r.phase || '' };
+      destConf: appr ? 'confirmed' : CONF_OF(p), destP: Math.round(p * 100), eta: estimateEta(pos, dest, cls) || 0, atd: departedAt, std: 0, sta: 0, landed: false, phase: r.phase || '' };
   }
   let naBusy = false;
   async function naTick() {

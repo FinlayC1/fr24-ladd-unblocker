@@ -4,7 +4,7 @@
 
 | Secret | Where it lives | Never |
 |---|---|---|
-| Monitor secret (`MON_TOKEN`) | The server's systemd unit, and each browser's userscript storage (*sources* > *Shared monitor*) | In the repository, in a URL (proxies log URLs), in logs or screenshots |
+| Monitor secret (`MON_TOKEN`) | The server's systemd unit, and the owner's own browser (*sources* > *Monitor*; other users need none) | In the repository, in a URL (proxies log URLs), in logs or screenshots |
 | ADS-B Exchange key | The browser's userscript storage. On a server, a root-only `EnvironmentFile` (`MON_ADSBX_KEY`) | In the repository or the systemd unit itself |
 | FAA NOTAM API credentials | The browser's userscript storage | In the repository |
 | Server SSH key | The administrator's own computer | Shared with anyone |
@@ -18,8 +18,13 @@ The scripts are written so the secret never appears in their output:
 ## Monitor exposure
 
 - The monitor listens on `127.0.0.1` only. Caddy terminates HTTPS in front of it.
-- Every endpoint except the static `/dash` page requires the secret. `/dash` contains no data.
-- Each client address is rate-limited (`MON_RATE` requests a minute).
+- **The shared monitor is public:**
+  - every copy of the script reads it without a secret;
+  - the secret opens the dashboard's numbers (`/stats`) and the full answers;
+  - reports from strangers are checked before use (see [docs/monitor.md](docs/monitor.md#public-mode)).
+- **A private monitor** (`"public": false` or `MON_PUBLIC=0`) answers only requests that carry the secret, except the static `/dash` page, which contains no data.
+- Each client address is rate-limited (`MON_RATE`, 300 requests a minute on a public monitor). The owner is never limited.
+- Browsers never send the shared monitor anything of their Flightradar24 session. FR24's feed headers go only to a monitor of their own.
 - The monitor makes outbound requests only to the data sources listed in [docs/data-sources.md](docs/data-sources.md).
 
 ## If a secret leaks
