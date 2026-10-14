@@ -36,3 +36,25 @@ jobs:
           for t in unit_monitor unit_monitor2 unit_fr24 unit_store unit_merge unit_public unit_wx; do node test/$t.cjs monitor/data > out.txt 2>&1 || { tail -30 out.txt; exit 1; }; grep -q '^FAIL' out.txt && { grep '^FAIL' out.txt; exit 1; }; echo "$t: $(grep -c '^PASS' out.txt) passed"; done
           node test/unit_registry.cjs > out.txt 2>&1 || { tail -30 out.txt; exit 1; }; echo "unit_registry: $(grep -c '^PASS' out.txt) passed"
           node test/unit_deploy.cjs > out.txt 2>&1 || { tail -30 out.txt; exit 1; }; echo "unit_deploy: $(grep -c '^PASS' out.txt) passed"
+  # The browser extension as built, loaded in a real Chromium (Playwright's): the service worker, both worlds, requests
+  # through the worker, the health check and the page that asks to allow a monitor of the user's own.
+  extension:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Playwright and its Chromium
+        run: |
+          mkdir -p "$RUNNER_TEMP/pw" && cd "$RUNNER_TEMP/pw" && npm init -y > /dev/null && npm i --no-save --no-audit --no-fund playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Extension test
+        run: |
+          export PLAYWRIGHT_PATH="$RUNNER_TEMP/pw/node_modules/playwright"
+          export CHROMIUM="$(node -e "console.log(require(process.env.PLAYWRIGHT_PATH).chromium.executablePath())")"
+          node test/unit_extension.cjs > out.txt 2>&1 || { cat out.txt; exit 1; }
+          cat out.txt; grep -q '^(skipped' out.txt && exit 1; grep -q '^FAIL' out.txt && exit 1; true
