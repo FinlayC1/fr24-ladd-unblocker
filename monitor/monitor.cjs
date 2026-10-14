@@ -58,6 +58,9 @@ const { createTracks } = require('./tracks.cjs');
 const tel = createTel({ max: CFG.telMax });
 // (every blocked aircraft's track, 90 days: playback named from it - tracks.cjs)
 const tracks = createTracks({ store: STORE, keepDays: CFG.trackDays, log: (...a) => log('tracks', ...a) });
+// (what public ADS-B lacks where no radar asks for it - airspeeds, Mach, wind, temperature - from a weather model: wx.cjs)
+const { createWx } = require('./wx.cjs');
+const wx = createWx(Object.assign({ fetch: (u, o) => global.fetch(u, o) }, CFG.wx || {}));
 const { createRegistry } = require(fs.existsSync(path.join(DIR, 'registry.js')) ? path.join(DIR, 'registry.js') : '../src/registry.js');
 const log = (...a) => console.log(new Date().toISOString().slice(0, 19), ...a);
 
@@ -814,14 +817,14 @@ async function nearAnswer(lat, lon, rKm) {
     out.push({ hex: c.nonIcao ? '~' + c.hex : c.hex, r: c.reg || undefined, t: c.type || undefined, flight: c.cs || undefined, lat: c.lat, lon: c.lon, alt_baro: c.gnd ? 'ground' : c.alt, gs: c.gs, track: c.trk, seen_pos: Math.max(0, Math.round(nowS - c.t)), dbFlags: (c.ladd ? 8 : 0) | (c.pia ? 4 : 0) | (c.mil ? 1 : 0) });
     if (out.length >= 2000) break;
   }
-  return { v: 1, now: t, looked, ac: out };
+  return { v: 1, now: t, looked, ac: out.map(r => wx.fill(r, nowS)) };
 }
 // /tel: the newest report of these addresses (a panel just opened); one this side has nothing fresh of, with where FR24
 // draws it: looked up there first (the same budget)
 async function telAnswer(hexes, lat, lon) {
   let nowS = Date.now() / 1000;
   if (hexes.some(h => !tel.has(h, nowS)) && isFinite(lat) && isFinite(lon) && Math.abs(lat) <= 85 && Math.abs(lon) <= 180) { await nearLookup(lat, lon, 120); nowS = Date.now() / 1000; }
-  return { v: 1, now: Math.round(nowS * 1000), ac: tel.get(hexes, nowS) };
+  return { v: 1, now: Math.round(nowS * 1000), ac: tel.get(hexes, nowS).map(r => wx.fill(r, nowS)) };
 }
 function saveIdent() { fs.mkdirSync(STORE, { recursive: true }); const f = path.join(STORE, 'ident.json'); fs.writeFileSync(f + '.tmp', JSON.stringify(ident.dump())); fs.renameSync(f + '.tmp', f); }
 function loadIdent(nowMs) { try { return ident.restore(JSON.parse(fs.readFileSync(path.join(STORE, 'ident.json'), 'utf8')), nowMs); } catch (e) { return 0; } }
@@ -1045,6 +1048,7 @@ function monStatus() {
     fr24: { scanning: !!CFG.fr24Scan, headersFrom: fr24.st.hdr ? 'browser' : 'default', ok: fr24.st.ok, fails: fr24.st.fails, lastErr: fr24.st.lastErr, lastOkAgo: fr24.st.lastOkAt ? Math.round((now - fr24.st.lastOkAt) / 1000) : null, paused: fr24.st.pauseUntil > now ? Math.round((fr24.st.pauseUntil - now) / 1000) : 0, scans: F24.scans, last: F24.last,
       flights: ident.flights.size, named: ident.ids.size, unnamed: [...ident.flights.values()].filter(F => !ident.ids.has(F.id) && now - F.seen < 600000).length, matched: ident.stats.matched, revoked: ident.stats.revoked, lookups: ident.stats.lookups, trails: ident.stats.trails, trailQueue: ident.trailQ.length, dest: dest.stats, logged: F24.logged,
       archive: { names: names.size, added: names.stats.added, withdrawn: names.stats.dropped, servedToPlayback: names.stats.served }, crowd: { public: PUBLIC, refused: ident.stats.crowdRefused || 0, waiting: ident.stats.crowdPending || 0 } },
+    wx: { cells: wx.stats.cells, requests: wx.stats.requests, today: wx.stats.used, fails: wx.stats.fails, lastErr: wx.stats.lastErr, estimated: wx.stats.estimated, waiting: wx.want.size },
     tel: { aircraft: tel.size, added: tel.stats.added, fromBrowsers: tel.stats.crowd || 0, refused: tel.stats.crowdBad || 0, served: tel.stats.served, asked: tel.stats.asked, missed: tel.stats.missed },
     owners: owners.status(),
     areas: CFG.areas.concat(userAreas).map(a => a.slice(0, 2)), paused: Object.fromEntries(Object.entries(pause).filter(([, t]) => t > now).map(([h, t]) => [h, Math.round((t - now) / 1000)])) };
@@ -1161,6 +1165,7 @@ if (require.main === module) {
   // (every blocked aircraft's owner not known yet: looked up, fifteen a minute at most, those flying now first)
   for (const [hex, b] of blocked) owners.want(hex, b.reg);
   ownersLoop();
+  setInterval(() => { wx.pump().catch(e => log('wx', String(e))); }, 2000);
 }
-module.exports = { tracks, pbMatch, learnedBuild, learnedDue, learnedLoad, learnedRef: () => learnedOut, liveBusy, backWaits, E, CFG, loadEngine, ingest, buildLegs, fr24Legs, fr24Leg, F24ref: () => F24, owners, ownersLoop, APT, legRunways, names, nearAnswer, telAnswer, tel, pbNames, PUBLIC, RATE, limited, wakeQuiet, parkedAt, boardLegs, flightsOfCs, lastHeard, legs, ac, backfillOne, backQ, blocked, markBlocked, seed, gapFill, addArea, userAreas,
+module.exports = { tracks, pbMatch, learnedBuild, learnedDue, learnedLoad, learnedRef: () => learnedOut, liveBusy, backWaits, E, CFG, loadEngine, ingest, buildLegs, fr24Legs, fr24Leg, F24ref: () => F24, owners, ownersLoop, APT, legRunways, names, nearAnswer, telAnswer, tel, wx, pbNames, PUBLIC, RATE, limited, wakeQuiet, parkedAt, boardLegs, flightsOfCs, lastHeard, legs, ac, backfillOne, backQ, blocked, markBlocked, seed, gapFill, addArea, userAreas,
   serve, fr24, ident, dest, F24, report, identRound, fr24Round, saveIdent, loadIdent, histUnknown, learnSince, learnWrite, diskLegs, KEEP_LADD, save, loadStore, dirtyDays, pollOpenSky, adsbxUse, live, liveList, answer, step, P, piaState, apiGet, gate, stats, lastOk, noteWatch, watch, watchedAll, flew, closeDays, histQ, histPend, histOne, histDay, histOf, histRead, nextHist, saveState, loadState, lastW, get closed() { return closed; }, set closed(v) { closed = v; }, pause };

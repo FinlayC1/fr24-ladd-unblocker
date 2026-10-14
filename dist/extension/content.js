@@ -5335,7 +5335,13 @@ const GM_xmlhttpRequest = (() => {
   const areaCache = new Map();   // hex -> newest normalized record
   const seenAt = c => c.receivedAt - (c.ageS || 0) * 1000;
   function noteCands(list) {
-    for (const c of list || []) { if (!c || !c.hex) continue; const p = areaCache.get(c.hex); if (!p || seenAt(c) >= seenAt(p)) areaCache.set(c.hex, c); noteLastSeen(c); }
+    for (const c of list || []) {
+      if (!c || !c.hex) continue; const p = areaCache.get(c.hex);
+      // (a report without the airspeeds, Mach, wind and temperature - the networks send them only now and then, and over
+      // the US not at all: the monitor's figures, its own or worked out from the weather model, kept two minutes)
+      if (p && !c.gnd && !fin(c.tas) && !fin(c.ias) && fin(p.tas) && seenAt(c) >= seenAt(p) && seenAt(c) - seenAt(p) < 120000) for (const k of ['ias', 'tas', 'mach', 'oat', 'wd', 'ws']) if (!fin(c[k]) && fin(p[k])) c[k] = p[k];
+      if (!p || seenAt(c) >= seenAt(p)) areaCache.set(c.hex, c); noteLastSeen(c);
+    }
     if (areaCache.size > 12000) { const cut = now() - 10 * 60000; for (const [k, v] of areaCache) if (v.receivedAt < cut) areaCache.delete(k); }
     refreshCallsigns(list);
   }
