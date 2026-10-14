@@ -20,9 +20,16 @@ process.env.MON_TOKEN = 'owner-secret';
 process.env.MON_RATE = '40';
 delete process.env.MON_PUBLIC;
 // (adsb.fi's area answers, made up here: counted)
-let fiAsked = 0;
+let fiAsked = 0, wxAsked = 0;
 global.fetch = async url => {
   if (/opendata\.adsb\.fi\/api\/v3\/lat\//.test(url)) { fiAsked++; return { status: 200, text: async () => JSON.stringify({ now: Date.now(), aircraft: [{ hex: '4ca9e1', r: 'EI-NEAR', t: 'C56X', lat: 53.5, lon: -6.3, alt_baro: 5000, gs: 200, track: 270, seen_pos: 1 }, { hex: '424b5e', r: 'M-HERI', t: 'GLF5', dbFlags: 8, lat: 50.12, lon: 0.70, alt_baro: 31500, alt_geom: 32150, gs: 504, track: 150.6, baro_rate: -64, squawk: '4521', ias: 281, tas: 452, mach: 0.784, oat: -47, wd: 268, ws: 61, nav_altitude_mcp: 31008, seen_pos: 0 }] }) }; }
+  // (Open-Meteo's GFS, made up: a 100 kt westerly at every level, the standard atmosphere's temperatures)
+  if (/api\.open-meteo\.com\/v1\/gfs/.test(url)) {
+    wxAsked++; const q = new URL(url), n = q.searchParams.get('latitude').split(',').length, t0 = Math.floor(Date.now() / 3600e3) * 3600, time = Array.from({ length: 48 }, (_, i) => t0 - 3600 + i * 3600), h = { time };
+    for (const [p, T] of [[850, 5], [700, -5], [600, -12], [500, -21], [400, -32], [300, -45], [250, -52], [200, -56.5], [150, -56.5]]) { h[`temperature_${p}hPa`] = time.map(() => T); h[`wind_speed_${p}hPa`] = time.map(() => 100); h[`wind_direction_${p}hPa`] = time.map(() => 270); }
+    const one = { latitude: 0, longitude: 0, hourly: h };
+    return { status: 200, text: async () => JSON.stringify(n > 1 ? Array.from({ length: n }, () => one) : one) };
+  }
   return { status: 404, text: async () => '' };
 };
 const M = require('../monitor/monitor.cjs');
@@ -171,6 +178,19 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     const bad = await req('POST', '/report', { ip: '192.0.2.74', body: { pbIds: [[0, hexL, '', '', '', 0, t0], [880003, 'nothex', '', '', '', 0, t0], [880004, hexL, '', '', '', 0, nS + 86400]] } });
     check('... nonsense refused (no flight id, no address, a moment in the future)', bad.body.pbNamed === 0);
     M.legs.delete(hexL); }
+  // ---- what public ADS-B lacks over the US: airspeeds, Mach, wind and temperature from the weather model
+  { const nS = Date.now() / 1000;
+    M.tel.add([{ hex: '407c02', flight: 'JCO55', r: 'G-VTLY', t: 'GLEX', lat: 44.04, lon: -98.04, alt_baro: 41000, alt_geom: 42575, gs: 595.6, track: 57.27, geom_rate: -64, squawk: '2027', seen_pos: 1 },
+      { hex: '4ca0e5', lat: 53.4, lon: -6.2, alt_baro: 37000, gs: 450, track: 90, ias: 260, tas: 455, mach: 0.79, oat: -50, wd: 250, ws: 40, seen_pos: 1 },
+      { hex: '4ca0e6', lat: 53.4, lon: -6.3, alt_baro: 2500, gs: 140, track: 280, seen_pos: 1 }], nS);
+    const before = (await req('GET', '/tel?hex=407c02')).body.ac[0];
+    check('an aircraft over the US with no airspeeds from any receiver: its weather cell asked for, nothing made up meanwhile', !('tas' in before) && M.wx.want.size >= 1 && before.gs === 595.6, before);
+    const got = await M.wx.pump(Date.now());
+    const a = (await req('GET', '/tel?hex=407c02,4ca0e5,4ca0e6')).body.ac, us = a.find(r => r.hex === '407c02'), eu = a.find(r => r.hex === '4ca0e5'), low = a.find(r => r.hex === '4ca0e6');
+    // (ground 595.6 kt on 057, wind 100 kt from 270: through the air 514 kt; -56.5 C at FL410: Mach 0.896)
+    check('... once the model is in: true airspeed (ground speed less the wind), Mach, indicated airspeed, wind and temperature, marked estimated', got >= 1 && wxAsked === 1 && Math.abs(us.tas - 514) <= 2 && Math.abs(us.mach - 0.896) <= 0.004 && us.ias > 230 && us.ias < 280 && us.oat === -56 && us.wd === 270 && us.ws === 100 && us.wx === 1, us);
+    check('... an aircraft\'s own figures (Europe) never replaced; nothing worked out low down', eu.tas === 455 && eu.ias === 260 && !eu.wx && !('tas' in low), { eu, low });
+    check('/status: the weather cells and the figures worked out counted', (await req('GET', '/status')).body.wx.cells >= 1 && M.wx.stats.estimated >= 1); }
   // ---- the boards: no "flight" back where it took off that never flew (a taxi with the transponder saying "airborne")
   { const lpl = M.E.byIcao('EGGP'), blk = M.E.byIcao('EGNH'), t = Math.round(Date.now() / 1000) - 7200, put = (hex, type, legs) => { const m = new Map(); for (const l of legs) m.set(Math.round(l.tStart / 600), Object.assign({ hex, type, reg: '', cs: '', ended: true, open: false }, l)); M.legs.set(hex, m); };
     put('4ca7b1', 'B738', [{ from: { id: lpl.id, conf: 'ground' }, to: { id: lpl.id, conf: 'ground' }, tStart: t, tOff: t + 60, tOn: t + 200, tEnd: t + 260, maxAlt: 300, pathKm: 3 }]);

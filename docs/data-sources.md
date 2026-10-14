@@ -38,6 +38,7 @@ Automated reading of FR24's feed is the part of the project that FR24's terms ar
 | Source | Used for | Licence |
 |---|---|---|
 | OurAirports (`davidmegginson/ourairports-data`) | Airfields, heliports, seaplane bases, runways (each end in full), radio frequencies (`monitor/mkdata.cjs`) | Public domain |
+| Open-Meteo GFS API (`api.open-meteo.com`, NOAA's GFS model) | Wind and temperature on nine pressure levels, for 5-degree cells where aircraft fly without Mode S EHS (most of the US, the oceans): the monitor works out true and indicated airspeed, Mach, wind and temperature from them (`monitor/wx.cjs`). Each cell every 12 hours, at most 7,000 weighted calls a day (the free tier's limit is 10,000) | Free, non-commercial; CC BY 4.0 |
 | tar1090-db (`wiedehopf/tar1090-db`) | ICAO type designators, aircraft classes | See the repository's licence (used as a lookup table) |
 | FAA aircraft register (MASTER / DEREG) | Build-year table by type and serial (`src/agetable.json`), US owner names | Public domain (US government) |
 | Isle of Man, UK CAA G-INFO, Swiss FOCA (BAZL) registers | Owner names | Public registers |

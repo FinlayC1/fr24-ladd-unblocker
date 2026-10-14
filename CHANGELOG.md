@@ -2,6 +2,15 @@
 
 All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PATCH`. The userscript and the monitor are released together.
 
+## [22.22.1] - 2026-10-14
+
+### Added
+- **Airspeeds, Mach, wind and temperature over the US and the oceans.** Public ADS-B has them only where radars ask aircraft for them (Mode S EHS: Europe), so over the US those fields stayed "N/A" (JCO55 over South Dakota). The monitor now works them out (`monitor/wx.cjs`):
+  - wind and temperature at the aircraft's height come from NOAA's GFS weather model, via Open-Meteo (CC BY 4.0), for 5-degree cells where such aircraft fly, refreshed every 12 hours;
+  - true airspeed is the ground speed less the wind, then Mach, indicated airspeed, wind and temperature follow from it.
+  - These are estimates, typically within about 10 kt and 2 °C. An aircraft's own figures always win.
+- The browser keeps the monitor's airspeed figures for two minutes when its own newer poll has none, instead of blanking them every other poll.
+
 ## [22.22.0] - 2026-10-14
 
 Every copy now shares one monitor, padlocks are gone, and airport boards no longer invent flights.

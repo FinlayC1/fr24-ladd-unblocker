@@ -84,6 +84,16 @@ const send = (w, data) => w.dispatchEvent(new w.MessageEvent('message', { data, 
   check('the shared monitor is never given FR24\'s device id of this browser (only a monitor of the user\'s own, with its secret)', reports.length > 0 && !reports.some(r => r.hdr || r.ua), reports.map(r => Object.keys(r)));
   check('a name found in a playback: reported to the monitor, then let go here', reports.some(r => Array.isArray(r.pbIds) && r.pbIds.some(x => x[0] === pbRow[0] && x[1] === '4ca777')) && !L.pbOut.has(pbRow[0]), reports.map(r => Object.keys(r)));
 
+  // ---- the monitor's airspeeds (worked out from the weather model over the US) kept when this browser's own poll of
+  // adsb.lol, a few seconds newer, has none - not blanked every other poll
+  { const t = Date.now(), m = L.normalizeReadsb({ hex: '407c02', flight: 'JCO55', lat: 44.04, lon: -98.04, alt_baro: 41000, gs: 595, track: 57, tas: 514, ias: 269, mach: 0.897, oat: -56, wd: 270, ws: 100, seen_pos: 3 }, 'monitor', t);
+    const own = L.normalizeReadsb({ hex: '407c02', flight: 'JCO55', lat: 44.05, lon: -98.02, alt_baro: 41000, gs: 596, track: 57, seen_pos: 0 }, 'adsb.lol', t);
+    L.noteCands([m]); L.noteCands([own]);
+    const c = L.areaCache.get('407c02');
+    check('the monitor\'s airspeeds, Mach, wind and temperature kept through this browser\'s own newer poll that has none', c === own && c.tas === 514 && c.ias === 269 && c.mach === 0.897 && c.oat === -56 && c.wd === 270 && c.ws === 100 && c.gs === 596, { tas: c.tas, gs: c.gs });
+    const later = L.normalizeReadsb({ hex: '407c02', lat: 44.3, lon: -97.5, alt_baro: 41000, gs: 596, track: 57, seen_pos: 0 }, 'adsb.lol', t + 180000);
+    L.noteCands([later]);
+    check('... for two minutes at most (never figures gone stale)', !Number.isFinite(L.areaCache.get('407c02').tas)); }
   // ---- an ordinary aircraft clicked: both asked, the first answer drawn
   for (const k of Object.keys(hits)) hits[k] = 0; posted.length = 0;
   const id = 0x3c00aa01, t0 = Date.now();

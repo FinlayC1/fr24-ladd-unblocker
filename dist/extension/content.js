@@ -41,7 +41,7 @@ const GM_xmlhttpRequest = (() => {
 // ==UserScript==
 // @name         Flightradar24 LADD / N-A Unblocker (feed-level)
 // @namespace    tweeks.io
-// @version      22.22.0
+// @version      22.22.1
 // @description  Identifies every LADD / N/A / blocked military aircraft on Flightradar24 from public ADS-B, and injects callsign, registration, operator, age, country, MSN, squawk, vertical speed, GPS altitude, airspeeds, wind, photos, a reasoned origin/destination with a wind-corrected ETA (also for ordinary flights FR24 shows as N/A - military, private, GA, helicopters, with private landing sites; learned from 63 days of every aircraft worldwide, with live weather and closures), airport-board entries and a rebuilt 7-month flight log straight into FR24's own data - so it all renders like normal FR24 traffic.
 // @author       Finlay Clarke
 // @match        https://www.flightradar24.com/*
@@ -128,7 +128,7 @@ const GM_xmlhttpRequest = (() => {
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "22.22.0";
+    var BRIDGE_V = "22.22.1";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
 
     var resolved = new Map();     // fr24 flight id -> identity record (incl. photos)
@@ -4636,7 +4636,7 @@ const GM_xmlhttpRequest = (() => {
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '22.22.0';
+  const VERSION = '22.22.1';
   const NM_KM = 1.852;
   const AREA_RADIUS_NM = 220;           // aggregator "point" radius for viewport sweeps (APIs cap at 250)
   const TARGET_RADIUS_NM = 40;          // radius for the immediate lookup of the selected aircraft
@@ -5246,7 +5246,13 @@ const GM_xmlhttpRequest = (() => {
   const areaCache = new Map();   // hex -> newest normalized record
   const seenAt = c => c.receivedAt - (c.ageS || 0) * 1000;
   function noteCands(list) {
-    for (const c of list || []) { if (!c || !c.hex) continue; const p = areaCache.get(c.hex); if (!p || seenAt(c) >= seenAt(p)) areaCache.set(c.hex, c); noteLastSeen(c); }
+    for (const c of list || []) {
+      if (!c || !c.hex) continue; const p = areaCache.get(c.hex);
+      // (a report without the airspeeds, Mach, wind and temperature - the networks send them only now and then, and over
+      // the US not at all: the monitor's figures, its own or worked out from the weather model, kept two minutes)
+      if (p && !c.gnd && !fin(c.tas) && !fin(c.ias) && fin(p.tas) && seenAt(c) >= seenAt(p) && seenAt(c) - seenAt(p) < 120000) for (const k of ['ias', 'tas', 'mach', 'oat', 'wd', 'ws']) if (!fin(c[k]) && fin(p[k])) c[k] = p[k];
+      if (!p || seenAt(c) >= seenAt(p)) areaCache.set(c.hex, c); noteLastSeen(c);
+    }
     if (areaCache.size > 12000) { const cut = now() - 10 * 60000; for (const [k, v] of areaCache) if (v.receivedAt < cut) areaCache.delete(k); }
     refreshCallsigns(list);
   }

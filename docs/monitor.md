@@ -7,6 +7,7 @@
 - **A permanent log.** Every blocked aircraft's take-offs and landings are kept for good, including flights only FR24 sees. The log feeds airport boards anywhere in the world and the browsers' destination engine (`/learn`).
 - **Owners and operators.** Each blocked aircraft's owner is looked up once and kept (`owners.cjs`).
 - **Airports.** It serves every runway in full, the radio frequencies, and which runways the flights it tracked used (`airport.cjs`).
+- **Airspeeds where no radar asks for them.** Over most of the US and the oceans no receiver hears an aircraft's airspeeds, Mach, wind or temperature (Mode S EHS is asked for by European radars, not American ones). The monitor works them out from NOAA's GFS weather model (`wx.cjs`, via Open-Meteo) and the aircraft's own ground speed, track and height, as estimates marked `wx: 1`; real figures always win.
 - **The figures FR24 padlocks, for any aircraft.** It keeps the newest public ADS-B report of every aircraft it hears (`tel.cjs`): vertical speed, GPS altitude, airspeeds, Mach, wind, temperature, squawk. A browser asks it for the aircraft just clicked (`/tel`) and for its map every other time (`/near`). It then asks the networks itself only half as often, and what each browser fetched is shared with the rest.
 - **Shared by every copy.** A monitor is public by default: every copy of the script connects to the project's shared monitor unless its user points it elsewhere or turns it off. Reading needs no secret. Reports from strangers are checked (see [Public mode](#public-mode)), and the owner's secret still opens everything.
 
@@ -34,7 +35,8 @@ It answers the browsers over a small HTTP API. How it fits into the whole is des
 - Outbound HTTPS to:
   - ADS-B: `api.adsb.lol`, `adsb.lol`, `opendata.adsb.fi`, `opensky-network.org`, `globe.airplanes.live` (and `adsbexchange-com1.p.rapidapi.com` if a key is set);
   - FR24: `data-feed.flightradar24.com`;
-  - owner lookups: `hexdb.io`, `api.adsbdb.com`, `registry.faa.gov`, `ginfoapi.caa.co.uk`, `ardis.iomaircraftregistry.com`, `app02.bazl.admin.ch`.
+  - owner lookups: `hexdb.io`, `api.adsbdb.com`, `registry.faa.gov`, `ginfoapi.caa.co.uk`, `ardis.iomaircraftregistry.com`, `app02.bazl.admin.ch`;
+  - weather aloft: `api.open-meteo.com`.
 
 ## Running it
 
@@ -90,6 +92,7 @@ Any of these can be overridden in a `monitor.json` next to `monitor.cjs` (the fi
 | `crowdNeed` | `2` | How many different browsers must send the same name or owner before a public monitor takes it, when it cannot check it itself |
 | `nearPerMin` | `30` | adsb.fi lookups a minute for places the monitor has heard little of, for all browsers together (one per 1-degree cell a minute) |
 | `telMax` | `30000` | Aircraft whose newest report is held for the padlocked figures |
+| `wx` | `{}` | The weather model for estimated airspeeds (`wx.cjs`): `cellDeg` (`5`), `everyS` (seconds between refreshes of a cell, `43200`), `batch` (cells a request, `40`), `gapMs` (`6000`), `dayCap` (weighted calls a day, `7000`) |
 
 For example, to poll more gently, create `monitor/monitor.json` containing `{ "apiPerMin": 12, "piaEvery": 600 }` and restart the service.
 
