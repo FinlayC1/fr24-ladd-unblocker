@@ -151,6 +151,26 @@ const send = (w, data) => w.dispatchEvent(new w.MessageEvent('message', { data, 
   check('... kept while it answers (the one in use asked first)', L.monUp() && L.monBase === STANDBY, L.monBase);
   refuse.mon = false; L.MON_DEFAULTS.pop(); await L.monCheck(true).catch(() => null);
   check('... and the first again when the list has only it', L.monUp() && L.monBase === MON, L.monBase);
+  // ---- G-EZWZ, an easyJet on the stand at Liverpool (15 Oct): taken over while FR24's feed had no callsign for it - FR24
+  // names it itself (its own registration in the feed): let go at once, the page told, never taken over again when opened
+  { const id = 0x3c1a0101, rec = { id, hex: '406c72', reg: 'G-EZWZ', type: 'A320', cs: 'GEZWZ', src: 'adsb.lol', matchedAt: Date.now(), verifiedAt: Date.now() };
+    L.live.set(id, rec); L.store.setId(id, rec); posted.length = 0;
+    send(w, { __tweeksLadd: 'feed', flights: [], na: [], named: [id], at: Date.now() });
+    await sleep(50);
+    check('an aircraft FR24 names itself, taken over before: let go (the record and the one kept), the page told', !L.live.has(id) && !L.store.getId(id) && L.fr24Named.has(id) && posted.some(d => d && d.__tweeksLadd === 'revoke' && (d.ids || []).includes(id)));
+    L.store.setId(id, rec); send(w, { __tweeksLadd: 'follow', id }); await sleep(50);
+    check('... opened in the panel later (a record of it still kept from before): not taken over again', !L.live.has(id));
+    L.store.delId(id);
+    // (and open in the panel when it is let go: what was drawn of ours goes, and FR24's panel - its callsign "N/A" - is
+    // not taken for a blocked flight's to name it again)
+    const id2 = 0x3c1a0102, rec2 = Object.assign({}, rec, { id: id2 });
+    L.live.set(id2, rec2); L.store.setId(id2, rec2); send(w, { __tweeksLadd: 'follow', id: id2 }); await sleep(30);
+    w.document.body.insertAdjacentHTML('beforeend', '<aside data-testid="aircraft-panel"><main><div class="first"><span data-testid="aircraft-panel__header__callsign">N/A</span></div><div class="grid"><p data-testid="aircraft-panel__hex">N/A</p><p data-testid="aircraft-panel__lat">53.3337</p><p data-testid="aircraft-panel__lng">-2.8497</p></div></main></aside>');
+    const drawn = !!(await until(() => { L.syncPanel(); return w.document.querySelector('[data-testid="aircraft-panel"] .tl-strip'); }, 3000));
+    send(w, { __tweeksLadd: 'feed', flights: [], na: [], named: [id2], at: Date.now() }); L.syncPanel(); await sleep(400); L.syncPanel();
+    check('... let go while open in the panel: our strip gone, not named again', drawn && !w.document.querySelector('[data-testid="aircraft-panel"] .tl-strip') && !L.live.has(id2) && !L.pending.has(id2), { drawn, strip: !!w.document.querySelector('[data-testid="aircraft-panel"] .tl-strip'), live: L.live.has(id2), pending: L.pending.has(id2) });
+    w.document.querySelector('[data-testid="aircraft-panel"]').remove();
+  }
   console.log(fails ? `\n${fails} failed` : '\nall passed');
   process.exit(fails ? 1 : 0);
 })().catch(e => { console.log('FAIL  harness error ' + (e && e.stack || e)); process.exit(1); });

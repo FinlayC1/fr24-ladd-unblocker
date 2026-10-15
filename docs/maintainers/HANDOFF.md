@@ -133,6 +133,25 @@ Its store and state should move to the VM.
   the registers' live answers (their formats as the browser's code already read them), FR24's acceptance of the
   server's scan.
 
+## 4f. 22.24.0 (15 Oct, cloud session) - built and tested offline; deploy with deploy.sh
+
+- **Playback.** Heatmap race beside `/pbmatch` (`06-playback.js`), `heatMatch` indexed by cell, Mach/OAT derived, the
+  registers' cells filled as they answer (`pbPanelTick`).
+- **Climb-outs are not landings.** Engine `climbingAt`/`descendingAt`: no `finalTo`, `endpoint` or "airport ahead" end
+  for a leg last heard climbing; no take-off field for an airliner first heard descending. `summarizeLeg` marks its
+  result `endRules: 2`. `climbedOut(leg, cls)` flags a kept leg made before (with `endAlt`: lost within 15 min of the
+  take-off at its highest; monitor form without `endAlt`: not LADD, within 10 min, 2,000 ft up). Applied in
+  `boardNoteLegs` (the `to` dropped, a drop row at the old field). The monitor's legs now carry `endAlt`, `how`,
+  `endRules` - until deploy.sh runs, its non-LADD legs are caught by the monitor-form rule in the browser.
+- **Board rows.** `fakeRow` in `06-boards.js` (`boardMerge`, `boardScrub`): an airline-callsign airliner's `log`/`live`
+  row with no other end (`log`), the same field, or a field within 80 km without `gc` (seen on the ground). `naRouteOf`
+  never routes such a jet within 80 km of where it left. `boardNoteLegs` learns no site for an unknown end unless the
+  jet was heard low.
+- **Remove ads.** `hideAd` in page.js, by the button's text ("Remove ads"), climbing while the box holds nothing else,
+  plus an advert slot beside it; in the mutation observer, so before paint. FR24's markup was not available here.
+- **FR24-named flights.** `patchFlight`: a flight with a registration is never reported as blocked; `named` ids go to
+  the userscript (`noteFr24Named`: let go, `revokedIds`, never re-adopted from the store). Same rule as `ident.cjs`.
+
 ## 4e. 22.23.0 (14 Oct, cloud session) - built and tested offline; deploy after the move to the Ampere VM
 
 - **Tracks.** `monitor/tracks.cjs` (`createTracks`): `put` from `buildLegs` (blocked rows past `x.trkAt`), `histDay`,

@@ -51,7 +51,8 @@ npm run test:all       # also the live end-to-end runs (normal and Tampermonkey-
 | `unit_store` | The permanent log (old days only added to, boards from disk), `/learn`, flights only FR24 sees, runways used, `/airport`, owners on the monitor, the names table's LADD flag | – |
 | `unit_registry` | Every register's answer read (FAA, G-INFO, Isle of Man, FOCA, hexdb, adsbdb), the monitor's owner store (pace, refusals, browsers' findings, kept across restarts) | – |
 | `unit_monlive` | Built userscript with a shared monitor: only that monitor asked, `/live` as the list, the names table, positions, `/learn`, owners asked of the monitor first, the LADD flag, fallbacks, `/hist` logs identical to the browser's own | – |
-| `unit_panel` | Built userscript on an FR24-shaped airport panel: *Latest events* and the coverage plea removed, movements per day, runway usage, runways in full, frequencies | – |
+| `unit_panel` | Built userscript on an FR24-shaped airport panel: *Latest events* and the coverage plea removed before they are drawn, movements per day, runway usage, runways in full, frequencies | – |
+| `unit_playback` | Built userscript on FR24's playback (M-ARNZ, 9 Oct): the heatmap fetched with the first frame beside a monitor that never answers, names before the track arrives, the file kept on disk, Mach and temperature from the track, the panel's padlocked country, serial number and age | – |
 | `unit_extension` | The built extension in a real Chromium: service worker, both worlds, requests through the worker | – (needs Playwright and Chromium; skipped without them) |
 | `unit_new` | Built userscript: playback, airline/airport lists, boards, sites, routes page | FR24 |
 | `panels1`, `panels2` | Reported panels replayed through the built script | FR24, adsb.lol |

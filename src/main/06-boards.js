@@ -44,6 +44,7 @@
   // saying "airborne", its take-off never seen: Liverpool's arrivals were full of "Liverpool -> Liverpool, landed")
   function boardScrub(apId, b) {
     let n = 0;
+    for (const [m, kind] of [[b.arr, 'arrivals'], [b.dep, 'departures']]) for (const k of Object.keys(m)) if (fakeRow(m[k], apId, kind)) { delete m[k]; n++; }
     for (const k of Object.keys(b.arr)) {
       const r = b.arr[k]; if (!r || r.drop || r.ap !== apId || !(r.src === 'live' || r.src === 'log')) continue;
       const d = b.dep[k], light = /^(piston|heli|fighter)$/.test(ENGINE.classify({ hex: r.hex || '', type: r.ty || '', reg: r.reg || '', cs: r.cs || '' }));
@@ -53,9 +54,28 @@
     if (n) b.dirty = true;
     return n;
   }
+  // A row of our own ('log': rebuilt from a flight log; 'live': a flight followed as it flew) of an airliner flying an
+  // airline's number - a flight FR24 shows and schedules itself - that is not one: an end unknown (one "N/A" end says
+  // nothing FR24's own row does not, and stands beside it as a second, made-up flight - 'log' rows), back at the field it
+  // left, or at a field close by, its landing there not seen on the ground: a climb-out given a landing at the field below
+  // or ahead of it - easyJets out of Gatwick "landed at Biggin Hill", Ryanairs and a Qatar 787 out of Manchester "to
+  // Manchester" and "to Liverpool". (gc: its landing was seen on the ground)
+  const airlineCs = cs => /^[A-Z]{3}\d/.test(String(cs || '').toUpperCase());
+  function fakeRow(r, apId, kind) {
+    if (!r || !(r.src === 'log' || r.src === 'live') || r.drop || !airlineCs(r.cs)) return false;
+    const hx = (r.hex && store.getHex(r.hex)) || {};
+    if (hx.ladd || hx.fr24Blocked || hx.pia || hx.mil || ENGINE.classify({ hex: r.hex || '', type: r.ty || hx.type || '', reg: r.reg || '', cs: r.cs }) !== 'airliner') return false;
+    if (!r.ap) return r.src === 'log';
+    if (r.ap === apId) return true;
+    if (r.gc) return false;
+    const a = apById(r.ap), h = apById(apId);
+    return !!a && !!h && ENGINE.dist(a.lat, a.lon, h.lat, h.lon) <= 80;
+  }
   // one flight's row: what a better source says wins, what it lacks is kept from the other
-  function boardMerge(b, kind, row) {
+  function boardMerge(b, kind, row, apId) {
     const m = kind === 'arrivals' ? b.arr : b.dep, cur = m[row.k];
+    // (one of those: not kept - and an older build's row of the same flight goes)
+    if (fakeRow(row, apId, kind)) { if (cur && cur.src === row.src) { delete m[row.k]; b.dirty = true; } return; }
     if (cur && (BOARD_RANK[cur.src] || 0) > (BOARD_RANK[row.src] || 0)) { for (const f of ['reg', 'hex', 'ty', 'dsc', 'al', 'alId', 'ap', 'cs', 'fid']) if (!cur[f] && row[f]) cur[f] = row[f]; }
     else {
       m[row.k] = cur ? Object.assign({}, cur, Object.fromEntries(Object.entries(row).filter(([, v]) => v != null && v !== ''))) : row;
@@ -80,7 +100,7 @@
   // written to disk before that, or it would write over what is there)
   async function boardFresh(apId) {
     let b = await boardLoad(apId);
-    if (b.noDisk && store.mode() === 'idb') { const old = b; boardMem.delete(apId); b = await boardLoad(apId); for (const r of Object.values(old.arr)) boardMerge(b, 'arrivals', r); for (const r of Object.values(old.dep)) boardMerge(b, 'departures', r); }
+    if (b.noDisk && store.mode() === 'idb') { const old = b; boardMem.delete(apId); b = await boardLoad(apId); for (const r of Object.values(old.arr)) boardMerge(b, 'arrivals', r, apId); for (const r of Object.values(old.dep)) boardMerge(b, 'departures', r, apId); }
     return b;
   }
   function boardSave(apId, b) { boardPrune(b); b.savedAt = now(); if (!b.noDisk) { store.setBoard(apId, { v: BOARD_V, at: now(), arr: b.arr, dep: b.dep }); b.dirty = false; } }
@@ -96,7 +116,7 @@
     for (const apId of ids) {
       const rows = boardPend.get(apId); boardPend.delete(apId); if (!rows || !rows.length) continue;
       const b = await boardFresh(apId);
-      for (const [kind, row] of rows) boardMerge(b, kind, row);
+      for (const [kind, row] of rows) boardMerge(b, kind, row, apId);
       boardSoon(apId, b);
       await idleSlice();
     }
@@ -194,7 +214,7 @@
     const apId = Number(d.apId); if (!boardOk(apId)) return;
     boardAsked.set(apId, now());
     const b = await boardFresh(apId);
-    const rows = boardPend.get(apId); if (rows) { boardPend.delete(apId); for (const [kind, row] of rows) boardMerge(b, kind, row); boardSave(apId, b); }
+    const rows = boardPend.get(apId); if (rows) { boardPend.delete(apId); for (const [kind, row] of rows) boardMerge(b, kind, row, apId); boardSave(apId, b); }
     boardSend(apId, b);
     // (the airline of each row is its callsign's: once FR24's airline list is in, the rows again)
     if (!fr24.airlines) fr24.loadAirlines().then(() => boardSend(apId, b)).catch(() => {});
@@ -226,8 +246,8 @@
     // (down away from FR24's airports - a strip, a private site: the landing place learned there)
     const ds = route.landed && !boardOk(to) ? (to && apById(to)) || route.destSite : null;
     const site = ds && fin(ds.lat) ? learnSite(ds.lat, ds.lon, { heli: ENGINE.classify({ type: who.ty }) === 'heli' }) : 0;
-    if (boardOk(from) && dep > 0 && route.originConf !== 'history') boardPut(from, 'departures', Object.assign({ k: 'f' + fid, src: 'live', drop: false, fid, cs, t: dep, sch: route.std || dep, est: dep, st: 'departed', col: 'green', ap: boardOk(to) && (route.landed || ['filed', 'confirmed', 'landed'].includes(route.destConf)) ? to : site }, who));
-    if (boardOk(to) && route.landed && route.ata > 0) boardPut(to, 'arrivals', Object.assign({ k: 'f' + fid, src: 'live', drop: false, fid, cs, t: route.ata, sch: route.sta || route.ata, est: route.ata, st: 'landed', col: 'green', ap: boardOk(from) ? from : 0 }, who));
+    if (boardOk(from) && dep > 0 && route.originConf !== 'history') boardPut(from, 'departures', Object.assign({ k: 'f' + fid, src: 'live', drop: false, fid, cs, t: dep, sch: route.std || dep, est: dep, st: 'departed', col: 'green', ap: boardOk(to) && (route.landed || ['filed', 'confirmed', 'landed'].includes(route.destConf)) ? to : site, gc: route.landed ? 1 : 0 }, who));
+    if (boardOk(to) && route.landed && route.ata > 0) boardPut(to, 'arrivals', Object.assign({ k: 'f' + fid, src: 'live', drop: false, fid, cs, t: route.ata, sch: route.sta || route.ata, est: route.ata, st: 'landed', col: 'green', ap: boardOk(from) ? from : 0, gc: 1 }, who));
   }
   // An aircraft's rebuilt log: its flights of the last three days, at both ends
   function boardNoteLegs(hex, legs, rec) {
@@ -236,9 +256,14 @@
     // (the other end when it is no airport of FR24's - a strip it does not list, a field, a pad - and the aircraft was
     // seen down there: the landing place learned there, by name, not "N/A")
     const placeOf = (id, la, lo2) => { const a = id ? apById(id) : null; return a ? learnSite(a.lat, a.lon, { heli }) : learnSite(la, lo2, { heli }); };
-    for (const l of legs) {
-      if (!l || !(l.tStart > lo)) continue;
-      const off = l.tOff || l.tStart, k = 'h' + hex + ':' + Math.round(off / 600), to = l.to && l.to.id;
+    for (const l0 of legs) {
+      if (!l0 || !(l0.tStart > lo)) continue;
+      const off = l0.tOff || l0.tStart, k = 'h' + hex + ':' + Math.round(off / 600);
+      // (a climb-out an older build - or the monitor's - gave a landing at the field below or ahead of it: no landing, and
+      // the row it made there goes)
+      let l = l0;
+      if (ENGINE.climbedOut(l0, cls)) { const on0 = l0.tOn || l0.tEnd; if (boardOk(l0.to.id) && on0) boardPut(l0.to.id, 'arrivals', { k, src: 'log', t: on0, drop: true }); l = Object.assign({}, l0, { to: null, tOn: null, ended: false }); }
+      const to = l.to && l.to.id;
       let from = l.from && l.from.id;
       // (no take-off seen, first heard within 10 km of where it landed: a local flight from there - not "N/A")
       const local = !from && !!to && fin(l.startLat) && (a => !!a && ENGINE.dist(l.startLat, l.startLon, a.lat, a.lon) < 10)(apById(to));
@@ -250,7 +275,10 @@
       // landing below coverage, G-BOIL at -125 ft, 49 kt beside its strip, was "N/A" all evening)
       const quietLow = !l.ended && !!to && /^(ground|low)$/.test(l.to.conf || '') && nowS() - (l.tEnd || 0) > 1200;
       const landed = !!to && (!!l.ended || quietLow), on = landed ? (l.tOn || l.tEnd) : 0;
-      const toSite = !boardOk(to) && (to ? landed : !!l.ended) ? placeOf(to, l.endLat, l.endLon) : 0;
+      // (an end not known at all: a landing place where it was last heard only when that was down low - a jet lost climbing
+      // away or at cruise came down somewhere else, not at a "private site" under where it was lost)
+      const downLow = /^(piston|heli|unknown)$/.test(cls) || l.how === 'ground' || l.how === 'touch' || (fin(l.endAlt) && l.endAlt < 1500);
+      const toSite = !boardOk(to) && (to ? landed : !!l.ended && downLow) ? placeOf(to, l.endLat, l.endLon) : 0;
       const fromSite = !boardOk(from) && l.startedOnGround ? placeOf(from, l.startLat, l.startLon) : 0;
       // (an end only guessed from the climb or the descent - "near" - is a board's row only when the aircraft was heard
       // within 30 km of that airport: HZ-AR27, first heard at FL170 80 km out on Manchester's departure, was put on
@@ -258,10 +286,10 @@
       const nearOk = (e, la, lo2) => !e || e.conf !== 'near' || (a => !!a && fin(la) && ENGINE.dist(la, lo2, a.lat, a.lon) <= 30)(apById(e.id));
       const fromOk = local || l.startedOnGround || (!!l.from && l.from.conf !== 'history' && nearOk(l.from, l.startLat, l.startLon));
       const toOk = (landed || !!toSite) && nearOk(l.to, l.endLat, l.endLon);
-      if (boardOk(from) && fromOk) boardPut(from, 'departures', Object.assign({ k, src: 'log', drop: false, cs: l.cs || '', t: off, sch: off, est: off, st: 'departed', col: 'green', ap: toOk ? (boardOk(to) ? to : toSite) : 0 }, who));
+      if (boardOk(from) && fromOk) boardPut(from, 'departures', Object.assign({ k, src: 'log', drop: false, cs: l.cs || '', t: off, sch: off, est: off, st: 'departed', col: 'green', ap: toOk ? (boardOk(to) ? to : toSite) : 0, gc: toOk && landed && l.to.conf === 'ground' ? 1 : 0 }, who));
       // (a row an older build kept from such a guess goes: HZ-AR27's on Liverpool's board)
       else if (boardOk(from) && l.from && l.from.conf === 'near') boardPut(from, 'departures', { k, src: 'log', t: off, drop: true });
-      if (boardOk(to) && toOk && on) boardPut(to, 'arrivals', Object.assign({ k, src: 'log', drop: false, cs: l.cs || '', t: on, sch: on, est: on, st: 'landed', col: 'green', ap: fromOk ? (boardOk(from) ? from : fromSite) : 0 }, who));
+      if (boardOk(to) && toOk && on) boardPut(to, 'arrivals', Object.assign({ k, src: 'log', drop: false, cs: l.cs || '', t: on, sch: on, est: on, st: 'landed', col: 'green', ap: fromOk ? (boardOk(from) ? from : fromSite) : 0, gc: l.to.conf === 'ground' ? 1 : 0 }, who));
       else if (boardOk(to) && landed && on && l.to.conf === 'near') boardPut(to, 'arrivals', { k, src: 'log', t: on, drop: true });
     }
   }

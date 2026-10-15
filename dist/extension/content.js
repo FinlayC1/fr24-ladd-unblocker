@@ -44,7 +44,7 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
 // ==UserScript==
 // @name         Flightradar24 LADD / N-A Unblocker (feed-level)
 // @namespace    tweeks.io
-// @version      22.23.0
+// @version      22.24.0
 // @description  Identifies every LADD / N/A / blocked military aircraft on Flightradar24 from public ADS-B, and injects callsign, registration, operator, age, country, MSN, squawk, vertical speed, GPS altitude, airspeeds, wind, photos, a reasoned origin/destination with a wind-corrected ETA (also for ordinary flights FR24 shows as N/A - military, private, GA, helicopters, with private landing sites; learned from 63 days of every aircraft worldwide, with live weather and closures), airport-board entries and a rebuilt 7-month flight log straight into FR24's own data - so it all renders like normal FR24 traffic.
 // @author       Finlay Clarke
 // @match        https://www.flightradar24.com/*
@@ -131,7 +131,7 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "22.23.0";
+    var BRIDGE_V = "22.24.0";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
 
     var resolved = new Map();     // fr24 flight id -> identity record (incl. photos)
@@ -146,6 +146,9 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
     var naRecs = new Map(), naRoutes = new Map();
     var recOf = function (id) { return resolved.get(id) || naRecs.get(id); }, routeOf = function (id) { return routes.get(id) || naRoutes.get(id); };
     var curNa = null;             // (while a LiveFeed answer is read: its N/A flights)
+    // Flights FR24 names itself - its own registration in its feed - that had been taken for blocked ones (no callsign: the
+    // transponder sends none, an easyJet on the stand after landing - G-EZWZ at Liverpool, 15 Oct): never drawn as ours
+    var fr24Named = new Set(), curNamed = null;
     var hist = new Map();         // registration -> { data: [flight list entries], at } for the "Recent <reg> flights" dropdown
     var histWait = new Map();     // registration -> [resolve callbacks] waiting for the userscript to supply history
     var photoCache = new Map();   // HEX -> { photos, at, err, final } - the pictures shown (from the userscript)
@@ -375,7 +378,9 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
       var id = idF.val, cs = strOf(fs, 11);
       var extraF = find(fs, 13), ex = extraF && extraF.wt === 2 ? parse(extraF.val) : [];
       var type = strOf(ex, 4), reg = strOf(ex, 2);
-      if (!cs) {
+      // (FR24's own registration for it: not blocked - one taken for blocked (no callsign) let go, here and by the userscript)
+      if (reg && (!cs || resolved.has(id))) { if (!fr24Named.has(id)) { fr24Named.add(id); if (fr24Named.size > 20000) fr24Named.delete(fr24Named.values().next().value); } if (resolved.has(id)) { resolved.delete(id); routes.delete(id); } if (curNamed && curNamed.length < 500) curNamed.push(id); }
+      if (!cs && !reg) {
         var rep = { id: id, lat: fltOf(fs, 2), lon: fltOf(fs, 3), trk: numOf(fs, 4), alt: numOf(fs, 5), spd: numOf(fs, 6), icon: numOf(fs, 7),
           ts: numOf(fs, 9), gnd: !!numOf(fs, 10), src: numOf(fs, 12), type: type, reg: reg, sel: !!selected };
         if (report) report.push(rep);
@@ -429,7 +434,7 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
     var lastFeedTotal = 0;
     function patchLiveFeed(body, bg, pbTs) {
       var fs = parse(body), report = [], parts = [], changed = false, serverTime = 0, total = 0, at = Date.now();
-      curNa = bg || pbTs ? null : [];
+      curNa = bg || pbTs ? null : []; curNamed = pbTs ? null : [];
       for (var i = 0; i < fs.length; i++) {
         var f = fs[i];
         if (f.wt === 2 && (f.fn === 1 || f.fn === 3)) {
@@ -440,11 +445,11 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
         } else { if (f.fn === 4 && f.wt === 0) serverTime = f.val; parts.push(f.raw); }
       }
       // (FR24's playback: the moment's unnamed flights, for the userscript to name as they were then - never as live ones)
-      if (pbTs) { post('pbFeed', { ts: pbTs, flights: report, at: at }); curNa = null; flushAir(); return changed ? concat(parts) : body; }
+      if (pbTs) { post('pbFeed', { ts: pbTs, flights: report, at: at }); curNa = null; curNamed = null; flushAir(); return changed ? concat(parts) : body; }
       if (!bg) stats.liveFeed++;
       lastFeedTotal = total; flushAir();
-      post('feed', { flights: report, na: curNa || [], serverTime: serverTime, total: total, at: at, bg: !!bg });
-      curNa = null;
+      post('feed', { flights: report, na: curNa || [], named: curNamed || [], serverTime: serverTime, total: total, at: at, bg: !!bg });
+      curNa = null; curNamed = null;
       return changed ? concat(parts) : body;
     }
     function patchFrames(buf, patchBody) {
@@ -491,7 +496,8 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
     var pbRoutes = new Map(), pbSent = {}, pbTrace = null;   // (the userscript's: each flight as flown; the open flight's track)
     // The figures FR24 padlocks, at the moment being played, from the open flight's ADS-B track: what changes steadily -
     // heights, speeds, climb - in proportion between two reports at most two minutes apart, the squawk and the wind from
-    // the nearer. Rows: [t, alt, GPS alt, vertical rate, IAS, TAS, squawk, wind dir, wind speed, sent by the aircraft 1/0]
+    // the nearer. Rows: [t, alt, GPS alt, vertical rate, IAS, TAS, squawk, wind dir, wind speed, sent by the aircraft 1/0,
+    // FIR name, FIR code, Mach, outside air temperature]
     function pbTelAt(id, ts) {
       var tr = pbTrace; if (!tr || tr.id !== id || !ts || !tr.pts.length) return null;
       var P = tr.pts, lo = 0, hi = P.length - 1; while (lo < hi) { var m = (lo + hi) >> 1; if (P[m][0] < ts) lo = m + 1; else hi = m; }
@@ -499,7 +505,7 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
       var f = b[0] > a[0] && ts > a[0] && ts < b[0] && b[0] - a[0] <= 120 ? (ts - a[0]) / (b[0] - a[0]) : (Math.abs(a[0] - ts) <= Math.abs(b[0] - ts) ? 0 : 1), near = f < 0.5 ? a : b;
       var mix = function (k) { var x = a[k], y = b[k]; return fin(x) && fin(y) ? x + (y - x) * f : fin(near[k]) ? near[k] : NaN; };
       var own = near[9] !== 0, n = function (v) { return fin(v) ? v : NaN; };
-      return { vr: own ? mix(3) : NaN, agps: own ? mix(2) : NaN, ias: own ? mix(4) : NaN, tas: own ? mix(5) : NaN, mach: NaN, oat: NaN, wd: n(near[7]), ws: n(near[8]), sq: near[6] ? parseInt(near[6], 8) || 0 : 0, air: near[10] || '', airId: near[11] || '', at: Date.now() };
+      return { vr: own ? mix(3) : NaN, agps: own ? mix(2) : NaN, ias: own ? mix(4) : NaN, tas: own ? mix(5) : NaN, mach: own ? mix(12) : NaN, oat: own ? mix(13) : NaN, wd: n(near[7]), ws: n(near[8]), sq: near[6] ? parseInt(near[6], 8) || 0 : 0, air: near[10] || '', airId: near[11] || '', at: Date.now() };
     }
     // FR24's playback - the map's, an aircraft's, a log's - moves its own figures (altitude, speed, track) along the open
     // flight's trail with its clock; the ones supplied here follow the same clock, set in the panel's own state each time the
@@ -515,7 +521,10 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
       if (t.sq > 0) fi.squawk = squawkWire(t.sq);
       if (t.air) { fi.airspace = t.air; if (t.airId) fi.airspaceId = t.airId; }
       var e = Object.assign({}, fi.emsInfo || {}), ch = false, set = function (k, v) { if (fin(v)) { e[k] = Math.round(v); ch = true; } };
-      set('agps', t.agps); set('ias', t.ias > 0 ? t.ias : NaN); set('tas', t.tas > 0 ? t.tas : NaN); set('windDir', t.wd); set('windSpd', t.ws);
+      set('agps', t.agps); set('ias', t.ias > 0 ? t.ias : NaN); set('tas', t.tas > 0 ? t.tas : NaN); set('windDir', t.wd); set('windSpd', t.ws); set('oat', t.oat);
+      // (Mach as the panel's state holds it: the wire's thousandths, as decoded - or, should a value already there be the
+      // number itself, that)
+      if (t.mach > 0) { e.mach = fin(e.mach) && e.mach > 0 && e.mach < 5 ? Math.round(t.mach * 1000) / 1000 : Math.round(t.mach * 1000); ch = true; }
       if (ch) fi.emsInfo = e;
     }
     setInterval(pbPanelTick, 250);
@@ -1693,11 +1702,85 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
       }
       return cur;
     }
-    function tlHide(el) { if (el && el.style.display !== 'none') { el.style.display = 'none'; el.setAttribute('data-tl-hidden', '1'); } }
-    function panelHide(panel) {
-      saying(panel, /^latest events$/i).forEach(function (e) { tlHide(partOf(e, panel, 'Latest events', 4000)); });
-      saying(panel, /help us improve|improve (our |the )?(ground )?coverage/i).forEach(function (e) { tlHide(partOf(e, panel, '', 600)); });
+    // (kept hidden when FR24 rewrites the element's style)
+    function tlHide(el) { if (el && (el.style.getPropertyValue('display') !== 'none' || el.style.getPropertyPriority('display') !== 'important' || !el.hasAttribute('data-tl-hidden'))) { el.style.setProperty('display', 'none', 'important'); el.setAttribute('data-tl-hidden', '1'); } }
+    // (what is left of a part once it is hidden - the box it sat in, its border and padding, with nothing else in it: the
+    // thin empty bar under the weather - goes too, up to the panel, while nothing else in it is shown)
+    function shownChild(c) {
+      if (c.hasAttribute('data-tl-hidden') || /^(SCRIPT|STYLE|TEMPLATE)$/.test(c.tagName)) return false;
+      if (c.style && c.style.display === 'none') return false;
+      try { return getComputedStyle(c).display !== 'none'; } catch (e) { return true; }
     }
+    function hideShell(el, panel) {
+      for (var cur = el; cur && cur.parentElement && cur.parentElement !== panel; cur = cur.parentElement) {
+        var up = cur.parentElement, kids = up.children, any = false;
+        if (up.querySelector('.tl-panel, .tl-rwy')) return;
+        for (var i = 0; i < kids.length && !any; i++) if (shownChild(kids[i])) any = true;
+        for (var n = up.firstChild; n && !any; n = n.nextSibling) if (n.nodeType === 3 && /\S/.test(n.nodeValue || '')) any = true;
+        if (any) return;
+        tlHide(up);
+      }
+    }
+    var EVENTS_RE = /^(latest|live) events$/i, BEG_RE = /help us improve|improve (our |the )?(ground )?coverage/i;
+    function hidePart(el, panel) { if (!el || el === panel) return; tlHide(el); hideShell(el, panel); }
+    // (the events' own section - FR24 builds the panel of sections, the events' the one its title opens - whatever is in it)
+    function firstText(el) {
+      var w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT), t;
+      while ((t = w.nextNode())) { var v = String(t.nodeValue || '').replace(/\s+/g, ' ').trim(); if (v) return v; }
+      return '';
+    }
+    function eventsPart(e, panel) {
+      var sec = e.closest('section');
+      if (sec && sec !== panel && panel.contains(sec) && !sec.contains(panel) && EVENTS_RE.test(firstText(sec)) && !sec.querySelector('[data-testid^="airport-panel__tab"], [data-testid^="airport-panel__schedules"], [data-testid^="airport-panel__promo-"], .tl-panel, .tl-rwy')) return sec;
+      return partOf(e, panel, 'Latest events', 4000);
+    }
+    function panelHide(panel, root) {
+      root = root || panel;
+      saying(root, EVENTS_RE).forEach(function (e) { hidePart(eventsPart(e, panel), panel); });
+      saying(root, BEG_RE).forEach(function (e) { hidePart(partOf(e, panel, '', 600), panel); });
+      saying(root, ADS_RE).forEach(function (e) { hideAd(e, panel); });
+    }
+    // FR24's "Remove ads" button where an advert sat in a board's list (the advert itself hidden by the userscript's style),
+    // and the empty slot around it: the button and every box that holds nothing else, and an advert's slot beside it, gone -
+    // the list closes up as if neither were there. On the boards' own pages too.
+    var ADS_RE = /^remove ads$/i, ADS_ONLY = /^((advert(isement)?|ads?|sponsored)\s*)*remove ads$/i;
+    var AD_MARK = '[id^="pb-slot-fr24-"],[id^="div-gpt-ad-"],[data-pb-ad-wrapper],ins.adsbygoogle,.ad-manager-wrapper';
+    function hideAd(el, stop) {
+      var cur = el;
+      while (cur.parentElement && cur.parentElement !== stop && cur.parentElement !== document.body && ADS_ONLY.test(textOf(cur.parentElement)) && !cur.parentElement.querySelector('.tl-panel, .tl-rwy')) cur = cur.parentElement;
+      tlHide(cur);
+      [cur.previousElementSibling, cur.nextElementSibling].forEach(function (x) { if (x && !textOf(x) && (x.matches(AD_MARK) || x.querySelector(AD_MARK))) tlHide(x); });
+      hideShell(cur, stop || document.body);
+    }
+    // FR24 draws those two parts and the panel is painted before the next tick: they are taken out as they are put in -
+    // a mutation observer's answer comes before the browser paints - so they are never seen, not even for a moment
+    var hideMo = null;
+    function hideWatch() {
+      if (hideMo || typeof MutationObserver !== 'function' || !document.documentElement) return;
+      var SEL_AP = '[data-testid="airport-panel"]';
+      hideMo = new MutationObserver(function (recs) {
+        for (var i = 0; i < recs.length; i++) {
+          var r = recs[i], t = r.type === 'characterData' ? r.target.parentElement : r.target; if (!t || t.nodeType !== 1) continue;
+          try {
+            var panel = t.closest(SEL_AP);
+            if (panel) {
+              if (r.type === 'characterData') panelHide(panel, t);
+              else for (var j = 0; j < r.addedNodes.length; j++) { var a = r.addedNodes[j], el = a.nodeType === 1 ? a : a.nodeType === 3 ? a.parentElement : null; if (el) panelHide(panel, el); }
+            } else if (r.type === 'childList') {
+              // (the panel itself put in, whole; elsewhere - a board's own page - the "Remove ads" button)
+              for (var k = 0; k < r.addedNodes.length; k++) {
+                var n = r.addedNodes[k], ne = n.nodeType === 1 ? n : n.nodeType === 3 ? n.parentElement : null; if (!ne) continue;
+                var p = ne.matches(SEL_AP) ? ne : ne.querySelector(SEL_AP); if (p) panelHide(p);
+                if (/remove ads/i.test(n.textContent || '')) saying(ne, ADS_RE).forEach(function (e) { if (!e.closest(SEL_AP)) hideAd(e, null); });
+              }
+            } else if (ADS_RE.test(textOf(t))) hideAd(t, null);
+          } catch (e) { stats.errors++; stats.lastError = String(e); }
+        }
+      });
+      hideMo.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+    }
+    hideWatch();
+    if (!hideMo) document.addEventListener('DOMContentLoaded', hideWatch, { once: true });
     // (FR24's locked pictures: by their name, else by the title they sit under)
     function kindNear(el, panel) {
       var img = el.matches('img') ? el : el.querySelector('img[alt]'), alt = img ? String(img.getAttribute('alt') || '') : '';
@@ -2177,7 +2260,7 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
     function acceptEntries(entries) {
       if (!entries) return;
       for (var i = 0; i < entries.length; i++) {
-        var r = entries[i]; if (!r || r.id == null) continue;
+        var r = entries[i]; if (!r || r.id == null || fr24Named.has(Number(r.id))) continue;
         var hexNum = r.hex ? parseInt(String(r.hex), 16) : 0;
         var prev = resolved.get(Number(r.id));
         var photos = Array.isArray(r.photos) && r.photos.length ? r.photos : (prev && prev.photos) || [];
@@ -2351,7 +2434,7 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
       else if (d.__tweeksLadd === 'hello') post('ready', { stats: stats, feedReady: !!feedHeaders, hdr: feedHdrPublic(), v: BRIDGE_V });
     });
     window[NS] = { resolved: resolved, routes: routes, naRecs: naRecs, naRoutes: naRoutes, telem: telem, hist: hist, lastPos: lastPos, photoCache: photoCache, psCache: psCache, stats: stats, fetchPhotos: fetchPhotos, hello: function () { post('ready', { stats: stats, feedReady: !!feedHeaders, v: BRIDGE_V }); }, v: BRIDGE_V };
-    if (window.__tlTestHook) try { window.__tlTestHook({ csOf: csOf, hist: hist, preloaded: function () { return preloaded; }, parse: parse, photoFits: photoFits, makerOf: makerOf, patchFollow: patchFollow, patchFlightMsg: patchFlightMsg, pushFollow: pushFollow, followSt: function () { return followSt; }, setFollowSt: function (s) { followSt = s; }, shownPhotos: shownPhotos, photoCache: photoCache, FOLLOW: FOLLOW, DETAILS: DETAILS, fLen: fLen, fStr: fStr, fVar: fVar, patchFlight: patchFlight, psState: function () { return { q: psQ.length, busy: psBusy, last: psLast, blockedFor: Math.max(0, psBlockedUntil - Date.now()), pri: Array.from(psPri), jobs: photoJobs.size, head: psQ.slice(0, 3).map(function (j) { return j.hex; }) }; }, acceptPubTel: acceptPubTel, pubTelFor: pubTelFor, fillNativeCard: fillNativeCard, regsOfCallsign: regsOfCallsign, categoryOf: categoryOf, nativeFill: nativeFill, natInfo: natInfo, telem: telem, b64Encode: b64Encode, b64DecodeInto: b64DecodeInto, frameHeader: frameHeader, concat: concat, varintInt32: varintInt32, PLAYBACK: PLAYBACK, patchPlayback: patchPlayback, patchPlaybackRequest: patchPlaybackRequest, pbRoutes: pbRoutes, pbTelAt: pbTelAt, setPbTrace: function (t) { pbTrace = t; }, patchList: patchList, acceptSites: acceptSites, listSig: listSig, mergeRoutes: mergeRoutes, applyRoutes: applyRoutes, routesAdd: routesAdd, applyAirport: applyAirport, applyBoardPage: applyBoardPage, applyStats: applyStats, mergeFlights: mergeFlights, apData: apData, telAt: telAt, noteTelem: noteTelem, pbTraceOf: function () { return pbTrace; }, logoOf: logoOf, archDetail: archDetail, tsOf: tsOf, noteAirportJson: noteAirportJson, rwyOf: rwyOf, rwyPanel: rwyPanel, panelTick: panelTick, panelData: panelData, promoSlots: promoSlots, acceptAirportPanel: acceptAirportPanel, unlockRunways: unlockRunways, mvRows: mvRows, mvKept: mvKept, dayOf: dayOf, pbPanelTick: pbPanelTick, logoFix: logoFix, liveEntries: liveEntries, pbPos: pbPos, unlockFeed: unlockFeed, derivedVs: derivedVs, altHist: altHist, acceptAir: acceptAir, airCache: airCache, flushAir: flushAir, airWant: function () { return airWant; }, lastPos: lastPos, resolved: resolved, stats: stats }); } catch (e) { /* ignore */ }
+    if (window.__tlTestHook) try { window.__tlTestHook({ csOf: csOf, hist: hist, preloaded: function () { return preloaded; }, parse: parse, photoFits: photoFits, makerOf: makerOf, patchFollow: patchFollow, patchFlightMsg: patchFlightMsg, pushFollow: pushFollow, followSt: function () { return followSt; }, setFollowSt: function (s) { followSt = s; }, shownPhotos: shownPhotos, photoCache: photoCache, FOLLOW: FOLLOW, DETAILS: DETAILS, fLen: fLen, fStr: fStr, fVar: fVar, patchFlight: patchFlight, patchLiveFeed: patchLiveFeed, fr24Named: fr24Named, psState: function () { return { q: psQ.length, busy: psBusy, last: psLast, blockedFor: Math.max(0, psBlockedUntil - Date.now()), pri: Array.from(psPri), jobs: photoJobs.size, head: psQ.slice(0, 3).map(function (j) { return j.hex; }) }; }, acceptPubTel: acceptPubTel, pubTelFor: pubTelFor, fillNativeCard: fillNativeCard, regsOfCallsign: regsOfCallsign, categoryOf: categoryOf, nativeFill: nativeFill, natInfo: natInfo, telem: telem, b64Encode: b64Encode, b64DecodeInto: b64DecodeInto, frameHeader: frameHeader, concat: concat, varintInt32: varintInt32, PLAYBACK: PLAYBACK, patchPlayback: patchPlayback, patchPlaybackRequest: patchPlaybackRequest, pbRoutes: pbRoutes, pbTelAt: pbTelAt, setPbTrace: function (t) { pbTrace = t; }, patchList: patchList, acceptSites: acceptSites, listSig: listSig, mergeRoutes: mergeRoutes, applyRoutes: applyRoutes, routesAdd: routesAdd, applyAirport: applyAirport, applyBoardPage: applyBoardPage, applyStats: applyStats, mergeFlights: mergeFlights, apData: apData, telAt: telAt, noteTelem: noteTelem, pbTraceOf: function () { return pbTrace; }, logoOf: logoOf, archDetail: archDetail, tsOf: tsOf, noteAirportJson: noteAirportJson, rwyOf: rwyOf, rwyPanel: rwyPanel, panelTick: panelTick, panelData: panelData, promoSlots: promoSlots, acceptAirportPanel: acceptAirportPanel, unlockRunways: unlockRunways, mvRows: mvRows, mvKept: mvKept, dayOf: dayOf, pbPanelTick: pbPanelTick, logoFix: logoFix, liveEntries: liveEntries, pbPos: pbPos, unlockFeed: unlockFeed, derivedVs: derivedVs, altHist: altHist, acceptAir: acceptAir, airCache: airCache, flushAir: flushAir, airWant: function () { return airWant; }, lastPos: lastPos, resolved: resolved, stats: stats }); } catch (e) { /* ignore */ }
     post('ready', { stats: stats, feedReady: false, v: BRIDGE_V });
   }
 
@@ -2702,6 +2785,8 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
       let tas = NaN, ws = NaN, wd = NaN, hdg = NaN, airT = -1e12;
       // (and, for the playback: GPS altitude and indicated airspeed - readsb's point carries them, or its last full state)
       let iasX = NaN, iasT = -1e12, geomX = NaN, geomT = -1e12;
+      // (and Mach and the outside air temperature - readsb's from the aircraft's own air data - for the playback panel)
+      let machX = NaN, machT = -1e12, oatX = NaN, oatT = -1e12;
       for (const p of (j && Array.isArray(j.trace) ? j.trace : [])) {
         if (!Array.isArray(p) || !fin(p[1]) || !fin(p[2])) continue;
         const t = base + (+p[0] || 0);
@@ -2717,12 +2802,14 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
           if (ex.category) cat = ex.category;
           if (own && fin(ex.ias)) { iasX = ex.ias; iasT = t; }
           if (own && fin(ex.alt_geom)) { geomX = ex.alt_geom; geomT = t; }
+          if (own && ex.mach > 0) { machX = ex.mach; machT = t; }
+          if (own && fin(ex.oat)) { oatX = ex.oat; oatT = t; }
           if (own && (fin(ex.tas) || fin(ex.ws))) { tas = fin(ex.tas) ? ex.tas : NaN; ws = fin(ex.ws) ? ex.ws : NaN; wd = fin(ex.wd) ? ex.wd : NaN; hdg = fin(ex.true_heading) ? ex.true_heading : NaN; airT = t; }
         }
         const flags = +p[6] || 0, a = p[3];
         const altGeom = fin(p[10]) ? p[10] : t - geomT < 60 ? geomX : NaN, ias = fin(p[12]) ? p[12] : t - iasT < 60 ? iasX : NaN;
         const air = t - airT < 300;
-        out.push({ t, lat: p[1], lon: p[2], altGeom, ias, alt: a === 'ground' ? null : (fin(a) ? a : null), gnd0: a === 'ground', gs: fin(p[4]) ? p[4] : null, trk: fin(p[5]) ? p[5] : null, vr: fin(p[7]) ? p[7] : null, stale: !!(flags & 1), newLeg: !!(flags & 2), own, cs, sq, mcp: t - mcpT < 900 ? mcp : NaN, fms: t - fmsT < 900 ? fms : NaN, cat, tas: air ? tas : NaN, ws: air ? ws : NaN, wd: air ? wd : NaN, hdg: air ? hdg : NaN });
+        out.push({ t, lat: p[1], lon: p[2], altGeom, ias, alt: a === 'ground' ? null : (fin(a) ? a : null), gnd0: a === 'ground', gs: fin(p[4]) ? p[4] : null, trk: fin(p[5]) ? p[5] : null, vr: fin(p[7]) ? p[7] : null, stale: !!(flags & 1), newLeg: !!(flags & 2), own, cs, sq, mcp: t - mcpT < 900 ? mcp : NaN, fms: t - fmsT < 900 ? fms : NaN, cat, tas: air ? tas : NaN, ws: air ? ws : NaN, wd: air ? wd : NaN, hdg: air ? hdg : NaN, mach: t - machT < 60 ? machX : NaN, oat: t - oatT < 60 ? oatX : NaN });
       }
       return out;
     }
@@ -2828,6 +2915,44 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
     // 50 ft on the approach to Nice's runway 04; 28 Aug: 12 km out at 1,650 ft lined up with Palma's 24 - neither was
     // seen on the ground). A field whose runways are not known: low, close and heading straight at it. One clear answer
     // or none.
+    // Still climbing at pts[i]: its own vertical rate says so, or it was on the ground, or 300 ft and more lower, half a
+    // minute to five minutes before. Lost like that, it was going away from the fields around it, not down to one:
+    // easyJets climbing out of Gatwick past Biggin Hill, out of the monitor's hearing, were "landed at Biggin Hill".
+    function climbingAt(pts, i) {
+      const p = pts && pts[i]; if (!p || p.gnd || p.alt == null) return false;
+      if (fin(p.vr) && p.vr < -300) return false;
+      if (fin(p.vr) && p.vr > 500) return true;
+      for (let j = i - 1; j >= 0 && p.t - pts[j].t <= 300; j--) {
+        const q = pts[j]; if (p.t - q.t < 30) continue;
+        return !!q.gnd || (q.alt != null && p.alt - q.alt > 300);
+      }
+      return false;
+    }
+    // (the same, coming down: its own vertical rate says so, or it was on the ground, or 300 ft and more lower, half a
+    // minute to five minutes after)
+    function descendingAt(pts, i) {
+      const p = pts && pts[i]; if (!p || p.gnd || p.alt == null) return false;
+      if (fin(p.vr) && p.vr > 300) return false;
+      if (fin(p.vr) && p.vr < -500) return true;
+      for (let j = i + 1; j < pts.length && pts[j].t - p.t <= 300; j++) {
+        const q = pts[j]; if (q.t - p.t < 30) continue;
+        return !!q.gnd || (q.alt != null && p.alt - q.alt > 300);
+      }
+      return false;
+    }
+    // (and, of a flight summarised before those rules - kept in a log, or by the monitor: a jet's or a turboprop's, up from
+    // the ground and lost within a quarter of an hour of the take-off at the highest it had been - still climbing, or
+    // levelled off on its departure - was given a landing it never made. One the monitor kept without its end's height,
+    // of an aircraft it does not follow for good (its rows of others are four days old at most): lost within ten minutes,
+    // 2,000 ft up and more - a jet lost lower than that is still by the field it left, and that is no flight at all. An end
+    // taken from its next take-off - 'chain' - is where it really went.)
+    const CLIMB_CLS = /^(airliner|bizjet|heavybiz|turboprop)$/;
+    function climbedOut(l, cls) {
+      if (!l || l.endRules >= 2 || !l.to || !l.startedOnGround || !l.ended || l.to.conf === 'ground' || l.to.conf === 'chain' || l.how === 'ground' || l.how === 'touch' || l.how === 'gap-land' || !CLIMB_CLS.test(cls || '')) return false;
+      const up = (l.tEnd || 0) - (l.tOff || l.tStart || 0); if (!(up >= 0)) return false;
+      if (fin(l.endAlt) && fin(l.maxAlt)) return up <= 900 && l.endAlt >= l.maxAlt - 50;
+      return !('endAlt' in l) && !l.ladd && up <= 600 && l.maxAlt >= 2000;
+    }
     function finalTo(p, o) {
       if (!p || p.gnd || !fin(p.lat) || !fin(p.lon) || p.alt == null || !fin(p.trk)) return null;
       if (fin(p.vr) && p.vr > 600) return null;
@@ -2880,19 +3005,28 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
     // three slices and more, on average within 1.5 km, and no other there a third as often or nearer than three times
     // as far: that flight. (M-ARNZ's PC-24 at FL250 off Blackpool, 9 Oct 12:35: 424c60 in 10 slices, mean 1.1 km; the
     // nearest other 3.8 km off and 10,000 ft higher.) Returns, per query, the address or ''.
+    // (each slice's queries by 0.1-degree cell: a record is held against those of its own cell and the eight around it only
+    // - the same answer as against every query, a fraction of the work with a whole screen of flights)
     function heatMatch(buf, t, qs) {
-      const dv = new DataView(buf), res = qs.map(() => new Map()); let at = null;
+      const dv = new DataView(buf), res = qs.map(() => new Map()); let at = null, grid = null;
       const along = (q, dt) => { if (!fin(q.trk) || !(q.gs > 0) || q.gnd) return [q.lat, q.lon]; const km = q.gs * 1.852 * dt / 3600; return [q.lat + km * Math.cos(q.trk * D2R) / 111.2, q.lon + km * Math.sin(q.trk * D2R) / (111.2 * Math.max(0.05, Math.cos(q.lat * D2R)))]; };
       for (let o = 0; o + 16 <= dv.byteLength; o += 16) {
         const h = dv.getUint32(o, true);
-        if (h === 0x0e7f7c9d) { const st = (dv.getInt32(o + 4, true) * 4294967296 + dv.getUint32(o + 8, true)) / 1000; at = Math.abs(st - t) <= 60 ? qs.map(q => along(q, st - t)) : null; continue; }
+        if (h === 0x0e7f7c9d) {
+          const st = (dv.getInt32(o + 4, true) * 4294967296 + dv.getUint32(o + 8, true)) / 1000; at = Math.abs(st - t) <= 60 ? qs.map(q => along(q, st - t)) : null; grid = null;
+          if (at) { grid = new Map(); for (let i = 0; i < at.length; i++) { const k = Math.floor(at[i][0] * 10) * 4000 + Math.floor(at[i][1] * 10), l = grid.get(k); if (l) l.push(i); else grid.set(k, [i]); } }
+          continue;
+        }
         if (!at) continue;
-        const la = dv.getInt32(o + 4, true) / 1e6, lo = dv.getInt32(o + 8, true) / 1e6;
-        for (let i = 0; i < qs.length; i++) {
-          const p = at[i], q = qs[i]; if (Math.abs(la - p[0]) > 0.05 || Math.abs(lo - p[1]) > 0.08) continue;
-          const r = q.r || 3, d = dist(la, lo, p[0], p[1]); if (d > r) continue;
-          if (!q.gnd && fin(q.alt) && q.alt > 1500 && Math.abs(dv.getInt16(o + 12, true) * 25 - q.alt) > 1500) continue;
-          const hex = (h & 0xffffff).toString(16).padStart(6, '0'), e = res[i].get(hex) || { n: 0, sum: 0 }; e.n++; e.sum += d; res[i].set(hex, e);
+        const la = dv.getInt32(o + 4, true) / 1e6, lo = dv.getInt32(o + 8, true) / 1e6, cy = Math.floor(la * 10), cx = Math.floor(lo * 10);
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+          const l = grid.get((cy + dy) * 4000 + cx + dx); if (!l) continue;
+          for (const i of l) {
+            const p = at[i], q = qs[i]; if (Math.abs(la - p[0]) > 0.05 || Math.abs(lo - p[1]) > 0.08) continue;
+            const r = q.r || 3, d = dist(la, lo, p[0], p[1]); if (d > r) continue;
+            if (!q.gnd && fin(q.alt) && q.alt > 1500 && Math.abs(dv.getInt16(o + 12, true) * 25 - q.alt) > 1500) continue;
+            const hex = (h & 0xffffff).toString(16).padStart(6, '0'), e = res[i].get(hex) || { n: 0, sum: 0 }; e.n++; e.sum += d; res[i].set(hex, e);
+          }
         }
       }
       return res.map((m, i) => {
@@ -3127,7 +3261,7 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
           if (gap > 600 && !prev.gnd && !p.gnd && prev.alt != null && p.alt != null && prev.alt < 600 && p.alt < 600 && (prev.gs == null || prev.gs < 30) && (p.gs == null || p.gs < 30) && dist(prev.lat, prev.lon, p.lat, p.lon) < 0.5) { prev.gnd = true; p.gnd = true; }
           // (last heard on a runway's final approach, then nothing for ten minutes and more, and next seen low, on the
           // ground or much later: it landed there - a quick turnaround is not one long flight)
-          const fa = gap > 600 && cur && !patrol && !prev.gnd ? finalTo(prev, fo) : null;
+          const fa = gap > 600 && cur && !patrol && !prev.gnd && !climbingAt(pts, ip - 1) ? finalTo(prev, fo) : null;
           // (a helicopter passes low over fields all the time: only when it is next seen at that field, or on the ground)
           const onFinal = !!fa && (heli ? p.gnd || dist(p.lat, p.lon, fa.airport.lat, fa.airport.lon) < 3 : p.gnd || (p.alt != null && p.alt < 9000) || gap > 1500);
           if (onFinal) { cur.finalAp = fa; close(prev, 'final'); lastGnd = null; }
@@ -3171,14 +3305,16 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
       // (the data runs to opts.dataEnd - the end of that day, or now: last heard on final twenty minutes and more before
       // it, the flight landed there; otherwise it is still open - flying out of coverage, or past the end of the day)
       if (cur) {
-        const last = pts[pts.length - 1], fa = opts && fin(opts.dataEnd) && opts.dataEnd - last.t >= 1200 && !patrol ? finalTo(last, fo) : null;
+        // (never a landing for one last heard climbing away - the field below or ahead of it is where it was not going)
+        const last = pts[pts.length - 1], quiet = opts && fin(opts.dataEnd) && opts.dataEnd - last.t >= 1200 && !patrol && !climbingAt(pts, pts.length - 1);
+        const fa = quiet ? finalTo(last, fo) : null;
         // (or last heard low near a field, then nothing to the end of the day: it came down there, most likely - named
         // with a question mark, the time reckoned from that last point)
-        let near = !fa && opts && fin(opts.dataEnd) && opts.dataEnd - last.t >= 1200 && !patrol && !last.gnd && last.alt != null ? airportAt(last.lat, last.lon, 12, { alt: last.alt, maxAgl: fin(last.vr) && last.vr < -300 ? 3000 : 2500 }) : null;
+        let near = !fa && quiet && !last.gnd && last.alt != null ? airportAt(last.lat, last.lon, 12, { alt: last.alt, maxAgl: fin(last.vr) && last.vr < -300 ? 3000 : 2500 }) : null;
         // (a light aircraft or helicopter last heard slow and low by a strip FR24 does not list: that strip - G-DGFD, an R44,
         // lost at 350 ft and 45 kt 2.8 km from Enstone, where it took off from next morning)
         const lightCls = heli || (opts && (opts.cls === 'piston' || opts.cls === 'heli'));
-        if (!fa && lightCls && opts && fin(opts.dataEnd) && opts.dataEnd - last.t >= 1200 && !patrol && !last.gnd && last.alt != null && !(last.gs > (heli ? 90 : 110))) {
+        if (!fa && lightCls && quiet && !last.gnd && last.alt != null && !(last.gs > (heli ? 90 : 110))) {
           const nf = fieldAt(last.lat, last.lon, heli ? 4 : 5, { alt: last.alt, maxAgl: 1200 });
           if (nf && (!near || nf.dist < near.dist)) near = nf;
         }
@@ -3300,19 +3436,26 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
       const descending = (() => { const l = pts[pts.length - 1]; if (!l || l.alt == null) return false; for (let i = pts.length - 2; i >= 0; i--) { if (l.t - pts[i].t >= 60) return pts[i].alt != null && pts[i].alt - l.alt > 200; } return false; })();
       const climbing = (() => { const f = pts[0]; if (!f || f.alt == null) return false; for (let i = 1; i < pts.length; i++) { if (pts[i].t - f.t >= 60) return pts[i].alt != null && pts[i].alt - f.alt > 200; } return false; })();
       const gapAp = (x, y, info) => { const o = Object.assign({}, ctx && ctx.cls ? { cls: ctx.cls, type: ctx.type } : null, info || null); const g = landingInGap(x, y, Object.keys(o).length ? o : null); return g ? { airport: g.airport, conf: 'low' } : null; };
-      const from = (leg.gapPrev && gapAp(leg.gapPrev, leg.start, leg.gapPrevInfo)) || (leg.startGnd ? endpoint(leg.start, true, true, ctx) : (climbing || (leg.start.alt != null && leg.start.alt < 4000) ? endpoint(leg.start, true, false, ctx) : null));
-      let to = (leg.how === 'gap-land' && leg.gapNext && gapAp(leg.end, leg.gapNext, leg.gapInfo)) || (leg.how === 'ground' || leg.how === 'touch' ? endpoint(leg.end, false, true, ctx) : ((leg.ended || descending) && (descending || (leg.end.alt != null && leg.end.alt < 4000)) ? endpoint(leg.end, false, false, ctx) : null));
+      // (first heard coming down - into the field below it, or one further on - is not where it took off; last heard climbing
+      // away is not where it landed: the field below, on whose approach it happens to be, or ahead of it)
+      let iL = -1; for (let i = pts.length - 1; i >= 0; i--) if (!pts[i].gnd) { iL = i; break; }
+      const L = iL >= 0 ? pts[iL] : null, seq = leg.startGnd && leg.start && leg.start !== pts[0] ? [leg.start].concat(pts) : pts;
+      // (a light aircraft first heard coming down is often on its own field's circuit: that field stays its departure)
+      const climbEnd = !!L && !descending && climbingAt(seq, seq === pts ? iL : iL + 1), descStart = !climbing && !!ctx && CLIMB_CLS.test(ctx.cls || '') && descendingAt(pts, 0);
+      const from = (leg.gapPrev && gapAp(leg.gapPrev, leg.start, leg.gapPrevInfo)) || (leg.startGnd ? endpoint(leg.start, true, true, ctx) : (climbing || (leg.start.alt != null && leg.start.alt < 4000 && !descStart)) ? endpoint(leg.start, true, false, ctx) : null);
+      let to = (leg.how === 'gap-land' && leg.gapNext && gapAp(leg.end, leg.gapNext, leg.gapInfo)) || (leg.how === 'ground' || leg.how === 'touch' ? endpoint(leg.end, false, true, ctx) : ((leg.ended || descending) && (descending || (leg.end.alt != null && leg.end.alt < 4000)) && !climbEnd ? endpoint(leg.end, false, false, ctx) : null));
       // (lost on a runway's final approach - in a hole, at the end of the data or of a day: that field, not a guess)
       if (leg.how !== 'ground' && leg.how !== 'touch' && leg.how !== 'gap-land' && (!to || to.conf !== 'ground')) {
-        let L = null; for (let i = pts.length - 1; i >= 0; i--) if (!pts[i].gnd) { L = pts[i]; break; }
-        const fa = leg.finalAp || (L && (leg.ended || descending) ? finalTo(L, { heli: !!ctx && ctx.grp === 'heli', cls: ctx && ctx.cls, type: ctx && ctx.type }) : null);
+        const fa = leg.finalAp || (L && (leg.ended || descending) && !climbEnd ? finalTo(L, { heli: !!ctx && ctx.grp === 'heli', cls: ctx && ctx.cls, type: ctx && ctx.type }) : null);
         if (fa) to = { airport: fa.airport, conf: 'low' };
         else if (leg.lostAp && (!to || to.conf === 'near')) to = { airport: leg.lostAp, conf: 'near' };
         // (an airliner, business jet or turboprop lost low and coming down - over the sea, out of every receiver's reach -
         // was landing at the airport ahead of it that takes it, never at "a private site": G-GDFR, 11 Jul, lost at 1,000 ft
         // off Dubrovnik)
         const light = !!ctx && /^(heli|piston|glider)$/.test(ctx.cls || '');
-        if (!to && !!ctx && !!ctx.cls && !light && L && (leg.ended || descending) && fin(L.alt) && L.alt < 8000 && fin(L.trk)) {
+        // (coming down: seen descending, or lost a thousand feet and more below the highest it had been)
+        const cameDown = descending || (leg.ended && !climbEnd && ((fin(L && L.vr) && L.vr < -300) || (L && fin(L.alt) && (leg.maxAlt || 0) - L.alt >= 1000)));
+        if (!to && !!ctx && !!ctx.cls && !light && L && cameDown && fin(L.alt) && L.alt < 8000 && fin(L.trk)) {
           let best = null;
           nearby(L.lat, L.lon, 70, (a, d) => {
             if (a.id >= 1e7 || (ctx.cls === 'airliner' && fin(a.size) && a.size < 3000) || rwyImpossible(a, ctx.cls, ctx.type)) return;
@@ -3325,8 +3468,10 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
       let pathKm = 0; for (let i = 1; i < pts.length; i++) pathKm += dist(pts[i - 1].lat, pts[i - 1].lon, pts[i].lat, pts[i].lon);
       const ap = e => e ? { id: e.airport.id, code: e.airport.code, conf: e.conf } : null;
       const on = to ? touchdownOf(leg, to.airport) : null, off = from ? takeoffOf(leg, from.airport) : null;
-      return { tStart: leg.start.t, tEnd: leg.end.t, startLat: leg.start.lat, startLon: leg.start.lon, startAlt: leg.start.alt, endLat: leg.end.lat, endLon: leg.end.lon, endAlt: leg.end.alt, endTrk: leg.end.trk, endGs: fin(leg.end.gs) ? Math.round(leg.end.gs) : null, startGs: fin(leg.start.gs) ? Math.round(leg.start.gs) : null, startedOnGround: !!leg.startGnd, ended: !!leg.ended, how: leg.how, maxAlt: leg.maxAlt || 0, cs: leg.cs || '', pathKm: Math.round(pathKm), from: ap(from), to: ap(to), laps: leg.laps > 1 ? leg.laps : 0, path: pathOf(leg),
+      // (endRules: built with the rules above - a board need not check its ends again: climbedOut)
+      const sum = { endRules: 2, tStart: leg.start.t, tEnd: leg.end.t, startLat: leg.start.lat, startLon: leg.start.lon, startAlt: leg.start.alt, endLat: leg.end.lat, endLon: leg.end.lon, endAlt: leg.end.alt, endTrk: leg.end.trk, endGs: fin(leg.end.gs) ? Math.round(leg.end.gs) : null, startGs: fin(leg.start.gs) ? Math.round(leg.start.gs) : null, startedOnGround: !!leg.startGnd, ended: !!leg.ended, how: leg.how, maxAlt: leg.maxAlt || 0, cs: leg.cs || '', pathKm: Math.round(pathKm), from: ap(from), to: ap(to), laps: leg.laps > 1 ? leg.laps : 0, path: pathOf(leg),
         tOn: on ? on.t : null, tOnEst: !!(on && on.est), tOff: off ? off.t : null, tOffEst: !!(off && off.est) };
+      return sum;
     }
     // Where the flight was at fixed minutes after take-off - its route, in a few numbers: a later flight of the same
     // aircraft from the same field can be laid over it (the same route out means the same destination, usually).
@@ -4555,7 +4700,7 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
       return res;
     }
 
-    return { setTables2, get T2() { return T2; }, fieldShortName, setApproach, approachCell, approachPath, apprGroup, apprKey, trackAgree, heatNear, heatMatch, reckon, trackErr, remotePath, flowKeysOf, pgrpOf, grp6, sunElev, airData, gsAlong, minutesTo, flowAt, pathOf, pathDev, ownerKey, parseRunwayLengths, setRunwayLengths, csvLine, SQ_NOINFO, tripBin, regionOf, learnLeg, learnRow, learnCollector, addLearnedOp, odAdd: (x, y, w) => { const k = odKey(String(x).toUpperCase(), String(y).toUpperCase()), v = (OD.get(k) || 0) + w; if (v > 1e-9) OD.set(k, v); else OD.delete(k); }, odWeight: (x, y) => OD.get(odKey(String(x).toUpperCase(), String(y).toUpperCase())) || 0, odCount: () => OD.size, setAirports, setUsage, addUsage, setRunways, parseRunwaysCsv, runwayFit, setWeights, setTables, setLogit, calibrated, mergePoints, finalTo, longFinal, typeRangeKm, FEAT, groupOf, W, classify, isStepClimb, rangeKm, parseTrace, legsFromPoints, summarizeLeg, stitchLegs, chainLegs, histStats, inferOrigin, predict, privateSite, rwyImpossible, typeDesc, heliSpots, heliAirportAt, landedSum, localFlew, approachTo, downAndUp, landingInGap, circuits, mergeCircuits, setFields, fieldAt, placeAt, isField, nearbyFields, fieldCount: () => FL.length, airportAt, departureFromClimb, arrivalFromDescent, nearby, dist, brg, xtat, destPoint, angDiff, get airports() { return AP; }, byId: id => byId.get(id), byIcao: c => byIcao.get(String(c || '').toUpperCase()) };
+    return { setTables2, get T2() { return T2; }, fieldShortName, setApproach, approachCell, approachPath, apprGroup, apprKey, trackAgree, heatNear, heatMatch, reckon, trackErr, remotePath, flowKeysOf, pgrpOf, grp6, sunElev, airData, gsAlong, minutesTo, flowAt, pathOf, pathDev, ownerKey, parseRunwayLengths, setRunwayLengths, csvLine, SQ_NOINFO, tripBin, regionOf, learnLeg, learnRow, learnCollector, addLearnedOp, odAdd: (x, y, w) => { const k = odKey(String(x).toUpperCase(), String(y).toUpperCase()), v = (OD.get(k) || 0) + w; if (v > 1e-9) OD.set(k, v); else OD.delete(k); }, odWeight: (x, y) => OD.get(odKey(String(x).toUpperCase(), String(y).toUpperCase())) || 0, odCount: () => OD.size, setAirports, setUsage, addUsage, setRunways, parseRunwaysCsv, runwayFit, setWeights, setTables, setLogit, calibrated, mergePoints, finalTo, longFinal, typeRangeKm, FEAT, groupOf, W, classify, isStepClimb, rangeKm, parseTrace, legsFromPoints, summarizeLeg, stitchLegs, chainLegs, histStats, inferOrigin, predict, privateSite, rwyImpossible, typeDesc, heliSpots, heliAirportAt, landedSum, localFlew, climbedOut, approachTo, downAndUp, landingInGap, circuits, mergeCircuits, setFields, fieldAt, placeAt, isField, nearbyFields, fieldCount: () => FL.length, airportAt, departureFromClimb, arrivalFromDescent, nearby, dist, brg, xtat, destPoint, angDiff, get airports() { return AP; }, byId: id => byId.get(id), byIcao: c => byIcao.get(String(c || '').toUpperCase()) };
   }
   /* ==/ENGINE== */
 
@@ -4730,7 +4875,7 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '22.23.0';
+  const VERSION = '22.24.0';
   const NM_KM = 1.852;
   const AREA_RADIUS_NM = 220;           // aggregator "point" radius for viewport sweeps (APIs cap at 250)
   const TARGET_RADIUS_NM = 40;          // radius for the immediate lookup of the selected aircraft
@@ -4822,15 +4967,17 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
     return w[0] + w.slice(1).toLowerCase();
   }
   // The legal form is not part of the name people know: "BALLYCASTLE AVIATION LIMITED PARTNERSHIP INCORPORATED" is
-  // Ballycastle Aviation, "Pad Aviation Service GmbH" is Pad Aviation Service (taken off the end, repeatedly; a name that
-  // would be nothing without it is kept whole)
-  const LEGAL_FORM = /[\s,]+(limited\s+liability\s+(company|partnership)|limited\s+partnership|l\.?\s?l\.?\s?[cp]\.?|l\.?\s?p\.?|ltd\.?|limited|unlimited|inc\.?|incorporated|corp\.?|corporation|co\.?|company|plc|ulc|dac|gmbh(\s*(&|and)\s*co\.?\s*kg)?|(&|and)\s*co\.?\s*kg|kg|ag|s\.?\s?a\.?\s?(de\s+c\.?\s?v\.?|s\.?|r\.?\s?l\.?)?|s\.?\s?r\.?\s?[lo]\.?|s\.?\s?p\.?\s?a\.?|b\.?\s?v\.?|n\.?\s?v\.?|oy|ab|asa|aps|a\/s|pty\.?(\s+ltd\.?)?|pte\.?(\s+ltd\.?)?|sdn\.?\s+bhd\.?|bhd\.?|jsc|pjsc|ojsc|cjsc|ltda\.?|lda\.?|kft\.?|zrt\.?|sp\.?\s*z\s*o\.?\s*o\.?|d\.?\s?o\.?\s?o\.?|ehf\.?|e\.?\s?v\.?|m\.?\s?b\.?\s?h\.?)\s*[.,]?\s*$/i;
+  // Ballycastle Aviation, "Pad Aviation Service GmbH" is Pad Aviation Service, "756J LLC" is 756J (taken off the end,
+  // repeatedly; a name that would be nothing without it - "LLC" alone - is kept whole). A company of one of Dubai's free
+  // zones carries the zone in its form: "MAPA AVIATION DWC-LLC" is Mapa Aviation (Dubai World Central), as are FZE, FZCO,
+  // FZ-LLC and DMCC ones.
+  const LEGAL_FORM = /[\s,]+(dwc(\s*-\s*|\s+)?l\.?\s?l\.?\s?c\.?|dwc|fz\s*-?\s*l\.?\s?l\.?\s?c\.?|fz\s*-?\s*co|fz\s*-?\s*e|fzc|dmcc|limited\s+liability\s+(company|partnership)|limited\s+partnership|l\.?\s?l\.?\s?[cp]\.?|l\.?\s?p\.?|ltd\.?|limited|unlimited|inc\.?|incorporated|corp\.?|corporation|co\.?|company|plc|ulc|dac|gmbh(\s*(&|and)\s*co\.?\s*kg)?|(&|and)\s*co\.?\s*kg|kg|ag|s\.?\s?a\.?\s?(de\s+c\.?\s?v\.?|s\.?|r\.?\s?l\.?)?|s\.?\s?r\.?\s?[lo]\.?|s\.?\s?p\.?\s?a\.?|b\.?\s?v\.?|n\.?\s?v\.?|oy|ab|asa|aps|a\/s|pty\.?(\s+ltd\.?)?|pte\.?(\s+ltd\.?)?|sdn\.?\s+bhd\.?|bhd\.?|jsc|pjsc|ojsc|cjsc|ltda\.?|lda\.?|kft\.?|zrt\.?|sp\.?\s*z\s*o\.?\s*o\.?|d\.?\s?o\.?\s?o\.?|ehf\.?|e\.?\s?v\.?|m\.?\s?b\.?\s?h\.?)\s*[.,]?\s*$/i;
   function withoutLegalForm(s) {
     // (a name in brackets after the legal form is a trading or former name: "PAL Aerospace Ltd (Provincial Aerospace)"
     // is PAL Aerospace - while "Gama Aviation (UK) Limited" keeps its own brackets)
     const alias = s.match(/^(.*\S)\s*\([^()]*\)\s*\.?$/);
     if (alias && LEGAL_FORM.test(alias[1])) s = alias[1];
-    for (let i = 0; i < 4; i++) { const t = s.replace(LEGAL_FORM, '').replace(/[\s,&]+$/, ''); if (t === s || !/[A-Za-z]{2}/.test(t)) break; s = t; }
+    for (let i = 0; i < 4; i++) { const t = s.replace(LEGAL_FORM, '').replace(/[\s,&-]+$/, ''); if (t === s || !/[A-Za-z0-9]{2}/.test(t)) break; s = t; }
     return s;
   }
   // A trust company holding the registration for an owner who stays unnamed (the FAA register's "TVPX AIRCRAFT SOLUTIONS
@@ -5426,21 +5573,58 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
   }
   // adsb.lol's history of every aircraft it heard, every 20 s (its heatmap: a file per half hour, ~27 MB, records of 16
   // bytes - address, lat and lon x1e6, altitude /25 ft, speed x10 kt - after a marker with the time): who was where FR24's
-  // track had the flight at that moment. Read only when nothing cheaper named a flight - one file in two minutes for the
-  // flight opened, one in fifteen otherwise - and kept until another is needed.
+  // track had the flight at that moment. Read for the ocean pass only when nothing cheaper named a flight - one file in
+  // two minutes for the flight opened, one in fifteen otherwise; for FR24's playback (06-playback) as soon as it opens.
+  // The files read are kept: the last two in memory, the last six half hours long over on disk (the browser's cache
+  // storage) - a playback opened again, after a reload too, has its file at once. One request per file at a time; one
+  // refused, asked again after a minute.
   const heat = { url: '', buf: null, selAt: 0, bgAt: 0 };
+  const heatMem = new Map(), heatJobs = new Map(), heatFail = new Map(), HEAT_STORE = 'tl-heat-v1', HEAT_DISK = 6;
+  const heatUrlOf = t => { const d = new Date(t * 1000); return `https://adsb.lol/globe_history/${dayStr(t * 1000)}/heatmap/${String(d.getUTCHours() * 2 + (d.getUTCMinutes() >= 30 ? 1 : 0)).padStart(2, '0')}.bin.ttf`; };
+  // (the half hour a file covers is over, with time to spare for it to be written whole: only then kept on disk)
+  const heatDone = t => Math.floor(t / 1800) * 1800 + 1800 < nowS() - 15 * 60;
   function gmBinary(url, timeout) {
     const gm = typeof GM_xmlhttpRequest === 'function' ? GM_xmlhttpRequest : (typeof GM !== 'undefined' && GM && typeof GM.xmlHttpRequest === 'function' ? GM.xmlHttpRequest : null);
     return new Promise((res, rej) => { if (!gm) return rej(new Error('GM_xmlhttpRequest unavailable')); gm({ method: 'GET', url, responseType: 'arraybuffer', timeout, onload: r => r.status === 200 && r.response ? res(r.response) : rej(new Error('HTTP ' + r.status)), onerror: () => rej(new Error('network error')), ontimeout: () => rej(new Error('timeout')) }); });
   }
+  const heatCaches = () => { try { return typeof caches !== 'undefined' && caches && typeof caches.open === 'function' ? caches : null; } catch (e) { return null; } };
+  async function heatDiskGet(url) {
+    const cs = heatCaches(); if (!cs) return null;
+    try { const c = await cs.open(HEAT_STORE), r = await c.match(url); if (!r) return null; const b = await r.arrayBuffer(); return b && b.byteLength >= 16 ? b : null; } catch (e) { return null; }
+  }
+  async function heatDiskPut(url, buf) {
+    const cs = heatCaches(); if (!cs) return;
+    try {
+      const c = await cs.open(HEAT_STORE); await c.put(url, new Response(buf, { headers: { 'Content-Type': 'application/octet-stream' } }));
+      const keys = await c.keys(); for (const k of keys.slice(0, Math.max(0, keys.length - HEAT_DISK))) await c.delete(k);
+    } catch (e) { log('heatmap kept', String(e && e.message || e)); }
+  }
+  const heatHave = url => heatMem.get(url) || null;
+  function heatLoad(t) {
+    const url = heatUrlOf(t);
+    const m = heatMem.get(url); if (m) { heatMem.delete(url); heatMem.set(url, m); return Promise.resolve(m); }
+    if (heatJobs.has(url)) return heatJobs.get(url);
+    if (now() - (heatFail.get(url) || 0) < 60000) return Promise.reject(new Error('heatmap refused a moment ago'));
+    const done = heatDone(t);
+    const job = (async () => {
+      let buf = done ? await heatDiskGet(url) : null;
+      if (!buf) { buf = await gmBinary(url, 180000); if (done) heatDiskPut(url, buf).catch(() => {}); }
+      heatMem.set(url, buf); while (heatMem.size > 2) heatMem.delete(heatMem.keys().next().value);
+      heat.url = url; heat.buf = buf;
+      return buf;
+    })();
+    heatJobs.set(url, job);
+    job.then(() => heatJobs.delete(url), e => { heatJobs.delete(url); heatFail.set(url, now()); if (heatFail.size > 50) heatFail.delete(heatFail.keys().next().value); log('heatmap', String(e && e.message || e)); });
+    return job;
+  }
   async function heatNear(t, posAt, altFt, sel) {
-    const d = new Date(t * 1000), url = `https://adsb.lol/globe_history/${dayStr(t * 1000)}/heatmap/${String(d.getUTCHours() * 2 + (d.getUTCMinutes() >= 30 ? 1 : 0)).padStart(2, '0')}.bin.ttf`;
-    if (heat.url !== url) {
+    const url = heatUrlOf(t);
+    if (!heatHave(url) && !heatJobs.has(url)) {
       if (now() - (sel ? heat.selAt : Math.max(heat.selAt, heat.bgAt)) < (sel ? 2 : 15) * 60000) return [];
       if (sel) heat.selAt = now(); else heat.bgAt = now();
-      try { heat.buf = await gmBinary(url, 180000); heat.url = url; } catch (e) { log('heatmap', String(e)); return []; }
     }
-    return ENGINE.heatNear(heat.buf, t, posAt, altFt);
+    let buf; try { buf = await heatLoad(t); } catch (e) { return []; }
+    return ENGINE.heatNear(buf, t, posAt, altFt);
   }
   async function matchByTraces(f) {
     if (traceBusy || !f || live.has(f.id) || f.gnd || !(f.alt > 10000) || now() - (traceAsked.get(f.id) || 0) < 10 * 60000) return false;
@@ -6011,6 +6195,22 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
     else if (!rec.origin) { const f = pending.get(rec.id); loadToday(rec.hex, 600000, { bg: !!(f && f.bg), idle: true }).then(() => { if (live.get(rec.id) === rec) publishRoute(rec.id, composeRoute(rec.id, rec.hex)); }).catch(() => {}); }
   }
   const revokedIds = new Set();   // withdrawn this session: not carried over from an older snapshot
+  // Flights FR24 names itself - its own registration for them in its feed, only no callsign (the transponder sends none: an
+  // easyJet on the stand after landing, G-EZWZ at Liverpool, 15 Oct): not blocked, never taken over. One taken over before
+  // - just now, or in a record kept from an earlier visit - is let go: the page told, the panel FR24's own again
+  const fr24Named = new Set();
+  function noteFr24Named(ids) {
+    for (const x of ids || []) {
+      const id = Number(x); if (!id) continue;
+      if (!fr24Named.has(id)) { fr24Named.add(id); revokedIds.add(id); pending.delete(id); attempts.delete(id); strikes.delete(id); }
+      const rec = live.get(id) || store.getId(id); if (!rec) continue;
+      log('FR24 names it itself: let go', id.toString(16), rec.hex || '');
+      live.delete(id); store.delId(id); routeState.delete(id); planState.delete(id); telemetry.delete(id);
+      postToPage('revoke', { ids: [id] });
+      if (onScreen(id)) syncPanelSoon();
+    }
+    if (fr24Named.size > 20000) { const it = fr24Named.values(); for (let i = 0; i < 5000; i++) fr24Named.delete(it.next().value); }
+  }
   function revoke(id, why) {
     const rec = live.get(id); if (!rec) return;
     revokedIds.add(id);
@@ -8609,6 +8809,10 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
     if (!appr && p < 0.6) return null;
     // (a field FR24 has no board for; back where it began - guessed, or without a real flight first)
     if (dest.id >= 1e7 || (home && home.id === dest.id && (!appr || !backOk(dest)))) return null;
+    // (an airline's jet flying its number is not going back to the field it left, nor to one close by: a climb-out turning
+    // over the field, or levelling off on a departure that points at the next airport - Ryanairs out of Manchester "to
+    // Manchester" and "to Liverpool" on its boards)
+    if (home && cls === 'airliner' && /^[A-Z]{3}\d/.test(String(f.cs || '').toUpperCase()) && ENGINE.dist(home.lat, home.lon, dest.lat, dest.lon) <= 80) return null;
     return { originId: fromAp ? fromAp.id : 0, originIata: fromAp ? apCode(fromAp) : '', originCity: fromAp ? fromAp.city : '', destId: dest.id, destIata: apCode(dest), destCity: dest.city,
       destConf: appr ? 'confirmed' : CONF_OF(p), destP: Math.round(p * 100), eta: estimateEta(pos, dest, cls) || 0, atd: departedAt, std: 0, sta: 0, landed: false, phase: r.phase || '' };
   }
@@ -9519,10 +9723,13 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     if (id == null) return;
     shownId = id;
     if (!panel.__tlNA) { const dep = q(panel, SEL.depIata), arr = q(panel, SEL.arrIata); if (dep && arr && isNA(dep.dataset.tlVal ? dep.dataset.tlOrig : dep.textContent) && isNA(arr.dataset.tlVal ? arr.dataset.tlOrig : arr.textContent)) panel.__tlNA = true; }
-    const rec = live.get(id) || (() => { const c = store.getId(id); if (c && c.hex) { live.set(id, c); pushToPage([c]); return c; } return null; })();
+    const rec = live.get(id) || (() => { const c = !fr24Named.has(id) && store.getId(id); if (c && c.hex) { live.set(id, c); pushToPage([c]); return c; } return null; })();
+    // (a record let go - FR24 names the aircraft itself, or a match withdrawn: what was drawn from it goes)
+    if (!rec && panel.__tlLive === id) restore(panel);
+    panel.__tlLive = rec ? id : null;
     if (rec) { applyRecord(panel, rec); if (!routeState.get(id) && rec.hex) routeFor(rec).catch(e => log('route failed', e)); return; }
     let pub = pubRecs.get(id);
-    if (!panelLooksBlocked(panel)) {
+    if (!panelLooksBlocked(panel) || fr24Named.has(id)) {
       // an ordinary aircraft is recognised from the panel itself (its ICAO address is on screen) - no need to wait
       const shown = panelHex(panel);
       if (!pub) { const hx0 = shown; if (/^[0-9a-f]{6}$/.test(hx0) && hx0 !== panel.__tlPrevHex) pub = notePublicAircraft(id, hx0, clean(q(panel, SEL.registration) && q(panel, SEL.registration).textContent), clean(q(panel, SEL.model) && q(panel, SEL.model).textContent), clean(q(panel, SEL.callsign) && q(panel, SEL.callsign).textContent)); }
@@ -10306,6 +10513,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // saying "airborne", its take-off never seen: Liverpool's arrivals were full of "Liverpool -> Liverpool, landed")
   function boardScrub(apId, b) {
     let n = 0;
+    for (const [m, kind] of [[b.arr, 'arrivals'], [b.dep, 'departures']]) for (const k of Object.keys(m)) if (fakeRow(m[k], apId, kind)) { delete m[k]; n++; }
     for (const k of Object.keys(b.arr)) {
       const r = b.arr[k]; if (!r || r.drop || r.ap !== apId || !(r.src === 'live' || r.src === 'log')) continue;
       const d = b.dep[k], light = /^(piston|heli|fighter)$/.test(ENGINE.classify({ hex: r.hex || '', type: r.ty || '', reg: r.reg || '', cs: r.cs || '' }));
@@ -10315,9 +10523,28 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     if (n) b.dirty = true;
     return n;
   }
+  // A row of our own ('log': rebuilt from a flight log; 'live': a flight followed as it flew) of an airliner flying an
+  // airline's number - a flight FR24 shows and schedules itself - that is not one: an end unknown (one "N/A" end says
+  // nothing FR24's own row does not, and stands beside it as a second, made-up flight - 'log' rows), back at the field it
+  // left, or at a field close by, its landing there not seen on the ground: a climb-out given a landing at the field below
+  // or ahead of it - easyJets out of Gatwick "landed at Biggin Hill", Ryanairs and a Qatar 787 out of Manchester "to
+  // Manchester" and "to Liverpool". (gc: its landing was seen on the ground)
+  const airlineCs = cs => /^[A-Z]{3}\d/.test(String(cs || '').toUpperCase());
+  function fakeRow(r, apId, kind) {
+    if (!r || !(r.src === 'log' || r.src === 'live') || r.drop || !airlineCs(r.cs)) return false;
+    const hx = (r.hex && store.getHex(r.hex)) || {};
+    if (hx.ladd || hx.fr24Blocked || hx.pia || hx.mil || ENGINE.classify({ hex: r.hex || '', type: r.ty || hx.type || '', reg: r.reg || '', cs: r.cs }) !== 'airliner') return false;
+    if (!r.ap) return r.src === 'log';
+    if (r.ap === apId) return true;
+    if (r.gc) return false;
+    const a = apById(r.ap), h = apById(apId);
+    return !!a && !!h && ENGINE.dist(a.lat, a.lon, h.lat, h.lon) <= 80;
+  }
   // one flight's row: what a better source says wins, what it lacks is kept from the other
-  function boardMerge(b, kind, row) {
+  function boardMerge(b, kind, row, apId) {
     const m = kind === 'arrivals' ? b.arr : b.dep, cur = m[row.k];
+    // (one of those: not kept - and an older build's row of the same flight goes)
+    if (fakeRow(row, apId, kind)) { if (cur && cur.src === row.src) { delete m[row.k]; b.dirty = true; } return; }
     if (cur && (BOARD_RANK[cur.src] || 0) > (BOARD_RANK[row.src] || 0)) { for (const f of ['reg', 'hex', 'ty', 'dsc', 'al', 'alId', 'ap', 'cs', 'fid']) if (!cur[f] && row[f]) cur[f] = row[f]; }
     else {
       m[row.k] = cur ? Object.assign({}, cur, Object.fromEntries(Object.entries(row).filter(([, v]) => v != null && v !== ''))) : row;
@@ -10342,7 +10569,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // written to disk before that, or it would write over what is there)
   async function boardFresh(apId) {
     let b = await boardLoad(apId);
-    if (b.noDisk && store.mode() === 'idb') { const old = b; boardMem.delete(apId); b = await boardLoad(apId); for (const r of Object.values(old.arr)) boardMerge(b, 'arrivals', r); for (const r of Object.values(old.dep)) boardMerge(b, 'departures', r); }
+    if (b.noDisk && store.mode() === 'idb') { const old = b; boardMem.delete(apId); b = await boardLoad(apId); for (const r of Object.values(old.arr)) boardMerge(b, 'arrivals', r, apId); for (const r of Object.values(old.dep)) boardMerge(b, 'departures', r, apId); }
     return b;
   }
   function boardSave(apId, b) { boardPrune(b); b.savedAt = now(); if (!b.noDisk) { store.setBoard(apId, { v: BOARD_V, at: now(), arr: b.arr, dep: b.dep }); b.dirty = false; } }
@@ -10358,7 +10585,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     for (const apId of ids) {
       const rows = boardPend.get(apId); boardPend.delete(apId); if (!rows || !rows.length) continue;
       const b = await boardFresh(apId);
-      for (const [kind, row] of rows) boardMerge(b, kind, row);
+      for (const [kind, row] of rows) boardMerge(b, kind, row, apId);
       boardSoon(apId, b);
       await idleSlice();
     }
@@ -10456,7 +10683,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     const apId = Number(d.apId); if (!boardOk(apId)) return;
     boardAsked.set(apId, now());
     const b = await boardFresh(apId);
-    const rows = boardPend.get(apId); if (rows) { boardPend.delete(apId); for (const [kind, row] of rows) boardMerge(b, kind, row); boardSave(apId, b); }
+    const rows = boardPend.get(apId); if (rows) { boardPend.delete(apId); for (const [kind, row] of rows) boardMerge(b, kind, row, apId); boardSave(apId, b); }
     boardSend(apId, b);
     // (the airline of each row is its callsign's: once FR24's airline list is in, the rows again)
     if (!fr24.airlines) fr24.loadAirlines().then(() => boardSend(apId, b)).catch(() => {});
@@ -10488,8 +10715,8 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     // (down away from FR24's airports - a strip, a private site: the landing place learned there)
     const ds = route.landed && !boardOk(to) ? (to && apById(to)) || route.destSite : null;
     const site = ds && fin(ds.lat) ? learnSite(ds.lat, ds.lon, { heli: ENGINE.classify({ type: who.ty }) === 'heli' }) : 0;
-    if (boardOk(from) && dep > 0 && route.originConf !== 'history') boardPut(from, 'departures', Object.assign({ k: 'f' + fid, src: 'live', drop: false, fid, cs, t: dep, sch: route.std || dep, est: dep, st: 'departed', col: 'green', ap: boardOk(to) && (route.landed || ['filed', 'confirmed', 'landed'].includes(route.destConf)) ? to : site }, who));
-    if (boardOk(to) && route.landed && route.ata > 0) boardPut(to, 'arrivals', Object.assign({ k: 'f' + fid, src: 'live', drop: false, fid, cs, t: route.ata, sch: route.sta || route.ata, est: route.ata, st: 'landed', col: 'green', ap: boardOk(from) ? from : 0 }, who));
+    if (boardOk(from) && dep > 0 && route.originConf !== 'history') boardPut(from, 'departures', Object.assign({ k: 'f' + fid, src: 'live', drop: false, fid, cs, t: dep, sch: route.std || dep, est: dep, st: 'departed', col: 'green', ap: boardOk(to) && (route.landed || ['filed', 'confirmed', 'landed'].includes(route.destConf)) ? to : site, gc: route.landed ? 1 : 0 }, who));
+    if (boardOk(to) && route.landed && route.ata > 0) boardPut(to, 'arrivals', Object.assign({ k: 'f' + fid, src: 'live', drop: false, fid, cs, t: route.ata, sch: route.sta || route.ata, est: route.ata, st: 'landed', col: 'green', ap: boardOk(from) ? from : 0, gc: 1 }, who));
   }
   // An aircraft's rebuilt log: its flights of the last three days, at both ends
   function boardNoteLegs(hex, legs, rec) {
@@ -10498,9 +10725,14 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     // (the other end when it is no airport of FR24's - a strip it does not list, a field, a pad - and the aircraft was
     // seen down there: the landing place learned there, by name, not "N/A")
     const placeOf = (id, la, lo2) => { const a = id ? apById(id) : null; return a ? learnSite(a.lat, a.lon, { heli }) : learnSite(la, lo2, { heli }); };
-    for (const l of legs) {
-      if (!l || !(l.tStart > lo)) continue;
-      const off = l.tOff || l.tStart, k = 'h' + hex + ':' + Math.round(off / 600), to = l.to && l.to.id;
+    for (const l0 of legs) {
+      if (!l0 || !(l0.tStart > lo)) continue;
+      const off = l0.tOff || l0.tStart, k = 'h' + hex + ':' + Math.round(off / 600);
+      // (a climb-out an older build - or the monitor's - gave a landing at the field below or ahead of it: no landing, and
+      // the row it made there goes)
+      let l = l0;
+      if (ENGINE.climbedOut(l0, cls)) { const on0 = l0.tOn || l0.tEnd; if (boardOk(l0.to.id) && on0) boardPut(l0.to.id, 'arrivals', { k, src: 'log', t: on0, drop: true }); l = Object.assign({}, l0, { to: null, tOn: null, ended: false }); }
+      const to = l.to && l.to.id;
       let from = l.from && l.from.id;
       // (no take-off seen, first heard within 10 km of where it landed: a local flight from there - not "N/A")
       const local = !from && !!to && fin(l.startLat) && (a => !!a && ENGINE.dist(l.startLat, l.startLon, a.lat, a.lon) < 10)(apById(to));
@@ -10512,7 +10744,10 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       // landing below coverage, G-BOIL at -125 ft, 49 kt beside its strip, was "N/A" all evening)
       const quietLow = !l.ended && !!to && /^(ground|low)$/.test(l.to.conf || '') && nowS() - (l.tEnd || 0) > 1200;
       const landed = !!to && (!!l.ended || quietLow), on = landed ? (l.tOn || l.tEnd) : 0;
-      const toSite = !boardOk(to) && (to ? landed : !!l.ended) ? placeOf(to, l.endLat, l.endLon) : 0;
+      // (an end not known at all: a landing place where it was last heard only when that was down low - a jet lost climbing
+      // away or at cruise came down somewhere else, not at a "private site" under where it was lost)
+      const downLow = /^(piston|heli|unknown)$/.test(cls) || l.how === 'ground' || l.how === 'touch' || (fin(l.endAlt) && l.endAlt < 1500);
+      const toSite = !boardOk(to) && (to ? landed : !!l.ended && downLow) ? placeOf(to, l.endLat, l.endLon) : 0;
       const fromSite = !boardOk(from) && l.startedOnGround ? placeOf(from, l.startLat, l.startLon) : 0;
       // (an end only guessed from the climb or the descent - "near" - is a board's row only when the aircraft was heard
       // within 30 km of that airport: HZ-AR27, first heard at FL170 80 km out on Manchester's departure, was put on
@@ -10520,10 +10755,10 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       const nearOk = (e, la, lo2) => !e || e.conf !== 'near' || (a => !!a && fin(la) && ENGINE.dist(la, lo2, a.lat, a.lon) <= 30)(apById(e.id));
       const fromOk = local || l.startedOnGround || (!!l.from && l.from.conf !== 'history' && nearOk(l.from, l.startLat, l.startLon));
       const toOk = (landed || !!toSite) && nearOk(l.to, l.endLat, l.endLon);
-      if (boardOk(from) && fromOk) boardPut(from, 'departures', Object.assign({ k, src: 'log', drop: false, cs: l.cs || '', t: off, sch: off, est: off, st: 'departed', col: 'green', ap: toOk ? (boardOk(to) ? to : toSite) : 0 }, who));
+      if (boardOk(from) && fromOk) boardPut(from, 'departures', Object.assign({ k, src: 'log', drop: false, cs: l.cs || '', t: off, sch: off, est: off, st: 'departed', col: 'green', ap: toOk ? (boardOk(to) ? to : toSite) : 0, gc: toOk && landed && l.to.conf === 'ground' ? 1 : 0 }, who));
       // (a row an older build kept from such a guess goes: HZ-AR27's on Liverpool's board)
       else if (boardOk(from) && l.from && l.from.conf === 'near') boardPut(from, 'departures', { k, src: 'log', t: off, drop: true });
-      if (boardOk(to) && toOk && on) boardPut(to, 'arrivals', Object.assign({ k, src: 'log', drop: false, cs: l.cs || '', t: on, sch: on, est: on, st: 'landed', col: 'green', ap: fromOk ? (boardOk(from) ? from : fromSite) : 0 }, who));
+      if (boardOk(to) && toOk && on) boardPut(to, 'arrivals', Object.assign({ k, src: 'log', drop: false, cs: l.cs || '', t: on, sch: on, est: on, st: 'landed', col: 'green', ap: fromOk ? (boardOk(from) ? from : fromSite) : 0, gc: l.to.conf === 'ground' ? 1 : 0 }, who));
       else if (boardOk(to) && landed && on && l.to.conf === 'near') boardPut(to, 'arrivals', { k, src: 'log', t: on, drop: true });
     }
   }
@@ -10811,15 +11046,19 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // ---- FR24's map playback: the whole map at any moment of FR24's week -------------------------------------------------
   // FR24 replays its feed as it was (Feed/Playback) and the panel of a flight opened in it (Feed/PlaybackFlight); the page
   // reports the moment and the flights it shows with no callsign. Each is named as it was then - from what this script
-  // already knew of that very flight (identified while it was live), else from adsb.lol's heatmap of that half hour: the
+  // already knew of that very flight (identified while it was live), from the monitor, and - at the same time, not after
+  // it, so a monitor that is slow, down or has no answer costs nothing - from adsb.lol's heatmap of that half hour: the
   // one aircraft heard where FR24 had it, at its height, of the type FR24 gives (M-ARNZ's PC-24 off Blackpool, 9 Oct
-  // 12:35). A named flight - and an ordinary one FR24 has no destination for - gets the flight as flown, from its ADS-B
+  // 12:35). The heatmap is read the moment a playback opens and kept (02 heatLoad), so the names are there as the map
+  // is. A named flight - and an ordinary one FR24 has no destination for - gets the flight as flown, from its ADS-B
   // track of that day: where it took off and where it landed, the strip's tag "Playback" in red. The flight open in the
   // panel gets its padlocked figures from that track, moment by moment (the page reads them from it as FR24 plays).
   const pbOut = new Map();   // FR24 flight id -> a name found here in a playback, for the monitor (02 reportToMonitor)
-  const pb = { ts: 0, at: 0, flights: new Map(), named: new Map(), routes: new Map(), sel: 0, selTs: 0, hexOf: new Map(), busy: false, heatAt: 0, tried: new Map(), routing: new Set(), traceKey: '', matchT: 0, monAsked: new Set() };
+  const pb = { ts: 0, at: 0, flights: new Map(), named: new Map(), routes: new Map(), sel: 0, selTs: 0, hexOf: new Map(), naming: new Set(), heatBusy: false, heatAgain: false, tried: new Map(), routing: new Set(), traceKey: '', matchT: 0, monAsked: new Set() };
   function pbMode() { return /^\/\d{4}-\d\d-\d\d\/\d\d:\d\d\//.test(location.pathname); }
-  const heatUrlOf = t => { const d = new Date(t * 1000); return `https://adsb.lol/globe_history/${dayStr(t * 1000)}/heatmap/${String(d.getUTCHours() * 2 + (d.getUTCMinutes() >= 30 ? 1 : 0)).padStart(2, '0')}.bin.ttf`; };
+  // (a flight is tried against its half hour's file once a two-minute step of it: tried again further on - one that has
+  // since taken off, or come out of a hole in coverage)
+  const pbTryKey = ts => heatUrlOf(ts) + '|' + Math.floor(ts / 120);
   function onPbFeed(d) {
     const ts = Number(d.ts) || 0; if (!ts) return;
     pb.ts = ts; pb.at = now();
@@ -10829,20 +11068,31 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       if (!pb.named.has(f.id)) { const c = store.getId(f.id); if (c && c.hex) pbAdopt(f.id, Object.assign({}, c), ts); }
     }
     if (pb.flights.size > 3000) for (const k of [...pb.flights.keys()].slice(0, 1000)) pb.flights.delete(k);
-    // (the monitor names the whole moment in one answer: asked as soon as the frame is in; without it, the heatmap's
-    // wait as before)
-    pbMatchSoon(monUp() ? 100 : 1500);
+    pbHeatWarm(ts);
+    pbMatchSoon(50);
   }
   function pbMatchSoon(ms) { if (!pb.matchT) pb.matchT = setTimeout(() => { pb.matchT = 0; pbMatch().catch(e => log('playback match', e)); }, ms); }
+  // The heatmap of the moment shown read at once - and, in the last ten minutes of a half hour, the next one's too, as
+  // the playback runs into it (two files at most on the way at a time: a quick scrub through the day asks for no more)
+  function pbHeatWarm(ts) {
+    const want = [ts], next = Math.floor(ts / 1800) * 1800 + 1800;
+    if (ts - (next - 1800) >= 1200 && next + 1800 < nowS() - 300) want.push(next);
+    for (const t of want) {
+      const u = heatUrlOf(t); if (heatHave(u) || heatJobs.has(u) || now() - (heatFail.get(u) || 0) < 60000) continue;
+      if (heatJobs.size >= 2) break;
+      const back = () => { if (heatUrlOf(pb.ts) === u) pbMatchSoon(0); };
+      heatLoad(t).then(back, back);
+    }
+  }
   // a flight named: the page labels it as FR24 would, and its route as flown follows
   function pbAdopt(id, rec, ts) {
     rec.id = id; pb.named.set(id, rec); pushToPage([rec]);
     if (rec.hex) pbRouteFor(id, rec.hex, ts).catch(e => log('playback route', e));
     if (id === pb.sel) { pbSendTrace(id, rec.hex, pb.selTs || ts).catch(() => {}); syncPanelSoon(); }
   }
-  // Every unnamed flight of the moment against adsb.lol's heatmap of its half hour, in one pass. A file is read at most
-  // every two minutes (one is ~25 MB) - at once for the flight opened in the panel - and each flight tried once a file.
-  // The monitor first (22.23, /pbmatch): every FR24 flight it named while it was live, and every other from the tracks it
+  // (one aircraft, one flight: an aircraft already named for another flight of about that moment is not this one too)
+  const pbTaken = (hex, id, ts) => { for (const r of pb.named.values()) if (r.hex === hex && r.id !== id && Math.abs((pb.flights.get(r.id) || {}).ts - ts) < 600) return true; return false; };
+  // The monitor (22.23, /pbmatch): every FR24 flight it named while it was live, and every other from the tracks it
   // keeps of the blocked aircraft (90 days) - the whole map's unnamed flights in one request, named at once, each with its
   // flight as the monitor logged it. An older monitor: the names it gave live only (/names).
   async function pbFromMonitor(ts) {
@@ -10858,53 +11108,86 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     let n = 0;
     for (const r of (j && Array.isArray(j.list) ? j.list : [])) {
       const [id, hex, reg, type, cs, flags, how, leg] = r;
-      if (!pb.flights.has(id) || pb.named.has(id) || !/^[0-9a-f]{6}$/.test(String(hex || ''))) continue;
+      if (!pb.flights.has(id) || pb.named.has(id) || !/^[0-9a-f]{6}$/.test(String(hex || '')) || pbTaken(hex, id, ts)) continue;
       const hx = store.getHex(hex) || {}, rec = { hex, cs: /^[A-Z0-9]{2,8}$/.test(String(cs || '')) ? cs : '', reg: reg || hx.reg || hexNNumber(hex), type: String(type || hx.type || '').toUpperCase(), desc: hx.desc || '', ladd: !!(flags & 1 || hx.ladd), mil: !!(flags & 2 || hx.mil), pia: !!(flags & 4 || hx.pia), src: how === 'track' ? 'monitor (its track)' : 'monitor (named live)', matchedAt: now() };
       store.mergeHex(hex, { reg: rec.reg, type: rec.type, ladd: rec.ladd || undefined, pia: rec.pia || undefined, mil: rec.mil || undefined });
       store.setId(id, Object.assign({ id }, rec));
       if (leg && typeof leg === 'object') pbRouteFromLeg(id, hex, leg);
       pbAdopt(id, rec, ts); n++;
       // (named from its track: kept on the monitor with that day, as a browser's playback name is - checked there)
-      if (how === 'track') { pbOut.set(id, [id, hex, rec.reg, rec.type, rec.cs, (rec.ladd ? 1 : 0) | (rec.mil ? 2 : 0) | (rec.pia ? 4 : 0), Math.round(ts)]); if (pbOut.size > 2000) pbOut.delete(pbOut.keys().next().value); }
+      if (how === 'track') pbOutSet(id, rec, ts);
       if (id === pb.sel) publicIdentity(hex, rec.reg).then(() => { pushToPage([rec]); syncPanelSoon(); }).catch(() => {});
     }
     if (n) log('playback: named from the monitor', n, 'of', fl.length);
     return n;
   }
+  function pbOutSet(id, rec, ts) { pbOut.set(id, [id, rec.hex, rec.reg, rec.type, rec.cs, (rec.ladd ? 1 : 0) | (rec.mil ? 2 : 0) | (rec.pia ? 4 : 0), Math.round(ts)]); if (pbOut.size > 2000) pbOut.delete(pbOut.keys().next().value); }
+  // the monitor and the heatmap side by side: whichever answers first names a flight
   async function pbMatch() {
-    if (pb.busy || !pb.ts) return;
-    const ts = pb.ts, url = heatUrlOf(ts);
-    await pbFromMonitor(ts).catch(e => log('playback names', e));
-    if (pb.ts !== ts) { pbMatchSoon(500); return; }
-    const list = [...pb.flights.values()].filter(f => f.ts === ts && !pb.named.has(f.id) && pb.tried.get(f.id) !== url && f.src !== 4 && (f.gnd || f.spd > 40 || f.alt > 1500));
-    if (!list.length) return;
-    const selWaiting = list.some(f => f.id === pb.sel);
-    if (heat.url !== url && now() - pb.heatAt < 2 * 60000 && !selWaiting) { pbMatchSoon(30000); return; }
-    pb.busy = true;
+    const ts = pb.ts; if (!ts) return;
+    pbHeatWarm(ts);
+    await Promise.all([pbFromMonitor(ts).catch(e => log('playback names', e)), pbFromHeat(ts).catch(e => log('playback heatmap', e))]);
+  }
+  // Every unnamed flight of the moment against adsb.lol's heatmap of its half hour, in one pass
+  async function pbFromHeat(ts) {
+    const url = heatUrlOf(ts), key = pbTryKey(ts);
+    const want = () => [...pb.flights.values()].filter(f => f.ts === ts && !pb.named.has(f.id) && pb.tried.get(f.id) !== key && f.src !== 4 && (f.gnd || f.spd > 40 || f.alt > 1500));
+    if (!want().length) return;
+    // (on its way: pbHeatWarm comes back here the moment it is in; refused - none for that half hour yet - the flights
+    // are said not to be in it, and it is asked for again a minute on)
+    const buf = heatHave(url);
+    if (!buf) { if (heatFail.has(url) && !heatJobs.has(url) && now() - heatFail.get(url) < 60000) for (const f of want()) pb.tried.set(f.id, key); return; }
+    if (pb.heatBusy) { pb.heatAgain = true; return; }
+    pb.heatBusy = true;
     try {
-      if (heat.url !== url) { pb.heatAt = now(); try { heat.buf = await gmBinary(url, 180000); heat.url = url; } catch (e) { log('playback heatmap', String(e)); return; } }
       await idleSlice();
-      const res = ENGINE.heatMatch(heat.buf, ts, list.map(f => ({ lat: f.lat, lon: f.lon, trk: f.trk, gs: f.spd, alt: f.alt, gnd: !!f.gnd, r: f.gnd ? 0.3 : 3 })));
+      if (pb.ts !== ts) { pb.heatAgain = true; return; }
+      const list = want(); if (!list.length) return;
+      const res = ENGINE.heatMatch(buf, ts, list.map(f => ({ lat: f.lat, lon: f.lon, trk: f.trk, gs: f.spd, alt: f.alt, gnd: !!f.gnd, r: f.gnd ? 0.3 : 3 })));
       const count = new Map(); res.forEach(h => { if (h) count.set(h, (count.get(h) || 0) + 1); });
       for (let i = 0; i < list.length; i++) {
-        const f = list[i], hex = res[i]; pb.tried.set(f.id, url);
-        if (!hex || count.get(hex) > 1 || [...pb.named.values()].some(r => r.hex === hex && r.id !== f.id && Math.abs((pb.flights.get(r.id) || {}).ts - ts) < 600)) continue;   // (one aircraft, one flight)
-        // its own track of that day: who it is (adsb.lol's database), its callsign then - and the type agreeing with FR24's
-        const pts = await pbPoints(hex, ts), tm = traceMeta.get(hex) || {}, hx = store.getHex(hex) || {};
-        const type = clean(tm.t || hx.type).toUpperCase();
-        if (f.type && type && typeRelation(type, f.type) === 'different') { log('playback match: types differ', f.id.toString(16), hex, type, f.type); continue; }
-        let cs = ''; { let best = 1e9; for (const p of pts) { const dt = Math.abs(p.t - ts); if (dt < best && p.cs) { best = dt; cs = p.cs; } if (p.t > ts + 3600) break; } }
-        const rec = { hex, cs: /^[A-Z0-9]{2,8}$/.test(cs) ? cs : '', reg: tm.r || hx.reg || hexNNumber(hex), type: type || clean(f.type).toUpperCase(), desc: tm.desc || hx.desc || '', ladd: !!(tm.flags & 8 || hx.ladd), pia: !!(tm.flags & 4 || hx.pia), mil: !!(tm.flags & 1 || hx.mil), src: 'adsb.lol (playback)', matchedAt: now() };
-        store.mergeHex(hex, { reg: rec.reg, type: rec.type, ladd: rec.ladd || undefined, pia: rec.pia || undefined, mil: rec.mil || undefined });
-        store.setId(f.id, Object.assign({ id: f.id }, rec));
-        log('playback: named', f.id.toString(16), hex, rec.reg, 'at', new Date(ts * 1000).toISOString().slice(11, 16));
-        pbAdopt(f.id, rec, ts);
-        // (and to the monitor: kept there for good with the day of the flight - any later playback of it, anyone's, named)
-        pbOut.set(f.id, [f.id, hex, rec.reg, rec.type, rec.cs, (rec.ladd ? 1 : 0) | (rec.mil ? 2 : 0) | (rec.pia ? 4 : 0), Math.round(ts)]); if (pbOut.size > 2000) pbOut.delete(pbOut.keys().next().value);
-        if (f.id === pb.sel) publicIdentity(hex, rec.reg).then(() => { pushToPage([rec]); syncPanelSoon(); }).catch(() => {});
+        const f = list[i], hex = res[i]; pb.tried.set(f.id, key);
+        if (!hex || count.get(hex) > 1 || pbTaken(hex, f.id, ts)) continue;
+        // (each named on its own - one whose track is still to come holds up neither the others nor the next moment)
+        pb.naming.add(f.id); pbHeatName(f, hex, ts).catch(e => log('playback name', e)).then(() => { pb.naming.delete(f.id); if (f.id === pb.sel) syncPanelSoon(); });
       }
-    } finally { pb.busy = false; }
-    if ([...pb.flights.values()].some(f => f.ts === pb.ts && !pb.named.has(f.id) && pb.tried.get(f.id) !== heatUrlOf(pb.ts))) pbMatchSoon(5000);
+      if (pb.tried.size > 20000) for (const k of [...pb.tried.keys()].slice(0, 5000)) pb.tried.delete(k);
+    } finally { pb.heatBusy = false; if (pb.heatAgain) { pb.heatAgain = false; pbMatchSoon(0); } }
+  }
+  // (its callsign at that moment, from its track of the day)
+  function pbCsAt(pts, ts) { let cs = '', best = 1e9; for (const p of pts || []) { const dt = Math.abs(p.t - ts); if (dt < best && p.cs) { best = dt; cs = p.cs; } if (p.t > ts + 3600) break; } return /^[A-Z0-9]{2,8}$/.test(cs) ? cs : ''; }
+  // A heatmap match named: at once from what is known of the aircraft here already (its registration and type - kept
+  // from the lists, earlier flights, its address for a US one), its type against FR24's; what is not known yet - an
+  // aircraft never seen here - from its track of that day first, the one request then. Its callsign then follows.
+  async function pbHeatName(f, hex, ts) {
+    const known = () => { const tm = traceMeta.get(hex) || {}, hx = store.getHex(hex) || {}; return { tm, hx, type: clean(tm.t || hx.type).toUpperCase(), reg: tm.r || hx.reg || hexNNumber(hex) }; };
+    const fType = clean(f.type).toUpperCase();
+    let k = known(), pts = null;
+    if ((fType && !k.type) || !k.reg) { pts = await pbPoints(hex, ts); k = known(); }
+    if (fType && k.type && typeRelation(k.type, fType) === 'different') { log('playback match: types differ', f.id.toString(16), hex, k.type, fType); return; }
+    if (pb.named.has(f.id) || pbTaken(hex, f.id, ts)) return;
+    const flagsOf = k => ({ ladd: !!(k.tm.flags & 8 || k.hx.ladd), pia: !!(k.tm.flags & 4 || k.hx.pia), mil: !!(k.tm.flags & 1 || k.hx.mil) });
+    const rec = Object.assign({ hex, cs: pts ? pbCsAt(pts, ts) : '', reg: k.reg, type: k.type || fType, desc: k.tm.desc || k.hx.desc || '' }, flagsOf(k), { src: 'adsb.lol (playback)', matchedAt: now() });
+    store.mergeHex(hex, { reg: rec.reg, type: rec.type, ladd: rec.ladd || undefined, pia: rec.pia || undefined, mil: rec.mil || undefined });
+    store.setId(f.id, Object.assign({ id: f.id }, rec));
+    log('playback: named', f.id.toString(16), hex, rec.reg, 'at', new Date(ts * 1000).toISOString().slice(11, 16));
+    pbAdopt(f.id, rec, ts);
+    // (and to the monitor: kept there for good with the day of the flight - any later playback of it, anyone's, named)
+    pbOutSet(f.id, rec, ts);
+    if (f.id === pb.sel) publicIdentity(hex, rec.reg).then(() => { pushToPage([rec]); syncPanelSoon(); }).catch(() => {});
+    if (pts) return;
+    // (named before its track was read: its callsign then - and anything the track's own record adds - once it is in)
+    const p2 = await pbPoints(hex, ts); if (pb.named.get(f.id) !== rec) return;
+    const k2 = known(), fl = flagsOf(k2), cs = pbCsAt(p2, ts), add = {};
+    if (cs && !rec.cs) add.cs = cs;
+    if (!rec.reg && k2.reg) add.reg = k2.reg;
+    if (!rec.desc && (k2.tm.desc || k2.hx.desc)) add.desc = k2.tm.desc || k2.hx.desc;
+    for (const x of ['ladd', 'pia', 'mil']) if (fl[x] && !rec[x]) add[x] = true;
+    if (!Object.keys(add).length) return;
+    Object.assign(rec, add);
+    store.mergeHex(hex, { reg: rec.reg || undefined, ladd: rec.ladd || undefined, pia: rec.pia || undefined, mil: rec.mil || undefined });
+    store.setId(f.id, Object.assign({ id: f.id }, rec)); pbOutSet(f.id, rec, ts);
+    pushToPage([rec]); if (f.id === pb.sel) syncPanelSoon();
   }
   // The flight as flown: its ADS-B track of that day (and of the next or the day before, across midnight) in legs - the
   // one it was flying at that moment, or about to fly from where it stood - with both its ends; an end away from FR24's
@@ -10946,6 +11229,29 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     if (!airportsReady() || !fin(leg.tStart)) return null;
     try { return pbRouteSet(id, pbRouteOf(hex, leg, ENGINE.classify(acOfHex(hex)) === 'heli')); } catch (e) { log('playback route', e); return null; }
   }
+  // Mach and the outside air temperature of a report: the aircraft's own (readsb's record of its air data), else worked
+  // out from its other figures - Mach from the indicated airspeed at its pressure altitude (compressible flow, the
+  // indicated airspeed taken for the calibrated), the temperature from the true airspeed against the speed of sound at
+  // that Mach, as readsb works it out (from Mach 0.395: below, the rounding of the figures sent makes it too inexact)
+  function machOf(ias, altFt) {
+    if (!(ias > 30) || !fin(altFt) || altFt > 60000) return NaN;
+    const p = altFt <= 36089 ? 101325 * Math.pow(1 - 6.8755856e-6 * altFt, 5.2558797) : 22632.06 * Math.exp(-4.806346e-5 * (altFt - 36089));
+    const qc = 101325 * (Math.pow(1 + 0.2 * Math.pow(ias / 661.4786, 2), 3.5) - 1), m = Math.sqrt(5 * (Math.pow(qc / p + 1, 2 / 7) - 1));
+    return m > 0.05 && m < 1 ? m : NaN;
+  }
+  // (one worked out is kept only where it makes sense: a temperature within 35 °C of the standard atmosphere's at that
+  // height - the figures of one report do not always belong together. Against the aircraft's own in the day tracks of
+  // test/fixtures/legs: Mach from the airspeed a median 0.001 off, the temperature 0.3 °C off from its own Mach, 0.8 °C
+  // from the worked-out one.)
+  const isaC = ft => 15 - 1.98 * Math.min(Math.max(ft, 0), 36089) / 1000;
+  const tempOf = (tas, mach, ft) => { const c = Math.pow(tas / (38.967854 * mach), 2) - 273.15; return Math.abs(c - isaC(ft)) <= 35 ? c : NaN; };
+  function pbAir(p) {
+    if (p.own === false || p.gnd0 || !fin(p.alt)) return [null, null];
+    let mach = p.mach > 0 && p.mach < 1 ? p.mach : NaN, oat = fin(p.oat) ? p.oat : NaN;
+    if (!fin(mach)) { const m = machOf(p.ias, p.alt); if (fin(m) && (!(p.tas > 0) || fin(tempOf(p.tas, m, p.alt)))) mach = m; }
+    if (!fin(oat) && mach >= 0.395 && p.tas > 0) oat = tempOf(p.tas, mach, p.alt);
+    return [fin(mach) ? Math.round(mach * 1000) / 1000 : null, fin(oat) ? Math.round(oat) : null];
+  }
   // the open flight's track, for its padlocked figures as FR24 plays it: the flight's span, every report
   async function pbSendTrace(id, hex, ts) {
     if (!hex || !ts) return;
@@ -10954,7 +11260,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     const lo = (r ? r.t0 : ts - 3 * 3600) - 600, hi = (r ? r.t1 : ts + 3 * 3600) + 600, nz = v => fin(v) ? Math.round(v) : null;
     // (and the airspace it was in - FIR / UIR by position and height - worked out once a minute along the way)
     let firT = -1e9, fir = null;
-    const rows = pts.filter(p => p.t >= lo && p.t <= hi).map(p => { if (p.t - firT >= 60) { firT = p.t; fir = firInfo(p.lat, p.lon, p.gnd0 ? 0 : p.alt); } return [Math.round(p.t), nz(p.alt), nz(p.altGeom), nz(p.vr), nz(p.ias), nz(p.tas), p.sq || '', nz(p.wd), nz(p.ws), p.own === false ? 0 : 1, fir ? fir.name : '', fir ? fir.code : '']; });
+    const rows = pts.filter(p => p.t >= lo && p.t <= hi).map(p => { if (p.t - firT >= 60) { firT = p.t; fir = firInfo(p.lat, p.lon, p.gnd0 ? 0 : p.alt); } const [mach, oat] = pbAir(p); return [Math.round(p.t), nz(p.alt), nz(p.altGeom), nz(p.vr), nz(p.ias), nz(p.tas), p.sq || '', nz(p.wd), nz(p.ws), p.own === false ? 0 : 1, fir ? fir.name : '', fir ? fir.code : '', mach, oat]; });
     postToPage('pbTrace', { id, hex, pts: rows });
     // (the other network's reports of that day, once in: the holes filled)
     const m = pbMore(hex, ts); if (m) m.then(all => { if (pb.traceKey !== key || all.length <= pts.length) return; pb.traceKey = ''; pbSendTrace(id, hex, ts).catch(() => {}); }).catch(() => {});
@@ -10980,14 +11286,31 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       else pbSendTrace(id, hex, Number(d.ts) || pb.selTs).catch(() => {});
     }
   }
+  // The panel's padlocked country of registration, serial number and age in playback, as on a live flight: FR24 answers a
+  // playback panel once, before the registers have answered for an aircraft just named - so written in its cells as they
+  // come (never the live airspeeds and the like: those of the moment played come from its track, 06 pbSendTrace). Only
+  // into a panel showing that very aircraft; anything of ours taken out again for another.
+  const PB_LOCKED = new Set(['country', 'msn', 'age']);
+  function pbLocked(panel, hx) {
+    const shown = panelHex(panel); if (hx && shown && hx.hex && shown !== hx.hex) hx = null;
+    let vals = null;
+    for (const cell of panel.querySelectorAll('[class*="col-span"]')) {
+      const label = cell.firstElementChild; if (!label || label.tagName !== 'P') continue;
+      const hit = LOCKED_FIELDS.find(x => x[0].test(clean(label.textContent))); if (!hit || !PB_LOCKED.has(hit[1])) continue;
+      if (!cell.querySelector('.tl-filled') && !lockOf(cell)) continue;
+      if (!vals) { const c = hx && hx.hex ? countryOf(hx.hex, hx.reg) : null; vals = hx ? { country: (regCountry(hx.reg) || {}).name || hx.country || (c && c.name) || '', msn: hx.msn || '', age: ageText(hx) } : {}; }
+      fillLockedCell(cell, vals[hit[1]] || '', hit[1]);
+    }
+  }
   // The strip in playback: who it was (a flight FR24 does not name) and the flight as flown, tagged "Playback" in red -
   // never a prediction: by then it was over
   function pbStrip(panel) {
     const id = pb.sel, rec = id ? pb.named.get(id) || null : null, route = id ? pb.routes.get(id) || null : null, f = id ? pb.flights.get(id) : null;
+    pbLocked(panel, rec ? withStored(rec) : (id && pb.hexOf.get(id) ? Object.assign({ hex: pb.hexOf.get(id) }, store.getHex(pb.hexOf.get(id)) || {}) : null));
     if (!rec && !route) {
       if (!f || !panelLooksBlocked(panel)) { panel.querySelectorAll('.tl-strip').forEach(e => e.remove()); return; }
       const el = strip(panel); el.dataset.state = 'playback';
-      const html = rowHtml('plane', gridHtml([cellHtml('Blocked aircraft' + tagHtml('LADD', 'ladd'), pb.tried.get(id) === heatUrlOf(f.ts) ? '<span class="tl-muted">not in the public ADS-B record of that moment</span>' : '<span class="tl-spin"></span> identifying from the public ADS-B record of that moment…', '', true)]));
+      const html = rowHtml('plane', gridHtml([cellHtml('Blocked aircraft' + tagHtml('LADD', 'ladd'), pb.tried.get(id) === pbTryKey(f.ts) && !pb.naming.has(id) ? '<span class="tl-muted">not in the public ADS-B record of that moment</span>' : '<span class="tl-spin"></span> identifying from the public ADS-B record of that moment…', '', true)]));
       if (el.__tlHtml !== html) { el.innerHTML = html; el.__tlHtml = html; }
       return;
     }
@@ -11419,10 +11742,11 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   }
   function onFeed(d) {
     const t = now();
+    if (d.named && d.named.length) noteFr24Named(d.named);
     if (d.na && d.na.length) noteNa(d.na, d.at || t);
     let fresh = 0; const cachedHits = [];
     for (const f of d.flights || []) {
-      if (!fin(f.lat) || !fin(f.lon)) continue;
+      if (!fin(f.lat) || !fin(f.lon) || fr24Named.has(f.id)) continue;
       const prev = pending.get(f.id);
       pending.set(f.id, Object.assign({}, f, { receivedAt: d.at || t, serverTime: d.serverTime || 0, type: f.type || (prev && prev.type) || '', reg: f.reg || (prev && prev.reg) || '', bg: d.bg ? (prev ? !!prev.bg : true) : false }));
       noteGroundState(f.id, f, d.at || t);
@@ -11467,7 +11791,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     // identity, telemetry and a route pushed here are in place for the panel's very first render.
     const id = Number(d.id) || null;
     if (id && id !== selectedId) { selectedId = id; telemLast = 0; syncPanelSoon(); }
-    if (id && !live.has(id)) { const c = store.getId(id); if (c && c.hex) live.set(id, hydrate(c)); }
+    if (id && !live.has(id) && !fr24Named.has(id)) { const c = store.getId(id); if (c && c.hex) live.set(id, hydrate(c)); }
     if (id && !live.has(id)) srvAdopt(id);       // (named by the monitor)
     if (id && !live.has(id)) pubPrime(id);   // an ordinary flight reopened: its reasoned route, before the first frame
     if (id && live.has(id)) {
@@ -11723,7 +12047,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     };
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true }); else start();
   }
-  try { (pageWindow()).__tweeksLadd = { version: VERSION, msgCount, schedOf, trailFor, get shownId() { return shownId; }, posStats, get bridgeV() { return bridgeV; }, hexOfId, currentPos, idHex, engine: ENGINE, live, pending, telemetry, store, routeState, planState, globalList, fr24, todayCache, sweep, resolveTargeted, routeFor, composeRoute, altsOf, holdTerminal, termHold, worldScan, refreshLists, quickRouteAll, historyPump, histPumped, learnedStore, regCountry, fr24Sched, pubRouted, pubRecs, privatePlace, loadSites, siteNear, sites, onSched, pubMem: () => pubMem, publishRoute, syncPanel, normalizeReadsb, telemOf, noteCands, csOfRec, warmHist, hostStat, loadT2, wantWx, wxMap, wantNotams, closedMap, estimateEta, nNumberHex, watchList, pollWatch, accStore, accNote, statsHtml, fleetList, checkHealth, health, exportCsv, predictForHex, verifyAgainstList, strikes, revokedIds, loadHistory, loadToday, fetchJetphotos, loadRunways, knownLegs, areaCache, pollView, saveSnapshot, boardNoteLegs, boardNoteFlight, boardNoteSched, boardScrub, boardLoad, naRouteOf, noteNa, naFeed, matchParked, matchByTraces, boardDrain, boardMem, onNeedBoard, operatorOf, shownOwner, enrich, userConfirm, userDestOf, loadApprTable, monGet, monPost, monCheck, monLive, monUp, MON_DEFAULTS, get monBase() { return monBase; }, liveSources, telOut, noteTelOut, reportTel, pbOut, srvIds, pullSrvIds, srvAdopt, reportToMonitor, syncSrvLearn, applyLearned, get feedHdr() { return feedHdr; }, boardMonFill, natRowOf, fnRows, buildSnapshot, bootHold, firAt, loadFir, onAirAsk, pb, onPbFeed, onPbFollow, onPbHex, pbRouteFor, pbMatch, pbFromMonitor, onNeedRoutes, onNeedAirportData, onNeedAirportPanel, liveBoardRows, runwaysOf, parseRunwayEnds, flightsOfCallsign, bootFlightPage, unlockExports, exportFile, rowWindow, hexOfFid, onNeedSearch, osmPick, wantOsmPlace, osmPlaceAt, learnSite, siteIdAt, siteBk, operatorIdOf, airlineIdByName, fr24Cat, onHistElsewhere, get viewBox() { return viewBox; }, get selectedId() { return currentId(); } }; } catch (_) { /* ignore */ }
+  try { (pageWindow()).__tweeksLadd = { version: VERSION, msgCount, schedOf, trailFor, get shownId() { return shownId; }, posStats, get bridgeV() { return bridgeV; }, hexOfId, currentPos, idHex, engine: ENGINE, live, pending, telemetry, store, routeState, planState, globalList, fr24, todayCache, sweep, resolveTargeted, routeFor, composeRoute, altsOf, holdTerminal, termHold, worldScan, refreshLists, quickRouteAll, historyPump, histPumped, learnedStore, regCountry, fr24Sched, pubRouted, pubRecs, privatePlace, loadSites, siteNear, sites, onSched, pubMem: () => pubMem, publishRoute, syncPanel, normalizeReadsb, telemOf, noteCands, csOfRec, warmHist, hostStat, loadT2, wantWx, wxMap, wantNotams, closedMap, estimateEta, nNumberHex, watchList, pollWatch, accStore, accNote, statsHtml, fleetList, checkHealth, health, exportCsv, predictForHex, verifyAgainstList, strikes, revokedIds, fr24Named, noteFr24Named, loadHistory, loadToday, fetchJetphotos, loadRunways, knownLegs, areaCache, pollView, saveSnapshot, boardNoteLegs, boardNoteFlight, boardNoteSched, boardScrub, boardLoad, naRouteOf, noteNa, naFeed, matchParked, matchByTraces, boardDrain, boardMem, onNeedBoard, operatorOf, shownOwner, enrich, userConfirm, userDestOf, loadApprTable, monGet, monPost, monCheck, monLive, monUp, MON_DEFAULTS, get monBase() { return monBase; }, liveSources, telOut, noteTelOut, reportTel, pbOut, srvIds, pullSrvIds, srvAdopt, reportToMonitor, syncSrvLearn, applyLearned, get feedHdr() { return feedHdr; }, boardMonFill, natRowOf, fnRows, buildSnapshot, bootHold, firAt, loadFir, onAirAsk, pb, onPbFeed, onPbFollow, onPbHex, pbRouteFor, pbMatch, pbFromMonitor, onNeedRoutes, onNeedAirportData, onNeedAirportPanel, liveBoardRows, runwaysOf, parseRunwayEnds, flightsOfCallsign, bootFlightPage, unlockExports, exportFile, rowWindow, hexOfFid, onNeedSearch, osmPick, wantOsmPlace, osmPlaceAt, learnSite, siteIdAt, siteBk, operatorIdOf, airlineIdByName, fr24Cat, onHistElsewhere, get viewBox() { return viewBox; }, get selectedId() { return currentId(); } }; } catch (_) { /* ignore */ }
   log('loaded v' + VERSION);
 
 })();

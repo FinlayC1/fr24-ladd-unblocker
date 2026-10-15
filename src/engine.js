@@ -344,6 +344,8 @@ function createRouteEngine() {
     let tas = NaN, ws = NaN, wd = NaN, hdg = NaN, airT = -1e12;
     // (and, for the playback: GPS altitude and indicated airspeed - readsb's point carries them, or its last full state)
     let iasX = NaN, iasT = -1e12, geomX = NaN, geomT = -1e12;
+    // (and Mach and the outside air temperature - readsb's from the aircraft's own air data - for the playback panel)
+    let machX = NaN, machT = -1e12, oatX = NaN, oatT = -1e12;
     for (const p of (j && Array.isArray(j.trace) ? j.trace : [])) {
       if (!Array.isArray(p) || !fin(p[1]) || !fin(p[2])) continue;
       const t = base + (+p[0] || 0);
@@ -359,12 +361,14 @@ function createRouteEngine() {
         if (ex.category) cat = ex.category;
         if (own && fin(ex.ias)) { iasX = ex.ias; iasT = t; }
         if (own && fin(ex.alt_geom)) { geomX = ex.alt_geom; geomT = t; }
+        if (own && ex.mach > 0) { machX = ex.mach; machT = t; }
+        if (own && fin(ex.oat)) { oatX = ex.oat; oatT = t; }
         if (own && (fin(ex.tas) || fin(ex.ws))) { tas = fin(ex.tas) ? ex.tas : NaN; ws = fin(ex.ws) ? ex.ws : NaN; wd = fin(ex.wd) ? ex.wd : NaN; hdg = fin(ex.true_heading) ? ex.true_heading : NaN; airT = t; }
       }
       const flags = +p[6] || 0, a = p[3];
       const altGeom = fin(p[10]) ? p[10] : t - geomT < 60 ? geomX : NaN, ias = fin(p[12]) ? p[12] : t - iasT < 60 ? iasX : NaN;
       const air = t - airT < 300;
-      out.push({ t, lat: p[1], lon: p[2], altGeom, ias, alt: a === 'ground' ? null : (fin(a) ? a : null), gnd0: a === 'ground', gs: fin(p[4]) ? p[4] : null, trk: fin(p[5]) ? p[5] : null, vr: fin(p[7]) ? p[7] : null, stale: !!(flags & 1), newLeg: !!(flags & 2), own, cs, sq, mcp: t - mcpT < 900 ? mcp : NaN, fms: t - fmsT < 900 ? fms : NaN, cat, tas: air ? tas : NaN, ws: air ? ws : NaN, wd: air ? wd : NaN, hdg: air ? hdg : NaN });
+      out.push({ t, lat: p[1], lon: p[2], altGeom, ias, alt: a === 'ground' ? null : (fin(a) ? a : null), gnd0: a === 'ground', gs: fin(p[4]) ? p[4] : null, trk: fin(p[5]) ? p[5] : null, vr: fin(p[7]) ? p[7] : null, stale: !!(flags & 1), newLeg: !!(flags & 2), own, cs, sq, mcp: t - mcpT < 900 ? mcp : NaN, fms: t - fmsT < 900 ? fms : NaN, cat, tas: air ? tas : NaN, ws: air ? ws : NaN, wd: air ? wd : NaN, hdg: air ? hdg : NaN, mach: t - machT < 60 ? machX : NaN, oat: t - oatT < 60 ? oatX : NaN });
     }
     return out;
   }
@@ -470,6 +474,44 @@ function createRouteEngine() {
   // 50 ft on the approach to Nice's runway 04; 28 Aug: 12 km out at 1,650 ft lined up with Palma's 24 - neither was
   // seen on the ground). A field whose runways are not known: low, close and heading straight at it. One clear answer
   // or none.
+  // Still climbing at pts[i]: its own vertical rate says so, or it was on the ground, or 300 ft and more lower, half a
+  // minute to five minutes before. Lost like that, it was going away from the fields around it, not down to one:
+  // easyJets climbing out of Gatwick past Biggin Hill, out of the monitor's hearing, were "landed at Biggin Hill".
+  function climbingAt(pts, i) {
+    const p = pts && pts[i]; if (!p || p.gnd || p.alt == null) return false;
+    if (fin(p.vr) && p.vr < -300) return false;
+    if (fin(p.vr) && p.vr > 500) return true;
+    for (let j = i - 1; j >= 0 && p.t - pts[j].t <= 300; j--) {
+      const q = pts[j]; if (p.t - q.t < 30) continue;
+      return !!q.gnd || (q.alt != null && p.alt - q.alt > 300);
+    }
+    return false;
+  }
+  // (the same, coming down: its own vertical rate says so, or it was on the ground, or 300 ft and more lower, half a
+  // minute to five minutes after)
+  function descendingAt(pts, i) {
+    const p = pts && pts[i]; if (!p || p.gnd || p.alt == null) return false;
+    if (fin(p.vr) && p.vr > 300) return false;
+    if (fin(p.vr) && p.vr < -500) return true;
+    for (let j = i + 1; j < pts.length && pts[j].t - p.t <= 300; j++) {
+      const q = pts[j]; if (q.t - p.t < 30) continue;
+      return !!q.gnd || (q.alt != null && p.alt - q.alt > 300);
+    }
+    return false;
+  }
+  // (and, of a flight summarised before those rules - kept in a log, or by the monitor: a jet's or a turboprop's, up from
+  // the ground and lost within a quarter of an hour of the take-off at the highest it had been - still climbing, or
+  // levelled off on its departure - was given a landing it never made. One the monitor kept without its end's height,
+  // of an aircraft it does not follow for good (its rows of others are four days old at most): lost within ten minutes,
+  // 2,000 ft up and more - a jet lost lower than that is still by the field it left, and that is no flight at all. An end
+  // taken from its next take-off - 'chain' - is where it really went.)
+  const CLIMB_CLS = /^(airliner|bizjet|heavybiz|turboprop)$/;
+  function climbedOut(l, cls) {
+    if (!l || l.endRules >= 2 || !l.to || !l.startedOnGround || !l.ended || l.to.conf === 'ground' || l.to.conf === 'chain' || l.how === 'ground' || l.how === 'touch' || l.how === 'gap-land' || !CLIMB_CLS.test(cls || '')) return false;
+    const up = (l.tEnd || 0) - (l.tOff || l.tStart || 0); if (!(up >= 0)) return false;
+    if (fin(l.endAlt) && fin(l.maxAlt)) return up <= 900 && l.endAlt >= l.maxAlt - 50;
+    return !('endAlt' in l) && !l.ladd && up <= 600 && l.maxAlt >= 2000;
+  }
   function finalTo(p, o) {
     if (!p || p.gnd || !fin(p.lat) || !fin(p.lon) || p.alt == null || !fin(p.trk)) return null;
     if (fin(p.vr) && p.vr > 600) return null;
@@ -522,19 +564,28 @@ function createRouteEngine() {
   // three slices and more, on average within 1.5 km, and no other there a third as often or nearer than three times
   // as far: that flight. (M-ARNZ's PC-24 at FL250 off Blackpool, 9 Oct 12:35: 424c60 in 10 slices, mean 1.1 km; the
   // nearest other 3.8 km off and 10,000 ft higher.) Returns, per query, the address or ''.
+  // (each slice's queries by 0.1-degree cell: a record is held against those of its own cell and the eight around it only
+  // - the same answer as against every query, a fraction of the work with a whole screen of flights)
   function heatMatch(buf, t, qs) {
-    const dv = new DataView(buf), res = qs.map(() => new Map()); let at = null;
+    const dv = new DataView(buf), res = qs.map(() => new Map()); let at = null, grid = null;
     const along = (q, dt) => { if (!fin(q.trk) || !(q.gs > 0) || q.gnd) return [q.lat, q.lon]; const km = q.gs * 1.852 * dt / 3600; return [q.lat + km * Math.cos(q.trk * D2R) / 111.2, q.lon + km * Math.sin(q.trk * D2R) / (111.2 * Math.max(0.05, Math.cos(q.lat * D2R)))]; };
     for (let o = 0; o + 16 <= dv.byteLength; o += 16) {
       const h = dv.getUint32(o, true);
-      if (h === 0x0e7f7c9d) { const st = (dv.getInt32(o + 4, true) * 4294967296 + dv.getUint32(o + 8, true)) / 1000; at = Math.abs(st - t) <= 60 ? qs.map(q => along(q, st - t)) : null; continue; }
+      if (h === 0x0e7f7c9d) {
+        const st = (dv.getInt32(o + 4, true) * 4294967296 + dv.getUint32(o + 8, true)) / 1000; at = Math.abs(st - t) <= 60 ? qs.map(q => along(q, st - t)) : null; grid = null;
+        if (at) { grid = new Map(); for (let i = 0; i < at.length; i++) { const k = Math.floor(at[i][0] * 10) * 4000 + Math.floor(at[i][1] * 10), l = grid.get(k); if (l) l.push(i); else grid.set(k, [i]); } }
+        continue;
+      }
       if (!at) continue;
-      const la = dv.getInt32(o + 4, true) / 1e6, lo = dv.getInt32(o + 8, true) / 1e6;
-      for (let i = 0; i < qs.length; i++) {
-        const p = at[i], q = qs[i]; if (Math.abs(la - p[0]) > 0.05 || Math.abs(lo - p[1]) > 0.08) continue;
-        const r = q.r || 3, d = dist(la, lo, p[0], p[1]); if (d > r) continue;
-        if (!q.gnd && fin(q.alt) && q.alt > 1500 && Math.abs(dv.getInt16(o + 12, true) * 25 - q.alt) > 1500) continue;
-        const hex = (h & 0xffffff).toString(16).padStart(6, '0'), e = res[i].get(hex) || { n: 0, sum: 0 }; e.n++; e.sum += d; res[i].set(hex, e);
+      const la = dv.getInt32(o + 4, true) / 1e6, lo = dv.getInt32(o + 8, true) / 1e6, cy = Math.floor(la * 10), cx = Math.floor(lo * 10);
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const l = grid.get((cy + dy) * 4000 + cx + dx); if (!l) continue;
+        for (const i of l) {
+          const p = at[i], q = qs[i]; if (Math.abs(la - p[0]) > 0.05 || Math.abs(lo - p[1]) > 0.08) continue;
+          const r = q.r || 3, d = dist(la, lo, p[0], p[1]); if (d > r) continue;
+          if (!q.gnd && fin(q.alt) && q.alt > 1500 && Math.abs(dv.getInt16(o + 12, true) * 25 - q.alt) > 1500) continue;
+          const hex = (h & 0xffffff).toString(16).padStart(6, '0'), e = res[i].get(hex) || { n: 0, sum: 0 }; e.n++; e.sum += d; res[i].set(hex, e);
+        }
       }
     }
     return res.map((m, i) => {
@@ -769,7 +820,7 @@ function createRouteEngine() {
         if (gap > 600 && !prev.gnd && !p.gnd && prev.alt != null && p.alt != null && prev.alt < 600 && p.alt < 600 && (prev.gs == null || prev.gs < 30) && (p.gs == null || p.gs < 30) && dist(prev.lat, prev.lon, p.lat, p.lon) < 0.5) { prev.gnd = true; p.gnd = true; }
         // (last heard on a runway's final approach, then nothing for ten minutes and more, and next seen low, on the
         // ground or much later: it landed there - a quick turnaround is not one long flight)
-        const fa = gap > 600 && cur && !patrol && !prev.gnd ? finalTo(prev, fo) : null;
+        const fa = gap > 600 && cur && !patrol && !prev.gnd && !climbingAt(pts, ip - 1) ? finalTo(prev, fo) : null;
         // (a helicopter passes low over fields all the time: only when it is next seen at that field, or on the ground)
         const onFinal = !!fa && (heli ? p.gnd || dist(p.lat, p.lon, fa.airport.lat, fa.airport.lon) < 3 : p.gnd || (p.alt != null && p.alt < 9000) || gap > 1500);
         if (onFinal) { cur.finalAp = fa; close(prev, 'final'); lastGnd = null; }
@@ -813,14 +864,16 @@ function createRouteEngine() {
     // (the data runs to opts.dataEnd - the end of that day, or now: last heard on final twenty minutes and more before
     // it, the flight landed there; otherwise it is still open - flying out of coverage, or past the end of the day)
     if (cur) {
-      const last = pts[pts.length - 1], fa = opts && fin(opts.dataEnd) && opts.dataEnd - last.t >= 1200 && !patrol ? finalTo(last, fo) : null;
+      // (never a landing for one last heard climbing away - the field below or ahead of it is where it was not going)
+      const last = pts[pts.length - 1], quiet = opts && fin(opts.dataEnd) && opts.dataEnd - last.t >= 1200 && !patrol && !climbingAt(pts, pts.length - 1);
+      const fa = quiet ? finalTo(last, fo) : null;
       // (or last heard low near a field, then nothing to the end of the day: it came down there, most likely - named
       // with a question mark, the time reckoned from that last point)
-      let near = !fa && opts && fin(opts.dataEnd) && opts.dataEnd - last.t >= 1200 && !patrol && !last.gnd && last.alt != null ? airportAt(last.lat, last.lon, 12, { alt: last.alt, maxAgl: fin(last.vr) && last.vr < -300 ? 3000 : 2500 }) : null;
+      let near = !fa && quiet && !last.gnd && last.alt != null ? airportAt(last.lat, last.lon, 12, { alt: last.alt, maxAgl: fin(last.vr) && last.vr < -300 ? 3000 : 2500 }) : null;
       // (a light aircraft or helicopter last heard slow and low by a strip FR24 does not list: that strip - G-DGFD, an R44,
       // lost at 350 ft and 45 kt 2.8 km from Enstone, where it took off from next morning)
       const lightCls = heli || (opts && (opts.cls === 'piston' || opts.cls === 'heli'));
-      if (!fa && lightCls && opts && fin(opts.dataEnd) && opts.dataEnd - last.t >= 1200 && !patrol && !last.gnd && last.alt != null && !(last.gs > (heli ? 90 : 110))) {
+      if (!fa && lightCls && quiet && !last.gnd && last.alt != null && !(last.gs > (heli ? 90 : 110))) {
         const nf = fieldAt(last.lat, last.lon, heli ? 4 : 5, { alt: last.alt, maxAgl: 1200 });
         if (nf && (!near || nf.dist < near.dist)) near = nf;
       }
@@ -942,19 +995,26 @@ function createRouteEngine() {
     const descending = (() => { const l = pts[pts.length - 1]; if (!l || l.alt == null) return false; for (let i = pts.length - 2; i >= 0; i--) { if (l.t - pts[i].t >= 60) return pts[i].alt != null && pts[i].alt - l.alt > 200; } return false; })();
     const climbing = (() => { const f = pts[0]; if (!f || f.alt == null) return false; for (let i = 1; i < pts.length; i++) { if (pts[i].t - f.t >= 60) return pts[i].alt != null && pts[i].alt - f.alt > 200; } return false; })();
     const gapAp = (x, y, info) => { const o = Object.assign({}, ctx && ctx.cls ? { cls: ctx.cls, type: ctx.type } : null, info || null); const g = landingInGap(x, y, Object.keys(o).length ? o : null); return g ? { airport: g.airport, conf: 'low' } : null; };
-    const from = (leg.gapPrev && gapAp(leg.gapPrev, leg.start, leg.gapPrevInfo)) || (leg.startGnd ? endpoint(leg.start, true, true, ctx) : (climbing || (leg.start.alt != null && leg.start.alt < 4000) ? endpoint(leg.start, true, false, ctx) : null));
-    let to = (leg.how === 'gap-land' && leg.gapNext && gapAp(leg.end, leg.gapNext, leg.gapInfo)) || (leg.how === 'ground' || leg.how === 'touch' ? endpoint(leg.end, false, true, ctx) : ((leg.ended || descending) && (descending || (leg.end.alt != null && leg.end.alt < 4000)) ? endpoint(leg.end, false, false, ctx) : null));
+    // (first heard coming down - into the field below it, or one further on - is not where it took off; last heard climbing
+    // away is not where it landed: the field below, on whose approach it happens to be, or ahead of it)
+    let iL = -1; for (let i = pts.length - 1; i >= 0; i--) if (!pts[i].gnd) { iL = i; break; }
+    const L = iL >= 0 ? pts[iL] : null, seq = leg.startGnd && leg.start && leg.start !== pts[0] ? [leg.start].concat(pts) : pts;
+    // (a light aircraft first heard coming down is often on its own field's circuit: that field stays its departure)
+    const climbEnd = !!L && !descending && climbingAt(seq, seq === pts ? iL : iL + 1), descStart = !climbing && !!ctx && CLIMB_CLS.test(ctx.cls || '') && descendingAt(pts, 0);
+    const from = (leg.gapPrev && gapAp(leg.gapPrev, leg.start, leg.gapPrevInfo)) || (leg.startGnd ? endpoint(leg.start, true, true, ctx) : (climbing || (leg.start.alt != null && leg.start.alt < 4000 && !descStart)) ? endpoint(leg.start, true, false, ctx) : null);
+    let to = (leg.how === 'gap-land' && leg.gapNext && gapAp(leg.end, leg.gapNext, leg.gapInfo)) || (leg.how === 'ground' || leg.how === 'touch' ? endpoint(leg.end, false, true, ctx) : ((leg.ended || descending) && (descending || (leg.end.alt != null && leg.end.alt < 4000)) && !climbEnd ? endpoint(leg.end, false, false, ctx) : null));
     // (lost on a runway's final approach - in a hole, at the end of the data or of a day: that field, not a guess)
     if (leg.how !== 'ground' && leg.how !== 'touch' && leg.how !== 'gap-land' && (!to || to.conf !== 'ground')) {
-      let L = null; for (let i = pts.length - 1; i >= 0; i--) if (!pts[i].gnd) { L = pts[i]; break; }
-      const fa = leg.finalAp || (L && (leg.ended || descending) ? finalTo(L, { heli: !!ctx && ctx.grp === 'heli', cls: ctx && ctx.cls, type: ctx && ctx.type }) : null);
+      const fa = leg.finalAp || (L && (leg.ended || descending) && !climbEnd ? finalTo(L, { heli: !!ctx && ctx.grp === 'heli', cls: ctx && ctx.cls, type: ctx && ctx.type }) : null);
       if (fa) to = { airport: fa.airport, conf: 'low' };
       else if (leg.lostAp && (!to || to.conf === 'near')) to = { airport: leg.lostAp, conf: 'near' };
       // (an airliner, business jet or turboprop lost low and coming down - over the sea, out of every receiver's reach -
       // was landing at the airport ahead of it that takes it, never at "a private site": G-GDFR, 11 Jul, lost at 1,000 ft
       // off Dubrovnik)
       const light = !!ctx && /^(heli|piston|glider)$/.test(ctx.cls || '');
-      if (!to && !!ctx && !!ctx.cls && !light && L && (leg.ended || descending) && fin(L.alt) && L.alt < 8000 && fin(L.trk)) {
+      // (coming down: seen descending, or lost a thousand feet and more below the highest it had been)
+      const cameDown = descending || (leg.ended && !climbEnd && ((fin(L && L.vr) && L.vr < -300) || (L && fin(L.alt) && (leg.maxAlt || 0) - L.alt >= 1000)));
+      if (!to && !!ctx && !!ctx.cls && !light && L && cameDown && fin(L.alt) && L.alt < 8000 && fin(L.trk)) {
         let best = null;
         nearby(L.lat, L.lon, 70, (a, d) => {
           if (a.id >= 1e7 || (ctx.cls === 'airliner' && fin(a.size) && a.size < 3000) || rwyImpossible(a, ctx.cls, ctx.type)) return;
@@ -967,8 +1027,10 @@ function createRouteEngine() {
     let pathKm = 0; for (let i = 1; i < pts.length; i++) pathKm += dist(pts[i - 1].lat, pts[i - 1].lon, pts[i].lat, pts[i].lon);
     const ap = e => e ? { id: e.airport.id, code: e.airport.code, conf: e.conf } : null;
     const on = to ? touchdownOf(leg, to.airport) : null, off = from ? takeoffOf(leg, from.airport) : null;
-    return { tStart: leg.start.t, tEnd: leg.end.t, startLat: leg.start.lat, startLon: leg.start.lon, startAlt: leg.start.alt, endLat: leg.end.lat, endLon: leg.end.lon, endAlt: leg.end.alt, endTrk: leg.end.trk, endGs: fin(leg.end.gs) ? Math.round(leg.end.gs) : null, startGs: fin(leg.start.gs) ? Math.round(leg.start.gs) : null, startedOnGround: !!leg.startGnd, ended: !!leg.ended, how: leg.how, maxAlt: leg.maxAlt || 0, cs: leg.cs || '', pathKm: Math.round(pathKm), from: ap(from), to: ap(to), laps: leg.laps > 1 ? leg.laps : 0, path: pathOf(leg),
+    // (endRules: built with the rules above - a board need not check its ends again: climbedOut)
+    const sum = { endRules: 2, tStart: leg.start.t, tEnd: leg.end.t, startLat: leg.start.lat, startLon: leg.start.lon, startAlt: leg.start.alt, endLat: leg.end.lat, endLon: leg.end.lon, endAlt: leg.end.alt, endTrk: leg.end.trk, endGs: fin(leg.end.gs) ? Math.round(leg.end.gs) : null, startGs: fin(leg.start.gs) ? Math.round(leg.start.gs) : null, startedOnGround: !!leg.startGnd, ended: !!leg.ended, how: leg.how, maxAlt: leg.maxAlt || 0, cs: leg.cs || '', pathKm: Math.round(pathKm), from: ap(from), to: ap(to), laps: leg.laps > 1 ? leg.laps : 0, path: pathOf(leg),
       tOn: on ? on.t : null, tOnEst: !!(on && on.est), tOff: off ? off.t : null, tOffEst: !!(off && off.est) };
+    return sum;
   }
   // Where the flight was at fixed minutes after take-off - its route, in a few numbers: a later flight of the same
   // aircraft from the same field can be laid over it (the same route out means the same destination, usually).
@@ -2197,7 +2259,7 @@ function createRouteEngine() {
     return res;
   }
 
-  return { setTables2, get T2() { return T2; }, fieldShortName, setApproach, approachCell, approachPath, apprGroup, apprKey, trackAgree, heatNear, heatMatch, reckon, trackErr, remotePath, flowKeysOf, pgrpOf, grp6, sunElev, airData, gsAlong, minutesTo, flowAt, pathOf, pathDev, ownerKey, parseRunwayLengths, setRunwayLengths, csvLine, SQ_NOINFO, tripBin, regionOf, learnLeg, learnRow, learnCollector, addLearnedOp, odAdd: (x, y, w) => { const k = odKey(String(x).toUpperCase(), String(y).toUpperCase()), v = (OD.get(k) || 0) + w; if (v > 1e-9) OD.set(k, v); else OD.delete(k); }, odWeight: (x, y) => OD.get(odKey(String(x).toUpperCase(), String(y).toUpperCase())) || 0, odCount: () => OD.size, setAirports, setUsage, addUsage, setRunways, parseRunwaysCsv, runwayFit, setWeights, setTables, setLogit, calibrated, mergePoints, finalTo, longFinal, typeRangeKm, FEAT, groupOf, W, classify, isStepClimb, rangeKm, parseTrace, legsFromPoints, summarizeLeg, stitchLegs, chainLegs, histStats, inferOrigin, predict, privateSite, rwyImpossible, typeDesc, heliSpots, heliAirportAt, landedSum, localFlew, approachTo, downAndUp, landingInGap, circuits, mergeCircuits, setFields, fieldAt, placeAt, isField, nearbyFields, fieldCount: () => FL.length, airportAt, departureFromClimb, arrivalFromDescent, nearby, dist, brg, xtat, destPoint, angDiff, get airports() { return AP; }, byId: id => byId.get(id), byIcao: c => byIcao.get(String(c || '').toUpperCase()) };
+  return { setTables2, get T2() { return T2; }, fieldShortName, setApproach, approachCell, approachPath, apprGroup, apprKey, trackAgree, heatNear, heatMatch, reckon, trackErr, remotePath, flowKeysOf, pgrpOf, grp6, sunElev, airData, gsAlong, minutesTo, flowAt, pathOf, pathDev, ownerKey, parseRunwayLengths, setRunwayLengths, csvLine, SQ_NOINFO, tripBin, regionOf, learnLeg, learnRow, learnCollector, addLearnedOp, odAdd: (x, y, w) => { const k = odKey(String(x).toUpperCase(), String(y).toUpperCase()), v = (OD.get(k) || 0) + w; if (v > 1e-9) OD.set(k, v); else OD.delete(k); }, odWeight: (x, y) => OD.get(odKey(String(x).toUpperCase(), String(y).toUpperCase())) || 0, odCount: () => OD.size, setAirports, setUsage, addUsage, setRunways, parseRunwaysCsv, runwayFit, setWeights, setTables, setLogit, calibrated, mergePoints, finalTo, longFinal, typeRangeKm, FEAT, groupOf, W, classify, isStepClimb, rangeKm, parseTrace, legsFromPoints, summarizeLeg, stitchLegs, chainLegs, histStats, inferOrigin, predict, privateSite, rwyImpossible, typeDesc, heliSpots, heliAirportAt, landedSum, localFlew, climbedOut, approachTo, downAndUp, landingInGap, circuits, mergeCircuits, setFields, fieldAt, placeAt, isField, nearbyFields, fieldCount: () => FL.length, airportAt, departureFromClimb, arrivalFromDescent, nearby, dist, brg, xtat, destPoint, angDiff, get airports() { return AP; }, byId: id => byId.get(id), byIcao: c => byIcao.get(String(c || '').toUpperCase()) };
 }
 /* ==/ENGINE== */
 if (typeof module !== 'undefined') module.exports = { createRouteEngine };

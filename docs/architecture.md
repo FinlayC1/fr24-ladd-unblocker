@@ -165,7 +165,7 @@ On the map's airport panel, FR24 locks two pictures and leaves other parts out. 
 - **Movements per day.** Each of the last days' take-offs and landings. FR24's own schedule is counted by local day, as on its statistics page, and the blocked flights the script knows from the monitor's log are added on top.
 - **Runway usage.** The runways used by the flights the monitor tracked there in the last 7 days. Each runway is worked out from the flight's track (section 4.2), with how many flights that covers.
 - **Airport & runway details.** Every runway in full: length, width, surface, lighting, and each end's heading, elevation and displaced threshold. Also the airport's radio frequencies (OurAirports, served by the monitor).
-- **Removed:** the "Latest events" part and the plea to help FR24's ground coverage.
+- **Removed:** the "Latest events" part and the plea to help FR24's ground coverage, with the box each sat in. A mutation observer removes them as FR24 adds them, before the browser draws the page, so they never show.
 
 FR24 names its locked pictures `airport-panel__promo-…`. Where a picture has no such name, it is found under its title. The panel is redone whenever FR24 redraws it.
 

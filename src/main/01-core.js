@@ -1,7 +1,7 @@
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '22.23.0';
+  const VERSION = '22.24.0';
   const NM_KM = 1.852;
   const AREA_RADIUS_NM = 220;           // aggregator "point" radius for viewport sweeps (APIs cap at 250)
   const TARGET_RADIUS_NM = 40;          // radius for the immediate lookup of the selected aircraft
@@ -93,15 +93,17 @@
     return w[0] + w.slice(1).toLowerCase();
   }
   // The legal form is not part of the name people know: "BALLYCASTLE AVIATION LIMITED PARTNERSHIP INCORPORATED" is
-  // Ballycastle Aviation, "Pad Aviation Service GmbH" is Pad Aviation Service (taken off the end, repeatedly; a name that
-  // would be nothing without it is kept whole)
-  const LEGAL_FORM = /[\s,]+(limited\s+liability\s+(company|partnership)|limited\s+partnership|l\.?\s?l\.?\s?[cp]\.?|l\.?\s?p\.?|ltd\.?|limited|unlimited|inc\.?|incorporated|corp\.?|corporation|co\.?|company|plc|ulc|dac|gmbh(\s*(&|and)\s*co\.?\s*kg)?|(&|and)\s*co\.?\s*kg|kg|ag|s\.?\s?a\.?\s?(de\s+c\.?\s?v\.?|s\.?|r\.?\s?l\.?)?|s\.?\s?r\.?\s?[lo]\.?|s\.?\s?p\.?\s?a\.?|b\.?\s?v\.?|n\.?\s?v\.?|oy|ab|asa|aps|a\/s|pty\.?(\s+ltd\.?)?|pte\.?(\s+ltd\.?)?|sdn\.?\s+bhd\.?|bhd\.?|jsc|pjsc|ojsc|cjsc|ltda\.?|lda\.?|kft\.?|zrt\.?|sp\.?\s*z\s*o\.?\s*o\.?|d\.?\s?o\.?\s?o\.?|ehf\.?|e\.?\s?v\.?|m\.?\s?b\.?\s?h\.?)\s*[.,]?\s*$/i;
+  // Ballycastle Aviation, "Pad Aviation Service GmbH" is Pad Aviation Service, "756J LLC" is 756J (taken off the end,
+  // repeatedly; a name that would be nothing without it - "LLC" alone - is kept whole). A company of one of Dubai's free
+  // zones carries the zone in its form: "MAPA AVIATION DWC-LLC" is Mapa Aviation (Dubai World Central), as are FZE, FZCO,
+  // FZ-LLC and DMCC ones.
+  const LEGAL_FORM = /[\s,]+(dwc(\s*-\s*|\s+)?l\.?\s?l\.?\s?c\.?|dwc|fz\s*-?\s*l\.?\s?l\.?\s?c\.?|fz\s*-?\s*co|fz\s*-?\s*e|fzc|dmcc|limited\s+liability\s+(company|partnership)|limited\s+partnership|l\.?\s?l\.?\s?[cp]\.?|l\.?\s?p\.?|ltd\.?|limited|unlimited|inc\.?|incorporated|corp\.?|corporation|co\.?|company|plc|ulc|dac|gmbh(\s*(&|and)\s*co\.?\s*kg)?|(&|and)\s*co\.?\s*kg|kg|ag|s\.?\s?a\.?\s?(de\s+c\.?\s?v\.?|s\.?|r\.?\s?l\.?)?|s\.?\s?r\.?\s?[lo]\.?|s\.?\s?p\.?\s?a\.?|b\.?\s?v\.?|n\.?\s?v\.?|oy|ab|asa|aps|a\/s|pty\.?(\s+ltd\.?)?|pte\.?(\s+ltd\.?)?|sdn\.?\s+bhd\.?|bhd\.?|jsc|pjsc|ojsc|cjsc|ltda\.?|lda\.?|kft\.?|zrt\.?|sp\.?\s*z\s*o\.?\s*o\.?|d\.?\s?o\.?\s?o\.?|ehf\.?|e\.?\s?v\.?|m\.?\s?b\.?\s?h\.?)\s*[.,]?\s*$/i;
   function withoutLegalForm(s) {
     // (a name in brackets after the legal form is a trading or former name: "PAL Aerospace Ltd (Provincial Aerospace)"
     // is PAL Aerospace - while "Gama Aviation (UK) Limited" keeps its own brackets)
     const alias = s.match(/^(.*\S)\s*\([^()]*\)\s*\.?$/);
     if (alias && LEGAL_FORM.test(alias[1])) s = alias[1];
-    for (let i = 0; i < 4; i++) { const t = s.replace(LEGAL_FORM, '').replace(/[\s,&]+$/, ''); if (t === s || !/[A-Za-z]{2}/.test(t)) break; s = t; }
+    for (let i = 0; i < 4; i++) { const t = s.replace(LEGAL_FORM, '').replace(/[\s,&-]+$/, ''); if (t === s || !/[A-Za-z0-9]{2}/.test(t)) break; s = t; }
     return s;
   }
   // A trust company holding the registration for an owner who stays unnamed (the FAA register's "TVPX AIRCRAFT SOLUTIONS

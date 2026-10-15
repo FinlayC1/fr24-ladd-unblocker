@@ -1,4 +1,4 @@
-// FR24 LADD Unblocker 22.23.0 - the page-world part (see src/page.js)
+// FR24 LADD Unblocker 22.24.0 - the page-world part (see src/page.js)
 (function () {
   'use strict';
   // ------------------------------------------------------------------------------------------------------------
@@ -7,7 +7,7 @@
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "22.23.0";
+    var BRIDGE_V = "22.24.0";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
 
     var resolved = new Map();     // fr24 flight id -> identity record (incl. photos)
@@ -22,6 +22,9 @@
     var naRecs = new Map(), naRoutes = new Map();
     var recOf = function (id) { return resolved.get(id) || naRecs.get(id); }, routeOf = function (id) { return routes.get(id) || naRoutes.get(id); };
     var curNa = null;             // (while a LiveFeed answer is read: its N/A flights)
+    // Flights FR24 names itself - its own registration in its feed - that had been taken for blocked ones (no callsign: the
+    // transponder sends none, an easyJet on the stand after landing - G-EZWZ at Liverpool, 15 Oct): never drawn as ours
+    var fr24Named = new Set(), curNamed = null;
     var hist = new Map();         // registration -> { data: [flight list entries], at } for the "Recent <reg> flights" dropdown
     var histWait = new Map();     // registration -> [resolve callbacks] waiting for the userscript to supply history
     var photoCache = new Map();   // HEX -> { photos, at, err, final } - the pictures shown (from the userscript)
@@ -251,7 +254,9 @@
       var id = idF.val, cs = strOf(fs, 11);
       var extraF = find(fs, 13), ex = extraF && extraF.wt === 2 ? parse(extraF.val) : [];
       var type = strOf(ex, 4), reg = strOf(ex, 2);
-      if (!cs) {
+      // (FR24's own registration for it: not blocked - one taken for blocked (no callsign) let go, here and by the userscript)
+      if (reg && (!cs || resolved.has(id))) { if (!fr24Named.has(id)) { fr24Named.add(id); if (fr24Named.size > 20000) fr24Named.delete(fr24Named.values().next().value); } if (resolved.has(id)) { resolved.delete(id); routes.delete(id); } if (curNamed && curNamed.length < 500) curNamed.push(id); }
+      if (!cs && !reg) {
         var rep = { id: id, lat: fltOf(fs, 2), lon: fltOf(fs, 3), trk: numOf(fs, 4), alt: numOf(fs, 5), spd: numOf(fs, 6), icon: numOf(fs, 7),
           ts: numOf(fs, 9), gnd: !!numOf(fs, 10), src: numOf(fs, 12), type: type, reg: reg, sel: !!selected };
         if (report) report.push(rep);
@@ -305,7 +310,7 @@
     var lastFeedTotal = 0;
     function patchLiveFeed(body, bg, pbTs) {
       var fs = parse(body), report = [], parts = [], changed = false, serverTime = 0, total = 0, at = Date.now();
-      curNa = bg || pbTs ? null : [];
+      curNa = bg || pbTs ? null : []; curNamed = pbTs ? null : [];
       for (var i = 0; i < fs.length; i++) {
         var f = fs[i];
         if (f.wt === 2 && (f.fn === 1 || f.fn === 3)) {
@@ -316,11 +321,11 @@
         } else { if (f.fn === 4 && f.wt === 0) serverTime = f.val; parts.push(f.raw); }
       }
       // (FR24's playback: the moment's unnamed flights, for the userscript to name as they were then - never as live ones)
-      if (pbTs) { post('pbFeed', { ts: pbTs, flights: report, at: at }); curNa = null; flushAir(); return changed ? concat(parts) : body; }
+      if (pbTs) { post('pbFeed', { ts: pbTs, flights: report, at: at }); curNa = null; curNamed = null; flushAir(); return changed ? concat(parts) : body; }
       if (!bg) stats.liveFeed++;
       lastFeedTotal = total; flushAir();
-      post('feed', { flights: report, na: curNa || [], serverTime: serverTime, total: total, at: at, bg: !!bg });
-      curNa = null;
+      post('feed', { flights: report, na: curNa || [], named: curNamed || [], serverTime: serverTime, total: total, at: at, bg: !!bg });
+      curNa = null; curNamed = null;
       return changed ? concat(parts) : body;
     }
     function patchFrames(buf, patchBody) {
@@ -367,7 +372,8 @@
     var pbRoutes = new Map(), pbSent = {}, pbTrace = null;   // (the userscript's: each flight as flown; the open flight's track)
     // The figures FR24 padlocks, at the moment being played, from the open flight's ADS-B track: what changes steadily -
     // heights, speeds, climb - in proportion between two reports at most two minutes apart, the squawk and the wind from
-    // the nearer. Rows: [t, alt, GPS alt, vertical rate, IAS, TAS, squawk, wind dir, wind speed, sent by the aircraft 1/0]
+    // the nearer. Rows: [t, alt, GPS alt, vertical rate, IAS, TAS, squawk, wind dir, wind speed, sent by the aircraft 1/0,
+    // FIR name, FIR code, Mach, outside air temperature]
     function pbTelAt(id, ts) {
       var tr = pbTrace; if (!tr || tr.id !== id || !ts || !tr.pts.length) return null;
       var P = tr.pts, lo = 0, hi = P.length - 1; while (lo < hi) { var m = (lo + hi) >> 1; if (P[m][0] < ts) lo = m + 1; else hi = m; }
@@ -375,7 +381,7 @@
       var f = b[0] > a[0] && ts > a[0] && ts < b[0] && b[0] - a[0] <= 120 ? (ts - a[0]) / (b[0] - a[0]) : (Math.abs(a[0] - ts) <= Math.abs(b[0] - ts) ? 0 : 1), near = f < 0.5 ? a : b;
       var mix = function (k) { var x = a[k], y = b[k]; return fin(x) && fin(y) ? x + (y - x) * f : fin(near[k]) ? near[k] : NaN; };
       var own = near[9] !== 0, n = function (v) { return fin(v) ? v : NaN; };
-      return { vr: own ? mix(3) : NaN, agps: own ? mix(2) : NaN, ias: own ? mix(4) : NaN, tas: own ? mix(5) : NaN, mach: NaN, oat: NaN, wd: n(near[7]), ws: n(near[8]), sq: near[6] ? parseInt(near[6], 8) || 0 : 0, air: near[10] || '', airId: near[11] || '', at: Date.now() };
+      return { vr: own ? mix(3) : NaN, agps: own ? mix(2) : NaN, ias: own ? mix(4) : NaN, tas: own ? mix(5) : NaN, mach: own ? mix(12) : NaN, oat: own ? mix(13) : NaN, wd: n(near[7]), ws: n(near[8]), sq: near[6] ? parseInt(near[6], 8) || 0 : 0, air: near[10] || '', airId: near[11] || '', at: Date.now() };
     }
     // FR24's playback - the map's, an aircraft's, a log's - moves its own figures (altitude, speed, track) along the open
     // flight's trail with its clock; the ones supplied here follow the same clock, set in the panel's own state each time the
@@ -391,7 +397,10 @@
       if (t.sq > 0) fi.squawk = squawkWire(t.sq);
       if (t.air) { fi.airspace = t.air; if (t.airId) fi.airspaceId = t.airId; }
       var e = Object.assign({}, fi.emsInfo || {}), ch = false, set = function (k, v) { if (fin(v)) { e[k] = Math.round(v); ch = true; } };
-      set('agps', t.agps); set('ias', t.ias > 0 ? t.ias : NaN); set('tas', t.tas > 0 ? t.tas : NaN); set('windDir', t.wd); set('windSpd', t.ws);
+      set('agps', t.agps); set('ias', t.ias > 0 ? t.ias : NaN); set('tas', t.tas > 0 ? t.tas : NaN); set('windDir', t.wd); set('windSpd', t.ws); set('oat', t.oat);
+      // (Mach as the panel's state holds it: the wire's thousandths, as decoded - or, should a value already there be the
+      // number itself, that)
+      if (t.mach > 0) { e.mach = fin(e.mach) && e.mach > 0 && e.mach < 5 ? Math.round(t.mach * 1000) / 1000 : Math.round(t.mach * 1000); ch = true; }
       if (ch) fi.emsInfo = e;
     }
     setInterval(pbPanelTick, 250);
@@ -1569,11 +1578,85 @@
       }
       return cur;
     }
-    function tlHide(el) { if (el && el.style.display !== 'none') { el.style.display = 'none'; el.setAttribute('data-tl-hidden', '1'); } }
-    function panelHide(panel) {
-      saying(panel, /^latest events$/i).forEach(function (e) { tlHide(partOf(e, panel, 'Latest events', 4000)); });
-      saying(panel, /help us improve|improve (our |the )?(ground )?coverage/i).forEach(function (e) { tlHide(partOf(e, panel, '', 600)); });
+    // (kept hidden when FR24 rewrites the element's style)
+    function tlHide(el) { if (el && (el.style.getPropertyValue('display') !== 'none' || el.style.getPropertyPriority('display') !== 'important' || !el.hasAttribute('data-tl-hidden'))) { el.style.setProperty('display', 'none', 'important'); el.setAttribute('data-tl-hidden', '1'); } }
+    // (what is left of a part once it is hidden - the box it sat in, its border and padding, with nothing else in it: the
+    // thin empty bar under the weather - goes too, up to the panel, while nothing else in it is shown)
+    function shownChild(c) {
+      if (c.hasAttribute('data-tl-hidden') || /^(SCRIPT|STYLE|TEMPLATE)$/.test(c.tagName)) return false;
+      if (c.style && c.style.display === 'none') return false;
+      try { return getComputedStyle(c).display !== 'none'; } catch (e) { return true; }
     }
+    function hideShell(el, panel) {
+      for (var cur = el; cur && cur.parentElement && cur.parentElement !== panel; cur = cur.parentElement) {
+        var up = cur.parentElement, kids = up.children, any = false;
+        if (up.querySelector('.tl-panel, .tl-rwy')) return;
+        for (var i = 0; i < kids.length && !any; i++) if (shownChild(kids[i])) any = true;
+        for (var n = up.firstChild; n && !any; n = n.nextSibling) if (n.nodeType === 3 && /\S/.test(n.nodeValue || '')) any = true;
+        if (any) return;
+        tlHide(up);
+      }
+    }
+    var EVENTS_RE = /^(latest|live) events$/i, BEG_RE = /help us improve|improve (our |the )?(ground )?coverage/i;
+    function hidePart(el, panel) { if (!el || el === panel) return; tlHide(el); hideShell(el, panel); }
+    // (the events' own section - FR24 builds the panel of sections, the events' the one its title opens - whatever is in it)
+    function firstText(el) {
+      var w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT), t;
+      while ((t = w.nextNode())) { var v = String(t.nodeValue || '').replace(/\s+/g, ' ').trim(); if (v) return v; }
+      return '';
+    }
+    function eventsPart(e, panel) {
+      var sec = e.closest('section');
+      if (sec && sec !== panel && panel.contains(sec) && !sec.contains(panel) && EVENTS_RE.test(firstText(sec)) && !sec.querySelector('[data-testid^="airport-panel__tab"], [data-testid^="airport-panel__schedules"], [data-testid^="airport-panel__promo-"], .tl-panel, .tl-rwy')) return sec;
+      return partOf(e, panel, 'Latest events', 4000);
+    }
+    function panelHide(panel, root) {
+      root = root || panel;
+      saying(root, EVENTS_RE).forEach(function (e) { hidePart(eventsPart(e, panel), panel); });
+      saying(root, BEG_RE).forEach(function (e) { hidePart(partOf(e, panel, '', 600), panel); });
+      saying(root, ADS_RE).forEach(function (e) { hideAd(e, panel); });
+    }
+    // FR24's "Remove ads" button where an advert sat in a board's list (the advert itself hidden by the userscript's style),
+    // and the empty slot around it: the button and every box that holds nothing else, and an advert's slot beside it, gone -
+    // the list closes up as if neither were there. On the boards' own pages too.
+    var ADS_RE = /^remove ads$/i, ADS_ONLY = /^((advert(isement)?|ads?|sponsored)\s*)*remove ads$/i;
+    var AD_MARK = '[id^="pb-slot-fr24-"],[id^="div-gpt-ad-"],[data-pb-ad-wrapper],ins.adsbygoogle,.ad-manager-wrapper';
+    function hideAd(el, stop) {
+      var cur = el;
+      while (cur.parentElement && cur.parentElement !== stop && cur.parentElement !== document.body && ADS_ONLY.test(textOf(cur.parentElement)) && !cur.parentElement.querySelector('.tl-panel, .tl-rwy')) cur = cur.parentElement;
+      tlHide(cur);
+      [cur.previousElementSibling, cur.nextElementSibling].forEach(function (x) { if (x && !textOf(x) && (x.matches(AD_MARK) || x.querySelector(AD_MARK))) tlHide(x); });
+      hideShell(cur, stop || document.body);
+    }
+    // FR24 draws those two parts and the panel is painted before the next tick: they are taken out as they are put in -
+    // a mutation observer's answer comes before the browser paints - so they are never seen, not even for a moment
+    var hideMo = null;
+    function hideWatch() {
+      if (hideMo || typeof MutationObserver !== 'function' || !document.documentElement) return;
+      var SEL_AP = '[data-testid="airport-panel"]';
+      hideMo = new MutationObserver(function (recs) {
+        for (var i = 0; i < recs.length; i++) {
+          var r = recs[i], t = r.type === 'characterData' ? r.target.parentElement : r.target; if (!t || t.nodeType !== 1) continue;
+          try {
+            var panel = t.closest(SEL_AP);
+            if (panel) {
+              if (r.type === 'characterData') panelHide(panel, t);
+              else for (var j = 0; j < r.addedNodes.length; j++) { var a = r.addedNodes[j], el = a.nodeType === 1 ? a : a.nodeType === 3 ? a.parentElement : null; if (el) panelHide(panel, el); }
+            } else if (r.type === 'childList') {
+              // (the panel itself put in, whole; elsewhere - a board's own page - the "Remove ads" button)
+              for (var k = 0; k < r.addedNodes.length; k++) {
+                var n = r.addedNodes[k], ne = n.nodeType === 1 ? n : n.nodeType === 3 ? n.parentElement : null; if (!ne) continue;
+                var p = ne.matches(SEL_AP) ? ne : ne.querySelector(SEL_AP); if (p) panelHide(p);
+                if (/remove ads/i.test(n.textContent || '')) saying(ne, ADS_RE).forEach(function (e) { if (!e.closest(SEL_AP)) hideAd(e, null); });
+              }
+            } else if (ADS_RE.test(textOf(t))) hideAd(t, null);
+          } catch (e) { stats.errors++; stats.lastError = String(e); }
+        }
+      });
+      hideMo.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+    }
+    hideWatch();
+    if (!hideMo) document.addEventListener('DOMContentLoaded', hideWatch, { once: true });
     // (FR24's locked pictures: by their name, else by the title they sit under)
     function kindNear(el, panel) {
       var img = el.matches('img') ? el : el.querySelector('img[alt]'), alt = img ? String(img.getAttribute('alt') || '') : '';
@@ -2053,7 +2136,7 @@
     function acceptEntries(entries) {
       if (!entries) return;
       for (var i = 0; i < entries.length; i++) {
-        var r = entries[i]; if (!r || r.id == null) continue;
+        var r = entries[i]; if (!r || r.id == null || fr24Named.has(Number(r.id))) continue;
         var hexNum = r.hex ? parseInt(String(r.hex), 16) : 0;
         var prev = resolved.get(Number(r.id));
         var photos = Array.isArray(r.photos) && r.photos.length ? r.photos : (prev && prev.photos) || [];
@@ -2227,7 +2310,7 @@
       else if (d.__tweeksLadd === 'hello') post('ready', { stats: stats, feedReady: !!feedHeaders, hdr: feedHdrPublic(), v: BRIDGE_V });
     });
     window[NS] = { resolved: resolved, routes: routes, naRecs: naRecs, naRoutes: naRoutes, telem: telem, hist: hist, lastPos: lastPos, photoCache: photoCache, psCache: psCache, stats: stats, fetchPhotos: fetchPhotos, hello: function () { post('ready', { stats: stats, feedReady: !!feedHeaders, v: BRIDGE_V }); }, v: BRIDGE_V };
-    if (window.__tlTestHook) try { window.__tlTestHook({ csOf: csOf, hist: hist, preloaded: function () { return preloaded; }, parse: parse, photoFits: photoFits, makerOf: makerOf, patchFollow: patchFollow, patchFlightMsg: patchFlightMsg, pushFollow: pushFollow, followSt: function () { return followSt; }, setFollowSt: function (s) { followSt = s; }, shownPhotos: shownPhotos, photoCache: photoCache, FOLLOW: FOLLOW, DETAILS: DETAILS, fLen: fLen, fStr: fStr, fVar: fVar, patchFlight: patchFlight, psState: function () { return { q: psQ.length, busy: psBusy, last: psLast, blockedFor: Math.max(0, psBlockedUntil - Date.now()), pri: Array.from(psPri), jobs: photoJobs.size, head: psQ.slice(0, 3).map(function (j) { return j.hex; }) }; }, acceptPubTel: acceptPubTel, pubTelFor: pubTelFor, fillNativeCard: fillNativeCard, regsOfCallsign: regsOfCallsign, categoryOf: categoryOf, nativeFill: nativeFill, natInfo: natInfo, telem: telem, b64Encode: b64Encode, b64DecodeInto: b64DecodeInto, frameHeader: frameHeader, concat: concat, varintInt32: varintInt32, PLAYBACK: PLAYBACK, patchPlayback: patchPlayback, patchPlaybackRequest: patchPlaybackRequest, pbRoutes: pbRoutes, pbTelAt: pbTelAt, setPbTrace: function (t) { pbTrace = t; }, patchList: patchList, acceptSites: acceptSites, listSig: listSig, mergeRoutes: mergeRoutes, applyRoutes: applyRoutes, routesAdd: routesAdd, applyAirport: applyAirport, applyBoardPage: applyBoardPage, applyStats: applyStats, mergeFlights: mergeFlights, apData: apData, telAt: telAt, noteTelem: noteTelem, pbTraceOf: function () { return pbTrace; }, logoOf: logoOf, archDetail: archDetail, tsOf: tsOf, noteAirportJson: noteAirportJson, rwyOf: rwyOf, rwyPanel: rwyPanel, panelTick: panelTick, panelData: panelData, promoSlots: promoSlots, acceptAirportPanel: acceptAirportPanel, unlockRunways: unlockRunways, mvRows: mvRows, mvKept: mvKept, dayOf: dayOf, pbPanelTick: pbPanelTick, logoFix: logoFix, liveEntries: liveEntries, pbPos: pbPos, unlockFeed: unlockFeed, derivedVs: derivedVs, altHist: altHist, acceptAir: acceptAir, airCache: airCache, flushAir: flushAir, airWant: function () { return airWant; }, lastPos: lastPos, resolved: resolved, stats: stats }); } catch (e) { /* ignore */ }
+    if (window.__tlTestHook) try { window.__tlTestHook({ csOf: csOf, hist: hist, preloaded: function () { return preloaded; }, parse: parse, photoFits: photoFits, makerOf: makerOf, patchFollow: patchFollow, patchFlightMsg: patchFlightMsg, pushFollow: pushFollow, followSt: function () { return followSt; }, setFollowSt: function (s) { followSt = s; }, shownPhotos: shownPhotos, photoCache: photoCache, FOLLOW: FOLLOW, DETAILS: DETAILS, fLen: fLen, fStr: fStr, fVar: fVar, patchFlight: patchFlight, patchLiveFeed: patchLiveFeed, fr24Named: fr24Named, psState: function () { return { q: psQ.length, busy: psBusy, last: psLast, blockedFor: Math.max(0, psBlockedUntil - Date.now()), pri: Array.from(psPri), jobs: photoJobs.size, head: psQ.slice(0, 3).map(function (j) { return j.hex; }) }; }, acceptPubTel: acceptPubTel, pubTelFor: pubTelFor, fillNativeCard: fillNativeCard, regsOfCallsign: regsOfCallsign, categoryOf: categoryOf, nativeFill: nativeFill, natInfo: natInfo, telem: telem, b64Encode: b64Encode, b64DecodeInto: b64DecodeInto, frameHeader: frameHeader, concat: concat, varintInt32: varintInt32, PLAYBACK: PLAYBACK, patchPlayback: patchPlayback, patchPlaybackRequest: patchPlaybackRequest, pbRoutes: pbRoutes, pbTelAt: pbTelAt, setPbTrace: function (t) { pbTrace = t; }, patchList: patchList, acceptSites: acceptSites, listSig: listSig, mergeRoutes: mergeRoutes, applyRoutes: applyRoutes, routesAdd: routesAdd, applyAirport: applyAirport, applyBoardPage: applyBoardPage, applyStats: applyStats, mergeFlights: mergeFlights, apData: apData, telAt: telAt, noteTelem: noteTelem, pbTraceOf: function () { return pbTrace; }, logoOf: logoOf, archDetail: archDetail, tsOf: tsOf, noteAirportJson: noteAirportJson, rwyOf: rwyOf, rwyPanel: rwyPanel, panelTick: panelTick, panelData: panelData, promoSlots: promoSlots, acceptAirportPanel: acceptAirportPanel, unlockRunways: unlockRunways, mvRows: mvRows, mvKept: mvKept, dayOf: dayOf, pbPanelTick: pbPanelTick, logoFix: logoFix, liveEntries: liveEntries, pbPos: pbPos, unlockFeed: unlockFeed, derivedVs: derivedVs, altHist: altHist, acceptAir: acceptAir, airCache: airCache, flushAir: flushAir, airWant: function () { return airWant; }, lastPos: lastPos, resolved: resolved, stats: stats }); } catch (e) { /* ignore */ }
     post('ready', { stats: stats, feedReady: false, v: BRIDGE_V });
   }
 

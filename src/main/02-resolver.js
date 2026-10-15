@@ -157,21 +157,58 @@
   }
   // adsb.lol's history of every aircraft it heard, every 20 s (its heatmap: a file per half hour, ~27 MB, records of 16
   // bytes - address, lat and lon x1e6, altitude /25 ft, speed x10 kt - after a marker with the time): who was where FR24's
-  // track had the flight at that moment. Read only when nothing cheaper named a flight - one file in two minutes for the
-  // flight opened, one in fifteen otherwise - and kept until another is needed.
+  // track had the flight at that moment. Read for the ocean pass only when nothing cheaper named a flight - one file in
+  // two minutes for the flight opened, one in fifteen otherwise; for FR24's playback (06-playback) as soon as it opens.
+  // The files read are kept: the last two in memory, the last six half hours long over on disk (the browser's cache
+  // storage) - a playback opened again, after a reload too, has its file at once. One request per file at a time; one
+  // refused, asked again after a minute.
   const heat = { url: '', buf: null, selAt: 0, bgAt: 0 };
+  const heatMem = new Map(), heatJobs = new Map(), heatFail = new Map(), HEAT_STORE = 'tl-heat-v1', HEAT_DISK = 6;
+  const heatUrlOf = t => { const d = new Date(t * 1000); return `https://adsb.lol/globe_history/${dayStr(t * 1000)}/heatmap/${String(d.getUTCHours() * 2 + (d.getUTCMinutes() >= 30 ? 1 : 0)).padStart(2, '0')}.bin.ttf`; };
+  // (the half hour a file covers is over, with time to spare for it to be written whole: only then kept on disk)
+  const heatDone = t => Math.floor(t / 1800) * 1800 + 1800 < nowS() - 15 * 60;
   function gmBinary(url, timeout) {
     const gm = typeof GM_xmlhttpRequest === 'function' ? GM_xmlhttpRequest : (typeof GM !== 'undefined' && GM && typeof GM.xmlHttpRequest === 'function' ? GM.xmlHttpRequest : null);
     return new Promise((res, rej) => { if (!gm) return rej(new Error('GM_xmlhttpRequest unavailable')); gm({ method: 'GET', url, responseType: 'arraybuffer', timeout, onload: r => r.status === 200 && r.response ? res(r.response) : rej(new Error('HTTP ' + r.status)), onerror: () => rej(new Error('network error')), ontimeout: () => rej(new Error('timeout')) }); });
   }
+  const heatCaches = () => { try { return typeof caches !== 'undefined' && caches && typeof caches.open === 'function' ? caches : null; } catch (e) { return null; } };
+  async function heatDiskGet(url) {
+    const cs = heatCaches(); if (!cs) return null;
+    try { const c = await cs.open(HEAT_STORE), r = await c.match(url); if (!r) return null; const b = await r.arrayBuffer(); return b && b.byteLength >= 16 ? b : null; } catch (e) { return null; }
+  }
+  async function heatDiskPut(url, buf) {
+    const cs = heatCaches(); if (!cs) return;
+    try {
+      const c = await cs.open(HEAT_STORE); await c.put(url, new Response(buf, { headers: { 'Content-Type': 'application/octet-stream' } }));
+      const keys = await c.keys(); for (const k of keys.slice(0, Math.max(0, keys.length - HEAT_DISK))) await c.delete(k);
+    } catch (e) { log('heatmap kept', String(e && e.message || e)); }
+  }
+  const heatHave = url => heatMem.get(url) || null;
+  function heatLoad(t) {
+    const url = heatUrlOf(t);
+    const m = heatMem.get(url); if (m) { heatMem.delete(url); heatMem.set(url, m); return Promise.resolve(m); }
+    if (heatJobs.has(url)) return heatJobs.get(url);
+    if (now() - (heatFail.get(url) || 0) < 60000) return Promise.reject(new Error('heatmap refused a moment ago'));
+    const done = heatDone(t);
+    const job = (async () => {
+      let buf = done ? await heatDiskGet(url) : null;
+      if (!buf) { buf = await gmBinary(url, 180000); if (done) heatDiskPut(url, buf).catch(() => {}); }
+      heatMem.set(url, buf); while (heatMem.size > 2) heatMem.delete(heatMem.keys().next().value);
+      heat.url = url; heat.buf = buf;
+      return buf;
+    })();
+    heatJobs.set(url, job);
+    job.then(() => heatJobs.delete(url), e => { heatJobs.delete(url); heatFail.set(url, now()); if (heatFail.size > 50) heatFail.delete(heatFail.keys().next().value); log('heatmap', String(e && e.message || e)); });
+    return job;
+  }
   async function heatNear(t, posAt, altFt, sel) {
-    const d = new Date(t * 1000), url = `https://adsb.lol/globe_history/${dayStr(t * 1000)}/heatmap/${String(d.getUTCHours() * 2 + (d.getUTCMinutes() >= 30 ? 1 : 0)).padStart(2, '0')}.bin.ttf`;
-    if (heat.url !== url) {
+    const url = heatUrlOf(t);
+    if (!heatHave(url) && !heatJobs.has(url)) {
       if (now() - (sel ? heat.selAt : Math.max(heat.selAt, heat.bgAt)) < (sel ? 2 : 15) * 60000) return [];
       if (sel) heat.selAt = now(); else heat.bgAt = now();
-      try { heat.buf = await gmBinary(url, 180000); heat.url = url; } catch (e) { log('heatmap', String(e)); return []; }
     }
-    return ENGINE.heatNear(heat.buf, t, posAt, altFt);
+    let buf; try { buf = await heatLoad(t); } catch (e) { return []; }
+    return ENGINE.heatNear(buf, t, posAt, altFt);
   }
   async function matchByTraces(f) {
     if (traceBusy || !f || live.has(f.id) || f.gnd || !(f.alt > 10000) || now() - (traceAsked.get(f.id) || 0) < 10 * 60000) return false;
@@ -742,6 +779,22 @@
     else if (!rec.origin) { const f = pending.get(rec.id); loadToday(rec.hex, 600000, { bg: !!(f && f.bg), idle: true }).then(() => { if (live.get(rec.id) === rec) publishRoute(rec.id, composeRoute(rec.id, rec.hex)); }).catch(() => {}); }
   }
   const revokedIds = new Set();   // withdrawn this session: not carried over from an older snapshot
+  // Flights FR24 names itself - its own registration for them in its feed, only no callsign (the transponder sends none: an
+  // easyJet on the stand after landing, G-EZWZ at Liverpool, 15 Oct): not blocked, never taken over. One taken over before
+  // - just now, or in a record kept from an earlier visit - is let go: the page told, the panel FR24's own again
+  const fr24Named = new Set();
+  function noteFr24Named(ids) {
+    for (const x of ids || []) {
+      const id = Number(x); if (!id) continue;
+      if (!fr24Named.has(id)) { fr24Named.add(id); revokedIds.add(id); pending.delete(id); attempts.delete(id); strikes.delete(id); }
+      const rec = live.get(id) || store.getId(id); if (!rec) continue;
+      log('FR24 names it itself: let go', id.toString(16), rec.hex || '');
+      live.delete(id); store.delId(id); routeState.delete(id); planState.delete(id); telemetry.delete(id);
+      postToPage('revoke', { ids: [id] });
+      if (onScreen(id)) syncPanelSoon();
+    }
+    if (fr24Named.size > 20000) { const it = fr24Named.values(); for (let i = 0; i < 5000; i++) fr24Named.delete(it.next().value); }
+  }
   function revoke(id, why) {
     const rec = live.get(id); if (!rec) return;
     revokedIds.add(id);
