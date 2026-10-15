@@ -1,4 +1,4 @@
-// FR24 LADD Unblocker 22.28.1 - the page-world part (see src/page.js)
+// FR24 LADD Unblocker 22.28.2 - the page-world part (see src/page.js)
 (function () {
   'use strict';
   // ------------------------------------------------------------------------------------------------------------
@@ -7,7 +7,7 @@
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "22.28.1";
+    var BRIDGE_V = "22.28.2";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed
@@ -415,8 +415,10 @@
     function pbSelOf(fb, ts) { try { var fs = parse(fb), id = numOf(fs, 1), exF = find(fs, 13), ex = exF && exF.wt === 2 ? parse(exF.val) : [], hx = numOf(ex, 14); if (!id || pbSelSent[id]) return; pbSelSent[id] = true; post('pbHex', { id: id, ts: ts, hex: hx > 0 ? ('000000' + hx.toString(16)).slice(-6) : '', reg: strOf(ex, 2), type: strOf(ex, 4), o: 0, d: 1, sel: true }); } catch (e) { /* ignore */ } }
     // (FR24's first panel answer of a flight opened in playback waits a moment - 1.5 s at most - for its track, so its
     // padlocked figures are there from the first draw)
-    var pbWaiters = [];
-    function pbReady(id) { return !!pbTrace && pbTrace.id === id; }
+    // (and for its route as flown - or word that there is none - so a flight FR24 has no destination for gets it in
+    // FR24's own boxes from the first draw)
+    var pbWaiters = [], pbRouteDone = new Set();
+    function pbReady(id) { return !!pbTrace && pbTrace.id === id && (pbRoutes.has(id) || pbRouteDone.has(id)); }
     function whenPbReady(id, ms) { if (pbReady(id)) return Promise.resolve(); return new Promise(function (res) { var w = { id: id, res: res }; pbWaiters.push(w); oSetTimeout(function () { var i = pbWaiters.indexOf(w); if (i >= 0) { pbWaiters.splice(i, 1); res(); } }, ms); }); }
     function pbRelease() { pbWaiters = pbWaiters.filter(function (w) { if (pbReady(w.id)) { w.res(); return false; } return true; }); }
     function tsOf(body) { var b = bodyBytes(body); if (!b || b.length < 5) return 0; try { return numOf(parse(b.subarray(5)), 2); } catch (e) { return 0; } }
@@ -798,7 +800,11 @@
           if (pst.id) post('pbFollow', { id: pst.id, ts: pst.ts });
           if (this.responseType === 'arraybuffer') installBinary(this, function (b) { return patchFlightMsg(b, pst, PLAYBACK); });
           else installText(this, function (b) { return patchFlightMsg(b, pst, PLAYBACK); }, pst);
-          if (pst.id && !pbReady(pst.id)) { var xpb = this, bpb = sendBody; whenPbReady(pst.id, 1500).then(function () { try { oSend.call(xpb, bpb); } catch (e) { /* aborted meanwhile */ } }); return; }
+          // (a blocked aircraft named here: its pictures asked for now, at the front of the queue, and the answer held for
+          // them too - 2.5 s at most - so the slideshow opens with them)
+          var ppr = pst.id ? resolved.get(pst.id) : null, pphWait = !!(ppr && ppr.hex && !hasPhotos(ppr) && !((photoCache.get(String(ppr.hex).toUpperCase()) || {}).final));
+          if (ppr && ppr.hex && !((photoCache.get(String(ppr.hex).toUpperCase()) || {}).final)) photosFor(ppr, true);
+          if (pst.id && (!pbReady(pst.id) || pphWait)) { var xpb = this, bpb = sendBody; Promise.all([whenPbReady(pst.id, 1500), pphWait ? photosWithin(ppr, 2500) : null]).then(function () { try { oSend.call(xpb, bpb); } catch (e) { /* aborted meanwhile */ } }); return; }
         } else if (!this.__tlOwn && /fr24\.feed\.api\.v1\.Feed\/(?:FollowFlight|FlightDetails)(?:$|\?)/.test(url)) {
           // FollowFlight feeds the aircraft panel; FlightDetails the expanded card of a live search result
           var isFollow = /FollowFlight/.test(url), FM = isFollow ? FOLLOW : DETAILS, st = { id: followIdFromBody(body) };
@@ -2292,7 +2298,7 @@
       else if (d.__tweeksLadd === 'pubTel') acceptPubTel(d.rows);
       else if (d.__tweeksLadd === 'airRows') acceptAir(d.rows);
       else if (d.__tweeksLadd === 'sites') acceptSites(d.list);
-      else if (d.__tweeksLadd === 'pbRoute') { if (d.id != null) { if (d.route) pbRoutes.set(Number(d.id), d.route); else pbRoutes.delete(Number(d.id)); if (pbRoutes.size > 3000) pbRoutes.delete(pbRoutes.keys().next().value); } }
+      else if (d.__tweeksLadd === 'pbRoute') { if (d.id != null) { var prId = Number(d.id); if (!d.none) { if (d.route) pbRoutes.set(prId, d.route); else pbRoutes.delete(prId); if (pbRoutes.size > 3000) pbRoutes.delete(pbRoutes.keys().next().value); } pbRouteDone.add(prId); if (pbRouteDone.size > 3000) pbRouteDone.delete(pbRouteDone.values().next().value); pbRelease(); } }
       else if (d.__tweeksLadd === 'pbTrace') { if (d.id != null && Array.isArray(d.pts)) { pbTrace = { id: Number(d.id), hex: d.hex || '', pts: d.pts }; pbRelease(); } }
       else if (d.__tweeksLadd === 'routesAdd') { if (d.apId) { routesAdd.set(Number(d.apId), d.list || []); keepApData(Number(d.apId)); routesTick(); } }
       else if (d.__tweeksLadd === 'airportPanel') acceptAirportPanel(d);
