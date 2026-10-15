@@ -102,6 +102,16 @@ const click = (win, el) => el.dispatchEvent(new win.MouseEvent('click', { bubble
   check('Escape closes it', !doc.querySelector('.tl-ub'));
   click(win, btn); click(win, btn);
   check('the button again closes it', !doc.querySelector('.tl-ub'));
+  // (what was learnt of FR24's own windows: Widgets' place and size, in screen pixels - no zoom here, so the same in CSS)
+  win.localStorage.setItem('tweeks.fr24.ladd.look2', JSON.stringify({ left: 14, top: 7, width: 260, head: 30, bottom: 700, anim: { in: [{ f: 0, t: 300, o: 0, x: -40, y: 0, m: 't' }, { f: 1, t: 300, o: 1, x: 0, y: 0, m: 't' }], out: null } }));
+  click(win, btn); const wl = doc.querySelector('.tl-ub');
+  check('the window takes the place and size learnt from FR24\'s Widgets', !!wl && wl.style.left === '14px' && wl.style.top === '7px' && wl.style.width === '260px' && wl.style.maxHeight === '693px', wl && wl.getAttribute('style'));
+  click(win, btn);
+  check('... and closes at once when no closing movement was learnt', !doc.querySelector('.tl-ub'));
+  win.localStorage.setItem('tweeks.fr24.ladd.look2', 'not json');
+  click(win, btn); const wd = doc.querySelector('.tl-ub');
+  check('... nothing usable learnt: Widgets\' size from the screenshots', !!wd && wd.style.width === '252px' && wd.style.left === '10px');
+  click(win, btn);
   doc.querySelector('.bar-wrap').remove(); doc.body.insertAdjacentHTML('beforeend', BAR);
   const btn2 = await until(() => doc.querySelector('nav.bar .tl-ub-btn'), 3000);
   check('FR24 draws its bar again: the button is back, once', !!btn2 && doc.querySelectorAll('.tl-ub-btn').length === 1 && btn2.previousElementSibling && /Playback/.test(btn2.previousElementSibling.textContent));
