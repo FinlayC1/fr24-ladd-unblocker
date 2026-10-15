@@ -2,6 +2,11 @@
 
 All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PATCH`. The userscript and the monitor are released together.
 
+## [22.27.2] - 2026-10-15
+
+### Changed
+- **The Firefox add-on's id is now `ladd-unblocker@finlayc1.github.io`.** Firefox Add-ons would not take the old id (`fr24-ladd-unblocker@finlayc1.github.io`) for a new listing ("Duplicate add-on ID found"), because the self-distributed upload of 22.27.0 holds it. With a new id the Firefox build goes on as a new, listed add-on. Nothing else changes, and Chrome and Edge are not affected.
+
 ## [22.27.1] - 2026-10-15
 
 ### Changed

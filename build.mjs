@@ -126,7 +126,7 @@ const manifest = {
 };
 // Firefox (140 and up: the first that reads what an add-on says it sends, below): the same, but its background is an event
 // page (a script), not a service worker, and an add-on is known by its id - never changed once on addons.mozilla.org
-const GECKO_ID = 'fr24-ladd-unblocker@finlayc1.github.io';
+const GECKO_ID = 'ladd-unblocker@finlayc1.github.io';
 const { minimum_chrome_version: _chromeOnly, ...common } = manifest;
 const firefoxManifest = {
   ...common,
