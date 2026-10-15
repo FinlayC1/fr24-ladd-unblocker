@@ -2,6 +2,11 @@
 
 All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PATCH`. The userscript and the monitor are released together.
 
+## [22.25.1] - 2026-10-15
+
+### Fixed
+- **Made-up flights on the airport boards, again.** Luton's arrivals had easyJets and Wizz jets "from Stansted" and a Ryanair "from Liverpool", none of which flew those routes. Each was a real landing at Luton given an origin nobody saw it leave. These jets were first heard in the air near Stansted, in the hold the two airports share, and the place they were first heard was taken for where they took off. 22.24.0's fix covered only an end close by, and it trusted any row whose landing was seen. Now a row the script makes of an airline's jet flying its own flight number (a flight FR24 shows itself, with its real route) is kept only when its other end was seen: the take-off there on the ground for an arrival (or FR24's own origin, for one followed live), and the landing there on the ground for a departure. A departure "to Palma" whose landing nobody saw goes too. Business jets, light aircraft, and blocked or military aircraft are not affected. Rows already kept are removed when a board is opened, and rows the monitor sends are checked the same way, so the monitor does not need updating for this.
+
 ## [22.25.0] - 2026-10-15
 
 The monitor keeps working on a flight until it can name it, and what one browser works out reaches every other. Update the monitor with this release: an older monitor ignores what browsers share, and nothing breaks.

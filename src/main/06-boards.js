@@ -55,11 +55,13 @@
     return n;
   }
   // A row of our own ('log': rebuilt from a flight log; 'live': a flight followed as it flew) of an airliner flying an
-  // airline's number - a flight FR24 shows and schedules itself - that is not one: an end unknown (one "N/A" end says
-  // nothing FR24's own row does not, and stands beside it as a second, made-up flight - 'log' rows), back at the field it
-  // left, or at a field close by, its landing there not seen on the ground: a climb-out given a landing at the field below
-  // or ahead of it - easyJets out of Gatwick "landed at Biggin Hill", Ryanairs and a Qatar 787 out of Manchester "to
-  // Manchester" and "to Liverpool". (gc: its landing was seen on the ground)
+  // airline's number - a flight FR24 shows and schedules itself, with its real route - kept only with an other end that
+  // was seen: the landing there on the ground (gc) for a departure, the take-off there on the ground (og) for an arrival
+  // (or, followed live, FR24's own origin). An end only guessed - from where the jet was first or last heard - is no
+  // flight: easyJets out of Gatwick "landed at Biggin Hill", Ryanairs out of Manchester "to Liverpool", and Luton's
+  // arrivals full of easyJets and Wizz jets "from Stansted" (first heard low near Stansted, in the hold both airports
+  // share, on the way in to Luton) and Ryanairs "from Liverpool". No other end at all: one "N/A" end says nothing FR24's
+  // own row does not, and stands beside it as a second flight ('log' rows). Back at the field it left: never.
   const airlineCs = cs => /^[A-Z]{3}\d/.test(String(cs || '').toUpperCase());
   function fakeRow(r, apId, kind) {
     if (!r || !(r.src === 'log' || r.src === 'live') || r.drop || !airlineCs(r.cs)) return false;
@@ -67,9 +69,7 @@
     if (hx.ladd || hx.fr24Blocked || hx.pia || hx.mil || ENGINE.classify({ hex: r.hex || '', type: r.ty || hx.type || '', reg: r.reg || '', cs: r.cs }) !== 'airliner') return false;
     if (!r.ap) return r.src === 'log';
     if (r.ap === apId) return true;
-    if (r.gc) return false;
-    const a = apById(r.ap), h = apById(apId);
-    return !!a && !!h && ENGINE.dist(a.lat, a.lon, h.lat, h.lon) <= 80;
+    return kind === 'arrivals' ? !(r.og || r.src === 'live') : !r.gc;
   }
   // one flight's row: what a better source says wins, what it lacks is kept from the other
   function boardMerge(b, kind, row, apId) {
@@ -286,10 +286,10 @@
       const nearOk = (e, la, lo2) => !e || e.conf !== 'near' || (a => !!a && fin(la) && ENGINE.dist(la, lo2, a.lat, a.lon) <= 30)(apById(e.id));
       const fromOk = local || l.startedOnGround || (!!l.from && l.from.conf !== 'history' && nearOk(l.from, l.startLat, l.startLon));
       const toOk = (landed || !!toSite) && nearOk(l.to, l.endLat, l.endLon);
-      if (boardOk(from) && fromOk) boardPut(from, 'departures', Object.assign({ k, src: 'log', drop: false, cs: l.cs || '', t: off, sch: off, est: off, st: 'departed', col: 'green', ap: toOk ? (boardOk(to) ? to : toSite) : 0, gc: toOk && landed && l.to.conf === 'ground' ? 1 : 0 }, who));
+      if (boardOk(from) && fromOk) boardPut(from, 'departures', Object.assign({ k, src: 'log', drop: false, cs: l.cs || '', t: off, sch: off, est: off, st: 'departed', col: 'green', ap: toOk ? (boardOk(to) ? to : toSite) : 0, gc: toOk && landed && l.to.conf === 'ground' ? 1 : 0, og: l.startedOnGround || (l.from && l.from.conf === 'ground') ? 1 : 0 }, who));
       // (a row an older build kept from such a guess goes: HZ-AR27's on Liverpool's board)
       else if (boardOk(from) && l.from && l.from.conf === 'near') boardPut(from, 'departures', { k, src: 'log', t: off, drop: true });
-      if (boardOk(to) && toOk && on) boardPut(to, 'arrivals', Object.assign({ k, src: 'log', drop: false, cs: l.cs || '', t: on, sch: on, est: on, st: 'landed', col: 'green', ap: fromOk ? (boardOk(from) ? from : fromSite) : 0, gc: l.to.conf === 'ground' ? 1 : 0 }, who));
+      if (boardOk(to) && toOk && on) boardPut(to, 'arrivals', Object.assign({ k, src: 'log', drop: false, cs: l.cs || '', t: on, sch: on, est: on, st: 'landed', col: 'green', ap: fromOk ? (boardOk(from) ? from : fromSite) : 0, gc: l.to.conf === 'ground' ? 1 : 0, og: l.startedOnGround || (l.from && l.from.conf === 'ground') ? 1 : 0 }, who));
       else if (boardOk(to) && landed && on && l.to.conf === 'near') boardPut(to, 'arrivals', { k, src: 'log', t: on, drop: true });
     }
   }
