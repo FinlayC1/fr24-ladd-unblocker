@@ -1,4 +1,4 @@
-// FR24 LADD Unblocker - browser extension (Chrome / Edge, Manifest V3): the content script's preamble.
+// FR24 LADD Unblocker - browser extension (Chrome / Edge / Firefox, Manifest V3): the content script's preamble.
 // The script itself is the same as the Tampermonkey userscript; it was written against a userscript manager's API, so
 // the two things it needs from one are given here:
 //   GM_xmlhttpRequest  requests to the other sites (adsb.lol, adsb.fi, the monitor, registers...) - a content script is
