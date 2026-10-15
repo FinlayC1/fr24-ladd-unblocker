@@ -386,12 +386,17 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   ];
   // the padlock: a wrapper holding only an icon (a real value always has text)
   const lockOf = cell => [...cell.children].find(c => c.tagName !== 'P' && !c.classList.contains('tl-filled') && c.querySelector('svg') && !c.querySelector('p') && !clean(c.textContent));
-  function fillLockedCell(cell, text, key) {
+  const WX_KEYS = ['ias', 'tas', 'mach', 'oat', 'wind'];
+  function fillLockedCell(cell, text, key, est) {
     let mine = cell.querySelector('.tl-filled[data-k="' + key + '"]');
     const lock = lockOf(cell);
     if (!text || !lock) { if (mine) mine.remove(); if (lock) lock.classList.remove('tl-filled-lock'); return; }
     if (!mine) { mine = document.createElement('p'); mine.className = 'tl-filled text-md leading-tight text-gray-1300'; mine.dataset.k = key; mine.title = 'From public data (LADD unblocker)'; lock.after(mine); }
     lock.classList.add('tl-filled-lock');
+    // (an estimate - the monitor's, from a weather model and the aircraft's ground speed - marked as one)
+    if (est) text = '≈ ' + text;
+    const title = est ? 'Estimated from NOAA\'s GFS weather model and the ground speed, typically within 10 kt and 2 °C (LADD unblocker)' : 'From public data (LADD unblocker)';
+    if (mine.title !== title) mine.title = title;
     if (mine.textContent !== text) mine.textContent = text;
   }
   // the newest telemetry for an aircraft: its own feed, or the area cache (every aircraft on screen, refreshed every few s)
@@ -419,6 +424,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       ias: fresh && fresh.ias > 0 ? spd(fresh.ias) : '', tas: fresh && fresh.tas > 0 ? spd(fresh.tas) : '',
       mach: fresh && fresh.mach > 0 ? fresh.mach.toFixed(3) : '', oat: fresh && fin(fresh.oat) ? `${Math.round(fresh.oat)} °C` : '',
       wind: fresh && fin(fresh.wd) && fin(fresh.ws) ? `${Math.round(fresh.wd)}° / ${spd(fresh.ws)}` : '',
+      est: !!(fresh && fresh.wx),
       fir: fresh && fresh.air ? (fresh.airId && fresh.airId !== fresh.air ? `${fresh.air} (${fresh.airId})` : fresh.air) : (where && fin(where.lat) ? firLabelAt(where.lat, where.lon, where.gnd ? 0 : where.alt) : '')
     };
   }
@@ -429,7 +435,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       const hit = LOCKED_FIELDS.find(f => f[0].test(clean(label.textContent))); if (!hit) continue;
       if (!cell.querySelector('.tl-filled') && !lockOf(cell)) continue;
       vals = vals || lockedValues(panel, rec, hx);
-      fillLockedCell(cell, vals[hit[1]], hit[1]);
+      fillLockedCell(cell, vals[hit[1]], hit[1], vals.est && WX_KEYS.includes(hit[1]));
     }
   }
   // An ordinary flight FR24 lists as "Private owner": the registered owner / operator from the registries (FAA, the Isle

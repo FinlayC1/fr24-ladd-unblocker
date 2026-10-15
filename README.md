@@ -92,7 +92,7 @@ For any browser with a userscript manager such as [Tampermonkey](https://www.tam
 
 Every copy of the script connects to the shared public monitor by default, so it knows every blocked flight worldwide from the moment FR24 opens, along with each aircraft's history. There is nothing to set up.
 
-To turn it off, or point it at [your own monitor](#run-your-own-monitor), open any aircraft's panel, click **sources** on the strip under the photo, and use the **Monitor** row. An address and secret you enter there stay in your browser. Turned off, your browser identifies what it sees on its own.
+To turn it off, or point it at [your own monitor](#run-your-own-monitor), open any aircraft's panel, click **sources** on the strip under the photo, and use the **Monitor** row. An address and secret you enter there stay in your browser. With the extension, a monitor at an address of your own opens a page where your browser asks you to allow it, once. Turned off, your browser identifies what it sees on its own.
 
 ### Updating
 

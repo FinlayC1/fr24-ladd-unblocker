@@ -359,10 +359,12 @@ function wantBackfill(hex, nowS) {
   backQ.push({ hex, days: have ? [dayOf(nowS)] : [3, 2, 1, 0].map(k => dayOf(nowS - k * 86400)) });
 }
 // (aircraft the userscript has identified - parked now, transponder off, so never heard here: known from now on)
-function seed(hexes, front, nowS) {
+// (allow: how many aircraft not yet followed may be added - a stranger's browser on a public monitor is held to a budget)
+function seed(hexes, front, nowS, allow) {
   let n = 0;
   for (const h of hexes) {
     const hex = String(h).toLowerCase(); if (!/^[0-9a-f]{6}$/.test(hex)) continue;
+    if (!blocked.has(hex) && allow && !allow()) continue;
     const had = backDone.has(hex); markBlocked(hex, null, nowS);
     if (had) continue;
     wantBackfill(hex, nowS); n++;
@@ -844,12 +846,25 @@ function work(final) {
   if (!final) learnedDue(nowS);
 }
 // (a place the userscript is looking at, to the nearest degree: the most recent few polled with the default areas)
-function addArea(lat, lon, nowS) {
+function addArea(lat, lon, nowS, allow) {
   if (!isFinite(lat) || !isFinite(lon) || Math.abs(lat) > 85) return false;
   const la = Math.round(lat), lo = Math.round(lon);
   if (CFG.areas.concat(userAreas).some(a => E.dist(a[0], a[1], la, lo) < 150)) { const u = userAreas.find(a => E.dist(a[0], a[1], la, lo) < 150); if (u) u[3] = Math.round(nowS); return false; }
+  if (allow && !allow()) return false;
   userAreas.push([la, lo, 250, Math.round(nowS)]); userAreas.sort((a, b) => b[3] - a[3]); userAreas.splice(CFG.userAreas);
   stateDirty = true; return true;
+}
+
+// What one address that is not the owner's may add to the monitor's own work on a public monitor, an hour at a time:
+// places to poll (/area - one browser looks at a few) and aircraft to follow (/seed - those it has not followed yet);
+// beyond it the request is answered, nothing added. (CFG.areaPerHour, CFG.seedPerHour)
+const adds = new Map();   // 'kind ip' -> { t: hour, n }
+function allowance(kind, ip, cap) {
+  return () => {
+    const t = Math.floor(Date.now() / 3600e3), k = kind + ' ' + ip, a = adds.get(k);
+    if (!a || a.t !== t) { if (adds.size > 20000) adds.clear(); adds.set(k, { t, n: 1 }); return cap >= 1; }
+    return ++a.n <= cap;
+  };
 }
 
 // ---- (22.23) a moment of FR24's playback, named at once: POST /pbmatch {t, f: [[FR24 id, lat, lon, alt ft, type, on the
@@ -1097,8 +1112,9 @@ function answer(u, nowS, ctx) {
   if (p === '/ladd') return { at: lastLadd.at, ac: lastLadd.ac };
   if (p === '/last') return { list: lastHeard(nowS) };
   if (p === '/parked') return { list: parkedAt(+q('ap'), String(q('type') || '').toUpperCase(), nowS) };
-  if (p === '/seed') return { queued: seed(String(q('hex') || '').split(',').slice(0, 500), q('front') === '1', nowS), backfillQueue: backQ.length };
-  if (p === '/area') { const added = addArea(+q('lat'), +q('lon'), nowS); return admin ? { added, areas: CFG.areas.concat(userAreas).map(a => a.slice(0, 2)) } : { added }; }
+  const ip = (ctx && ctx.ip) || '';
+  if (p === '/seed') return { queued: seed(String(q('hex') || '').split(',').slice(0, 500), q('front') === '1', nowS, admin ? null : allowance('seed', ip, +CFG.seedPerHour || 300)), backfillQueue: backQ.length };
+  if (p === '/area') { const added = addArea(+q('lat'), +q('lon'), nowS, admin ? null : allowance('area', ip, +CFG.areaPerHour || 4)); return admin ? { added, areas: CFG.areas.concat(userAreas).map(a => a.slice(0, 2)) } : { added }; }
   return null;
 }
 function serve() {

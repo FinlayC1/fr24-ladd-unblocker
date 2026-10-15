@@ -89,6 +89,8 @@ Any of these can be overridden in a `monitor.json` next to `monitor.cjs` (the fi
 | `ident` / `dest` | `{}` | Fine-tuning of the naming (`keepFlightH`, `trailEvery`…) and of the rough destinations (`every`, `perRound`, `budgetMs`) |
 | `public` | `true` | Answer every copy of the script (see [Public mode](#public-mode)); `MON_PUBLIC` overrides it |
 | `rate` | `300` | A public monitor's requests per minute per client address; `MON_RATE` overrides it |
+| `areaPerHour` | `4` | On a public monitor, new places one address other than the owner's may add with `/area` in an hour; beyond it the request is answered and nothing is added |
+| `seedPerHour` | `300` | On a public monitor, aircraft not yet followed that one address other than the owner's may add with `/seed` in an hour |
 | `crowdNeed` | `2` | How many different browsers must send the same name or owner before a public monitor takes it, when it cannot check it itself |
 | `nearPerMin` | `30` | adsb.fi lookups a minute for places the monitor has heard little of, for all browsers together (one per 1-degree cell a minute) |
 | `telMax` | `30000` | Aircraft whose newest report is held for the padlocked figures |
@@ -150,8 +152,8 @@ All answers are JSON. On a public monitor every endpoint answers without the sec
 | `GET /parked?ap=<id>&type=<icao type>` | Aircraft of that type whose last flight in 14 days ended at that airport |
 | `GET /last` | Where each blocked jet (and each other business jet cruising) was last heard in 14 hours, used for ocean identification |
 | `GET /ladd` | The LADD list as last polled (kept for older userscript versions) |
-| `GET /seed?hex=a,b[&front=1]` | Tell the monitor about blocked aircraft the userscript identified. They are tracked from then on and their last three days are rebuilt. |
-| `GET /area?lat=&lon=` | A place the userscript is looking at. Its traffic is polled too, for three days. |
+| `GET /seed?hex=a,b[&front=1]` | Tell the monitor about blocked aircraft the userscript identified. They are tracked from then on and their last three days are rebuilt. On a public monitor, other people's browsers add at most `seedPerHour` new aircraft an hour each. |
+| `GET /area?lat=&lon=` | A place the userscript is looking at. Its traffic is polled too, for three days. On a public monitor, other people's browsers add at most `areaPerHour` new places an hour each. |
 | `GET /stats` | The dashboard's numbers: memory, load, requests per endpoint and per client, recent requests. Only with the secret. |
 | `GET /dash` | The dashboard page. It contains no data and asks for the secret in the browser. |
 

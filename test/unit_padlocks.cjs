@@ -87,11 +87,17 @@ const send = (w, data) => w.dispatchEvent(new w.MessageEvent('message', { data, 
 
   // ---- the monitor's airspeeds (worked out from the weather model over the US) kept when this browser's own poll of
   // adsb.lol, a few seconds newer, has none - not blanked every other poll
-  { const t = Date.now(), m = L.normalizeReadsb({ hex: '407c02', flight: 'JCO55', lat: 44.04, lon: -98.04, alt_baro: 41000, gs: 595, track: 57, tas: 514, ias: 269, mach: 0.897, oat: -56, wd: 270, ws: 100, seen_pos: 3 }, 'monitor', t);
+  { const t = Date.now(), m = L.normalizeReadsb({ hex: '407c02', flight: 'JCO55', lat: 44.04, lon: -98.04, alt_baro: 41000, gs: 595, track: 57, tas: 514, ias: 269, mach: 0.897, oat: -56, wd: 270, ws: 100, seen_pos: 3, wx: 1 }, 'monitor', t);
     const own = L.normalizeReadsb({ hex: '407c02', flight: 'JCO55', lat: 44.05, lon: -98.02, alt_baro: 41000, gs: 596, track: 57, seen_pos: 0 }, 'adsb.lol', t);
     L.noteCands([m]); L.noteCands([own]);
     const c = L.areaCache.get('407c02');
     check('the monitor\'s airspeeds, Mach, wind and temperature kept through this browser\'s own newer poll that has none', c === own && c.tas === 514 && c.ias === 269 && c.mach === 0.897 && c.oat === -56 && c.wd === 270 && c.ws === 100 && c.gs === 596, { tas: c.tas, gs: c.gs });
+    check('... still marked as the weather model\'s estimate (shown with "≈"), here and in what the panel reads', c.wx === true && L.telemOf(c).wx === true);
+    L.telOut.clear(); L.noteTelOut([own]); const back = L.telOut.get('407c02');
+    check('... and never reported back to the monitor as this browser\'s own figures', !!back && back.slice(9, 15).every(v => v == null) && back[4] === 596, back);
+    const eu = L.normalizeReadsb({ hex: '4ca0e5', lat: 53.4, lon: -6.2, alt_baro: 37000, gs: 450, track: 90, tas: 455, ias: 260, mach: 0.79, oat: -50, wd: 250, ws: 40, seen_pos: 0 }, 'adsb.lol', t);
+    L.noteCands([eu]); L.noteTelOut([eu]);
+    check('... an aircraft\'s own figures: not marked, and reported', eu.wx === false && L.telOut.get('4ca0e5')[10] === 455);
     const later = L.normalizeReadsb({ hex: '407c02', lat: 44.3, lon: -97.5, alt_baro: 41000, gs: 596, track: 57, seen_pos: 0 }, 'adsb.lol', t + 180000);
     L.noteCands([later]);
     check('... for two minutes at most (never figures gone stale)', !Number.isFinite(L.areaCache.get('407c02').tas)); }

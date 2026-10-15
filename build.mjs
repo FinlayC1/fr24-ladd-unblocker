@@ -110,6 +110,8 @@ const manifest = {
   icons: { 16: 'icons/16.png', 48: 'icons/48.png', 128: 'icons/128.png' },
   background: { service_worker: 'background.js' },
   host_permissions: [...new Set(hosts.flatMap(hostPerm))],
+  // (a monitor of the user's own, at any https address: asked for when it is set, on grant.html)
+  optional_host_permissions: ['https://*/*'],
   content_scripts: [
     { matches: ['https://www.flightradar24.com/*', 'https://flightradar24.com/*'], js: ['page.js'], run_at: 'document_start', world: 'MAIN', all_frames: false },
     { matches: ['https://www.flightradar24.com/*', 'https://flightradar24.com/*'], js: ['content.js'], run_at: 'document_start', all_frames: false }
@@ -154,6 +156,8 @@ const extFiles = [
   ['page.js', Buffer.from(pagePart)],
   ['content.js', Buffer.from(rd('extension/shim.js') + '\n' + out)],
   ['background.js', Buffer.from(rd('extension/background.js'))],
+  ['grant.html', Buffer.from(rd('extension/grant.html'))],
+  ['grant.js', Buffer.from(rd('extension/grant.js'))],
   ...[16, 48, 128].map(n => { const f = path.join(root, 'extension', 'icons', n + '.png'); return ['icons/' + n + '.png', fs.existsSync(f) ? fs.readFileSync(f) : pngIcon(n)]; })
 ];
 const extDir = path.join(root, 'dist', 'extension');

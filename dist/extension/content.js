@@ -37,6 +37,9 @@ const GM_xmlhttpRequest = (() => {
     return { abort() { if (pending.delete(id)) { try { if (port) port.postMessage({ abort: id }); } catch (e) { /* closed */ } try { if (o.onabort) o.onabort({}); } catch (e) { /* the caller's */ } } } };
   };
 })();
+// (a monitor of the user's own at an address the manifest does not list: may the extension reach it? - asked of the
+// service worker, which opens the page where the user allows it when not; resolves true when it is allowed already)
+const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendMessage({ tlGrant: origin }, ok => { void chrome.runtime.lastError; res(!!ok); }); } catch (e) { res(false); } });
 
 // ==UserScript==
 // @name         Flightradar24 LADD / N-A Unblocker (feed-level)
@@ -2343,6 +2346,8 @@ const GM_xmlhttpRequest = (() => {
       else if (d.__tweeksLadd === 'osmReq') { if (d.key && /^https:\/\/overpass-api\.de\/api\/interpreter\?data=/.test(String(d.url || ''))) oFetch.call(window, d.url).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) { post('osmRes', { key: d.key, j: j }); }, function () { post('osmRes', { key: d.key, j: null }); }); }
       else if (d.__tweeksLadd === 'photosDone') acceptPhotosDone(d);
       else if (d.__tweeksLadd === 'scan') runScan(d.regions || [], d.opts || {});
+      // (the health check's figures - the extension's script runs in its own world and cannot read this one's objects)
+      else if (d.__tweeksLadd === 'stats?') post('stats', { stats: stats });
       else if (d.__tweeksLadd === 'hello') post('ready', { stats: stats, feedReady: !!feedHeaders, hdr: feedHdrPublic(), v: BRIDGE_V });
     });
     window[NS] = { resolved: resolved, routes: routes, naRecs: naRecs, naRoutes: naRoutes, telem: telem, hist: hist, lastPos: lastPos, photoCache: photoCache, psCache: psCache, stats: stats, fetchPhotos: fetchPhotos, hello: function () { post('ready', { stats: stats, feedReady: !!feedHeaders, v: BRIDGE_V }); }, v: BRIDGE_V };
@@ -5283,9 +5288,11 @@ const GM_xmlhttpRequest = (() => {
       lat, lon, alt: fin(alt) ? alt : NaN, gnd, gs: Number(ac.gs), trk: Number(ac.track), ageS: (Number(ac.seen_pos) || 0), receivedAt, dbFlags, ladd: !!(dbFlags & 8), pia: !!(dbFlags & 4), mil: !!(dbFlags & 1), src,
       cat: clean(ac.category).toUpperCase(), sq, squawk: sq ? parseInt(sq, 8) : 0, emergency: clean(ac.emergency),
       // everything the panel's own fields can show, straight from the transponder
-      vs: fin(numOr(ac.baro_rate)) ? numOr(ac.baro_rate) : numOr(ac.geom_rate), agps: numOr(ac.alt_geom), ias: numOr(ac.ias), tas: numOr(ac.tas), mach: numOr(ac.mach), oat: numOr(ac.oat), wd: numOr(ac.wd), ws: numOr(ac.ws), mcp: numOr(ac.nav_altitude_mcp), fms: numOr(ac.nav_altitude_fms), navHdg: numOr(ac.nav_heading), qnh: numOr(ac.nav_qnh), ...(gnd ? GROUND_AIRDATA : {}) };
+      vs: fin(numOr(ac.baro_rate)) ? numOr(ac.baro_rate) : numOr(ac.geom_rate), agps: numOr(ac.alt_geom), ias: numOr(ac.ias), tas: numOr(ac.tas), mach: numOr(ac.mach), oat: numOr(ac.oat), wd: numOr(ac.wd), ws: numOr(ac.ws), mcp: numOr(ac.nav_altitude_mcp), fms: numOr(ac.nav_altitude_fms), navHdg: numOr(ac.nav_heading), qnh: numOr(ac.nav_qnh),
+      // (wx: the airspeeds, Mach, wind and temperature are the monitor's estimate from a weather model, not the aircraft's)
+      wx: !gnd && ac.wx === 1, ...(gnd ? GROUND_AIRDATA : {}) };
   }
-  const telemOf = c => c ? { gnd: !!c.gnd, vr: c.vs, sq: c.squawk || 0, sqs: c.sq || '', agps: c.agps, ias: c.ias, tas: c.tas, mach: c.mach, oat: c.oat, wd: c.wd, ws: c.ws, mcp: c.mcp, fms: c.fms, cat: c.cat, emergency: c.emergency, ...firFields(c), at: c.receivedAt - (c.ageS || 0) * 1000 } : null;
+  const telemOf = c => c ? { gnd: !!c.gnd, vr: c.vs, sq: c.squawk || 0, sqs: c.sq || '', agps: c.agps, ias: c.ias, tas: c.tas, mach: c.mach, oat: c.oat, wd: c.wd, ws: c.ws, wx: !!c.wx, mcp: c.mcp, fms: c.fms, cat: c.cat, emergency: c.emergency, ...firFields(c), at: c.receivedAt - (c.ageS || 0) * 1000 } : null;
   const firFields = c => { const f = firInfo(c.lat, c.lon, c.gnd ? 0 : c.alt); return f ? { air: f.name, airId: f.code } : { air: '', airId: '' }; };
   const readsbList = j => Array.isArray(j && j.ac) ? j.ac : Array.isArray(j && j.aircraft) ? j.aircraft : [];
   // (altFn: an older address of the same query, asked when the first is not found - adsb.fi moved its area query to v3)
@@ -5339,7 +5346,7 @@ const GM_xmlhttpRequest = (() => {
       if (!c || !c.hex) continue; const p = areaCache.get(c.hex);
       // (a report without the airspeeds, Mach, wind and temperature - the networks send them only now and then, and over
       // the US not at all: the monitor's figures, its own or worked out from the weather model, kept two minutes)
-      if (p && !c.gnd && !fin(c.tas) && !fin(c.ias) && fin(p.tas) && seenAt(c) >= seenAt(p) && seenAt(c) - seenAt(p) < 120000) for (const k of ['ias', 'tas', 'mach', 'oat', 'wd', 'ws']) if (!fin(c[k]) && fin(p[k])) c[k] = p[k];
+      if (p && !c.gnd && !fin(c.tas) && !fin(c.ias) && fin(p.tas) && seenAt(c) >= seenAt(p) && seenAt(c) - seenAt(p) < 120000) { for (const k of ['ias', 'tas', 'mach', 'oat', 'wd', 'ws']) if (!fin(c[k]) && fin(p[k])) c[k] = p[k]; c.wx = !!p.wx; c.airKept = true; }
       if (!p || seenAt(c) >= seenAt(p)) areaCache.set(c.hex, c); noteLastSeen(c);
     }
     if (areaCache.size > 12000) { const cut = now() - 10 * 60000; for (const [k, v] of areaCache) if (v.receivedAt < cut) areaCache.delete(k); }
@@ -5786,7 +5793,10 @@ const GM_xmlhttpRequest = (() => {
   function noteTelOut(list) {
     for (const c of list || []) {
       if (!c || c.nonIcao || c.src === 'monitor' || !fin(c.lat) || !fin(c.lon) || now() - seenAt(c) > 60000) continue;
-      telOut.set(c.hex, [c.hex, rnd4(c.lat), rnd4(c.lon), c.gnd ? 'g' : fin(c.alt) ? Math.round(c.alt) : null, nn(c.gs), nn(c.trk), c.gnd ? 0 : nn(c.vs), c.sq || '', nn(c.agps), nn(c.ias), nn(c.tas), nn(c.mach), nn(c.oat), nn(c.wd), nn(c.ws), Math.round(seenAt(c) / 1000), c.reg || '', c.type || '', c.cs || '', c.dbFlags | 0]);
+      // (airspeeds, Mach, wind and temperature only as the aircraft sent them: never the monitor's own figures kept from an
+      // earlier report, nor its estimates - sent back, they would come back as a browser's and lose their mark)
+      const own = !c.wx && !c.airKept;
+      telOut.set(c.hex, [c.hex, rnd4(c.lat), rnd4(c.lon), c.gnd ? 'g' : fin(c.alt) ? Math.round(c.alt) : null, nn(c.gs), nn(c.trk), c.gnd ? 0 : nn(c.vs), c.sq || '', nn(c.agps), ...(own ? [nn(c.ias), nn(c.tas), nn(c.mach), nn(c.oat), nn(c.wd), nn(c.ws)] : [null, null, null, null, null, null]), Math.round(seenAt(c) / 1000), c.reg || '', c.type || '', c.cs || '', c.dbFlags | 0]);
     }
     if (telOut.size > 3000) for (const k of [...telOut.keys()].slice(0, telOut.size - 3000)) telOut.delete(k);
   }
@@ -5890,6 +5900,7 @@ const GM_xmlhttpRequest = (() => {
   const strikes = new Map();          // fr24 id -> { n, first } consecutive failed verifications
   const msgCount = {};   // page reports received, by kind (the strip of an ordinary flight shows them)
   let shownId = null;   // the flight id the open panel is showing (worked out from the aircraft on screen)
+  let bridgeStats = null;   // (the page part's counters, as it last sent them - read by the health check)
   let selectedId = null, bridgeReady = false, feedReady = false, sweepTimer = 0, sweepRunning = false, viewCenter = null;
 
   function pageWindow() { try { return typeof unsafeWindow !== 'undefined' && unsafeWindow ? unsafeWindow : window; } catch (_) { return window; } }
@@ -9265,12 +9276,17 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   ];
   // the padlock: a wrapper holding only an icon (a real value always has text)
   const lockOf = cell => [...cell.children].find(c => c.tagName !== 'P' && !c.classList.contains('tl-filled') && c.querySelector('svg') && !c.querySelector('p') && !clean(c.textContent));
-  function fillLockedCell(cell, text, key) {
+  const WX_KEYS = ['ias', 'tas', 'mach', 'oat', 'wind'];
+  function fillLockedCell(cell, text, key, est) {
     let mine = cell.querySelector('.tl-filled[data-k="' + key + '"]');
     const lock = lockOf(cell);
     if (!text || !lock) { if (mine) mine.remove(); if (lock) lock.classList.remove('tl-filled-lock'); return; }
     if (!mine) { mine = document.createElement('p'); mine.className = 'tl-filled text-md leading-tight text-gray-1300'; mine.dataset.k = key; mine.title = 'From public data (LADD unblocker)'; lock.after(mine); }
     lock.classList.add('tl-filled-lock');
+    // (an estimate - the monitor's, from a weather model and the aircraft's ground speed - marked as one)
+    if (est) text = '≈ ' + text;
+    const title = est ? 'Estimated from NOAA\'s GFS weather model and the ground speed, typically within 10 kt and 2 °C (LADD unblocker)' : 'From public data (LADD unblocker)';
+    if (mine.title !== title) mine.title = title;
     if (mine.textContent !== text) mine.textContent = text;
   }
   // the newest telemetry for an aircraft: its own feed, or the area cache (every aircraft on screen, refreshed every few s)
@@ -9298,6 +9314,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       ias: fresh && fresh.ias > 0 ? spd(fresh.ias) : '', tas: fresh && fresh.tas > 0 ? spd(fresh.tas) : '',
       mach: fresh && fresh.mach > 0 ? fresh.mach.toFixed(3) : '', oat: fresh && fin(fresh.oat) ? `${Math.round(fresh.oat)} °C` : '',
       wind: fresh && fin(fresh.wd) && fin(fresh.ws) ? `${Math.round(fresh.wd)}° / ${spd(fresh.ws)}` : '',
+      est: !!(fresh && fresh.wx),
       fir: fresh && fresh.air ? (fresh.airId && fresh.airId !== fresh.air ? `${fresh.air} (${fresh.airId})` : fresh.air) : (where && fin(where.lat) ? firLabelAt(where.lat, where.lon, where.gnd ? 0 : where.alt) : '')
     };
   }
@@ -9308,7 +9325,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       const hit = LOCKED_FIELDS.find(f => f[0].test(clean(label.textContent))); if (!hit) continue;
       if (!cell.querySelector('.tl-filled') && !lockOf(cell)) continue;
       vals = vals || lockedValues(panel, rec, hx);
-      fillLockedCell(cell, vals[hit[1]], hit[1]);
+      fillLockedCell(cell, vals[hit[1]], hit[1], vals.est && WX_KEYS.includes(hit[1]));
     }
   }
   // An ordinary flight FR24 lists as "Private owner": the registered owner / operator from the registries (FAA, the Isle
@@ -11220,12 +11237,15 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   const health = { issues: [], at: 0, t0: now() };
   function checkHealth() {
     const issues = [];
-    let B = null; try { B = pageWindow().__tweeksLaddBridge; } catch (_) { /* ignore */ }
+    // (the page part's counters: read directly where the script shares its world, otherwise - the browser extension - as
+    // the page part last sent them, and asked for again for the next check)
+    let S = null; try { const B = pageWindow().__tweeksLaddBridge; S = B && B.stats; } catch (_) { /* ignore */ }
+    if (!S) { S = bridgeStats; if (bridgeReady) postToPage('stats?'); }
     if (!bridgeReady && now() - health.t0 > 20000) issues.push('the page part of the script is not answering');
-    if (B && B.stats) {
-      if (B.stats.maskDisabled) issues.push('FR24 refused the request for the unlocked fields');
-      if (B.stats.errors > 25) issues.push(`FR24's data format may have changed (${B.stats.errors} patch errors)`);
-      if (now() - health.t0 > 90000 && !B.stats.liveFeed && !isAircraftPage) issues.push("FR24's live feed was not recognised");
+    if (S) {
+      if (S.maskDisabled) issues.push('FR24 refused the request for the unlocked fields');
+      if (S.errors > 25) issues.push(`FR24's data format may have changed (${S.errors} patch errors)`);
+      if (now() - health.t0 > 90000 && !S.liveFeed && !isAircraftPage) issues.push("FR24's live feed was not recognised");
     }
     const panel = document.querySelector(SEL.panel);
     if (panel && currentId() != null) { const missing = ['callsign', 'registration', 'depIata', 'arrIata'].filter(k => !q(panel, SEL[k])); if (missing.length >= 2) issues.push("FR24's aircraft panel changed layout"); }
@@ -11359,7 +11379,10 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       // turn off: no monitor at all)
       const url = monAddr((document.getElementById('tl-mon-url') || {}).value) || MON_DEFAULT_URL, token = String((document.getElementById('tl-mon-token') || {}).value || '').trim();
       store.kvSet('monRemote', act === 'monClear' ? {} : act === 'monOff' ? { off: true } : url === MON_DEFAULT_URL && !token ? {} : { url, token }); monBase = ''; monOk = false;
-      monCheck(true).catch(() => {}).then(() => { const b = popEl && popEl.querySelector('.tl-pop-body'); if (b) b.innerHTML = sourcesHtml(); });
+      // (the browser extension reaches only the hosts its manifest lists: a monitor elsewhere is asked for - the browser
+      // opens a page where the user allows it - and looked at again once allowed)
+      const asked = act === 'monSave' && typeof TL_HOST_ACCESS === 'function' && !MON_DEFAULTS.includes(url) && !/\.sslip\.io$/.test(new URL(url).host) ? TL_HOST_ACCESS(new URL(url).origin) : Promise.resolve(true);
+      asked.then(has => monCheck(true).catch(() => {}).then(() => { if (!has && !monOk) monErr = 'allow the extension to reach it, on the page the browser opened'; const b = popEl && popEl.querySelector('.tl-pop-body'); if (b) b.innerHTML = sourcesHtml(); }));
       return;
     }
     if (act === 'adsbxSave' || act === 'adsbxClear') {
@@ -11510,10 +11533,11 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       case 'feedReady': noteFeedHdr(d.hdr); if (!feedReady) { feedReady = true; log('feed headers captured'); worldScan('startup').catch(() => {}); } break;
       case 'scanDone': onScanDone(d); break;
       case 'view': { const first = !viewBox; onView(d); if (first) pollView().catch(() => {}); break; }
+      case 'stats': bridgeStats = d.stats || bridgeStats; break;
       case 'ready': {
         if (!bridgeReady) log('bridge ready', d.v || '(no version)');
         bridgeV = d.v || '?'; if (bridgeV !== VERSION) log('page bridge is another version:', bridgeV);
-        bridgeReady = true; noteFeedHdr(d.hdr); if (d.feedReady && !feedReady) { feedReady = true; worldScan('startup').catch(() => {}); }
+        bridgeReady = true; bridgeStats = d.stats || bridgeStats; noteFeedHdr(d.hdr); if (d.feedReady && !feedReady) { feedReady = true; worldScan('startup').catch(() => {}); }
         // everything known right now - the last session's snapshot included - at once, so the map, a flight opened
         // straight from the URL, boards and search are patched from FR24's very first answer; the rest of the store
         // (flight ids of the last 12 hours) once it has been read
