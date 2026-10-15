@@ -55,7 +55,13 @@ const registrySrc = rd('src/registry.js');
 const r0 = registrySrc.indexOf('/* ==REGISTRY=='), r1 = registrySrc.indexOf('/* ==/REGISTRY== */');
 if (r0 < 0 || r1 < 0) throw new Error('registry markers missing');
 const registry = registrySrc.slice(r0, r1 + '/* ==/REGISTRY== */'.length).split('\n').map(l => l ? '  ' + l : l).join('\n');
-const mods = fs.readdirSync(path.join(root, 'src', 'main')).filter(f => /^\d\d-.*\.js$/.test(f)).sort().map(f => rd('src/main/' + f));
+// (the newest CHANGELOG section's headlines - its bold lead of each item - for the window's "what's new" note after an update)
+const whatsNew = (() => {
+  const sec = rd('CHANGELOG.md').split(/^## /m)[1] || '', v = (sec.match(/^\[([^\]]+)\]/) || [])[1] || '';
+  const items = [...sec.matchAll(/^- \*\*(.+?)\*\*/gm)].map(m => m[1].replace(/`/g, '').trim()).filter(Boolean).slice(0, 3);
+  return { v, items };
+})();
+const mods = fs.readdirSync(path.join(root, 'src', 'main')).filter(f => /^\d\d-.*\.js$/.test(f)).sort().map(f => rd('src/main/' + f).replace("'__TL_WHATSNEW__'", () => JSON.stringify(whatsNew)));
 // the learned data: [the name the script knows it by, what it is, its JSON]
 const DATA = [
   ['ROUTE_TABLES', 'Learned likelihood tables + business/military aviation airport usage (test/mktables.cjs, ~11,000 real legs)', JSON.stringify(tables)],

@@ -63,7 +63,14 @@ const tracks = createTracks({ store: STORE, keepDays: CFG.trackDays, log: (...a)
 const { createWx } = require('./wx.cjs');
 const wx = createWx(Object.assign({ fetch: (u, o) => global.fetch(u, o) }, CFG.wx || {}));
 const { createRegistry } = require(fs.existsSync(path.join(DIR, 'registry.js')) ? path.join(DIR, 'registry.js') : '../src/registry.js');
-const log = (...a) => console.log(new Date().toISOString().slice(0, 19), ...a);
+// (the last 300 lines are also kept in memory for the owner's LADD Unblock window - /admin/log - never the secret)
+const logRing = [];
+const scrub = s => TOKEN ? String(s).split(TOKEN).join('[secret]') : String(s);
+const log = (...a) => {
+  const t = new Date().toISOString().slice(0, 19);
+  console.log(t, ...a);
+  try { logRing.push(scrub(t + ' ' + a.map(x => x instanceof Error ? (x.stack || x.message) : typeof x === 'string' ? x : JSON.stringify(x)).join(' ')).slice(0, 2000)); if (logRing.length > 300) logRing.splice(0, logRing.length - 300); } catch (e) { /* not kept */ }
+};
 
 function loadEngine() {
   E.setAirports(JSON.parse(fs.readFileSync(path.join(DATA, 'airports.json'), 'utf8')).rows);
@@ -1220,7 +1227,7 @@ function dashStats() {
   const now = Date.now(), minAgo = now - 60000, os = require('os'), mem = process.memoryUsage(), recent = reqs.filter(r => r.t > minAgo);
   const lastMin = (key, v) => recent.filter(r => r[key] === v).length;
   return {
-    uptimeS: process.uptime(),
+    uptimeS: process.uptime(), ver: MON_VER, commit: MON_COMMIT, controls: TOKEN ? controls() : null,
     mon: monStatus(),
     srv: { rss: mem.rss, heap: mem.heapUsed, totalMem: os.totalmem(), freeMem: os.freemem(), load: os.loadavg(), cpus: os.cpus().length },
     req: { total: reqTotals.total, lastMin: recent.length, clients: byClient.size, unauthorized: reqTotals.unauthorized, limited: reqTotals.limited, errors: reqTotals.errors },
@@ -1229,13 +1236,54 @@ function dashStats() {
     recent: reqs.slice(-80).reverse()
   };
 }
+// ---- the owner's controls: what the LADD Unblock window does in place of a terminal on the server -------------------
+// Only with the secret (never on a monitor with none set). /admin/update runs deploy.sh - the newest commit of the branch,
+// checked, restarted, rolled back if it does not answer - as a unit of its own (systemd-run), so restarting this service
+// does not stop it half way; its output is kept in the store (deploy-last.log). /admin/restart saves and exits, and systemd
+// starts it again. Neither is offered where they cannot work: not under systemd, not a git checkout.
+const MON_VER = (() => { try { return JSON.parse(fs.readFileSync(path.join(DIR, '..', 'package.json'), 'utf8')).version || ''; } catch (e) { return ''; } })();
+const MON_COMMIT = (() => { try { return require('child_process').execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: DIR, timeout: 5000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch (e) { return ''; } })();
+const UNDER_SYSTEMD = !!process.env.INVOCATION_ID;
+const CAN_DEPLOY = process.platform === 'linux' && UNDER_SYSTEMD && fs.existsSync(path.join(DIR, 'deploy.sh')) && fs.existsSync(path.join(DIR, '..', '.git'));
+const DEPLOY_LOG = path.join(STORE, 'deploy-last.log');
+const ctl = { deployAt: 0, restartAt: 0, stop: null };
+const controls = () => ({ update: CAN_DEPLOY, restart: UNDER_SYSTEMD });
+function deployLogTail() {
+  try { const st = fs.statSync(DEPLOY_LOG); const txt = fs.readFileSync(DEPLOY_LOG, 'utf8'); return { at: st.mtimeMs, text: scrub(txt.split('\n').slice(-40).join('\n')).slice(-6000) }; } catch (e) { return null; }
+}
+function adminAnswer(p, method, q) {
+  if (p === '/admin/log') return { lines: logRing.slice(-Math.min(300, Math.max(1, +q('n') || 80))), deploy: deployLogTail(), controls: controls() };
+  if (method !== 'POST') return null;
+  if (p === '/admin/restart') {
+    if (!UNDER_SYSTEMD) return { ok: false, err: 'not run by systemd here: stopping it would leave it stopped' };
+    if (Date.now() - ctl.restartAt < 60000) return { ok: false, err: 'already restarting' };
+    ctl.restartAt = Date.now(); log('restart asked for from the LADD Unblock window');
+    setTimeout(() => { if (ctl.stop) ctl.stop(); else process.exit(0); }, 500);
+    return { ok: true };
+  }
+  if (p === '/admin/update') {
+    if (!CAN_DEPLOY) return { ok: false, err: 'not a git checkout run by systemd: update it on the server' };
+    if (Date.now() - ctl.deployAt < 5 * 60000) return { ok: false, err: 'an update is already running' };
+    ctl.deployAt = Date.now(); log('update asked for from the LADD Unblock window');
+    const uid = process.getuid ? String(process.getuid()) : '';
+    const args = ['-n', 'systemd-run', '--unit', 'fr24-deploy-' + Date.now(), '--collect', '--quiet', ...(uid ? ['--uid', uid] : []), '--property', 'WorkingDirectory=' + path.join(DIR, '..'),
+      '--property', 'StandardOutput=truncate:' + DEPLOY_LOG, '--property', 'StandardError=inherit', '/bin/bash', path.join(DIR, 'deploy.sh')];
+    return new Promise(res => {
+      require('child_process').execFile('sudo', args, { timeout: 20000 }, (e, out, err) => {
+        if (e) { ctl.deployAt = 0; const why = scrub(String(err || e.message || e)).trim().slice(0, 300); log('update could not start', why); return res({ ok: false, err: why || 'could not start' }); }
+        res({ ok: true });
+      });
+    });
+  }
+  return null;
+}
 // One request's answer (null: no such path)
 // (ctx.admin: the owner - the full answers; anyone else on a public monitor: no places browsers looked at, no private
 // person's name)
 function answer(u, nowS, ctx) {
   const p = u.pathname, q = k => u.searchParams.get(k), admin = !ctx || !!ctx.admin;
   if (p === '/stats') return admin ? dashStats() : null;
-  if (p === '/status') { const st = Object.assign({ v: 3, data: 'adsb.lol (ODbL)', since: stats.since, public: PUBLIC }, monStatus()); if (!admin) delete st.areas; return st; }
+  if (p === '/status') { const st = Object.assign({ v: 3, data: 'adsb.lol (ODbL)', since: stats.since, public: PUBLIC, ver: MON_VER, commit: MON_COMMIT }, monStatus()); if (!admin) delete st.areas; else if (TOKEN) st.controls = controls(); return st; }
   if (p === '/near') return nearAnswer(+q('lat'), +q('lon'), +q('r'));
   if (p === '/tel') return telAnswer(hexList(q('hex'), 100), +(q('lat') || NaN), +(q('lon') || NaN));
   if (p === '/names') return { list: names.get(String(q('ids') || '').split(',').slice(0, 2000), +q('t') || 0) };
@@ -1277,6 +1325,14 @@ function serve() {
     const admin = !TOKEN || req.headers['x-monitor-token'] === TOKEN, ctx = { admin, ip };
     if (!admin && (!PUBLIC || u.pathname === '/stats')) { res.writeHead(401); res.end(); return; }
     if (!admin && limited(ip)) { res.writeHead(429, { 'Retry-After': '30' }); res.end(); return; }
+    // (the owner's controls: only with the secret - a monitor with none set offers none)
+    if (u.pathname.startsWith('/admin/')) {
+      if (!TOKEN || req.headers['x-monitor-token'] !== TOKEN) { res.writeHead(401); res.end(); return; }
+      const send = b => { if (res.headersSent) return; if (!b) { res.writeHead(404); res.end(); return; } res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(b)); };
+      req.resume();
+      try { Promise.resolve(adminAnswer(u.pathname, req.method, k => u.searchParams.get(k))).then(send, e => { if (!res.headersSent) { res.writeHead(500); res.end(); } log('admin', e); }); } catch (e) { res.writeHead(500); res.end(); }
+      return;
+    }
     if (req.method === 'POST') {
       if (u.pathname !== '/report' && u.pathname !== '/pbmatch') { res.writeHead(404); res.end(); return; }
       const parts = []; let size = 0;
@@ -1320,6 +1376,7 @@ if (require.main === module) {
   setInterval(() => log('status', JSON.stringify({ polls: stats.polls, hexPolls: stats.hexPolls, fails: stats.fails, aircraft: ac.size, live: live.size, blocked: blocked.size, legs: [...legs.values()].reduce((n, m) => n + m.size, 0), backfill: backQ.length, hist: histQ.length, rss: Math.round(process.memoryUsage().rss / 1048576), err: stats.lastErr })), 600000);
   // (stopped - Ctrl+C here, systemd's stop or restart on a server: what it has is saved first)
   const stop = () => { try { work(true); } catch (e) { log('save on stop', e); } process.exit(0); };
+  ctl.stop = stop;
   process.on('SIGINT', stop); process.on('SIGTERM', stop);
   // (an error anywhere is logged and the monitor goes on; another copy already running is the one exception)
   process.on('uncaughtException', e => { log('error', e && e.stack || e); if (e && e.code === 'EADDRINUSE') process.exit(1); });
@@ -1332,5 +1389,5 @@ if (require.main === module) {
   ownersLoop();
   setInterval(() => { wx.pump().catch(e => log('wx', String(e))); }, 2000);
 }
-module.exports = { learnCheck, learnFromCrowd, crowdLearnSave, crowdRows, LC, tracks, waiting, waitRound, waitLive, waitNamed, waitClaims, WAIT, saveWaiting, loadWaiting, pbMatch, learnedBuild, learnedDue, learnedLoad, learnedRef: () => learnedOut, liveBusy, backWaits, E, CFG, loadEngine, ingest, buildLegs, fr24Legs, fr24Leg, F24ref: () => F24, owners, ownersLoop, APT, legRunways, names, nearAnswer, telAnswer, tel, wx, pbNames, PUBLIC, RATE, limited, wakeQuiet, parkedAt, boardLegs, flightsOfCs, lastHeard, legs, ac, backfillOne, backQ, blocked, markBlocked, seed, gapFill, addArea, userAreas,
+module.exports = { adminAnswer, ctl, logRing, log, MON_VER, learnCheck, learnFromCrowd, crowdLearnSave, crowdRows, LC, tracks, waiting, waitRound, waitLive, waitNamed, waitClaims, WAIT, saveWaiting, loadWaiting, pbMatch, learnedBuild, learnedDue, learnedLoad, learnedRef: () => learnedOut, liveBusy, backWaits, E, CFG, loadEngine, ingest, buildLegs, fr24Legs, fr24Leg, F24ref: () => F24, owners, ownersLoop, APT, legRunways, names, nearAnswer, telAnswer, tel, wx, pbNames, PUBLIC, RATE, limited, wakeQuiet, parkedAt, boardLegs, flightsOfCs, lastHeard, legs, ac, backfillOne, backQ, blocked, markBlocked, seed, gapFill, addArea, userAreas,
   serve, fr24, ident, dest, F24, report, identRound, fr24Round, saveIdent, loadIdent, histUnknown, learnSince, learnWrite, diskLegs, KEEP_LADD, save, loadStore, dirtyDays, pollOpenSky, adsbxUse, live, liveList, answer, step, P, piaState, apiGet, gate, stats, lastOk, noteWatch, watch, watchedAll, flew, closeDays, histQ, histPend, histOne, histDay, histOf, histRead, nextHist, saveState, loadState, lastW, get closed() { return closed; }, set closed(v) { closed = v; }, pause };
