@@ -323,8 +323,9 @@
     const ago = t => t ? (s => s < 90 ? s + ' s ago' : s < 5400 ? Math.round(s / 60) + ' min ago' : Math.round(s / 3600) + ' h ago')(Math.round((now() - t) / 1000)) : 'not asked yet';
     const rows = SOURCE_ROWS.map(([host, name]) => {
       const h = hostStat.get(host), dead = (deadHosts.get(host) || 0) > now();
+      const n = h ? ` <span class="tl-muted">· ${h.ok} ok${h.fail ? ', ' + h.fail + ' failed' : ''}</span>` : '';
       const st = dead ? '<span style="color:#e05252">paused (refused)</span>' : !h ? '<span class="tl-muted">not asked yet</span>' : h.lastOk >= h.lastErr ? `<span style="color:#3fb950">ok</span> <span class="tl-muted">${ago(h.lastOk)}</span>` : `<span style="color:#e0a852">${esc(h.err || 'failing')}</span> <span class="tl-muted">${ago(h.lastErr)}</span>`;
-      return `<div class="tl-pop-row"><span>${esc(name)}</span> ${st}</div>`;
+      return `<div class="tl-pop-row"><span>${esc(name)}</span> ${st}${n}</div>`;
     }).join('');
     const has = !!String(store.kvGet('adsbxKey') || '').trim();
     const mr = monRemote(), monRow = `<div class="tl-pop-row" style="margin-top:8px"><span>Monitor</span> ${mr ? '<span class="tl-muted">' + esc(mr.url) + (mr.dflt ? ' (the public monitor)' : mr.token ? ' (with your secret)' : '') + (monBase === mr.url && monOk ? ' - in use' : ' - not answering' + (monErr ? ' (' + esc(monErr) + ')' : '') + ', checked again within 5 min') + (monBase === mr.url && monLive.at ? ' · live list ' + monLive.n + ' aircraft, ' + ago(monLive.at) + (monLive.ok ? '' : ' (stale - own lists used)') : '') + (monBase === mr.url && srvIds.at ? ' · names ' + srvIds.rows.size + ' FR24 flights, ' + ago(srvIds.at) + (srvIds.scanOk ? '' : ' (its FR24 scan not working - this browser\'s reports keep it going)') : '') + '</span>' : '<span class="tl-muted">turned off - this browser works alone</span>'}</div>
