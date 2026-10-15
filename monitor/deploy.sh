@@ -39,6 +39,11 @@ JDIR="${FR24_JOURNALD_DIR:-/etc/systemd/journald.conf.d}"
 if [ ! -f "$JDIR/fr24-retention.conf" ]; then
   sudo mkdir -p "$JDIR" && printf '[Journal]\nMaxRetentionSec=14day\n' | sudo tee "$JDIR/fr24-retention.conf" >/dev/null && sudo systemctl restart systemd-journald && say "system log now kept 14 days at most"
 fi
+# (the unit or a drop-in edited by hand since systemd last read them - the secret, the checkout: read again, so the restart
+# runs with what is on disk and the check asks with the secret the monitor will have)
+if [ "$(systemctl show "$SERVICE" -p NeedDaemonReload --value 2>/dev/null)" = "yes" ]; then
+  sudo systemctl daemon-reload && say "the service's settings had changed on disk - read again"
+fi
 say "restarting $SERVICE"
 sudo systemctl restart "$SERVICE"
 if check; then say "OK - the monitor answers ($(git log -1 --format='%h'))"; exit 0; fi
