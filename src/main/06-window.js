@@ -24,7 +24,7 @@
   const UB_STYLE = `
 .tl-ub-c{--tl-f:1;font-size:calc(var(--tl-f)*14px);line-height:1.43;color:#393939;text-align:left;font-weight:400}
 .tl-ub-c *{box-sizing:border-box}
-.tl-ub-in{display:block;flex:1 1 auto;min-height:0;width:100%;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#f8c023 transparent}
+.tl-ub-in{display:block;background:#ededed;flex:1 1 auto;min-height:0;width:100%;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#f8c023 transparent}
 .tl-ub-in::-webkit-scrollbar,.tl-ub-body::-webkit-scrollbar{width:5px}
 .tl-ub-in::-webkit-scrollbar-thumb,.tl-ub-body::-webkit-scrollbar-thumb{background:#f8c023;border-radius:3px}
 [data-tl-ub-host]>:not([data-tl-ub-keep]):not(.tl-ub-in){display:none!important}
