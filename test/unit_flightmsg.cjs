@@ -140,6 +140,18 @@ check('ordinary aircraft: FR24 data kept (registration, callsign, photos)', str(
   const imgsG = aiG ? fields(aiG.val, 11).map(f => str(f.val, 3)) : [];
   check('... then the slideshow filled to three: FR24\'s two JetPhotos pictures, then the Planespotters one (none twice)', imgsG.length === 3 && /plnspttrs/.test(imgsG[2]) && imgsG.filter(u => /476943/.test(u)).length === 1, imgsG);
 }
+// 2f) a picture in JetPhotos' credit-bar size ("640cb": "© name - JetPhotos" burnt into its bottom) reaching the page
+//     for a blocked aircraft: the slideshow gets the clean size (FR24 takes the picture we give it verbatim)
+{
+  posted.length = 0;
+  const fid4 = 1103986150, efi4 = cat(H.parse(efiReal).filter(f => f.fn !== 1).map(f => f.raw).concat([H.fVar(1, fid4)]));
+  B.resolved.set(fid4, { cs: 'UPCS1', reg: 'UP-CS001', hex: '4bce8e', hexNum: 0x4bce8e, type: 'GLF4', photos: [] });
+  w.dispatchEvent(new w.MessageEvent('message', { data: { __tweeksLadd: 'photosDone', hex: '4bce8e', early: true, photos: [{ link: 'https://www.jetphotos.com/photo/11590001', credit: 'Boltushkina Anastasia - Kazakhstan Spotting Club', thumb: 'https://cdn.jetphotos.com/200/6/123456_1790000000_tb.jpg', medium: 'https://cdn.jetphotos.com/400/6/123456_1790000000.jpg', large: 'https://cdn.jetphotos.com/640cb/6/123456_1790000000.jpg', source: 'Flightradar24' }] }, source: w }));
+  const outH = H.patchFlightMsg(cat([H.fLen(1, aiStub), H.fLen(5, efi4)]), { id: fid4 }, H.FOLLOW), aiH = one(outH, 1);
+  const imgsH = aiH ? fields(aiH.val, 11).map(f => str(f.val, 3)) : [];
+  check('a JetPhotos picture in its credit-bar size: shown in the clean size (640, no "cb")', imgsH.length === 1 && imgsH[0] === 'https://cdn.jetphotos.com/640/6/123456_1790000000.jpg', imgsH);
+  B.resolved.delete(fid4);
+}
 // 2d) "Playback" of a blocked flight (panel menu, airport-board card): its ADS-B track on adsb.lol, not FR24's empty one
 {
   const opened = []; w.open = u => { opened.push(u); return null; };

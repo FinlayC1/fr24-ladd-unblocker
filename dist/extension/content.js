@@ -579,7 +579,10 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
     var shotKeyP = function (p) { return fileKey(p && (p.large || p.medium || p.thumb)); };
     var imgKeyA = function (im) { return fileKey(strOf(im, 5) || strOf(im, 4) || strOf(im, 3) || strOf(im, 1)); };
     var realImg = function (im) { return !adImg(im) && (has(im, 3) || has(im, 4) || has(im, 5)); };
-    function goodPhotos(l) { return (l || []).filter(function (p) { return p && !adJson(p); }); }
+    // JetPhotos' "cb" sizes have the photographer's credit bar burnt into the bottom of the picture: the same size without
+    // "cb" is the clean photo (FR24 strips it on its own medium / large path, not on the thumbnail it takes verbatim)
+    var noBar = function (u) { return typeof u === 'string' ? u.replace(/(\/\/cdn\.jetphotos\.com\/\d+)cb\//i, '$1/') : u; };
+    function goodPhotos(l) { return (l || []).filter(function (p) { return p && !adJson(p); }).map(function (p) { return p.large === noBar(p.large) && p.medium === noBar(p.medium) && p.thumb === noBar(p.thumb) ? p : Object.assign({}, p, { large: noBar(p.large), medium: noBar(p.medium), thumb: noBar(p.thumb) }); }); }
     function ourPhotosFor(hexU) { var c = photoCache.get(hexU); var l = goodPhotos(c && c.photos); if (!l.length) l = goodPhotos((psCache.get(hexU) || {}).photos); return l; }
     function photoParts(photos) {
       // url (1), copyright (2), thumbnail (3): FR24 then uses the thumbnail verbatim as the image and url as the link
@@ -1181,7 +1184,7 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
     var hasPhotos = function (rec) { return shownPhotos(rec).length > 0; };
     // warm: ask now, so the card has its pictures when opened (nothing waits on the answer)
     function warmPhotos(rec, pri) { if (rec && rec.hex && !((photoCache.get(String(rec.hex).toUpperCase()) || {}).final)) photosFor(rec, pri); }
-    var boardImage = function (ph) { var img = ph.large || ph.medium || ph.thumb; return { copyright: ph.credit || ph.source || '', link: ph.link || img, thumbnail: ph.thumb || img, url: img }; };
+    var boardImage = function (ph) { var img = noBar(ph.large || ph.medium || ph.thumb); return { copyright: ph.credit || ph.source || '', link: ph.link || img, thumbnail: noBar(ph.thumb) || img, url: img }; };
     function withTimeout(p, ms, dflt) { return Promise.race([p, new Promise(function (res) { setTimeout(function () { res(dflt); }, ms); })]); }
 
     // ---- fetch shim: search box, airport boards (list + detail card), "Recent <reg> flights" ---------------------------
@@ -7191,9 +7194,11 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
   }
   function onPagePhotos(d) {
     const hex = String(d.hex || '').toLowerCase(); if (!hex) return;
-    const w = photoWaiters.get(hex) || []; photoWaiters.delete(hex);
-    d.photos = goodPhotos(d.photos);
-    w.forEach(fn => fn({ photos: d.photos, err: d.err || '' }));
+    d.photos = goodPhotos(d.photos).map(cleanPhoto);
+    // (Planespotters' answer is what the waiters asked for; FR24's own pictures of a blocked airframe, sent when its
+    // panel first opens, are not that answer - taken for it, they went on screen as the "early" pictures with
+    // JetPhotos' credit bar burnt into the bottom)
+    if (!(d.photos.length && isJp(d.photos[0]))) { const w = photoWaiters.get(hex) || []; photoWaiters.delete(hex); w.forEach(fn => fn({ photos: d.photos, err: d.err || '' })); }
     // FR24's own pictures of a blocked airframe are JetPhotos pictures: they go first straight away
     if (d.photos && d.photos.length && isJp(d.photos[0])) {
       const hx = store.getHex(hex);
@@ -7449,7 +7454,8 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
       entry.run = async () => {
         entry.started = true;
         try {
-          const photos = await fetchPhotos(rec, entry.pri, ph => { if (!(rec.photos || []).some(isJp)) { rec.photos = ph; rec.photoAt = now(); persist(rec); postToPage('photosDone', { hex: rec.hex, photos: ph, early: true }); } },
+          // (the early pictures cleaned as the final ones are: JetPhotos' "cb" sizes have the credit bar burnt in)
+          const photos = await fetchPhotos(rec, entry.pri, ph => { if (!(rec.photos || []).some(isJp)) { rec.photos = goodPhotos(ph).map(cleanPhoto); rec.photoAt = now(); persist(rec); postToPage('photosDone', { hex: rec.hex, photos: rec.photos, early: true }); } },
             more => { rec.photos = more; rec.photoAt = now(); persist(rec); postToPage('photosDone', { hex: rec.hex, photos: goodPhotos(more).map(cleanPhoto) }); });
           if (photoInFlight.get(rec.hex) === entry) {
             rec.photoLevel = 2; rec.photoAt = now(); rec.photoV = PHOTO_V; rec.photosStale = false;

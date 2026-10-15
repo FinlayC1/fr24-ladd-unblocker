@@ -140,6 +140,9 @@ Its store and state should move to the VM.
   decides), else FR24's plan (`fr24Sched`: `atd`, no `ata`). Before, only our route counted, so a flight FR24 routes
   itself was listed under its own (hidden) head. Only legs ending after the current flight's start (less 300 s) are
   left out, and an older open leg stays. Test: `unit_recent`.
+- **Photos.** `onPagePhotos` no longer resolves the Planespotters waiters (`photoWaiters`) with FR24's own pictures (JetPhotos
+  640cb, sent by the page when a blocked airframe's panel opens); the early pictures are cleaned (`cleanPhoto`) like the
+  final ones; page.js `goodPhotos` and `boardImage` strip `cb` too. Tests: `unit_photos`, `unit_flightmsg` 2f.
 
 ## 4f. 22.24.0 (15 Oct, cloud session) - built and tested offline; deploy with deploy.sh
 
