@@ -1287,9 +1287,23 @@
       // (indexed by callsign and number: an airport's six days are thousands of rows)
       var fids = {}, cst = {}, nmt = {}, add = function (o, k, t, e) { (o[k] || (o[k] = [])).push({ t: t, e: e }); }, near = function (o, k, t, w) { return k ? (o[k] || []).find(function (x) { return Math.abs(x.t - t) < w; }) || null : null; };
       nat.forEach(function (e) { if (e.flight && e.flight.id) fids[String(e.flight.id)] = e; if (e.flight && e.flight.callsign) add(cst, String(e.flight.callsign).toUpperCase(), e.estimatedTime || e.scheduledTime || 0, e); if (e.flight && e.flight.number) add(nmt, String(e.flight.number).toUpperCase(), e.scheduledTime || 0, e); });
+      // (the same callsign to the same airport with its time moved - a flight not flown yet planned again: FR24's own row of
+      // CWL52 to Glasgow at 15:30 (estimated 15:40), the schedule's at 16:15 (16:25), exactly 45 minutes apart - within two
+      // hours by any of their times; two flights already flown within 45 minutes)
+      var went = function (x) { return /^(departed|landed)$/.test(x || ''); };
+      var nearCs = function (k, r) {
+        if (!k) return null;
+        var rt = [r.est, r.sch, r.t].filter(Boolean), ra = went(r.st), rap = (r.nat && r.nat.airportId) || r.ap || 0;
+        return (cst[k] || []).find(function (x) {
+          var e = x.e;
+          if (ra && went(e.status && e.status.name)) return Math.abs(x.t - (r.est || r.t)) < 2700;
+          if (e.airportId && rap && e.airportId === rap) return [e.estimatedTime, e.scheduledTime].filter(Boolean).some(function (a) { return rt.some(function (b) { return Math.abs(a - b) < 7200; }); });
+          return Math.abs(x.t - (r.est || r.t)) < 2700;
+        }) || null;
+      };
       var pick = rows.filter(function (r) {
         var t = r.sch || r.t; if (!(t >= nowS - 3 * 86400 && t <= nowS + 3 * 86400)) return false;
-        var hit = (r.fid && fids[r.fid]) || near(nmt, String(r.num || '').toUpperCase(), r.sch || r.t, 1800) || near(cst, String(r.cs || '').toUpperCase(), r.est || r.t, 2700);
+        var hit = (r.fid && fids[r.fid]) || near(nmt, String(r.num || '').toUpperCase(), r.sch || r.t, 1800) || nearCs(String(r.cs || '').toUpperCase(), r);
         if (!hit) return true;
         // (FR24's own row of it stands - what it leaves out, "N/A" where the flight went or came from, the aircraft of
         // its card, from the kept one: G-PTRK)
@@ -1350,6 +1364,9 @@
       var need = !ac.registration || !ac.type, priv = !d.airline || /private owner/i.test(d.airline);
       var known = String(ac.hex || ac.icao24 || ac.modeS || '').toLowerCase();
       var got = info && (info.reg || info.hex) ? Promise.resolve(info) : need ? infoOfCallsign(d.flight && d.flight.callsign) : priv && !/^[0-9a-f]{6}$/.test(known) && ac.registration ? regInfo(ac.registration) : Promise.resolve(known ? { hex: known } : null);
+      // (what was kept of the flight without its aircraft - the type and operator its schedule gave: CWL52's card, Cranwell
+      // FTU, E50P - stands with what the lookup adds)
+      if (info && !(info.reg || info.hex) && (info.ty || info.al)) got = got.then(function (x) { var o = Object.assign({}, info); Object.keys(x || {}).forEach(function (k) { if (x[k]) o[k] = x[k]; }); return o; });
       return got.then(function (x) {
         if (x) {
           if (!ac.registration && x.reg) ac.registration = x.reg;
@@ -1410,7 +1427,14 @@
     function logoOf(id) { return !id ? '' : LOGO_ADD[id] ? LOGO_ADD[id].source : 'https://cdn.flightradar24.com/assets/airlines/logotypes/' + id + '.png'; }
     function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
     function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* full or blocked */ } }
-    var siteRows = (function () { try { var l = JSON.parse(lsGet('tl.sites') || '[]'); return Array.isArray(l) ? l : []; } catch (e) { return []; } })();
+    // (a place is its part before the first comma - "Rotherham, South Yorkshire" is Rotherham: the same cut as the userscript's
+    // ENGINE.placeShort, which test/unit_places.cjs checks them against. The landing places kept from before, cut here; the
+    // userscript's own list, which keeps both names where two places would read the same, replaces them at once)
+    function placeShort(n) {
+      var s = String(n == null ? '' : n).replace(/\s+/g, ' ').trim(), i = s.indexOf(',');
+      return i < 0 ? s : s.slice(0, i).trim() || s.replace(/^[,\s]+|[,\s]+$/g, '').replace(/,\s*/g, ', ');
+    }
+    var siteRows = (function () { try { var l = JSON.parse(lsGet('tl.sites') || '[]'); return Array.isArray(l) ? l.map(function (r) { return r && typeof r === 'object' ? Object.assign({}, r, { name: placeShort(r.name), city: placeShort(r.city) }) : r; }) : []; } catch (e) { return []; } })();
     function listSig(kind) { return kind === 'airlines' ? LISTS_V : LISTS_V + ':' + hashStr(JSON.stringify(siteRows)); }
     function patchList(kind, j) {
       if (!j || !Array.isArray(j.rows) || j.rows.length < 100) return false;
@@ -2323,6 +2347,6 @@
       else if (d.__tweeksLadd === 'hello') post('ready', { stats: stats, feedReady: !!feedHeaders, hdr: feedHdrPublic(), v: BRIDGE_V });
     });
     window[NS] = { resolved: resolved, routes: routes, naRecs: naRecs, naRoutes: naRoutes, telem: telem, hist: hist, lastPos: lastPos, photoCache: photoCache, psCache: psCache, stats: stats, fetchPhotos: fetchPhotos, hello: function () { post('ready', { stats: stats, feedReady: !!feedHeaders, v: BRIDGE_V }); }, v: BRIDGE_V };
-    if (window.__tlTestHook) try { window.__tlTestHook({ csOf: csOf, hist: hist, preloaded: function () { return preloaded; }, parse: parse, photoFits: photoFits, makerOf: makerOf, patchFollow: patchFollow, patchFlightMsg: patchFlightMsg, pushFollow: pushFollow, followSt: function () { return followSt; }, setFollowSt: function (s) { followSt = s; }, shownPhotos: shownPhotos, photoCache: photoCache, FOLLOW: FOLLOW, DETAILS: DETAILS, fLen: fLen, fStr: fStr, fVar: fVar, patchFlight: patchFlight, patchLiveFeed: patchLiveFeed, fr24Named: fr24Named, psState: function () { return { q: psQ.length, busy: psBusy, last: psLast, blockedFor: Math.max(0, psBlockedUntil - Date.now()), pri: Array.from(psPri), jobs: photoJobs.size, head: psQ.slice(0, 3).map(function (j) { return j.hex; }) }; }, acceptPubTel: acceptPubTel, pubTelFor: pubTelFor, fillNativeCard: fillNativeCard, regsOfCallsign: regsOfCallsign, categoryOf: categoryOf, nativeFill: nativeFill, natInfo: natInfo, telem: telem, b64Encode: b64Encode, b64DecodeInto: b64DecodeInto, frameHeader: frameHeader, concat: concat, varintInt32: varintInt32, PLAYBACK: PLAYBACK, patchPlayback: patchPlayback, patchPlaybackRequest: patchPlaybackRequest, pbRoutes: pbRoutes, pbTelAt: pbTelAt, setPbTrace: function (t) { pbTrace = t; }, patchList: patchList, acceptSites: acceptSites, listSig: listSig, mergeRoutes: mergeRoutes, applyRoutes: applyRoutes, routesAdd: routesAdd, applyAirport: applyAirport, applyBoardPage: applyBoardPage, applyStats: applyStats, mergeFlights: mergeFlights, apData: apData, telAt: telAt, noteTelem: noteTelem, pbTraceOf: function () { return pbTrace; }, logoOf: logoOf, archDetail: archDetail, tsOf: tsOf, noteAirportJson: noteAirportJson, rwyOf: rwyOf, rwyPanel: rwyPanel, panelTick: panelTick, panelData: panelData, promoSlots: promoSlots, acceptAirportPanel: acceptAirportPanel, unlockRunways: unlockRunways, mvRows: mvRows, mvKept: mvKept, dayOf: dayOf, pbPanelTick: pbPanelTick, logoFix: logoFix, liveEntries: liveEntries, pbPos: pbPos, unlockFeed: unlockFeed, derivedVs: derivedVs, altHist: altHist, acceptAir: acceptAir, airCache: airCache, flushAir: flushAir, airWant: function () { return airWant; }, lastPos: lastPos, resolved: resolved, stats: stats }); } catch (e) { /* ignore */ }
+    if (window.__tlTestHook) try { window.__tlTestHook({ csOf: csOf, hist: hist, preloaded: function () { return preloaded; }, parse: parse, photoFits: photoFits, makerOf: makerOf, patchFollow: patchFollow, patchFlightMsg: patchFlightMsg, pushFollow: pushFollow, followSt: function () { return followSt; }, setFollowSt: function (s) { followSt = s; }, shownPhotos: shownPhotos, photoCache: photoCache, FOLLOW: FOLLOW, DETAILS: DETAILS, fLen: fLen, fStr: fStr, fVar: fVar, patchFlight: patchFlight, patchLiveFeed: patchLiveFeed, fr24Named: fr24Named, psState: function () { return { q: psQ.length, busy: psBusy, last: psLast, blockedFor: Math.max(0, psBlockedUntil - Date.now()), pri: Array.from(psPri), jobs: photoJobs.size, head: psQ.slice(0, 3).map(function (j) { return j.hex; }) }; }, acceptPubTel: acceptPubTel, pubTelFor: pubTelFor, fillNativeCard: fillNativeCard, regsOfCallsign: regsOfCallsign, categoryOf: categoryOf, placeShort: placeShort, nativeFill: nativeFill, natInfo: natInfo, addArch: addArch, acceptBoardArch: acceptBoardArch, telem: telem, b64Encode: b64Encode, b64DecodeInto: b64DecodeInto, frameHeader: frameHeader, concat: concat, varintInt32: varintInt32, PLAYBACK: PLAYBACK, patchPlayback: patchPlayback, patchPlaybackRequest: patchPlaybackRequest, pbRoutes: pbRoutes, pbTelAt: pbTelAt, setPbTrace: function (t) { pbTrace = t; }, patchList: patchList, acceptSites: acceptSites, listSig: listSig, mergeRoutes: mergeRoutes, applyRoutes: applyRoutes, routesAdd: routesAdd, applyAirport: applyAirport, applyBoardPage: applyBoardPage, applyStats: applyStats, mergeFlights: mergeFlights, apData: apData, telAt: telAt, noteTelem: noteTelem, pbTraceOf: function () { return pbTrace; }, logoOf: logoOf, archDetail: archDetail, tsOf: tsOf, noteAirportJson: noteAirportJson, rwyOf: rwyOf, rwyPanel: rwyPanel, panelTick: panelTick, panelData: panelData, promoSlots: promoSlots, acceptAirportPanel: acceptAirportPanel, unlockRunways: unlockRunways, mvRows: mvRows, mvKept: mvKept, dayOf: dayOf, pbPanelTick: pbPanelTick, logoFix: logoFix, liveEntries: liveEntries, pbPos: pbPos, unlockFeed: unlockFeed, derivedVs: derivedVs, altHist: altHist, acceptAir: acceptAir, airCache: airCache, flushAir: flushAir, airWant: function () { return airWant; }, lastPos: lastPos, resolved: resolved, stats: stats }); } catch (e) { /* ignore */ }
     post('ready', { stats: stats, feedReady: false, v: BRIDGE_V });
   }

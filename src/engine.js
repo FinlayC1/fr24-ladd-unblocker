@@ -272,6 +272,21 @@ function createRouteEngine() {
     }
     return t.length >= 3 ? t : s;
   }
+  // A place as the extension shows it: the part before the first comma - "Rotherham, South Yorkshire" is Rotherham,
+  // "Pirrinuan, QLD 4405" Pirrinuan, "Baker," Baker. One place name everywhere it is shown (boards, panels, playback,
+  // search); page.js carries the same three lines for the page, and test/unit_places.cjs checks they agree.
+  function placeShort(n) {
+    const s = String(n == null ? '' : n).replace(/\s+/g, ' ').trim(), i = s.indexOf(',');
+    return i < 0 ? s : s.slice(0, i).trim() || s.replace(/^[,\s]+|[,\s]+$/g, '').replace(/,\s*/g, ', ');
+  }
+  // Many places at once: each by its short name, unless two different places would then read the same - "Newport,
+  // Wales" and "Newport, Isle of Wight" - and those keep their full names. Returns a Map of full name -> label.
+  function placeLabels(fulls) {
+    const by = new Map(), out = new Map();
+    for (const f of fulls || []) { const full = String(f == null ? '' : f).trim(), k = placeShort(full).toLowerCase(); if (!full || !k) continue; (by.get(k) || by.set(k, new Set()).get(k)).add(full.toLowerCase()); }
+    for (const f of fulls || []) { const full = String(f == null ? '' : f).trim(); if (!full || out.has(full)) continue; const sh = placeShort(full), set = by.get(sh.toLowerCase()); out.set(full, set && set.size > 1 ? full : sh); }
+    return out;
+  }
   function setFields(rows) {
     fieldRows = rows || null;
     for (const f of FL) { if (byId.get(f.id) === f) byId.delete(f.id); if (byIcao.get(f.icao) === f) byIcao.delete(f.icao); }
@@ -286,7 +301,7 @@ function createRouteEngine() {
       let listed = false; nearby(r.lat, r.lon, 5.5, (a, d) => { if (d <= Math.max(2.5, 1.5 + Math.min(3.5, Math.log10(1 + (a.size || 0)) * 0.7) + 0.5)) listed = true; }); if (listed) continue;
       const id = fieldId(ident); if (byId.has(id)) continue;
       const ref = airportAt(r.lat, r.lon, 150);                            // (its country and time zone: the nearest airport's)
-      const a = { id, iata: '', icao: ident, name: r.name || ident, city: fieldShortName(r.name) || r.city || '', town: r.city || '', country: ref ? ref.airport.country : '', countryId: ref ? ref.airport.countryId : 0, lat: r.lat, lon: r.lon, alt: +r.alt || 0, size: 0, tz: ref ? ref.airport.tz : null, tzName: ref ? ref.airport.tzName : '', field: true };
+      const a = { id, iata: '', icao: ident, name: r.name || ident, city: placeShort(fieldShortName(r.name)) || placeShort(r.city), town: placeShort(r.city), townFull: r.city || '', country: ref ? ref.airport.country : '', countryId: ref ? ref.airport.countryId : 0, lat: r.lat, lon: r.lon, alt: +r.alt || 0, size: 0, tz: ref ? ref.airport.tz : null, tzName: ref ? ref.airport.tzName : '', field: true };
       a.mil = MIL_RE.test(a.name); a.code = ident;
       a.rw = RW.get(ident) || null; a.rwl = RWL.get(ident) || null;
       FL.push(a); byId.set(id, a); byIcao.set(ident, a);
@@ -2259,7 +2274,7 @@ function createRouteEngine() {
     return res;
   }
 
-  return { setTables2, get T2() { return T2; }, fieldShortName, setApproach, approachCell, approachPath, apprGroup, apprKey, trackAgree, heatNear, heatMatch, reckon, trackErr, remotePath, flowKeysOf, pgrpOf, grp6, sunElev, airData, gsAlong, minutesTo, flowAt, pathOf, pathDev, ownerKey, parseRunwayLengths, setRunwayLengths, csvLine, SQ_NOINFO, tripBin, regionOf, learnLeg, learnRow, learnCollector, addLearnedOp, odAdd: (x, y, w) => { const k = odKey(String(x).toUpperCase(), String(y).toUpperCase()), v = (OD.get(k) || 0) + w; if (v > 1e-9) OD.set(k, v); else OD.delete(k); }, odWeight: (x, y) => OD.get(odKey(String(x).toUpperCase(), String(y).toUpperCase())) || 0, odCount: () => OD.size, setAirports, setUsage, addUsage, setRunways, parseRunwaysCsv, runwayFit, setWeights, setTables, setLogit, calibrated, mergePoints, finalTo, longFinal, typeRangeKm, FEAT, groupOf, W, classify, isStepClimb, rangeKm, parseTrace, legsFromPoints, summarizeLeg, stitchLegs, chainLegs, histStats, inferOrigin, predict, privateSite, rwyImpossible, typeDesc, heliSpots, heliAirportAt, landedSum, localFlew, climbedOut, approachTo, downAndUp, landingInGap, circuits, mergeCircuits, setFields, fieldAt, placeAt, isField, nearbyFields, fieldCount: () => FL.length, airportAt, departureFromClimb, arrivalFromDescent, nearby, dist, brg, xtat, destPoint, angDiff, get airports() { return AP; }, byId: id => byId.get(id), byIcao: c => byIcao.get(String(c || '').toUpperCase()) };
+  return { setTables2, get T2() { return T2; }, fieldShortName, placeShort, placeLabels, setApproach, approachCell, approachPath, apprGroup, apprKey, trackAgree, heatNear, heatMatch, reckon, trackErr, remotePath, flowKeysOf, pgrpOf, grp6, sunElev, airData, gsAlong, minutesTo, flowAt, pathOf, pathDev, ownerKey, parseRunwayLengths, setRunwayLengths, csvLine, SQ_NOINFO, tripBin, regionOf, learnLeg, learnRow, learnCollector, addLearnedOp, odAdd: (x, y, w) => { const k = odKey(String(x).toUpperCase(), String(y).toUpperCase()), v = (OD.get(k) || 0) + w; if (v > 1e-9) OD.set(k, v); else OD.delete(k); }, odWeight: (x, y) => OD.get(odKey(String(x).toUpperCase(), String(y).toUpperCase())) || 0, odCount: () => OD.size, setAirports, setUsage, addUsage, setRunways, parseRunwaysCsv, runwayFit, setWeights, setTables, setLogit, calibrated, mergePoints, finalTo, longFinal, typeRangeKm, FEAT, groupOf, W, classify, isStepClimb, rangeKm, parseTrace, legsFromPoints, summarizeLeg, stitchLegs, chainLegs, histStats, inferOrigin, predict, privateSite, rwyImpossible, typeDesc, heliSpots, heliAirportAt, landedSum, localFlew, climbedOut, approachTo, downAndUp, landingInGap, circuits, mergeCircuits, setFields, fieldAt, placeAt, isField, nearbyFields, fieldCount: () => FL.length, airportAt, departureFromClimb, arrivalFromDescent, nearby, dist, brg, xtat, destPoint, angDiff, get airports() { return AP; }, byId: id => byId.get(id), byIcao: c => byIcao.get(String(c || '').toUpperCase()) };
 }
 /* ==/ENGINE== */
 if (typeof module !== 'undefined') module.exports = { createRouteEngine };
