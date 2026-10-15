@@ -173,14 +173,23 @@ html.tl-no-strip .tl-strip{display:none!important}`;
 
   // ---- the button on FR24's bar ---------------------------------------------------------------------------------------
   // (the elements holding exactly this text: the bar's labels - and a window's title, which the bar test below leaves out)
-  function textLeaves(label) {
-    const out = [];
-    try { const r = document.evaluate(`//body//*[text()[normalize-space(.)='${label}']]`, document, null, 7, null); for (let i = 0; i < r.snapshotLength; i++) { const el = r.snapshotItem(i); if (!el.closest('.tl-ub,.tl-ub-btn,.tl-pop,script,style')) out.push(el); } } catch (e) { /* no XPath */ }
+  // (one walk over the page's text for all the labels: label -> [elements])
+  function labelLeaves(labels) {
+    const out = {}; for (const l of labels) out[l] = [];
+    if (!document.body) return out;
+    const tw = document.createTreeWalker(document.body, 4), seen = new Set();
+    for (let n = tw.nextNode(); n; n = tw.nextNode()) {
+      const t = n.data; if (t.length > 40) continue;
+      const k = t.trim(); if (!(k in out)) continue;
+      const el = n.parentElement; if (!el || seen.has(el) || el.closest('.tl-ub,.tl-ub-btn,.tl-pop,script,style')) continue;
+      seen.add(el); out[k].push(el);
+    }
     return out;
   }
+  const textLeaves = label => labelLeaves([label])[label];
   // the bar: the smallest element holding the labels of at least four of its buttons, each in a child of its own
   function findBar() {
-    const leaves = {}; for (const l of UB_LABELS) leaves[l] = textLeaves(l);
+    const leaves = labelLeaves(UB_LABELS);
     let best = null;
     for (const w of [...leaves.Widgets, ...leaves.Weather]) {
       for (let a = w.parentElement, d = 0; a && a !== document.body && d < 6; a = a.parentElement, d++) {
@@ -237,9 +246,12 @@ html.tl-no-strip .tl-strip{display:none!important}`;
       }
     }, 450);
   }
-  let ubMiss = 0;
+  // (looked for again only when the page has changed since the last look)
+  let ubMiss = 0, ubDirty = true;
   function ensureBarButton() {
     if (ubBtn && ubBtn.isConnected && ubBar && ubBar.contains(ubBtn)) return true;
+    if (!ubDirty) return false;
+    ubDirty = false;
     const found = findBar(); if (!found) { ubMiss++; return false; }
     ubMiss = 0; ubItems = found.items;
     if (found.bar !== ubBar) {
@@ -264,6 +276,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
       addUnblockStyle(); if (opt.on) applyOptsLive();
       // (every second while FR24 builds its page; once the bar is there, every second to put the button back if FR24 drew
       // the bar again; a page without the bar is looked at less and less often)
+      try { new MutationObserver(() => { ubDirty = true; }).observe(document.body || document.documentElement, { childList: true, characterData: true, subtree: true }); } catch (e) { ubDirty = true; }
       const tick = () => { ensureBarButton(); setTimeout(tick, ubMiss > 60 ? 5000 : 1000); };
       tick();
       document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && unblockWindowOpen()) closeUnblockWindow(); });
