@@ -1,3 +1,3 @@
 { "root": true, "env": { "browser": true, "es2022": true }, "parserOptions": { "ecmaVersion": 2022, "sourceType": "script" },
-  "globals": { "GM_xmlhttpRequest": "readonly", "GM": "readonly", "GM_notification": "readonly", "unsafeWindow": "readonly", "module": "writable" },
+  "globals": { "GM_xmlhttpRequest": "readonly", "GM": "readonly", "GM_notification": "readonly", "unsafeWindow": "readonly", "TL_HOST_ACCESS": "readonly", "module": "writable" },
   "rules": { "no-undef": "error", "no-unused-vars": ["warn", { "args": "none" }], "no-redeclare": "error", "no-dupe-keys": "error", "no-unreachable": "error", "no-const-assign": "error", "no-use-before-define": ["error", { "functions": false, "classes": false, "variables": false }] } }

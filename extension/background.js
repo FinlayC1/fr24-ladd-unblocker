@@ -21,3 +21,17 @@ chrome.runtime.onConnect.addListener(port => {
   });
   port.onDisconnect.addListener(() => { for (const c of running.values()) c.abort(); running.clear(); });
 });
+// A monitor of the user's own (the Sources menu) at an address the manifest does not list: the browser asks the user to
+// allow it, on the extension's own page (grant.html) - only a click there may grant a host. Answered true when it is
+// allowed already.
+chrome.runtime.onMessage.addListener((m, sender, reply) => {
+  if (!m || typeof m.tlGrant !== 'string') return;
+  let origin = '';
+  try { const u = new URL(m.tlGrant); if (u.protocol === 'https:' && u.origin === m.tlGrant) origin = u.origin; } catch (e) { /* not an address */ }
+  if (!origin) { reply(false); return; }
+  chrome.permissions.contains({ origins: [origin + '/*'] }, has => {
+    if (!has) chrome.tabs.create({ url: chrome.runtime.getURL('grant.html') + '#' + encodeURIComponent(origin) });
+    reply(!!has);
+  });
+  return true;
+});

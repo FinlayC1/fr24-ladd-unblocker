@@ -53,6 +53,12 @@ if (!fs.existsSync(path.join(src, 'manifest.json'))) { console.log('FAIL  dist/e
     const iso = ctxs.find(c => c.auxData && c.auxData.type === 'isolated' && /LADD/.test(c.name));
     const ev = async expr => { const r = await cdp.send('Runtime.evaluate', { expression: expr, contextId: iso.id, awaitPromise: true, returnByValue: true }); return r.exceptionDetails ? 'EXC ' + JSON.stringify(r.exceptionDetails).slice(0, 300) : r.result.value; };
     check('... the script in the extension\'s isolated world, the same version as the page part, the two greeting each other', !!iso && await ev('__tweeksLadd.version') === man.version && await ev('__tweeksLadd.bridgeV') === man.version && await ev('__tweeksLadd.msgCount.ready >= 1'), iso && { v: await ev('__tweeksLadd.version'), bridge: await ev('__tweeksLadd.bridgeV') });
+    // (the health check: the page part's counters reach the script's world - it cannot read the page's objects)
+    await page.evaluate(() => { window.__tweeksLaddBridge.stats.maskDisabled = true; });
+    await ev('__tweeksLadd.checkHealth()'); await page.waitForTimeout(400); await ev('__tweeksLadd.checkHealth()');
+    const issues = await ev('__tweeksLadd.health.issues');
+    check('... the health check sees the page part\'s counters (FR24 refusing the unlocked fields)', Array.isArray(issues) && issues.some(x => /refused the request for the unlocked fields/.test(x)), issues);
+    await page.evaluate(() => { window.__tweeksLaddBridge.stats.maskDisabled = false; });
     check('... the page part injected once (not again by the script)', await page.evaluate(() => document.querySelectorAll('script').length) === 0);
     const gm = o => ev(`new Promise(r => { const t0 = Date.now(); const h = GM_xmlhttpRequest(Object.assign(${JSON.stringify(o)}, { onload: x => r({ status: x.status, text: x.responseText, bin: x.response instanceof ArrayBuffer ? Array.from(new Uint8Array(x.response)) : null, ms: Date.now() - t0 }), onerror: e => r({ error: e.error }), ontimeout: () => r({ timeout: true, ms: Date.now() - t0 }), onabort: () => r({ aborted: true }) })); ${o.abortAfter ? `setTimeout(() => h.abort(), ${o.abortAfter});` : ''} })`);
     const a = await gm({ url: base + '/echo?x=1', headers: { 'X-Monitor-Token': 'abc', Accept: 'application/json' } });
@@ -71,6 +77,16 @@ if (!fs.existsSync(path.join(src, 'manifest.json'))) { console.log('FAIL  dist/e
     // rules apply, and the server sends no permission for them)
     const before = seen.length, off = await gm({ url: base.replace('127.0.0.1', 'localhost') + '/echo' });
     check('... a host the manifest does not grant: its answer withheld from the script (the same server under another name)', !!off.error && !off.status, { off, served: seen.length - before });
+    // (a monitor of the user's own at an address the manifest does not list: the browser's page to allow it opens; one it
+    // lists needs nothing)
+    const listed = await ev('TL_HOST_ACCESS("https://api.adsb.lol")');
+    const tabP = ctx.waitForEvent('page', { timeout: 5000 }).catch(() => null), other = await ev('TL_HOST_ACCESS("https://monitor.example.org")'), tab = await tabP;
+    if (tab) await tab.waitForLoadState().catch(() => {});
+    const shown = tab ? await tab.evaluate(() => ({ origin: document.getElementById('origin').textContent, button: !document.getElementById('allow').disabled })).catch(e => String(e)) : null;
+    check('own monitor: an address the manifest lists is reachable as it is; another opens the extension\'s page asking the user to allow it', listed === true && other === false && !!tab && /grant\.html#/.test(tab.url()) && shown && shown.origin === 'https://monitor.example.org' && shown.button === true, { listed, other, url: tab && tab.url(), shown });
+    const bad = await ev('TL_HOST_ACCESS("http://monitor.example.org")');
+    check('... nothing asked for an address that is not https', bad === false && ctx.pages().filter(x => /grant\.html/.test(x.url())).length === 1);
+    check('manifest: any https address only as an optional host (asked for, never granted at install)', JSON.stringify(built.optional_host_permissions) === '["https://*/*"]' && !built.host_permissions.includes('https://*/*'));
     check('no errors from the extension on the page', errors.length === 0, errors.slice(0, 5));
   } finally { await ctx.close(); srv.close(); }
   console.log(fails ? `\n${fails} failed` : '\nall passed');
