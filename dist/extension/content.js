@@ -44,7 +44,7 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
 // ==UserScript==
 // @name         Flightradar24 LADD / N-A Unblocker (feed-level)
 // @namespace    tweeks.io
-// @version      22.27.3
+// @version      22.28.1
 // @description  Identifies every LADD / N/A / blocked military aircraft on Flightradar24 from public ADS-B, and injects callsign, registration, operator, age, country, MSN, squawk, vertical speed, GPS altitude, airspeeds, wind, photos, a reasoned origin/destination with a wind-corrected ETA (also for ordinary flights FR24 shows as N/A - military, private, GA, helicopters, with private landing sites; learned from 63 days of every aircraft worldwide, with live weather and closures), airport-board entries and a rebuilt 7-month flight log straight into FR24's own data - so it all renders like normal FR24 traffic.
 // @author       Finlay Clarke
 // @updateURL    https://raw.githubusercontent.com/FinlayC1/fr24-ladd-unblocker/main/dist/fr24-ladd-unblocker.user.js
@@ -133,7 +133,7 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "22.27.3";
+    var BRIDGE_V = "22.28.1";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed
@@ -4882,7 +4882,7 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '22.27.3';
+  const VERSION = '22.28.1';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
@@ -11867,8 +11867,9 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     const ago = t => t ? (s => s < 90 ? s + ' s ago' : s < 5400 ? Math.round(s / 60) + ' min ago' : Math.round(s / 3600) + ' h ago')(Math.round((now() - t) / 1000)) : 'not asked yet';
     const rows = SOURCE_ROWS.map(([host, name]) => {
       const h = hostStat.get(host), dead = (deadHosts.get(host) || 0) > now();
+      const n = h ? ` <span class="tl-muted">· ${h.ok} ok${h.fail ? ', ' + h.fail + ' failed' : ''}</span>` : '';
       const st = dead ? '<span style="color:#e05252">paused (refused)</span>' : !h ? '<span class="tl-muted">not asked yet</span>' : h.lastOk >= h.lastErr ? `<span style="color:#3fb950">ok</span> <span class="tl-muted">${ago(h.lastOk)}</span>` : `<span style="color:#e0a852">${esc(h.err || 'failing')}</span> <span class="tl-muted">${ago(h.lastErr)}</span>`;
-      return `<div class="tl-pop-row"><span>${esc(name)}</span> ${st}</div>`;
+      return `<div class="tl-pop-row"><span>${esc(name)}</span> ${st}${n}</div>`;
     }).join('');
     const has = !!String(store.kvGet('adsbxKey') || '').trim();
     const mr = monRemote(), monRow = `<div class="tl-pop-row" style="margin-top:8px"><span>Monitor</span> ${mr ? '<span class="tl-muted">' + esc(mr.url) + (mr.dflt ? ' (the public monitor)' : mr.token ? ' (with your secret)' : '') + (monBase === mr.url && monOk ? ' - in use' : ' - not answering' + (monErr ? ' (' + esc(monErr) + ')' : '') + ', checked again within 5 min') + (monBase === mr.url && monLive.at ? ' · live list ' + monLive.n + ' aircraft, ' + ago(monLive.at) + (monLive.ok ? '' : ' (stale - own lists used)') : '') + (monBase === mr.url && srvIds.at ? ' · names ' + srvIds.rows.size + ' FR24 flights, ' + ago(srvIds.at) + (srvIds.scanOk ? '' : ' (its FR24 scan not working - this browser\'s reports keep it going)') : '') + '</span>' : '<span class="tl-muted">turned off - this browser works alone</span>'}</div>
@@ -11956,6 +11957,10 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // and how one appears and goes - copied, not guessed; until one has been opened, Widgets as measured from screenshots)
   const UB_LOOK_KEY = 'tweeks.fr24.ladd.look2';
   const UB_LOOK0 = { left: 10, top: 70, width: 252, head: 30, anim: { in: null, out: null } };
+  // (the version whose "what's new" was put away, and the one whose dot on the button the window was opened for)
+  const UB_SEEN_KEY = 'tweeks.fr24.ladd.seenver', UB_DOT_KEY = 'tweeks.fr24.ladd.dotver';
+  // (the newest CHANGELOG section's headlines, written in by build.mjs: { v, items })
+  const UB_WHATS_NEW = {"v":"22.28.1","items":["The LADD Unblock window now copies FR24's own windows instead of guessing at them."]};
   // (an aircraft with an open padlock: FR24's outline style - 24 grid, 1.5 stroke in the text colour)
   const UB_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
   const UB_X = '<svg viewBox="0 0 14 14" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M2 2l10 10M12 2L2 12"/></svg>';
@@ -11998,6 +12003,15 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
 .tl-ub-going{pointer-events:none}
 .tl-ub-btn-on,.tl-ub-btn-on *{color:#f8c023!important}
 .tl-ub-btn [data-tl-ub-label]{white-space:nowrap}
+.tl-ub-dot{position:absolute;top:3px;left:calc(50% + 6px);width:7px;height:7px;border-radius:50%;background:#f8c023;box-shadow:0 0 0 1.5px rgba(0,0,0,.55);pointer-events:none}
+.tl-ub-dot[data-k="new"]{background:#4ea1e8}
+.tl-ub-new{position:relative;margin:8px 7px 2px;padding:6px 22px 6px 8px;background:#e8f1fa;border-radius:6px;font-size:11px;line-height:1.4;color:#393939}
+.tl-ub-new ul{margin:3px 0 2px;padding-left:14px}
+.tl-ub-new li{margin:1px 0}
+.tl-ub-new .tl-ub-x{top:3px;right:2px;color:#5c5c5c}
+.tl-ub-alert{margin-top:6px;padding:5px 7px;background:#fff4d1;border-left:3px solid #f8c023;border-radius:3px;font-size:11px;line-height:1.4}
+.tl-ub-grid .tl-ub-kv span:last-child{text-align:right}
+.tl-ub-log{margin:6px 0 0;max-height:160px;overflow:auto;padding:5px 6px;background:#fff;border:1px solid #dcdcdc;border-radius:4px;font:10px/1.35 ui-monospace,Consolas,monospace;white-space:pre-wrap;word-break:break-word;color:#393939}
 html.tl-no-strip .tl-strip{display:none!important}`;
   // the switches, in the order shown; 'reload': takes effect when FR24 is loaded again
   const UB_FEATURES = [
@@ -12009,6 +12023,8 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     ['noAds', 'Hide ads & upgrade prompts', "FR24's adverts, the ad sidebar, the free-trial pop-up and upgrade banners. The sidebar and pop-up come back after a reload.", 'reload']
   ];
   let ubBtn = null, ubBar = null, ubItems = new Map(), ubWin = null, ubNeedReload = false, ubLatest = null, ubAsking = null, ubNote = '';
+  const lsGet = k => { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } };
+  const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* full or blocked */ } };
 
   function saveOpts() { try { localStorage.setItem(OPT_KEY, JSON.stringify(opt)); } catch (e) { log('options', e); } postToPage('opts', { opts: opt }); }
   function applyOptsLive() {
@@ -12044,7 +12060,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     ubAsking = gmRequest(UB_LATEST_URL + '?t=' + Math.floor(now() / 60000), { timeout: 15000 })
       .then(j => { const v = j && typeof j.version === 'string' && /^\d+(\.\d+)*$/.test(j.version) ? j.version : ''; ubLatest = v ? { v, at: now() } : { err: 'no version in the answer', at: now() }; })
       .catch(e => { ubLatest = { err: String(e && e.message || e), at: now() }; })
-      .then(() => { ubAsking = null; renderUnblockWindow(); return ubLatest; });
+      .then(() => { ubAsking = null; renderUnblockWindow(); ubBadge(); return ubLatest; });
     renderUnblockWindow();
     return ubAsking;
   }
@@ -12065,20 +12081,151 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     else btns.push(`<button class="tl-ub-b tl-ub-b2" data-ub-act="check"${ubAsking ? ' disabled' : ''}>Check for updates</button>`);
     if (ik.kind === 'ext') btns.push('<button class="tl-ub-b tl-ub-b2" data-ub-act="reloadExt" title="Load the extension again from its folder - after replacing its files with a new version">Reload extension</button>');
     const how = ik.kind === 'us' ? 'Update opens the new version in your userscript manager, which offers to update.' : ik.kind === 'ext' ? 'An unpacked extension cannot replace its own files: Update downloads the new zip, you unzip it over the old folder, and Reload extension loads it.' : 'Installed from a store: your browser updates it by itself.';
-    return `<div class="tl-ub-kv"><span>Installed</span><span>v${esc(VERSION)}</span></div><div class="tl-ub-kv"><span>Latest</span><span>${latest}</span></div>
+    const warn = newer ? `<div class="tl-ub-alert">This version is out of date: <b>v${esc(L.v)}</b> is out, you have v${esc(VERSION)}.</div>` : '';
+    return `${warn}<div class="tl-ub-kv"><span>Installed</span><span>v${esc(VERSION)}</span></div><div class="tl-ub-kv"><span>Latest</span><span>${latest}</span></div>
       <div class="tl-ub-kv"><span>Type</span><span>${esc(ik.name)}</span></div><div class="tl-ub-btns">${btns.join('')}</div>
       <div class="tl-ub-note">${esc(ubNote || how)} <a href="${UB_CHANGES_URL}" target="_blank" rel="noopener">What's new</a></div>`;
   }
+
+  // ---- what's new: once after an update, a small note at the top of the window until it is put away ------------------
+  // (a first install has nothing to compare with: noted as seen)
+  function whatsNewDue() {
+    const seen = lsGet(UB_SEEN_KEY);
+    if (!seen) { lsSet(UB_SEEN_KEY, VERSION); return false; }
+    return newerThan(VERSION, seen);
+  }
+  function whatsNewHtml() {
+    if (!whatsNewDue()) return '';
+    const W = UB_WHATS_NEW && typeof UB_WHATS_NEW === 'object' && UB_WHATS_NEW.v === VERSION ? UB_WHATS_NEW : null, items = W ? (W.items || []).slice(0, 3) : [];
+    return `<div class="tl-ub-new"><b>Updated to v${esc(VERSION)}</b>${items.length ? '<ul>' + items.map(t => `<li>${esc(t)}</li>`).join('') + '</ul>' : ' '}<a href="${UB_CHANGES_URL}" target="_blank" rel="noopener">What's new</a>
+      <button type="button" class="tl-ub-x" data-ub-act="seenNew" aria-label="Dismiss" title="Dismiss">${UB_X}</button></div>`;
+  }
+  // ---- the dot on the bar's button: amber when a newer version is out, blue after an update until the window is opened --
+  function ubBadge() {
+    if (!ubBtn) return;
+    const L = ubLatest, k = L && L.v && newerThan(L.v, VERSION) ? 'upd' : whatsNewDue() && lsGet(UB_DOT_KEY) !== VERSION ? 'new' : '';
+    let d = ubBtn.querySelector('.tl-ub-dot');
+    if (!k) { if (d) d.remove(); ubBtn.removeAttribute('title'); ubBtn.setAttribute('title', 'LADD Unblock'); return; }
+    if (!d) { d = document.createElement('span'); d.className = 'tl-ub-dot'; if (getComputedStyle(ubBtn).position === 'static') ubBtn.style.position = 'relative'; ubBtn.appendChild(d); }
+    d.dataset.k = k;
+    ubBtn.setAttribute('title', k === 'upd' ? `LADD Unblock - v${L.v} is out (you have v${VERSION})` : `LADD Unblock - updated to v${VERSION}`);
+  }
+
+  // ---- the monitor: what it is doing, and the owner's controls (update, restart, its log) in place of a terminal --------
+  // Asked every 20 s while the window is open, and only then: /stats with the owner's secret (it holds /status and the
+  // server's own numbers), /status without. Nothing is asked of the data services for it.
+  const ubMon = { at: 0, st: null, srv: null, req: null, up: 0, err: '', busy: false, note: '', log: null, logOpen: false, confirm: '', confirmAt: 0, deployUntil: 0, deployAt: 0, timer: 0 };
+  const nf = n => n == null || !isFinite(n) ? '-' : Number(n).toLocaleString('en-GB');
+  const agoS = s => s == null ? 'never' : s < 90 ? Math.round(s) + ' s' : s < 5400 ? Math.round(s / 60) + ' min' : s < 172800 ? Math.round(s / 3600) + ' h' : Math.round(s / 86400) + ' days';
+  const durS = s => s < 3600 ? Math.round(s / 60) + ' min' : s < 172800 ? Math.floor(s / 3600) + ' h ' + Math.round((s % 3600) / 60) + ' min' : Math.floor(s / 86400) + ' days ' + Math.round((s % 86400) / 3600) + ' h';
+  const monIsOwner = () => { const r = monRemote(); return !!(r && r.token); };
+  function monRefresh() {
+    if (ubMon.busy || !opt.on) return;
+    const r = monRemote(); if (!r) { ubMon.st = null; ubMon.err = ''; return monPaint(); }
+    ubMon.busy = true;
+    const owner = monIsOwner();
+    monGet(owner ? '/stats' : '/status', { timeout: 8000 })
+      .then(j => {
+        if (owner && j && j.mon) { ubMon.st = Object.assign({}, j.mon, { ver: j.ver, commit: j.commit, controls: j.controls, since: j.since }); ubMon.srv = j.srv || null; ubMon.req = j.req || null; ubMon.up = j.uptimeS || 0; }
+        else if (j && j.v) { ubMon.st = j; ubMon.srv = null; ubMon.req = null; ubMon.up = j.since ? (now() - j.since) / 1000 : 0; }
+        else throw new Error('not a monitor');
+        ubMon.at = now(); ubMon.err = '';
+      })
+      .catch(e => { ubMon.err = /HTTP 401/.test(String(e)) ? 'the secret saved here is not this monitor\'s' : String((e && e.message) || e).slice(0, 100); })
+      .then(() => (owner && (ubMon.logOpen || now() < ubMon.deployUntil) ? monLog() : null))
+      .then(() => { ubMon.busy = false; monPaint(); });
+  }
+  function monLog() {
+    return monGet('/admin/log?n=60', { timeout: 8000 }).then(j => {
+      ubMon.log = j || null;
+      // (an update under way: its own last line says how it went)
+      const d = j && j.deploy; if (d && now() < ubMon.deployUntil && d.at > ubMon.deployAt - 5000) { const last = String(d.text || '').trim().split('\n').filter(l => /^\[deploy\]/.test(l)).pop(); if (last) ubMon.note = last.replace(/^\[deploy\]\s*/, 'Update: '); if (/OK - |already up to date|not updating|back to|rolled back/.test(last || '')) ubMon.deployUntil = 0; }
+    }).catch(e => { ubMon.log = { err: String((e && e.message) || e) }; });
+  }
+  function monControl(act) {
+    // (a second click within 5 s does it: nothing on the server happens from one stray click)
+    if (ubMon.confirm !== act || now() - ubMon.confirmAt > 5000) { ubMon.confirm = act; ubMon.confirmAt = now(); monPaint(); setTimeout(() => { if (ubMon.confirm === act && now() - ubMon.confirmAt >= 5000) { ubMon.confirm = ''; monPaint(); } }, 5100); return; }
+    ubMon.confirm = '';
+    if (act === 'log') return;
+    ubMon.note = act === 'monUpdate' ? 'Asking the monitor to update…' : 'Asking the monitor to restart…'; monPaint();
+    monPost(act === 'monUpdate' ? '/admin/update' : '/admin/restart', {})
+      .then(j => {
+        if (!j || !j.ok) { ubMon.note = 'The monitor said no: ' + ((j && j.err) || 'no answer'); return; }
+        if (act === 'monUpdate') { ubMon.deployAt = now(); ubMon.deployUntil = now() + 8 * 60000; ubMon.note = 'Updating: it fetches the newest version, restarts with it and checks it answers (back to this one if not). The result shows here.'; }
+        else ubMon.note = 'Restarting: it saves everything first and answers again in a minute or two.';
+        monOk = false; monCheckAt = 0;
+      })
+      .catch(e => { ubMon.note = /HTTP 401/.test(String(e)) ? 'The monitor refused: the secret saved here is not its own.' : /HTTP 404/.test(String(e)) ? 'This monitor is older than these controls: update it once on the server (deploy.sh).' : 'No answer from the monitor (' + String((e && e.message) || e).slice(0, 80) + ').'; })
+      .then(monPaint);
+  }
+  function monHtml() {
+    const r = monRemote();
+    if (!r) return '<p>Turned off: this browser works alone (Data sources > Monitor turns it on).</p>';
+    const S = ubMon.st, kv = (k, v, t) => `<div class="tl-ub-kv"${t ? ` title="${esc(t)}"` : ''}><span>${esc(k)}</span><span>${v}</span></div>`;
+    if (!S) return `<div class="tl-ub-note">${ubMon.err ? `<span class="tl-warn">Not answering</span> (${esc(ubMon.err)})` : '<span class="tl-muted">asking…</span>'}</div>`;
+    const L = ubLatest, behind = S.ver && L && L.v && newerThan(L.v, S.ver);
+    const la = S.listAge || {}, f = S.fr24 || {}, w = S.waiting || {}, o = S.owners || {}, t = S.tel || {}, h = S.hist || {}, x = S.wx || {};
+    const paused = Object.entries(S.paused || {}).map(([k, v]) => `${esc(k)} ${agoS(v)}`).join(', ');
+    const errs = [S.fails ? `polls ${nf(S.fails)}` : '', f.fails ? `FR24 ${nf(f.fails)}` : '', x.fails ? `weather ${nf(x.fails)}` : '', o.fails ? `owners ${nf(o.fails)}` : ''].filter(Boolean).join(' · ');
+    const rows = [
+      kv('Version', S.ver ? `v${esc(S.ver)}${S.commit ? ' <span class="tl-muted">' + esc(S.commit) + '</span>' : ''} ${behind ? `<span class="tl-warn">behind v${esc(L.v)}</span>` : L && L.v ? '<span class="tl-muted">(up to date)</span>' : ''}` : '<span class="tl-muted">older than 22.28</span>'),
+      kv('Running for', ubMon.up ? durS(ubMon.up) : '-'),
+      kv('Live list', `${nf(S.live)} aircraft · LADD list ${agoS(la.ladd)} old`, 'Every blocked, LADD, military and PIA aircraft heard in the last 5 minutes; how long ago the LADD list last answered'),
+      kv('Blocked aircraft', nf(S.blocked)),
+      kv('Flights kept', nf(S.legs)),
+      kv('FR24 scan', f.scanning === false ? 'off' : f.lastOkAgo != null ? `ok ${agoS(f.lastOkAgo)} ago${f.paused ? ' · <span class="tl-warn">paused ' + agoS(f.paused) + '</span>' : ''}` : '<span class="tl-warn">not working</span>'),
+      kv('Flights named', `${nf(f.named)} of ${nf(f.flights)}`, 'FR24 flights drawn without a callsign or registration, and how many of them the monitor has named'),
+      kv('Waiting to be named', nf(w.flights)),
+      kv('Lookups served', `${nf(t.served)}`, 'Padlocked figures (vertical speed, airspeeds, squawk...) the monitor handed to browsers since it started'),
+      kv('Owners known', `${nf(o.known)}${o.queue ? ' · ' + nf(o.queue) + ' to look up' : ''}`),
+      kv('Queues', `day logs ${nf(h.queue)} · rebuilds ${nf(S.backfillQueue)} · trails ${nf(f.trailQueue)}`, 'Work the monitor has still to do: day logs to close, aircraft whose recent days are being rebuilt, FR24 trails to fetch'),
+      kv('Errors', errs || '<span class="tl-muted">none</span>', S.lastErr ? 'Last: ' + S.lastErr : ''),
+      paused ? kv('Paused', `<span class="tl-warn">${paused}</span>`, 'Hosts the monitor is leaving alone after they refused or rate-limited it') : ''
+    ];
+    if (ubMon.srv) rows.push(kv('Memory', `${nf(Math.round(ubMon.srv.rss / 1048576))} MB · load ${esc((ubMon.srv.load || [0])[0].toFixed(2))}`));
+    if (ubMon.req) rows.push(kv('Requests', `${nf(ubMon.req.lastMin)} a minute · ${nf(ubMon.req.clients)} browsers`));
+    const C = S.controls || null, cf = a => ubMon.confirm === a;
+    let ctl = '';
+    if (monIsOwner() && C) {
+      const b = [];
+      if (C.update) b.push(`<button class="tl-ub-b${cf('monUpdate') ? '' : ' tl-ub-b2'}" data-ub-act="monUpdate" title="Fetch the newest version from GitHub, restart with it, and go back to this one if it does not answer">${cf('monUpdate') ? 'Click again to update' : behind ? 'Update to v' + esc(L.v) : 'Update monitor'}</button>`);
+      if (C.restart) b.push(`<button class="tl-ub-b tl-ub-b2" data-ub-act="monRestart" title="Save everything and start again">${cf('monRestart') ? 'Click again to restart' : 'Restart'}</button>`);
+      b.push(`<button class="tl-ub-b tl-ub-b2" data-ub-act="monLog">${ubMon.logOpen ? 'Hide log' : 'Log'}</button>`);
+      ctl = `<div class="tl-ub-btns">${b.join('')}</div>`;
+    } else if (monIsOwner()) ctl = `<div class="tl-ub-note">Controls (update, restart, log) come with the monitor's next version: update it once on the server with deploy.sh.</div>`;
+    else ctl = '<div class="tl-ub-note">The owner\'s secret, saved under Data sources > Monitor, adds controls here: update, restart, and its log.</div>';
+    let logBox = '';
+    if (ubMon.logOpen) {
+      const Lg = ubMon.log, d = Lg && Lg.deploy;
+      logBox = !Lg ? '<div class="tl-ub-note tl-muted">loading…</div>' : Lg.err ? `<div class="tl-ub-note tl-warn">${esc(Lg.err)}</div>` : `<pre class="tl-ub-log">${d && d.text ? esc('Last update (' + new Date(d.at).toLocaleString('en-GB') + '):\n' + d.text.trim() + '\n\n') : ''}${esc((Lg.lines || []).slice(-60).join('\n') || 'nothing logged yet')}</pre>`;
+    }
+    return `<div class="tl-ub-grid">${rows.join('')}</div>${ubMon.err ? `<div class="tl-ub-note"><span class="tl-warn">Last ask failed</span> (${esc(ubMon.err)})</div>` : ''}${ctl}${ubMon.note ? `<div class="tl-ub-note">${esc(ubMon.note)}</div>` : ''}${logBox}<div class="tl-ub-note tl-muted">Updated ${ubMon.at ? agoS((now() - ubMon.at) / 1000) + ' ago' : '-'} · ${esc(r.url.replace(/^https:\/\//, ''))}</div>`;
+  }
+  // ---- this browser: what it has done since FR24 was opened -----------------------------------------------------------
+  function localHtml() {
+    let ok = 0, fail = 0; for (const h of hostStat.values()) { ok += h.ok; fail += h.fail; }
+    const kv = (k, v, t) => `<div class="tl-ub-kv"${t ? ` title="${esc(t)}"` : ''}><span>${esc(k)}</span><span>${v}</span></div>`;
+    return `<div class="tl-ub-grid">${kv('Flights identified', nf(live.size), 'Blocked and N/A flights this tab has named')}${kv('Routes worked out', nf(routeState.size))}${kv('Named by the monitor', nf(srvIds.rows.size), 'FR24 flights the monitor has named, known to this tab')}${kv('Blocked aircraft live', nf(globalList.byHex.size))}${kv('Requests', `${nf(ok)} answered${fail ? ` · <span class="tl-warn">${nf(fail)} failed</span>` : ''}`, "Every data source together; each one's own count is under Data sources")}</div><div class="tl-ub-note tl-muted">Since FR24 was opened in this tab.</div>`;
+  }
+  function monPaint() {
+    if (!ubWin || !ubWin.isConnected) return;
+    const m = ubWin.querySelector('#tl-ub-mon'); if (m) m.innerHTML = monHtml();
+    const l = ubWin.querySelector('#tl-ub-local'); if (l) l.innerHTML = localHtml();
+  }
+  function monStart() { monStop(); monRefresh(); ubMon.timer = setInterval(() => { if (!unblockWindowOpen()) return monStop(); monRefresh(); }, 20000); }
+  function monStop() { if (ubMon.timer) clearInterval(ubMon.timer); ubMon.timer = 0; }
 
   // ---- the window ------------------------------------------------------------------------------------------------------
   const tgHtml = (k, label) => `<button type="button" class="tl-ub-tg" role="switch" aria-checked="${opt[k] ? 'true' : 'false'}" aria-label="${esc(label)}" data-ub-opt="${k}"><i></i></button>`;
   function ubBodyHtml() {
     const info = '<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor"><circle cx="5" cy="5" r="4.4"/><path d="M5 4.4v3M5 2.6v.2" stroke-linecap="round"/></svg>';
-    return `<div class="tl-ub-reload"${ubNeedReload ? '' : ' hidden'}><span>Reload FR24 to apply</span><button type="button" class="tl-ub-b" data-ub-act="reload">Reload</button></div>
+    return `<div class="tl-ub-reload"${ubNeedReload ? '' : ' hidden'}><span>Reload FR24 to apply</span><button type="button" class="tl-ub-b" data-ub-act="reload">Reload</button></div>${whatsNewHtml()}
       <div class="tl-ub-row tl-ub-top"><span class="tl-ub-t">Enable LADD Unblock</span>${tgHtml('on', 'Enable LADD Unblock')}</div>
       <div class="tl-ub-info">${info}<span>Names blocked (LADD) and N/A aircraft from public ADS-B, with routes, predicted destinations and flight history.${opt.on ? '' : ' Switched off: FR24 is left as it is.'}</span></div>
       ${UB_FEATURES.map(([k, t, d]) => `<div class="tl-ub-item tl-ub-feat"><div class="tl-ub-row"><span class="tl-ub-t">${esc(t)}</span>${tgHtml(k, t)}</div><p>${esc(d)}</p></div>`).join('')}
       <div class="tl-ub-item"><span class="tl-ub-t">Updates</span><div id="tl-ub-upd">${updatesHtml()}</div></div>
+      <div class="tl-ub-item"><span class="tl-ub-t">Monitor</span><div id="tl-ub-mon">${opt.on ? monHtml() : '<p>Switched off.</p>'}</div></div>
+      <div class="tl-ub-item"><span class="tl-ub-t">This browser</span><div id="tl-ub-local">${opt.on ? localHtml() : '<p>Switched off.</p>'}</div></div>
       <div class="tl-ub-item"><span class="tl-ub-t">Data sources</span><div id="tl-ub-sources">${opt.on ? sourcesHtml() : '<p>Switched off.</p>'}</div></div>`;
   }
   function renderUnblockWindow() {
@@ -12141,6 +12288,9 @@ html.tl-no-strip .tl-strip{display:none!important}`;
         if (act === 'close') closeUnblockWindow();
         else if (act === 'reload') location.reload();
         else if (act === 'check') { ubNote = ''; checkLatest(true); }
+        else if (act === 'seenNew') { lsSet(UB_SEEN_KEY, VERSION); renderUnblockWindow(); ubBadge(); }
+        else if (act === 'monUpdate' || act === 'monRestart') monControl(act);
+        else if (act === 'monLog') { ubMon.logOpen = !ubMon.logOpen; if (ubMon.logOpen) { ubMon.log = null; monLog().then(monPaint); } monPaint(); }
         else doUpdate(act);
       });
       document.body.appendChild(ubWin);
@@ -12149,9 +12299,13 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     renderUnblockWindow(); placeUnblockWindow();
     if (fresh) ubAnimate(ubWin, ubLook().anim.in);
     if (ubBtn) ubBtn.classList.add('tl-ub-btn-on');
+    if (whatsNewDue()) lsSet(UB_DOT_KEY, VERSION);
+    ubBadge();
     checkLatest(false);
+    if (opt.on) monStart();
   }
   function closeUnblockWindow() {
+    monStop();
     if (ubWin) { const w = ubWin; ubWin = null; w.classList.add('tl-ub-going'); ubAnimate(w, ubLook().anim.out, () => w.remove()); }
     if (ubBtn) ubBtn.classList.remove('tl-ub-btn-on');
   }
@@ -12335,6 +12489,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     if (ubBtn) ubBtn.remove();
     ubBtn = makeBarButton(found);
     last.after(ubBtn);
+    ubBadge();
     return true;
   }
   function addUnblockStyle() { if (document.getElementById('tl-ub-style')) return; const s = document.createElement('style'); s.id = 'tl-ub-style'; s.textContent = UB_STYLE; (document.head || document.documentElement).appendChild(s); }
@@ -12346,6 +12501,8 @@ html.tl-no-strip .tl-strip{display:none!important}`;
       try { new MutationObserver(() => { ubDirty = true; }).observe(document.body || document.documentElement, { childList: true, characterData: true, subtree: true }); } catch (e) { ubDirty = true; }
       const tick = () => { ensureBarButton(); setTimeout(tick, ubMiss > 60 ? 5000 : 1000); };
       tick();
+      // (the newest version looked up a little after FR24 opens and every 6 hours: a dot on the button when one is out)
+      setTimeout(() => { checkLatest(false); setInterval(() => checkLatest(false), 6 * 3600000); }, 20000);
       document.addEventListener('keydown', ev => { if (ev.key === 'Escape') { if (unblockWindowOpen()) closeUnblockWindow(); if (ubWatched.size) watchNative(''); } });
       document.addEventListener('click', ev => { if (ubWatched.size && ev.target && [...ubWatched.keys()].some(el => el.contains(ev.target))) watchNative(''); }, true);
       window.addEventListener('resize', () => { if (unblockWindowOpen()) placeUnblockWindow(); });

@@ -2,11 +2,23 @@
 
 All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PATCH`. The userscript and the monitor are released together.
 
-## [22.27.3] - 2026-10-15
+## [22.28.1] - 2026-10-15
 
 ### Changed
 - **The LADD Unblock window now copies FR24's own windows instead of guessing at them.** It is the width of Widgets and sits where Widgets does, its title bar is as tall as FR24's on screen (so its text and switches are the same size as theirs, whatever zoom FR24's page uses), and it opens and closes with the same movement as FR24's windows. It learns all of this by watching the first FR24 window you open from the bottom bar, and keeps it. Before then, it uses the size of Widgets as it appears in a screenshot and simply appears.
 - Its section titles, dividers, corners and switches are drawn in Widgets' colours and sizes.
+
+## [22.28.0] - 2026-10-15
+
+### Added
+- **The LADD Unblock window says when this version is out of date.** A small amber dot appears on the bottom bar's LADD Unblock button when a newer version is out, and the window's **Updates** says so in a line of its own. The newest version is looked up a little after FR24 opens and every 6 hours.
+- **A short "what's new" note after an update.** The first time the window is opened after an update, a small note at its top gives the new version's main changes, with a link to all of them. It stays until it is dismissed with its ✕. Until the window is opened, the button has a small blue dot.
+- **The monitor's own figures in the window.** A new **Monitor** section shows its version (and whether it is behind), how long it has been running, the live list and how old the LADD list is, blocked aircraft and flights kept, FR24's scan and how many of its flights are named, flights waiting to be named, lookups served to browsers, owners known, its queues, its errors and any hosts it is leaving alone. With the owner's secret it also shows its memory, load, requests a minute and browsers. These come from the monitor only, every 20 seconds while the window is open; the data services are not asked anything more.
+- **Controls for the monitor, with the owner's secret.** **Update monitor** does what `deploy.sh` does on the server: the newest version from GitHub, restarted, checked, and put back if it does not answer. **Restart** saves everything and starts it again. **Log** shows its latest log lines and how the last update went. Each button needs a second click to act. The monitor needs updating once on the server (`bash ~/fr24-ladd/monitor/deploy.sh`) for these to appear.
+- **This browser's own figures:** flights identified, routes worked out, flights the monitor named, blocked aircraft live, and requests answered and failed since FR24 was opened. Each data source under **Data sources** also counts its answers and failures.
+
+### Monitor
+- `POST /admin/update`, `POST /admin/restart` and `GET /admin/log`, only with the secret (never on a monitor without one). `/status` and `/stats` give the monitor's version and commit.
 
 ## [22.27.2] - 2026-10-15
 
