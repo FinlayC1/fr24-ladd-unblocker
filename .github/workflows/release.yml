@@ -1,9 +1,14 @@
-# A release: a tag v<version> (the version in package.json) - pushed, or made on GitHub's Releases page ("Draft a new
-# release", a new tag, Publish) - and this builds the extension and the userscript and attaches them to the release, with
-# that version's changelog entry as its notes.
-#   git tag v22.22.0 && git push origin v22.22.0
+# A release: v<version> (the version in package.json), with the extension and the userscript attached and that version's
+# changelog entry as its notes. Made on its own once every test passes on main with a version not released yet - so a
+# version bump merged to main is published, and nothing else is. A tag pushed by hand, or a release made on GitHub's
+# Releases page, is filled in the same way.
+#   (by hand) git tag v22.22.0 && git push origin v22.22.0
 name: Release
 on:
+  workflow_run:
+    workflows: [Tests]
+    types: [completed]
+    branches: [main]
   push:
     tags: ['v*']
   release:
@@ -11,37 +16,62 @@ on:
 permissions:
   contents: write
 concurrency:
-  group: release-${{ github.ref_name }}
+  group: release
   cancel-in-progress: false
 jobs:
   release:
+    # (after the tests: only a push to main whose every job passed)
+    if: github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
+      - name: The version to release
+        id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V="v$(node -p "require('./package.json').version")"
+          if [ "$GITHUB_EVENT_NAME" = "workflow_run" ]; then
+            # (already released: nothing to do)
+            if gh release view "$V" >/dev/null 2>&1 || git ls-remote --exit-code --tags origin "refs/tags/$V" >/dev/null 2>&1; then echo "skip=1" >> "$GITHUB_OUTPUT"; echo "$V is out already"; exit 0; fi
+          else
+            test "$V" = "$GITHUB_REF_NAME" || { echo "the tag $GITHUB_REF_NAME is not the version $V"; exit 1; }
+          fi
+          echo "tag=$V" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@v4
+        if: steps.v.outputs.skip != '1'
         with:
           node-version: 22
           cache: npm
       - run: npm ci
+        if: steps.v.outputs.skip != '1'
       - run: npm run build
-      - name: The tag is the version being built
-        run: test "v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"
+        if: steps.v.outputs.skip != '1'
       - name: Release notes from the changelog
+        if: steps.v.outputs.skip != '1'
+        env:
+          TAG: ${{ steps.v.outputs.tag }}
         run: |
           node -e "
             const s = require('fs').readFileSync('CHANGELOG.md', 'utf8'), v = process.argv[1].replace(/^v/, '');
             const i = s.indexOf('## [' + v + ']'); if (i < 0) { console.log('Version ' + v); process.exit(0); }
             const j = s.indexOf('\n## [', i + 1); console.log(s.slice(s.indexOf('\n', i) + 1, j < 0 ? undefined : j).trim());
-          " "$GITHUB_REF_NAME" > notes.md
+          " "$TAG" > notes.md
           printf '\n\n---\n**Install:** Chrome / Edge - download `fr24-ladd-unblocker-extension.zip`, unzip it, then *Load unpacked* in `chrome://extensions` (Developer mode). Tampermonkey - open `fr24-ladd-unblocker.user.js`.\n' >> notes.md
       - name: Publish
+        if: steps.v.outputs.skip != '1'
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.v.outputs.tag }}
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: |
-          # (a release already made on GitHub's page for this tag: the files and notes added to it; otherwise made here)
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" dist/fr24-ladd-unblocker-extension.zip dist/fr24-ladd-unblocker.user.js --clobber
-            gh release edit "$GITHUB_REF_NAME" --title "FR24 LADD Unblocker $GITHUB_REF_NAME" --notes-file notes.md
+          # (a release already made on GitHub's page for this tag: the files and notes added to it; otherwise made here,
+          # its tag on the commit that was tested)
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/fr24-ladd-unblocker-extension.zip dist/fr24-ladd-unblocker.user.js --clobber
+            gh release edit "$TAG" --title "FR24 LADD Unblocker $TAG" --notes-file notes.md
           else
-            gh release create "$GITHUB_REF_NAME" dist/fr24-ladd-unblocker-extension.zip dist/fr24-ladd-unblocker.user.js --title "FR24 LADD Unblocker $GITHUB_REF_NAME" --notes-file notes.md
+            gh release create "$TAG" dist/fr24-ladd-unblocker-extension.zip dist/fr24-ladd-unblocker.user.js --target "$SHA" --title "FR24 LADD Unblocker $TAG" --notes-file notes.md
           fi
