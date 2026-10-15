@@ -201,13 +201,22 @@
   function fillPlayback() {
     const sn = document.getElementById('txt-aircraft-serial');
     if (sn && pageMsn && /^\s*-?\s*$/.test(sn.textContent || '')) { sn.textContent = pageMsn; sn.title = 'From the public register / JetPhotos (LADD unblocker)'; }
-    const id = (location.hash || '').replace(/^#/, '').toLowerCase(), rec = id && fr24Flights.get(id); if (!rec) return;
+    const id = (location.hash || '').replace(/^#/, '').toLowerCase(); if (!id) return;
+    // (the row's own cells as filled, should the flight not be among those kept - a "Private Site" end, an inferred one)
+    const rec = fr24Flights.get(id) || rowEnds(id); if (!rec) return;
     for (const [sel, key] of [['#txt-airport-origin', 'from'], ['#txt-airport-dest', 'to']]) {
-      const el = document.querySelector(sel), c = rec[key]; if (!el || !c || !/^\s*-?\s*$/.test(el.textContent || '')) continue;
+      const el = document.querySelector(sel), c = rec[key]; if (!el || !c || !/^\s*(?:-|—|–|N\/A)?\s*$/i.test(el.textContent || '')) continue;
       const a = c.a, q = /tl-inf/.test(c.desk) ? (c.desk.match(/<span class="tl-inf"[^>]*>\?<\/span>/) || [''])[0] : '';
       el.innerHTML = a ? `${esc(a.city || a.name)} <small>(${esc(a.iata || a.icao)})</small>${q}` : /Private Site/.test(c.desk) ? 'Private Site' : c.desk.replace(/<a\b[^>]*>\s*(\([^()<]*\))\s*<\/a>/, '<small>$1</small>');
       el.title = a ? `${a.name}${a.field ? ' (airfield not in FR24\'s list)' : ''}` : c.title || 'Away from any listed airfield';
     }
+  }
+  function rowEnds(fid) {
+    if (!/^[0-9a-f]{4,12}$/.test(fid)) return null;
+    const btn = document.querySelector(`#tbl-datatable [data-flight="${fid}"]`), tr = btn && btn.closest('tr'); if (!tr || tr.children.length < 12) return null;
+    const cell = td => td && td.classList.contains('tl-filled') ? { desk: td.innerHTML, mob: td.innerHTML, title: td.title || '', a: null } : null;
+    const o = { from: cell(tr.children[3]), to: cell(tr.children[4]) };
+    return o.from || o.to ? o : null;
   }
   // FR24's playback panel padlocks GPS altitude, true and indicated airspeed, vertical speed and squawk: those of the
   // moment being played, from the public ADS-B track (that day's, read once while the page is open)
@@ -454,7 +463,9 @@
         publicIdentity(hex0, reg).then(hx => { if (hx) { if (hx.msn) pageMsn = hx.msn; fillAircraftHeader(Object.assign({ hex: hex0, reg }, hx), reg); fillPlayback(); } }).catch(e => log('aircraft page identity', e));
         // (the playback panel's padlocked figures, as it plays - from the start, not once the airport lists are in; the
         // tracks of the two latest flights read now, any other's as the pointer reaches its row)
-        setInterval(() => { fillPlaybackData(hex0).catch(e => log('playback data', e)); }, 400);
+        // (and its "-" ends: FR24 builds that panel when a flight is played - after this page's observers were set up -
+        // and fills it from its own request, later than the address changes: G-FRGP's "To: -" beside its row's Private Site)
+        setInterval(() => { try { fillPlayback(); } catch (e) { log('playback ends', e); } fillPlaybackData(hex0).catch(e => log('playback data', e)); }, 400);
         // (and its rows' padlocked KML / CSV: the flight's public track as those files)
         unlockExports(tbody); new MutationObserver(() => unlockExports(tbody)).observe(tbody, { childList: true, subtree: true });
         exportClicks(() => Promise.resolve(hex0), tr => clean(tr.children[5] && tr.children[5].textContent).replace(/[()]/g, '').toUpperCase() || reg.replace(/-/g, ''));
