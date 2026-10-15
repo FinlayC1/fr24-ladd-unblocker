@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Flightradar24 LADD / N-A Unblocker (feed-level)
 // @namespace    tweeks.io
-// @version      22.28.2
+// @version      22.28.4
 // @description  Identifies every LADD / N/A / blocked military aircraft on Flightradar24 from public ADS-B, and injects callsign, registration, operator, age, country, MSN, squawk, vertical speed, GPS altitude, airspeeds, wind, photos, a reasoned origin/destination with a wind-corrected ETA (also for ordinary flights FR24 shows as N/A - military, private, GA, helicopters, with private landing sites; learned from 63 days of every aircraft worldwide, with live weather and closures), airport-board entries and a rebuilt 7-month flight log straight into FR24's own data - so it all renders like normal FR24 traffic.
 // @author       Finlay Clarke
 // @updateURL    https://raw.githubusercontent.com/FinlayC1/fr24-ladd-unblocker/main/dist/fr24-ladd-unblocker.user.js
@@ -90,7 +90,7 @@
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "22.28.2";
+    var BRIDGE_V = "22.28.4";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed
@@ -1383,9 +1383,23 @@
       // (indexed by callsign and number: an airport's six days are thousands of rows)
       var fids = {}, cst = {}, nmt = {}, add = function (o, k, t, e) { (o[k] || (o[k] = [])).push({ t: t, e: e }); }, near = function (o, k, t, w) { return k ? (o[k] || []).find(function (x) { return Math.abs(x.t - t) < w; }) || null : null; };
       nat.forEach(function (e) { if (e.flight && e.flight.id) fids[String(e.flight.id)] = e; if (e.flight && e.flight.callsign) add(cst, String(e.flight.callsign).toUpperCase(), e.estimatedTime || e.scheduledTime || 0, e); if (e.flight && e.flight.number) add(nmt, String(e.flight.number).toUpperCase(), e.scheduledTime || 0, e); });
+      // (the same callsign to the same airport with its time moved - a flight not flown yet planned again: FR24's own row of
+      // CWL52 to Glasgow at 15:30 (estimated 15:40), the schedule's at 16:15 (16:25), exactly 45 minutes apart - within two
+      // hours by any of their times; two flights already flown within 45 minutes)
+      var went = function (x) { return /^(departed|landed)$/.test(x || ''); };
+      var nearCs = function (k, r) {
+        if (!k) return null;
+        var rt = [r.est, r.sch, r.t].filter(Boolean), ra = went(r.st), rap = (r.nat && r.nat.airportId) || r.ap || 0;
+        return (cst[k] || []).find(function (x) {
+          var e = x.e;
+          if (ra && went(e.status && e.status.name)) return Math.abs(x.t - (r.est || r.t)) < 2700;
+          if (e.airportId && rap && e.airportId === rap) return [e.estimatedTime, e.scheduledTime].filter(Boolean).some(function (a) { return rt.some(function (b) { return Math.abs(a - b) < 7200; }); });
+          return Math.abs(x.t - (r.est || r.t)) < 2700;
+        }) || null;
+      };
       var pick = rows.filter(function (r) {
         var t = r.sch || r.t; if (!(t >= nowS - 3 * 86400 && t <= nowS + 3 * 86400)) return false;
-        var hit = (r.fid && fids[r.fid]) || near(nmt, String(r.num || '').toUpperCase(), r.sch || r.t, 1800) || near(cst, String(r.cs || '').toUpperCase(), r.est || r.t, 2700);
+        var hit = (r.fid && fids[r.fid]) || near(nmt, String(r.num || '').toUpperCase(), r.sch || r.t, 1800) || nearCs(String(r.cs || '').toUpperCase(), r);
         if (!hit) return true;
         // (FR24's own row of it stands - what it leaves out, "N/A" where the flight went or came from, the aircraft of
         // its card, from the kept one: G-PTRK)
@@ -1446,6 +1460,9 @@
       var need = !ac.registration || !ac.type, priv = !d.airline || /private owner/i.test(d.airline);
       var known = String(ac.hex || ac.icao24 || ac.modeS || '').toLowerCase();
       var got = info && (info.reg || info.hex) ? Promise.resolve(info) : need ? infoOfCallsign(d.flight && d.flight.callsign) : priv && !/^[0-9a-f]{6}$/.test(known) && ac.registration ? regInfo(ac.registration) : Promise.resolve(known ? { hex: known } : null);
+      // (what was kept of the flight without its aircraft - the type and operator its schedule gave: CWL52's card, Cranwell
+      // FTU, E50P - stands with what the lookup adds)
+      if (info && !(info.reg || info.hex) && (info.ty || info.al)) got = got.then(function (x) { var o = Object.assign({}, info); Object.keys(x || {}).forEach(function (k) { if (x[k]) o[k] = x[k]; }); return o; });
       return got.then(function (x) {
         if (x) {
           if (!ac.registration && x.reg) ac.registration = x.reg;
@@ -1506,7 +1523,14 @@
     function logoOf(id) { return !id ? '' : LOGO_ADD[id] ? LOGO_ADD[id].source : 'https://cdn.flightradar24.com/assets/airlines/logotypes/' + id + '.png'; }
     function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
     function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* full or blocked */ } }
-    var siteRows = (function () { try { var l = JSON.parse(lsGet('tl.sites') || '[]'); return Array.isArray(l) ? l : []; } catch (e) { return []; } })();
+    // (a place is its part before the first comma - "Rotherham, South Yorkshire" is Rotherham: the same cut as the userscript's
+    // ENGINE.placeShort, which test/unit_places.cjs checks them against. The landing places kept from before, cut here; the
+    // userscript's own list, which keeps both names where two places would read the same, replaces them at once)
+    function placeShort(n) {
+      var s = String(n == null ? '' : n).replace(/\s+/g, ' ').trim(), i = s.indexOf(',');
+      return i < 0 ? s : s.slice(0, i).trim() || s.replace(/^[,\s]+|[,\s]+$/g, '').replace(/,\s*/g, ', ');
+    }
+    var siteRows = (function () { try { var l = JSON.parse(lsGet('tl.sites') || '[]'); return Array.isArray(l) ? l.map(function (r) { return r && typeof r === 'object' ? Object.assign({}, r, { name: placeShort(r.name), city: placeShort(r.city) }) : r; }) : []; } catch (e) { return []; } })();
     function listSig(kind) { return kind === 'airlines' ? LISTS_V : LISTS_V + ':' + hashStr(JSON.stringify(siteRows)); }
     function patchList(kind, j) {
       if (!j || !Array.isArray(j.rows) || j.rows.length < 100) return false;
@@ -2441,7 +2465,7 @@
       else if (d.__tweeksLadd === 'hello') post('ready', { stats: stats, feedReady: !!feedHeaders, hdr: feedHdrPublic(), v: BRIDGE_V });
     });
     window[NS] = { resolved: resolved, routes: routes, naRecs: naRecs, naRoutes: naRoutes, telem: telem, hist: hist, lastPos: lastPos, photoCache: photoCache, psCache: psCache, stats: stats, fetchPhotos: fetchPhotos, hello: function () { post('ready', { stats: stats, feedReady: !!feedHeaders, v: BRIDGE_V }); }, v: BRIDGE_V };
-    if (window.__tlTestHook) try { window.__tlTestHook({ csOf: csOf, hist: hist, preloaded: function () { return preloaded; }, parse: parse, photoFits: photoFits, makerOf: makerOf, patchFollow: patchFollow, patchFlightMsg: patchFlightMsg, pushFollow: pushFollow, followSt: function () { return followSt; }, setFollowSt: function (s) { followSt = s; }, shownPhotos: shownPhotos, photoCache: photoCache, FOLLOW: FOLLOW, DETAILS: DETAILS, fLen: fLen, fStr: fStr, fVar: fVar, patchFlight: patchFlight, patchLiveFeed: patchLiveFeed, fr24Named: fr24Named, psState: function () { return { q: psQ.length, busy: psBusy, last: psLast, blockedFor: Math.max(0, psBlockedUntil - Date.now()), pri: Array.from(psPri), jobs: photoJobs.size, head: psQ.slice(0, 3).map(function (j) { return j.hex; }) }; }, acceptPubTel: acceptPubTel, pubTelFor: pubTelFor, fillNativeCard: fillNativeCard, regsOfCallsign: regsOfCallsign, categoryOf: categoryOf, nativeFill: nativeFill, natInfo: natInfo, telem: telem, b64Encode: b64Encode, b64DecodeInto: b64DecodeInto, frameHeader: frameHeader, concat: concat, varintInt32: varintInt32, PLAYBACK: PLAYBACK, patchPlayback: patchPlayback, patchPlaybackRequest: patchPlaybackRequest, pbRoutes: pbRoutes, pbTelAt: pbTelAt, setPbTrace: function (t) { pbTrace = t; }, patchList: patchList, acceptSites: acceptSites, listSig: listSig, mergeRoutes: mergeRoutes, applyRoutes: applyRoutes, routesAdd: routesAdd, applyAirport: applyAirport, applyBoardPage: applyBoardPage, applyStats: applyStats, mergeFlights: mergeFlights, apData: apData, telAt: telAt, noteTelem: noteTelem, pbTraceOf: function () { return pbTrace; }, logoOf: logoOf, archDetail: archDetail, tsOf: tsOf, noteAirportJson: noteAirportJson, rwyOf: rwyOf, rwyPanel: rwyPanel, panelTick: panelTick, panelData: panelData, promoSlots: promoSlots, acceptAirportPanel: acceptAirportPanel, unlockRunways: unlockRunways, mvRows: mvRows, mvKept: mvKept, dayOf: dayOf, pbPanelTick: pbPanelTick, logoFix: logoFix, liveEntries: liveEntries, pbPos: pbPos, unlockFeed: unlockFeed, derivedVs: derivedVs, altHist: altHist, acceptAir: acceptAir, airCache: airCache, flushAir: flushAir, airWant: function () { return airWant; }, lastPos: lastPos, resolved: resolved, stats: stats }); } catch (e) { /* ignore */ }
+    if (window.__tlTestHook) try { window.__tlTestHook({ csOf: csOf, hist: hist, preloaded: function () { return preloaded; }, parse: parse, photoFits: photoFits, makerOf: makerOf, patchFollow: patchFollow, patchFlightMsg: patchFlightMsg, pushFollow: pushFollow, followSt: function () { return followSt; }, setFollowSt: function (s) { followSt = s; }, shownPhotos: shownPhotos, photoCache: photoCache, FOLLOW: FOLLOW, DETAILS: DETAILS, fLen: fLen, fStr: fStr, fVar: fVar, patchFlight: patchFlight, patchLiveFeed: patchLiveFeed, fr24Named: fr24Named, psState: function () { return { q: psQ.length, busy: psBusy, last: psLast, blockedFor: Math.max(0, psBlockedUntil - Date.now()), pri: Array.from(psPri), jobs: photoJobs.size, head: psQ.slice(0, 3).map(function (j) { return j.hex; }) }; }, acceptPubTel: acceptPubTel, pubTelFor: pubTelFor, fillNativeCard: fillNativeCard, regsOfCallsign: regsOfCallsign, categoryOf: categoryOf, placeShort: placeShort, nativeFill: nativeFill, natInfo: natInfo, addArch: addArch, acceptBoardArch: acceptBoardArch, telem: telem, b64Encode: b64Encode, b64DecodeInto: b64DecodeInto, frameHeader: frameHeader, concat: concat, varintInt32: varintInt32, PLAYBACK: PLAYBACK, patchPlayback: patchPlayback, patchPlaybackRequest: patchPlaybackRequest, pbRoutes: pbRoutes, pbTelAt: pbTelAt, setPbTrace: function (t) { pbTrace = t; }, patchList: patchList, acceptSites: acceptSites, listSig: listSig, mergeRoutes: mergeRoutes, applyRoutes: applyRoutes, routesAdd: routesAdd, applyAirport: applyAirport, applyBoardPage: applyBoardPage, applyStats: applyStats, mergeFlights: mergeFlights, apData: apData, telAt: telAt, noteTelem: noteTelem, pbTraceOf: function () { return pbTrace; }, logoOf: logoOf, archDetail: archDetail, tsOf: tsOf, noteAirportJson: noteAirportJson, rwyOf: rwyOf, rwyPanel: rwyPanel, panelTick: panelTick, panelData: panelData, promoSlots: promoSlots, acceptAirportPanel: acceptAirportPanel, unlockRunways: unlockRunways, mvRows: mvRows, mvKept: mvKept, dayOf: dayOf, pbPanelTick: pbPanelTick, logoFix: logoFix, liveEntries: liveEntries, pbPos: pbPos, unlockFeed: unlockFeed, derivedVs: derivedVs, altHist: altHist, acceptAir: acceptAir, airCache: airCache, flushAir: flushAir, airWant: function () { return airWant; }, lastPos: lastPos, resolved: resolved, stats: stats }); } catch (e) { /* ignore */ }
     post('ready', { stats: stats, feedReady: false, v: BRIDGE_V });
   }
 
@@ -2720,6 +2744,21 @@
       }
       return t.length >= 3 ? t : s;
     }
+    // A place as the extension shows it: the part before the first comma - "Rotherham, South Yorkshire" is Rotherham,
+    // "Pirrinuan, QLD 4405" Pirrinuan, "Baker," Baker. One place name everywhere it is shown (boards, panels, playback,
+    // search); page.js carries the same three lines for the page, and test/unit_places.cjs checks they agree.
+    function placeShort(n) {
+      const s = String(n == null ? '' : n).replace(/\s+/g, ' ').trim(), i = s.indexOf(',');
+      return i < 0 ? s : s.slice(0, i).trim() || s.replace(/^[,\s]+|[,\s]+$/g, '').replace(/,\s*/g, ', ');
+    }
+    // Many places at once: each by its short name, unless two different places would then read the same - "Newport,
+    // Wales" and "Newport, Isle of Wight" - and those keep their full names. Returns a Map of full name -> label.
+    function placeLabels(fulls) {
+      const by = new Map(), out = new Map();
+      for (const f of fulls || []) { const full = String(f == null ? '' : f).trim(), k = placeShort(full).toLowerCase(); if (!full || !k) continue; (by.get(k) || by.set(k, new Set()).get(k)).add(full.toLowerCase()); }
+      for (const f of fulls || []) { const full = String(f == null ? '' : f).trim(); if (!full || out.has(full)) continue; const sh = placeShort(full), set = by.get(sh.toLowerCase()); out.set(full, set && set.size > 1 ? full : sh); }
+      return out;
+    }
     function setFields(rows) {
       fieldRows = rows || null;
       for (const f of FL) { if (byId.get(f.id) === f) byId.delete(f.id); if (byIcao.get(f.icao) === f) byIcao.delete(f.icao); }
@@ -2734,7 +2773,7 @@
         let listed = false; nearby(r.lat, r.lon, 5.5, (a, d) => { if (d <= Math.max(2.5, 1.5 + Math.min(3.5, Math.log10(1 + (a.size || 0)) * 0.7) + 0.5)) listed = true; }); if (listed) continue;
         const id = fieldId(ident); if (byId.has(id)) continue;
         const ref = airportAt(r.lat, r.lon, 150);                            // (its country and time zone: the nearest airport's)
-        const a = { id, iata: '', icao: ident, name: r.name || ident, city: fieldShortName(r.name) || r.city || '', town: r.city || '', country: ref ? ref.airport.country : '', countryId: ref ? ref.airport.countryId : 0, lat: r.lat, lon: r.lon, alt: +r.alt || 0, size: 0, tz: ref ? ref.airport.tz : null, tzName: ref ? ref.airport.tzName : '', field: true };
+        const a = { id, iata: '', icao: ident, name: r.name || ident, city: placeShort(fieldShortName(r.name)) || placeShort(r.city), town: placeShort(r.city), townFull: r.city || '', country: ref ? ref.airport.country : '', countryId: ref ? ref.airport.countryId : 0, lat: r.lat, lon: r.lon, alt: +r.alt || 0, size: 0, tz: ref ? ref.airport.tz : null, tzName: ref ? ref.airport.tzName : '', field: true };
         a.mil = MIL_RE.test(a.name); a.code = ident;
         a.rw = RW.get(ident) || null; a.rwl = RWL.get(ident) || null;
         FL.push(a); byId.set(id, a); byIcao.set(ident, a);
@@ -4707,7 +4746,7 @@
       return res;
     }
 
-    return { setTables2, get T2() { return T2; }, fieldShortName, setApproach, approachCell, approachPath, apprGroup, apprKey, trackAgree, heatNear, heatMatch, reckon, trackErr, remotePath, flowKeysOf, pgrpOf, grp6, sunElev, airData, gsAlong, minutesTo, flowAt, pathOf, pathDev, ownerKey, parseRunwayLengths, setRunwayLengths, csvLine, SQ_NOINFO, tripBin, regionOf, learnLeg, learnRow, learnCollector, addLearnedOp, odAdd: (x, y, w) => { const k = odKey(String(x).toUpperCase(), String(y).toUpperCase()), v = (OD.get(k) || 0) + w; if (v > 1e-9) OD.set(k, v); else OD.delete(k); }, odWeight: (x, y) => OD.get(odKey(String(x).toUpperCase(), String(y).toUpperCase())) || 0, odCount: () => OD.size, setAirports, setUsage, addUsage, setRunways, parseRunwaysCsv, runwayFit, setWeights, setTables, setLogit, calibrated, mergePoints, finalTo, longFinal, typeRangeKm, FEAT, groupOf, W, classify, isStepClimb, rangeKm, parseTrace, legsFromPoints, summarizeLeg, stitchLegs, chainLegs, histStats, inferOrigin, predict, privateSite, rwyImpossible, typeDesc, heliSpots, heliAirportAt, landedSum, localFlew, climbedOut, approachTo, downAndUp, landingInGap, circuits, mergeCircuits, setFields, fieldAt, placeAt, isField, nearbyFields, fieldCount: () => FL.length, airportAt, departureFromClimb, arrivalFromDescent, nearby, dist, brg, xtat, destPoint, angDiff, get airports() { return AP; }, byId: id => byId.get(id), byIcao: c => byIcao.get(String(c || '').toUpperCase()) };
+    return { setTables2, get T2() { return T2; }, fieldShortName, placeShort, placeLabels, setApproach, approachCell, approachPath, apprGroup, apprKey, trackAgree, heatNear, heatMatch, reckon, trackErr, remotePath, flowKeysOf, pgrpOf, grp6, sunElev, airData, gsAlong, minutesTo, flowAt, pathOf, pathDev, ownerKey, parseRunwayLengths, setRunwayLengths, csvLine, SQ_NOINFO, tripBin, regionOf, learnLeg, learnRow, learnCollector, addLearnedOp, odAdd: (x, y, w) => { const k = odKey(String(x).toUpperCase(), String(y).toUpperCase()), v = (OD.get(k) || 0) + w; if (v > 1e-9) OD.set(k, v); else OD.delete(k); }, odWeight: (x, y) => OD.get(odKey(String(x).toUpperCase(), String(y).toUpperCase())) || 0, odCount: () => OD.size, setAirports, setUsage, addUsage, setRunways, parseRunwaysCsv, runwayFit, setWeights, setTables, setLogit, calibrated, mergePoints, finalTo, longFinal, typeRangeKm, FEAT, groupOf, W, classify, isStepClimb, rangeKm, parseTrace, legsFromPoints, summarizeLeg, stitchLegs, chainLegs, histStats, inferOrigin, predict, privateSite, rwyImpossible, typeDesc, heliSpots, heliAirportAt, landedSum, localFlew, climbedOut, approachTo, downAndUp, landingInGap, circuits, mergeCircuits, setFields, fieldAt, placeAt, isField, nearbyFields, fieldCount: () => FL.length, airportAt, departureFromClimb, arrivalFromDescent, nearby, dist, brg, xtat, destPoint, angDiff, get airports() { return AP; }, byId: id => byId.get(id), byIcao: c => byIcao.get(String(c || '').toUpperCase()) };
   }
   /* ==/ENGINE== */
 
@@ -4882,7 +4921,7 @@
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '22.28.2';
+  const VERSION = '22.28.4';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
@@ -6859,10 +6898,12 @@
     const near = ENGINE.airportAt(lat, lon, 150), tzId = near ? near.airport.id : 0;
     if (generic) return { code: 'PVT', name: 'Private site', lat: NaN, lon: NaN, alt: near ? near.airport.alt || 0 : 0, tzId, known: '' };
     const k = siteNear(lat, lon, heli ? 0.35 : 1.5, heli ? 'HWSM' : 'SWMH'), s = k && k.row;
-    if (!s) { const o = osmPlaceAt(lat, lon); if (o) return { code: 'PVT', name: o.name, lat: o.lat, lon: o.lon, alt: near ? near.airport.alt || 0 : 0, tzId, known: o.kind }; if (o === undefined) wantOsmPlace(lat, lon, opts && opts.onNew); }
+    if (!s) { const o = osmPlaceAt(lat, lon); if (o) return { code: 'PVT', name: ENGINE.placeShort(o.name), full: o.name, lat: o.lat, lon: o.lon, alt: near ? near.airport.alt || 0 : 0, tzId, known: o.kind }; if (o === undefined) wantOsmPlace(lat, lon, opts && opts.onNew); }
     // (the town: the nearest one OurAirports names within 10 km, else 25 km)
     const town = s ? null : siteNear(lat, lon, 10, null, r => !!r[5]) || siteNear(lat, lon, 25, null, r => !!r[5]);
-    return { code: s && /^[A-Z]{4}$/.test(s[4]) ? s[4] : 'PVT', name: s ? (s[2] === 'H' ? s[3] : ENGINE.fieldShortName(s[3])) : 'Private site' + (town ? ' near ' + town.row[5] : ''), lat: s ? s[0] : lat, lon: s ? s[1] : lon, alt: s ? s[6] : (near ? near.airport.alt || 0 : 0), tzId, known: s ? s[2] : '' };
+    // (cut at the first comma where it shows - Rotherham, South Yorkshire - with the whole name kept for telling places apart)
+    const raw = s ? (s[2] === 'H' ? s[3] : ENGINE.fieldShortName(s[3])) : 'Private site' + (town ? ' near ' + town.row[5] : '');
+    return { code: s && /^[A-Z]{4}$/.test(s[4]) ? s[4] : 'PVT', name: ENGINE.placeShort(raw), full: raw, lat: s ? s[0] : lat, lon: s ? s[1] : lon, alt: s ? s[6] : (near ? near.airport.alt || 0 : 0), tzId, known: s ? s[2] : '' };
   }
   // ---- landing places learned: every spot an aircraft was seen down at away from FR24's airports - a strip FR24 does not
   // list, a pad, a farm field - gets a lasting id (9,000,001 on) and its name (as privatePlace gives it), the same each
@@ -6879,15 +6920,15 @@
     if (!sites.grid) { loadSites(); return 0; }                     // (named once the list of strips and towns is in)
     const heli = !!(opts && opts.heli), p = privatePlace(lat, lon, { heli, onNew: () => learnSite(lat, lon, opts) });
     const ref = ENGINE.airportAt(lat, lon, 300); if (!p || !ref) return 0;
-    const town = /^Private site near /.test(p.name) ? p.name.slice(18) : '', named = p.known && p.known !== '';
+    const town = /^Private site near /.test(p.name) ? p.name.slice(18) : '', fullTown = /^Private site near /.test(p.full || '') ? p.full.slice(18) : '', named = p.known && p.known !== '';
     let s = siteNearBook(lat, lon, 1.5);
     if (s) {
       s.last = nowS();
       // (a name worked out better since - OpenStreetMap's pad answered, the strip list came in)
-      if (genericSite(s) && (named || (town && s.name === 'Private site'))) { Object.assign(s, { name: p.name, city: town || ENGINE.fieldShortName(p.name) || p.name, code: p.code || 'PVT', named }); sitesSoon(); }
+      if (genericSite(s) && (named || (town && s.name === 'Private site'))) { Object.assign(s, { name: p.name, city: town || ENGINE.fieldShortName(p.name) || p.name, fullName: p.full || '', fullCity: fullTown, code: p.code || 'PVT', named }); sitesSoon(); }
       return s.id;
     }
-    s = { id: SITE_BASE + (++bk.n), lat: Math.round((fin(p.lat) ? p.lat : lat) * 1e5) / 1e5, lon: Math.round((fin(p.lon) ? p.lon : lon) * 1e5) / 1e5, name: p.name, city: town || ENGINE.fieldShortName(p.name) || p.name, code: p.code || 'PVT', apId: ref.airport.id, alt: Math.round(p.alt || 0), n: 1, first: nowS(), last: nowS(), named };
+    s = { id: SITE_BASE + (++bk.n), lat: Math.round((fin(p.lat) ? p.lat : lat) * 1e5) / 1e5, lon: Math.round((fin(p.lon) ? p.lon : lon) * 1e5) / 1e5, name: p.name, city: town || ENGINE.fieldShortName(p.name) || p.name, fullName: p.full || '', fullCity: fullTown, code: p.code || 'PVT', apId: ref.airport.id, alt: Math.round(p.alt || 0), n: 1, first: nowS(), last: nowS(), named };
     bk.list.push(s);
     if (bk.list.length > 1500) bk.list = bk.list.sort((a, b) => b.last - a.last).slice(0, 1500);
     log('landing place learned', s.id, s.name, s.lat, s.lon);
@@ -6897,13 +6938,21 @@
   // minute, renamed as it answers - Aintree Racecourse for 'Private site near Liverpool')
   setInterval(() => { const bk = siteBk(); if (!bk || !sites.grid || document.hidden) return; const s = bk.list.find(x => genericSite(x) && !(nowS() - (x.osmTry || 0) < 86400)); if (!s) return; s.osmTry = nowS(); privatePlace(s.lat, s.lon, { onNew: () => learnSite(s.lat, s.lon) }); }, 60000);
   // (as FR24's own airport list has its airports)
+  // (a landing place's name as shown: "Private site near Rotherham", not "... near Rotherham, South Yorkshire" - those
+  // kept before the names were cut at the comma too - unless two different places would read the same)
+  let siteLab = null;
+  const siteLabel = (n, kind) => {
+    const f = String(n == null ? '' : n).trim(), bk = siteBk(); if (!bk) return ENGINE.placeShort(f);
+    if (!siteLab) siteLab = { name: ENGINE.placeLabels(bk.list.map(x => x.fullName || x.name)), city: ENGINE.placeLabels(bk.list.map(x => x.fullCity || x.city)) };
+    return siteLab[kind].get(f) || ENGINE.placeShort(f);
+  };
   function siteRow(s) {
     const ref = airports.byId.get(s.apId) || {}, icao = /^[A-Z]{4}$/.test(s.code || '') ? s.code : '';
-    return { id: s.id, iata: s.code || 'PVT', icao, name: s.name, city: s.city, country: ref.country || '', countryId: ref.countryId || 0, lat: s.lat, lon: s.lon, alt: s.alt || 0, size: 1, timezone: ref.timezone || { abbr: 'UTC', abbrName: null, isDst: false, name: 'UTC', offset: 0, offsetHours: '0:00' }, videoStream: null };
+    return { id: s.id, iata: s.code || 'PVT', icao, name: siteLabel(s.fullName || s.name, 'name'), city: siteLabel(s.fullCity || s.city, 'city'), country: ref.country || '', countryId: ref.countryId || 0, lat: s.lat, lon: s.lon, alt: s.alt || 0, size: 1, timezone: ref.timezone || { abbr: 'UTC', abbrName: null, isDst: false, name: 'UTC', offset: 0, offsetHours: '0:00' }, videoStream: null };
   }
   function siteAp(id) { const bk = siteBk(), s = bk && bk.list.find(x => x.id === id); if (!s) return null; const r = siteRow(s); return Object.assign({}, r, { tz: r.timezone.offset, code: r.iata, site: true }); }
   function pushSites() { const bk = siteBk(); if (bk && bk.list.length) postToPage('sites', { list: bk.list.map(siteRow) }); }
-  function sitesSoon() { if (siteSaveT) return; siteSaveT = setTimeout(() => { siteSaveT = 0; store.kvSet('sites2', siteBk()); pushSites(); }, 3000); }
+  function sitesSoon() { siteLab = null; if (siteSaveT) return; siteSaveT = setTimeout(() => { siteSaveT = 0; store.kvSet('sites2', siteBk()); pushSites(); }, 3000); }
   // (an unlisted airfield - an id from the route engine's field list - answers too; and a learned landing place)
   const apById = id => (id && (airports.byId.get(id) || (id >= 1e7 ? ENGINE.byId(id) : isSiteId(id) ? siteAp(id) : null))) || null;
   // what FR24's own panel and boards can be given: its airports, and the landing places it has been given (a strip of
@@ -8451,8 +8500,8 @@
     const setO = (a, note, conf) => { if (!a) return; r.originId = a.id; r.originIata = apCode(a); r.originCity = a.city || a.name; r.originNote = note || ''; r.originConf = conf || ''; };
     const setD = (a, conf, reason) => { if (!a) return; r.destId = a.id; r.destIata = apCode(a); r.destCity = a.city || a.name; r.destConf = conf; r.destReason = reason || ''; };
     // a place away from every listed airport (helicopter pads, fields, private strips): shown as its code and name
-    const setOSite = (s, note, conf) => { r.originId = 0; r.originIata = s.code; r.originCity = s.name; r.originSite = s; r.originNote = note || ''; r.originConf = conf || ''; };
-    const setDSite = (s, conf, reason) => { r.destId = 0; r.destIata = s.code; r.destCity = s.name; r.destSite = s; r.destConf = conf; r.destReason = reason || ''; };
+    const setOSite = (s, note, conf) => { r.originId = 0; r.originIata = s.code; r.originCity = ENGINE.placeShort(s.name); r.originSite = s; r.originNote = note || ''; r.originConf = conf || ''; };
+    const setDSite = (s, conf, reason) => { r.destId = 0; r.destIata = s.code; r.destCity = ENGINE.placeShort(s.name); r.destSite = s; r.destConf = conf; r.destReason = reason || ''; };
     // a helicopter took off away from any airport: that private site is where it came from
     const t0p = trail[0], heliFromSite = heli && t0p && (t0p.gnd || heliSlow0) && !ENGINE.heliAirportAt(t0p.lat, t0p.lon) && !(origin && origin.conf === 'plan');
     if (pos.gnd) {
@@ -9451,7 +9500,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       const nLog = route && route.legCount || 0, basis = route && (route.destIata || route.originIata) && !route.landed ? `${isConfirmed(route) ? 'confirmed' : 'worked out'} from its track, ${nLog ? `its own flight log (${nLog} earlier flight${nLog === 1 ? '' : 's'}${route.base ? ', based at ' + route.base : ''})` : 'no earlier flights of its own on record'}${popTxt()} and public ADS-B` : '';
       const routeHtml = route ? routeCells(route, '', basis) : (st && st.working ? gridHtml([cellHtml('Destination' + tagHtml('Predicted', 'pred'), '<span class="tl-spin"></span> <span class="tl-muted">working out the route…</span>', '', true)]) : '');
       // (no data-source credit: the hex, then whether it was just verified and the owner's town)
-      const tail = [rec.verifiedAt && now() - rec.verifiedAt < 120000 ? 'verified' : '', hx.ownerCity ? esc(placeName(hx.ownerCity)) : ''].filter(Boolean).join(' · ');
+      const tail = [rec.verifiedAt && now() - rec.verifiedAt < 120000 ? 'verified' : '', hx.ownerCity ? esc(placeName(ENGINE.placeShort(hx.ownerCity))) : ''].filter(Boolean).join(' · ');
       const idCell = cellHtml('Identified from public ADS-B' + tagHtml(badge, 'ladd'), `${esc(hexU || '?')}${tail ? ` <span class="tl-muted">· ${tail}</span>` : ''}`, '', true);
       html = rowHtml('plane', `${gridHtml([idCell])}${routeHtml ? '<hr class="border border-white">' + routeHtml : ''}${links ? `<div class="tl-links">${links}</div>` : ''}<div class="tl-links">${toolLinks(rec)}</div>${healthHtml()}${bridgeWarnHtml()}`);
     }
@@ -10335,7 +10384,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       }
       setField('SERIAL NUMBER (MSN)', hx.msn);
       setField('AGE', ageText(hx), ageTitle(hx));
-      setField('OPERATOR', shownOwner(hx, hx.cs) || '', hx.ownerCity && ownerName(hx.owner) ? 'Registered to ' + (ownerName(hx.owner) || '') + ', ' + placeName(hx.ownerCity) : '');
+      setField('OPERATOR', shownOwner(hx, hx.cs) || '', hx.ownerCity && ownerName(hx.owner) ? 'Registered to ' + (ownerName(hx.owner) || '') + ', ' + placeName(ENGINE.placeShort(hx.ownerCity)) : '');
       // (an aircraft FR24 lists under "Private owner": its registered owner / operator there instead - a real airline
       // FR24 names stays)
       {
@@ -10795,8 +10844,23 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       o.nat = n;
     }
   }
+  // (a row that says the flight went: its status, or what FR24's own row of it says)
+  const rowActual = r => /^(departed|landed)$/.test(r.st || (r.nat && r.nat.status && r.nat.status.name) || '');
+  // (the airline FR24 lists under an id is the airline a row names - "Ryanair" and "Ryanair UK" are, "Ryanair" and
+  // "Cranwell FTU" are not; no name, a private owner or military, or no list yet: nothing to contradict it)
+  function alOk(id, name) {
+    const k = nameKey(name); if (!id || !k || /^(privateowner|military)$/.test(k)) return true;
+    const n = nameKey(fr24.airlineName(id)); return !n || n.startsWith(k) || k.startsWith(n);
+  }
+  // (one callsign to the same airport, one of the two not flown yet: within two hours by any of their times)
+  const sameCsFlight = (x, r) => {
+    const ap = (r.nat && r.nat.airportId) || r.ap || 0;
+    if (x.act && rowActual(r)) return Math.abs(x.t - r.t) < 2700;
+    if (!x.ap || !ap || x.ap !== ap) return false;
+    return x.ts.some(a => [r.est, r.sch, r.t].some(b => b > 0 && Math.abs(a - b) < 7200));
+  };
   function boardList(m, pre) {
-    const rows = Object.values(m).sort((a, b) => (BOARD_RANK[b.src] || 0) - (BOARD_RANK[a.src] || 0)), out = [], byFid = new Map(), byWho = new Map(), byRoute = new Map();
+    const rows = Object.values(m).sort((a, b) => (BOARD_RANK[b.src] || 0) - (BOARD_RANK[a.src] || 0) || (b.src === 'fr24') - (a.src === 'fr24')), out = [], byFid = new Map(), byWho = new Map(), byRoute = new Map(), byCs = new Map();
     const airlineOf = cs => { const c = /^([A-Z]{3})\d/.exec(String(cs || '').toUpperCase()); return (c && fr24.byIcao.get(c[1])) || 0; };
     for (let r of rows) {
       if (r.drop) continue;
@@ -10804,6 +10868,10 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       // (the same flight from a lesser source: what the row shown lacks - the other airport, FR24's flight id, the
       // aircraft - taken from it. G-PTRK's own FR24 row "N/A", its rebuilt track landed somewhere)
       let dup = (r.fid && byFid.get(r.fid)) || who.map(w => (byWho.get(w) || []).find(x => Math.abs(x.t - r.t) < 2700)).find(Boolean);
+      // (or the same callsign to the same airport with its time moved: a flight not flown yet is planned again - FR24's own
+      // row of CWL52 to Glasgow at 15:30 (estimated 15:40) and its schedule's at 16:15 (16:25), exactly 45 minutes apart,
+      // were two rows. Two flights already flown are two flights, so those keep the 45 minutes)
+      if (!dup && r.cs) dup = (byCs.get(String(r.cs).toUpperCase()) || []).find(x => sameCsFlight(x, r)) || null;
       // (or FR24's own row of an airline's flight that has no callsign - a number's list read before it flew: U281
       // Belfast -> Liverpool "Scheduled 14:40" beside the easyJet EZY89VK seen landing from Belfast at 14:42. The same
       // airline, from or to the same airport, within 45 minutes: the nearest one)
@@ -10814,10 +10882,11 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       if (dup) {
         const o = out[dup.i];
         if (r.src === 'log' || r.src === 'live') { takeActual(o, r); dup.took = true; }
-        for (const f of ['ap', 'fid', 'reg', 'hex', 'ty', 'dsc', 'alId']) if (!o[f] && r[f]) o[f] = r[f];
+        for (const f of ['ap', 'fid', 'reg', 'hex', 'ty', 'dsc', 'al']) if (!o[f] && r[f]) o[f] = r[f];
+        if (!o.alId && r.alId && alOk(r.alId, r.al)) o.alId = r.alId;
         if (o.nat && !o.nat.airportId && r.ap) o.nat = Object.assign({}, o.nat, { airportId: r.ap });
         // (and the operator - and its logo - FR24's own row of a club aircraft leaves out: G-RVRN, Ravenair)
-        const rid = r.alId || airlineIdByName(r.al);
+        const rid = (alOk(r.alId, r.al) && r.alId) || airlineIdByName(r.al);
         if (o.nat && !o.nat.airlineId && rid) o.nat = Object.assign({}, o.nat, { airlineId: rid, airline: !o.nat.airline || /private owner/i.test(o.nat.airline) ? fr24.airlineName(rid) || r.al || o.nat.airline : o.nat.airline });
         continue;
       }
@@ -10840,11 +10909,18 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
         if (id && r.nat) r.nat = Object.assign({}, r.nat, { airlineId: id, airline: r.nat.airline || fr24.airlineName(id) || null });
         else if (id) Object.assign(r, { alId: id, al: r.al || fr24.airlineName(id) });
       }
+      // (an airline id that is not the airline named on the row - Cranwell FTU's flight with Ryanair's logo: the name
+      // stands, and the logo is the one FR24 lists under it, or none. FR24's own board rows are as FR24 gave them)
+      if (r.src !== 'fr24') {
+        if (r.alId && !alOk(r.alId, r.al)) Object.assign(r, { alId: airlineIdByName(r.al) || 0 });
+        if (r.nat && r.nat.airlineId && !alOk(r.nat.airlineId, r.al)) r.nat = Object.assign({}, r.nat, { airlineId: airlineIdByName(r.al) || null, airline: r.al || null });
+      }
       if (r.nat && !r.nat.airportId && r.ap) r.nat = Object.assign({}, r.nat, { airportId: r.ap });
       if (!r.ty && !(r.nat && r.nat.aircraftType) && GLIDER.test(r.dsc || '')) r.ty = 'GLID';
       { const fc = fr24Cat({ type: r.ty || (r.nat && r.nat.aircraftType) || '', mil: !!(r.hex && (store.getHex(r.hex) || {}).mil) }); if (fc != null) r.fc = fc; }
       out.push(r);
-      const ent = { t: r.t, i: out.length - 1 }; if (r.fid) byFid.set(r.fid, ent); for (const w of who) (byWho.get(w) || byWho.set(w, []).get(w)).push(ent);
+      const ent = { t: r.t, i: out.length - 1, ts: [r.est, r.sch, r.t].filter(v => v > 0), act: rowActual(r), ap: (r.nat && r.nat.airportId) || r.ap || 0 }; if (r.fid) byFid.set(r.fid, ent); for (const w of who) (byWho.get(w) || byWho.set(w, []).get(w)).push(ent);
+      if (r.cs) (byCs.get(String(r.cs).toUpperCase()) || byCs.set(String(r.cs).toUpperCase(), []).get(String(r.cs).toUpperCase())).push(ent);
       if (r.src === 'fr24' || r.src === 'sched') { const al = (r.nat && r.nat.airlineId) || r.alId, ap = (r.nat && r.nat.airportId) || r.ap; if (al && ap) (byRoute.get(al + ':' + ap) || byRoute.set(al + ':' + ap, []).get(al + ':' + ap)).push({ t: r.sch || r.t, i: out.length - 1 }); }
     }
     return out;
@@ -12076,16 +12152,19 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   const UB_ZIP_URL = `https://github.com/${UB_REPO}/releases/latest/download/fr24-ladd-unblocker-extension.zip`;
   const UB_CHANGES_URL = `https://github.com/${UB_REPO}/blob/main/CHANGELOG.md`;
   const UB_LABELS = ['Settings', 'Weather', 'Filters', 'Widgets', 'Playback'];
-  const UB_RECT_KEY = 'tweeks.fr24.ladd.winrect';
+  // (FR24's own window as last seen, in screen pixels: where Widgets sits and its size, the height of a window's title bar,
+  // and how one appears and goes - copied, not guessed; until one has been opened, Widgets as measured from screenshots)
+  const UB_LOOK_KEY = 'tweeks.fr24.ladd.look2';
+  const UB_LOOK0 = { left: 10, top: 70, width: 252, head: 30, anim: { in: null, out: null } };
   // (the version whose "what's new" was put away, and the one whose dot on the button the window was opened for)
   const UB_SEEN_KEY = 'tweeks.fr24.ladd.seenver', UB_DOT_KEY = 'tweeks.fr24.ladd.dotver';
   // (the newest CHANGELOG section's headlines, written in by build.mjs: { v, items })
-  const UB_WHATS_NEW = {"v":"22.28.2","items":["A LADD aircraft's slideshow no longer opens on a short picture with \"© name - JetPhotos\" burnt into its bottom."]};
+  const UB_WHATS_NEW = {"v":"22.28.4","items":["A LADD aircraft's slideshow no longer opens on a short picture with \"© name - JetPhotos\" burnt into its bottom."]};
   // (an aircraft with an open padlock: FR24's outline style - 24 grid, 1.5 stroke in the text colour)
   const UB_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
   const UB_X = '<svg viewBox="0 0 14 14" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M2 2l10 10M12 2L2 12"/></svg>';
   const UB_STYLE = `
-.tl-ub{position:fixed;z-index:2147482000;left:10px;top:70px;width:252px;max-height:calc(100vh - 160px);display:flex;flex-direction:column;background:#f4f4f4;color:#393939;border-radius:10px;box-shadow:0 2px 12px rgba(0,0,0,.35);overflow:hidden;font-family:inherit;font-size:12px;line-height:1.35;text-align:left}
+.tl-ub{position:fixed;z-index:2147482000;left:10px;top:70px;width:252px;max-height:calc(100vh - 160px);display:flex;flex-direction:column;background:#f4f4f4;color:#393939;border-radius:8px;box-shadow:0 2px 12px rgba(0,0,0,.35);overflow:hidden;font-family:inherit;font-size:12px;line-height:1.35;text-align:left}
 .tl-ub *{box-sizing:border-box}
 .tl-ub-head{flex:none;position:relative;height:30px;display:flex;align-items:center;justify-content:center;background:#393939;color:#fff;font-size:13px;font-weight:700}
 .tl-ub-x{position:absolute;right:7px;top:5px;width:20px;height:20px;padding:0;border:0;background:none;color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center}
@@ -12094,16 +12173,16 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
 .tl-ub-body::-webkit-scrollbar-thumb{background:#f8c023;border-radius:3px}
 .tl-ub-row{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .tl-ub-top{padding:12px 7px 6px}
-.tl-ub-t{font-size:11px;font-weight:700;text-transform:uppercase}
+.tl-ub-t{font-size:11px;font-weight:600;color:#6d6d6d;text-transform:uppercase}
 .tl-ub-info{display:flex;gap:4px;padding:0 7px 9px;font-size:10px;line-height:1.35;color:#5c5c5c}
 .tl-ub-info svg{flex:none;margin-top:1px}
-.tl-ub-item{padding:10px 7px 10px;border-top:1px solid #dcdcdc}
+.tl-ub-item{padding:10px 7px 10px;border-top:1px solid #fff}
 .tl-ub-item p{margin:3px 0 0;font-size:11px;line-height:1.4;color:#393939}
 .tl-ub-off .tl-ub-feat{opacity:.45}
-.tl-ub-tg{flex:none;position:relative;width:38px;height:20px;padding:0;border:0;border-radius:10px;background:#c4c4c4;cursor:pointer;transition:background .15s}
+.tl-ub-tg{flex:none;position:relative;width:36px;height:20px;padding:0;border:0;border-radius:10px;background:#c4c4c4;cursor:pointer;transition:background .15s}
 .tl-ub-tg[aria-checked="true"]{background:#f8c023}
 .tl-ub-tg i{position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.3);transition:left .15s}
-.tl-ub-tg[aria-checked="true"] i{left:20px}
+.tl-ub-tg[aria-checked="true"] i{left:18px}
 .tl-ub-reload{position:sticky;top:0;z-index:1;display:flex;align-items:center;justify-content:space-between;gap:6px;padding:6px 7px;background:#fff4d1;border-bottom:1px solid #f8c023;font-size:11px;font-weight:600}
 .tl-ub-reload[hidden]{display:none}
 .tl-ub-b{flex:none;padding:4px 10px;border:0;border-radius:4px;background:#f8c023;color:#1b1b1b;font:inherit;font-size:11px;font-weight:700;cursor:pointer}
@@ -12120,6 +12199,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
 .tl-ub .tl-pop-row{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 6px;padding:3px 0;border-top:1px solid rgba(0,0,0,.06);font-size:11px}
 .tl-ub #tl-ub-sources>.tl-muted{font-size:10px;line-height:1.4}
 .tl-ub .tl-in{flex:1 1 100%;min-width:0;margin:1px 0;padding:4px 6px;background:#fff;color:#393939;border:1px solid #c8c8c8;border-radius:4px;font:inherit;font-size:11px}
+.tl-ub-going{pointer-events:none}
 .tl-ub-btn-on,.tl-ub-btn-on *{color:#f8c023!important}
 .tl-ub-btn [data-tl-ub-label]{white-space:nowrap}
 .tl-ub-dot{position:absolute;top:3px;left:calc(50% + 6px);width:7px;height:7px;border-radius:50%;background:#f8c023;box-shadow:0 0 0 1.5px rgba(0,0,0,.55);pointer-events:none}
@@ -12355,14 +12435,44 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   }
   // (the data sources' own buttons - monitor, keys - are handled with the strip's tools, which redraw this part)
   function refreshSources() { const el = ubWin && ubWin.isConnected ? ubWin.querySelector('#tl-ub-sources') : null; if (el && opt.on) el.innerHTML = sourcesHtml(); }
+  function ubLook() {
+    let r = null; try { r = JSON.parse(localStorage.getItem(UB_LOOK_KEY) || 'null'); } catch (e) { r = null; }
+    return Object.assign({}, UB_LOOK0, r && typeof r === 'object' ? r : {});
+  }
+  function saveLook(part) { try { localStorage.setItem(UB_LOOK_KEY, JSON.stringify(Object.assign(ubLook(), part))); } catch (e) { /* full */ } }
+  // FR24's size and zoom: its title bar as tall as theirs on screen (whatever the page's own zoom does to this one), and
+  // then its place, width and bottom edge in screen pixels - turned into this window's CSS pixels (k: screen px per px)
   function placeUnblockWindow() {
     if (!ubWin) return;
-    let r = null; try { r = JSON.parse(localStorage.getItem(UB_RECT_KEY) || 'null'); } catch (e) { r = null; }
-    const vw = window.innerWidth || 1200, vh = window.innerHeight || 800;
-    const left = r && r.left >= 0 && r.left < vw - 150 ? r.left : 10, top = r && r.top >= 0 && r.top < vh - 200 ? r.top : 70, width = r && r.width >= 200 && r.width <= 520 ? r.width : 252;
+    const L = ubLook(), head = ubWin.querySelector('.tl-ub-head');
+    ubWin.style.zoom = '';
+    const hb = head ? head.getBoundingClientRect().height : 0, ho = head ? head.offsetHeight : 0;
+    const s0 = hb > 0 && ho > 0 ? hb / ho : 1;
+    let z = hb > 0 && L.head > 0 ? Math.min(2, Math.max(0.6, L.head / hb)) : 1;
+    if (Math.abs(z - 1) < 0.03 || !(window.CSS && CSS.supports && CSS.supports('zoom', '1.5'))) z = 1;
+    if (z !== 1) ubWin.style.zoom = String(Math.round(z * 1000) / 1000);
+    const k = s0 * z, vw = window.innerWidth || 1200, vh = window.innerHeight || 800;
+    const width = L.width >= 200 && L.width <= 520 ? L.width : UB_LOOK0.width;
+    const left = L.left >= 0 && L.left < vw - 150 ? L.left : UB_LOOK0.left, top = L.top >= 0 && L.top < vh - 200 ? L.top : UB_LOOK0.top;
     const barTop = ubBar && ubBar.isConnected ? ubBar.getBoundingClientRect().top : 0;
-    ubWin.style.left = left + 'px'; ubWin.style.top = top + 'px'; ubWin.style.width = width + 'px';
-    ubWin.style.maxHeight = Math.max(240, (barTop > top + 240 ? barTop - 10 : vh - 20) - top) + 'px';
+    const bottom = L.bottom > top + 240 && L.bottom <= vh ? L.bottom : barTop > top + 240 ? barTop - 10 : vh - 20;
+    ubWin.style.left = left / k + 'px'; ubWin.style.top = top / k + 'px'; ubWin.style.width = width / k + 'px';
+    ubWin.style.maxHeight = Math.max(240, bottom - top) / k + 'px';
+  }
+  // how FR24's windows appear and go, replayed: the frames seen on theirs (where it was, its size, how see-through)
+  function ubAnimate(el, frames, done) {
+    const a = frames && frames.length > 1 && typeof el.animate === 'function' ? frames : null;
+    if (!a) { if (done) done(); return; }
+    const r = el.getBoundingClientRect(), k = r.width > 0 && el.offsetWidth > 0 ? r.width / el.offsetWidth : 1;
+    const kf = a.map(f => {
+      const o = { offset: f.f, opacity: f.o };
+      if (f.m === 's') { o.transformOrigin = '0 0'; o.transform = `translate(${f.x / k}px,${f.y / k}px) scale(${f.sx},${f.sy})`; }
+      else { o.transform = `translate(${f.x / k}px,${f.y / k}px)`; if (f.m === 'c') o.clipPath = `inset(${f.ct}% ${f.cr}% ${f.cb}% ${f.cl}%)`; }
+      return o;
+    });
+    let an = null; try { an = el.animate(kf, { duration: a[a.length - 1].t, easing: 'linear', fill: 'none' }); } catch (e) { an = null; }
+    if (!an) { if (done) done(); return; }
+    if (done) { let fin = false; const end = () => { if (!fin) { fin = true; done(); } }; an.onfinish = end; an.oncancel = end; setTimeout(end, a[a.length - 1].t + 400); }
   }
   function openUnblockWindow() {
     addUnblockStyle();
@@ -12384,14 +12494,20 @@ html.tl-no-strip .tl-strip{display:none!important}`;
       });
       document.body.appendChild(ubWin);
     }
+    const fresh = !ubWin.dataset.shown; ubWin.dataset.shown = '1';
     renderUnblockWindow(); placeUnblockWindow();
+    if (fresh) ubAnimate(ubWin, ubLook().anim.in);
     if (ubBtn) ubBtn.classList.add('tl-ub-btn-on');
     if (whatsNewDue()) lsSet(UB_DOT_KEY, VERSION);
     ubBadge();
     checkLatest(false);
     if (opt.on) monStart();
   }
-  function closeUnblockWindow() { monStop(); if (ubWin) { ubWin.remove(); ubWin = null; } if (ubBtn) ubBtn.classList.remove('tl-ub-btn-on'); }
+  function closeUnblockWindow() {
+    monStop();
+    if (ubWin) { const w = ubWin; ubWin = null; w.classList.add('tl-ub-going'); ubAnimate(w, ubLook().anim.out, () => w.remove()); }
+    if (ubBtn) ubBtn.classList.remove('tl-ub-btn-on');
+  }
   const unblockWindowOpen = () => !!(ubWin && ubWin.isConnected);
 
   // ---- the button on FR24's bar ---------------------------------------------------------------------------------------
@@ -12455,19 +12571,100 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     if (unblockWindowOpen()) b.classList.add('tl-ub-btn-on');
     return b;
   }
-  // (one of FR24's own windows opened from the bar: where it sits and how wide it is, for this one to match)
-  function learnNativeWindow(label) {
-    setTimeout(() => {
-      for (const t of textLeaves(label)) {
-        if (ubBar && ubBar.contains(t)) continue;
-        for (let a = t.parentElement, d = 0; a && a !== document.body && d < 8; a = a.parentElement, d++) {
-          const cs = getComputedStyle(a); if (cs.position !== 'fixed' && cs.position !== 'absolute') continue;
-          const r = a.getBoundingClientRect();
-          if (r.width >= 200 && r.width <= 520 && r.height >= 150) { try { localStorage.setItem(UB_RECT_KEY, JSON.stringify({ left: Math.round(r.left), top: Math.round(r.top), width: Math.round(r.width) })); } catch (e) { /* full */ } return; }
-          break;
+  // ---- FR24's own windows, watched as they open and close: Widgets' place and size, every window's title bar height,
+  // and the frames of their appear and disappear, for this window to copy ------------------------------------------------
+  // (the window: the nearest fixed or absolute box round its title, sized like a window - its layout size, which an
+  // animation's scale does not change; its title bar: the window's child holding the title)
+  function nativeWindowOf(label) {
+    for (const t of textLeaves(label)) {
+      if (ubBar && ubBar.contains(t)) continue;
+      for (let a = t.parentElement, d = 0; a && a !== document.body && d < 8; a = a.parentElement, d++) {
+        const cs = getComputedStyle(a); if (cs.position !== 'fixed' && cs.position !== 'absolute') continue;
+        if (a.offsetWidth >= 200 && a.offsetWidth <= 520 && a.offsetHeight >= 150) { let h = t; while (h.parentElement && h.parentElement !== a) h = h.parentElement; return { el: a, head: h }; }
+        break;
+      }
+    }
+    return null;
+  }
+  // (what the eye sees of it: where and how big on screen, how see-through - its own and its parents' - and whether a
+  // transform is at work on it or them)
+  function lookOf(el, t) {
+    const r = el.getBoundingClientRect(); let o = 1, tf = '', n = 0;
+    for (let a = el; a && a !== document.body && n < 5; a = a.parentElement, n++) { const cs = getComputedStyle(a); o *= parseFloat(cs.opacity) || 0; if (cs.display === 'none' || cs.visibility === 'hidden') o = 0; tf += '|' + (cs.transform || 'none'); }
+    return { t, x: r.left, y: r.top, w: r.width, h: r.height, o: el.isConnected ? o : 0, tf };
+  }
+  const sameLook = (a, b) => Math.abs(a.x - b.x) < 0.5 && Math.abs(a.y - b.y) < 0.5 && Math.abs(a.w - b.w) < 0.5 && Math.abs(a.h - b.h) < 0.5 && Math.abs(a.o - b.o) < 0.01 && a.tf === b.tf;
+  // (the frames, against the window at rest: moved by a transform - its box mapped with a translate and a scale; grown in
+  // place - clipped to what showed; otherwise moved; at most 24 frames)
+  function framesOf(seen, rest) {
+    if (seen.length < 2 || !(rest.w > 0) || !(rest.h > 0) || !(rest.o > 0)) return null;
+    const t0 = seen[0].t, dur = seen[seen.length - 1].t - t0; if (!(dur >= 30) || dur > 3000) return null;
+    const step = Math.max(1, Math.ceil(seen.length / 24)), pick = seen.filter((f, i) => i % step === 0 || i === seen.length - 1);
+    const moved = seen.some(f => f.tf !== rest.tf);
+    return pick.map(f => {
+      const g = { f: Math.round((f.t - t0) / dur * 1000) / 1000, t: Math.round(dur), o: Math.round(Math.min(1, f.o / rest.o) * 1000) / 1000, x: Math.round(f.x - rest.x), y: Math.round(f.y - rest.y), m: 't' };
+      if (moved) { g.m = 's'; g.sx = Math.round(f.w / rest.w * 1000) / 1000; g.sy = Math.round(f.h / rest.h * 1000) / 1000; }
+      else if (!moved && (Math.abs(f.w - rest.w) > 1 || Math.abs(f.h - rest.h) > 1)) {
+        const pc = (v, of) => Math.round(Math.min(100, Math.max(0, v / of * 100)) * 10) / 10;
+        g.m = 'c'; g.x = 0; g.y = 0;
+        g.ct = pc(f.y - rest.y, rest.h); g.cl = pc(f.x - rest.x, rest.w); g.cr = pc(rest.x + rest.w - f.x - f.w, rest.w); g.cb = pc(rest.y + rest.h - f.y - f.h, rest.h);
+      }
+      return g;
+    });
+  }
+  const ubWatched = new Map();   // window element -> its label, while open
+  const frame = f => (window.requestAnimationFrame ? requestAnimationFrame(f) : setTimeout(f, 16));
+  const clock = () => (window.performance && performance.now ? performance.now() : Date.now());
+  // (one opening: looked for every frame until it is there, then followed until it stands still)
+  function watchOpen(label) {
+    const t0 = clock(), seen = []; let nw = null, still = 0;
+    const tick = () => {
+      const t = clock(); if (t - t0 > (nw ? 2500 : 1500)) return;
+      if (!nw) nw = nativeWindowOf(label);
+      if (nw) {
+        const f = lookOf(nw.el, t); if (!nw.el.isConnected) return;
+        if (seen.length && sameLook(f, seen[seen.length - 1])) still++; else still = 0;
+        seen.push(f);
+        if (still >= 8) {
+          ubWatched.set(nw.el, label);
+          const rest = seen[seen.length - 1], moving = seen.slice(0, seen.length - still), hb = nw.head.getBoundingClientRect().height;
+          const part = {}, fr = framesOf(moving, rest);
+          if (fr) part.anim = Object.assign({}, ubLook().anim, { in: fr });
+          if (hb >= 18 && hb <= 80 && nw.head.offsetHeight < nw.el.offsetHeight / 2) part.head = Math.round(hb * 10) / 10;
+          if (label === 'Widgets' && rest.w >= 200 && rest.w <= 520) Object.assign(part, { left: Math.round(rest.x), top: Math.round(rest.y), width: Math.round(rest.w), bottom: Math.round(rest.y + rest.h) });
+          saveLook(part);
+          return;
         }
       }
-    }, 450);
+      frame(tick);
+    };
+    frame(tick);
+  }
+  // (one closing: followed from the click until it has gone; nothing learnt if it stayed)
+  function watchClose(el) {
+    const t0 = clock(), seen = [lookOf(el, t0)];
+    const tick = () => {
+      const t = clock(), f = lookOf(el, t), gone = !el.isConnected || f.o < 0.01 || f.w < 1;
+      if (gone) {
+        ubWatched.delete(el);
+        const moving = seen.slice(seen.findIndex((g, i) => i === seen.length - 1 || !sameLook(g, seen[i + 1])));
+        const fr = moving.length > 1 ? framesOf(moving.concat([Object.assign({}, moving[moving.length - 1], { t, o: 0 })]), seen[0]) : null;
+        if (fr) saveLook({ anim: Object.assign({}, ubLook().anim, { out: fr }) });
+        return;
+      }
+      seen.push(f);
+      if (t - t0 > 2500 || (t - t0 > 300 && seen.slice(-12).every(g => sameLook(g, seen[0])))) return;
+      frame(tick);
+    };
+    frame(tick);
+  }
+  // (a click on the bar or in one of FR24's windows, or Escape: the windows open now may be closing, the one asked for opening)
+  function watchNative(label) {
+    for (const [el] of ubWatched) if (el.isConnected) watchClose(el); else ubWatched.delete(el);
+    if (label && label !== 'Playback') {
+      const open = nativeWindowOf(label);
+      if (!open) watchOpen(label); else if (!ubWatched.has(open.el)) watchClose(open.el);
+    }
   }
   // (looked for again only when the page has changed since the last look)
   let ubMiss = 0, ubDirty = true;
@@ -12484,7 +12681,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
         const it = ev.target && ev.target.closest ? ev.target.closest('.tl-ub-btn') : null; if (it) return;
         if (unblockWindowOpen()) closeUnblockWindow();
         const lbl = [...ubItems.entries()].find(([, el]) => el.contains(ev.target));
-        if (lbl && lbl[0] !== 'Playback') learnNativeWindow(lbl[0]);
+        watchNative(lbl ? lbl[0] : '');
       }, true);
     }
     const items = [...found.items.values()], last = items.reduce((a, b) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? b : a));
@@ -12505,7 +12702,8 @@ html.tl-no-strip .tl-strip{display:none!important}`;
       tick();
       // (the newest version looked up a little after FR24 opens and every 6 hours: a dot on the button when one is out)
       setTimeout(() => { checkLatest(false); setInterval(() => checkLatest(false), 6 * 3600000); }, 20000);
-      document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && unblockWindowOpen()) closeUnblockWindow(); });
+      document.addEventListener('keydown', ev => { if (ev.key === 'Escape') { if (unblockWindowOpen()) closeUnblockWindow(); if (ubWatched.size) watchNative(''); } });
+      document.addEventListener('click', ev => { if (ubWatched.size && ev.target && [...ubWatched.keys()].some(el => el.contains(ev.target))) watchNative(''); }, true);
       window.addEventListener('resize', () => { if (unblockWindowOpen()) placeUnblockWindow(); });
     };
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', go, { once: true }); else go();
@@ -12837,7 +13035,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true }); else start();
   }
   }
-  try { (pageWindow()).__tweeksLadd = { version: VERSION, msgCount, schedOf, trailFor, get shownId() { return shownId; }, posStats, get bridgeV() { return bridgeV; }, hexOfId, currentPos, idHex, engine: ENGINE, live, pending, telemetry, store, routeState, planState, globalList, fr24, todayCache, sweep, resolveTargeted, routeFor, composeRoute, altsOf, holdTerminal, termHold, worldScan, refreshLists, quickRouteAll, historyPump, histPumped, learnedStore, regCountry, fr24Sched, pubRouted, pubRecs, privatePlace, loadSites, siteNear, sites, onSched, pubMem: () => pubMem, publishRoute, syncPanel, normalizeReadsb, telemOf, noteCands, csOfRec, warmHist, hostStat, loadT2, wantWx, wxMap, wantNotams, closedMap, estimateEta, nNumberHex, watchList, pollWatch, accStore, accNote, statsHtml, fleetList, checkHealth, health, exportCsv, predictForHex, verifyAgainstList, strikes, revokedIds, fr24Named, noteFr24Named, loadHistory, loadToday, fetchJetphotos, loadRunways, knownLegs, areaCache, pollView, saveSnapshot, boardNoteLegs, boardNoteFlight, boardNoteSched, boardScrub, boardLoad, boardList, naRouteOf, noteNa, naFeed, matchParked, matchByTraces, boardDrain, boardMem, onNeedBoard, operatorOf, shownOwner, enrich, userConfirm, userDestOf, loadApprTable, monGet, monPost, monCheck, monLive, monUp, MON_DEFAULTS, get monBase() { return monBase; }, liveSources, telOut, noteTelOut, reportTel, pbOut, srvIds, pullSrvIds, srvAdopt, reportToMonitor, syncSrvLearn, applyLearned, srvRoute, srvRec, crowdOf, routesOut, routesSent, noteRouteOut, learnFromLeg, learnOutTake, learnOutBack, get learnOutN() { return learnOut.length; }, srvCovers, get srvLearned() { return srvLearned; }, set srvLearned(v) { srvLearned = v; }, addSrvLearned, get feedHdr() { return feedHdr; }, boardMonFill, natRowOf, fnRows, buildSnapshot, bootHold, firAt, loadFir, onAirAsk, pb, onPbFeed, onPbFollow, onPbHex, pbRouteFor, pbMatch, pbFromMonitor, onNeedRoutes, onNeedAirportData, onNeedAirportPanel, liveBoardRows, runwaysOf, parseRunwayEnds, flightsOfCallsign, bootFlightPage, unlockExports, exportFile, rowWindow, hexOfFid, onNeedSearch, osmPick, wantOsmPlace, osmPlaceAt, learnSite, siteIdAt, siteBk, operatorIdOf, airlineIdByName, fr24Cat, onHistElsewhere, get viewBox() { return viewBox; }, get selectedId() { return currentId(); }, opt, setOpt, notify, openUnblockWindow, closeUnblockWindow, ensureBarButton, findBar, checkLatest, installKind }; } catch (_) { /* ignore */ }
+  try { (pageWindow()).__tweeksLadd = { version: VERSION, msgCount, schedOf, trailFor, get shownId() { return shownId; }, posStats, get bridgeV() { return bridgeV; }, hexOfId, currentPos, idHex, engine: ENGINE, live, pending, telemetry, store, routeState, planState, globalList, fr24, todayCache, sweep, resolveTargeted, routeFor, composeRoute, altsOf, holdTerminal, termHold, worldScan, refreshLists, quickRouteAll, historyPump, histPumped, learnedStore, regCountry, fr24Sched, pubRouted, pubRecs, privatePlace, loadSites, siteNear, sites, onSched, pubMem: () => pubMem, publishRoute, syncPanel, normalizeReadsb, telemOf, noteCands, csOfRec, warmHist, hostStat, loadT2, wantWx, wxMap, wantNotams, closedMap, estimateEta, nNumberHex, watchList, pollWatch, accStore, accNote, statsHtml, fleetList, checkHealth, health, exportCsv, predictForHex, verifyAgainstList, strikes, revokedIds, fr24Named, noteFr24Named, loadHistory, loadToday, fetchJetphotos, loadRunways, knownLegs, areaCache, pollView, saveSnapshot, boardNoteLegs, boardNoteFlight, boardNoteSched, boardScrub, boardLoad, boardList, naRouteOf, noteNa, naFeed, matchParked, matchByTraces, boardDrain, boardMem, onNeedBoard, operatorOf, shownOwner, enrich, userConfirm, userDestOf, loadApprTable, monGet, monPost, monCheck, monLive, monUp, MON_DEFAULTS, get monBase() { return monBase; }, liveSources, telOut, noteTelOut, reportTel, pbOut, srvIds, pullSrvIds, srvAdopt, reportToMonitor, syncSrvLearn, applyLearned, srvRoute, srvRec, crowdOf, routesOut, routesSent, noteRouteOut, learnFromLeg, learnOutTake, learnOutBack, get learnOutN() { return learnOut.length; }, srvCovers, get srvLearned() { return srvLearned; }, set srvLearned(v) { srvLearned = v; }, addSrvLearned, get feedHdr() { return feedHdr; }, boardMonFill, natRowOf, fnRows, buildSnapshot, bootHold, firAt, loadFir, onAirAsk, pb, onPbFeed, onPbFollow, onPbHex, pbRouteFor, pbMatch, pbFromMonitor, onNeedRoutes, onNeedAirportData, onNeedAirportPanel, liveBoardRows, runwaysOf, parseRunwayEnds, flightsOfCallsign, bootFlightPage, unlockExports, exportFile, rowWindow, hexOfFid, onNeedSearch, osmPick, wantOsmPlace, osmPlaceAt, learnSite, siteIdAt, siteBk, siteRow, apById, operatorIdOf, airlineIdByName, fr24Cat, onHistElsewhere, get viewBox() { return viewBox; }, get selectedId() { return currentId(); }, opt, setOpt, notify, openUnblockWindow, closeUnblockWindow, ensureBarButton, findBar, checkLatest, installKind }; } catch (_) { /* ignore */ }
   log('loaded v' + VERSION);
 
 })();

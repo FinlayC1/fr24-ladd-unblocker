@@ -282,8 +282,8 @@
     const setO = (a, note, conf) => { if (!a) return; r.originId = a.id; r.originIata = apCode(a); r.originCity = a.city || a.name; r.originNote = note || ''; r.originConf = conf || ''; };
     const setD = (a, conf, reason) => { if (!a) return; r.destId = a.id; r.destIata = apCode(a); r.destCity = a.city || a.name; r.destConf = conf; r.destReason = reason || ''; };
     // a place away from every listed airport (helicopter pads, fields, private strips): shown as its code and name
-    const setOSite = (s, note, conf) => { r.originId = 0; r.originIata = s.code; r.originCity = s.name; r.originSite = s; r.originNote = note || ''; r.originConf = conf || ''; };
-    const setDSite = (s, conf, reason) => { r.destId = 0; r.destIata = s.code; r.destCity = s.name; r.destSite = s; r.destConf = conf; r.destReason = reason || ''; };
+    const setOSite = (s, note, conf) => { r.originId = 0; r.originIata = s.code; r.originCity = ENGINE.placeShort(s.name); r.originSite = s; r.originNote = note || ''; r.originConf = conf || ''; };
+    const setDSite = (s, conf, reason) => { r.destId = 0; r.destIata = s.code; r.destCity = ENGINE.placeShort(s.name); r.destSite = s; r.destConf = conf; r.destReason = reason || ''; };
     // a helicopter took off away from any airport: that private site is where it came from
     const t0p = trail[0], heliFromSite = heli && t0p && (t0p.gnd || heliSlow0) && !ENGINE.heliAirportAt(t0p.lat, t0p.lon) && !(origin && origin.conf === 'plan');
     if (pos.gnd) {

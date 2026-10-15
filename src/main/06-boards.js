@@ -167,8 +167,23 @@
       o.nat = n;
     }
   }
+  // (a row that says the flight went: its status, or what FR24's own row of it says)
+  const rowActual = r => /^(departed|landed)$/.test(r.st || (r.nat && r.nat.status && r.nat.status.name) || '');
+  // (the airline FR24 lists under an id is the airline a row names - "Ryanair" and "Ryanair UK" are, "Ryanair" and
+  // "Cranwell FTU" are not; no name, a private owner or military, or no list yet: nothing to contradict it)
+  function alOk(id, name) {
+    const k = nameKey(name); if (!id || !k || /^(privateowner|military)$/.test(k)) return true;
+    const n = nameKey(fr24.airlineName(id)); return !n || n.startsWith(k) || k.startsWith(n);
+  }
+  // (one callsign to the same airport, one of the two not flown yet: within two hours by any of their times)
+  const sameCsFlight = (x, r) => {
+    const ap = (r.nat && r.nat.airportId) || r.ap || 0;
+    if (x.act && rowActual(r)) return Math.abs(x.t - r.t) < 2700;
+    if (!x.ap || !ap || x.ap !== ap) return false;
+    return x.ts.some(a => [r.est, r.sch, r.t].some(b => b > 0 && Math.abs(a - b) < 7200));
+  };
   function boardList(m, pre) {
-    const rows = Object.values(m).sort((a, b) => (BOARD_RANK[b.src] || 0) - (BOARD_RANK[a.src] || 0)), out = [], byFid = new Map(), byWho = new Map(), byRoute = new Map();
+    const rows = Object.values(m).sort((a, b) => (BOARD_RANK[b.src] || 0) - (BOARD_RANK[a.src] || 0) || (b.src === 'fr24') - (a.src === 'fr24')), out = [], byFid = new Map(), byWho = new Map(), byRoute = new Map(), byCs = new Map();
     const airlineOf = cs => { const c = /^([A-Z]{3})\d/.exec(String(cs || '').toUpperCase()); return (c && fr24.byIcao.get(c[1])) || 0; };
     for (let r of rows) {
       if (r.drop) continue;
@@ -176,6 +191,10 @@
       // (the same flight from a lesser source: what the row shown lacks - the other airport, FR24's flight id, the
       // aircraft - taken from it. G-PTRK's own FR24 row "N/A", its rebuilt track landed somewhere)
       let dup = (r.fid && byFid.get(r.fid)) || who.map(w => (byWho.get(w) || []).find(x => Math.abs(x.t - r.t) < 2700)).find(Boolean);
+      // (or the same callsign to the same airport with its time moved: a flight not flown yet is planned again - FR24's own
+      // row of CWL52 to Glasgow at 15:30 (estimated 15:40) and its schedule's at 16:15 (16:25), exactly 45 minutes apart,
+      // were two rows. Two flights already flown are two flights, so those keep the 45 minutes)
+      if (!dup && r.cs) dup = (byCs.get(String(r.cs).toUpperCase()) || []).find(x => sameCsFlight(x, r)) || null;
       // (or FR24's own row of an airline's flight that has no callsign - a number's list read before it flew: U281
       // Belfast -> Liverpool "Scheduled 14:40" beside the easyJet EZY89VK seen landing from Belfast at 14:42. The same
       // airline, from or to the same airport, within 45 minutes: the nearest one)
@@ -186,10 +205,11 @@
       if (dup) {
         const o = out[dup.i];
         if (r.src === 'log' || r.src === 'live') { takeActual(o, r); dup.took = true; }
-        for (const f of ['ap', 'fid', 'reg', 'hex', 'ty', 'dsc', 'alId']) if (!o[f] && r[f]) o[f] = r[f];
+        for (const f of ['ap', 'fid', 'reg', 'hex', 'ty', 'dsc', 'al']) if (!o[f] && r[f]) o[f] = r[f];
+        if (!o.alId && r.alId && alOk(r.alId, r.al)) o.alId = r.alId;
         if (o.nat && !o.nat.airportId && r.ap) o.nat = Object.assign({}, o.nat, { airportId: r.ap });
         // (and the operator - and its logo - FR24's own row of a club aircraft leaves out: G-RVRN, Ravenair)
-        const rid = r.alId || airlineIdByName(r.al);
+        const rid = (alOk(r.alId, r.al) && r.alId) || airlineIdByName(r.al);
         if (o.nat && !o.nat.airlineId && rid) o.nat = Object.assign({}, o.nat, { airlineId: rid, airline: !o.nat.airline || /private owner/i.test(o.nat.airline) ? fr24.airlineName(rid) || r.al || o.nat.airline : o.nat.airline });
         continue;
       }
@@ -212,11 +232,18 @@
         if (id && r.nat) r.nat = Object.assign({}, r.nat, { airlineId: id, airline: r.nat.airline || fr24.airlineName(id) || null });
         else if (id) Object.assign(r, { alId: id, al: r.al || fr24.airlineName(id) });
       }
+      // (an airline id that is not the airline named on the row - Cranwell FTU's flight with Ryanair's logo: the name
+      // stands, and the logo is the one FR24 lists under it, or none. FR24's own board rows are as FR24 gave them)
+      if (r.src !== 'fr24') {
+        if (r.alId && !alOk(r.alId, r.al)) Object.assign(r, { alId: airlineIdByName(r.al) || 0 });
+        if (r.nat && r.nat.airlineId && !alOk(r.nat.airlineId, r.al)) r.nat = Object.assign({}, r.nat, { airlineId: airlineIdByName(r.al) || null, airline: r.al || null });
+      }
       if (r.nat && !r.nat.airportId && r.ap) r.nat = Object.assign({}, r.nat, { airportId: r.ap });
       if (!r.ty && !(r.nat && r.nat.aircraftType) && GLIDER.test(r.dsc || '')) r.ty = 'GLID';
       { const fc = fr24Cat({ type: r.ty || (r.nat && r.nat.aircraftType) || '', mil: !!(r.hex && (store.getHex(r.hex) || {}).mil) }); if (fc != null) r.fc = fc; }
       out.push(r);
-      const ent = { t: r.t, i: out.length - 1 }; if (r.fid) byFid.set(r.fid, ent); for (const w of who) (byWho.get(w) || byWho.set(w, []).get(w)).push(ent);
+      const ent = { t: r.t, i: out.length - 1, ts: [r.est, r.sch, r.t].filter(v => v > 0), act: rowActual(r), ap: (r.nat && r.nat.airportId) || r.ap || 0 }; if (r.fid) byFid.set(r.fid, ent); for (const w of who) (byWho.get(w) || byWho.set(w, []).get(w)).push(ent);
+      if (r.cs) (byCs.get(String(r.cs).toUpperCase()) || byCs.set(String(r.cs).toUpperCase(), []).get(String(r.cs).toUpperCase())).push(ent);
       if (r.src === 'fr24' || r.src === 'sched') { const al = (r.nat && r.nat.airlineId) || r.alId, ap = (r.nat && r.nat.airportId) || r.ap; if (al && ap) (byRoute.get(al + ':' + ap) || byRoute.set(al + ':' + ap, []).get(al + ':' + ap)).push({ t: r.sch || r.t, i: out.length - 1 }); }
     }
     return out;

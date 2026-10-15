@@ -209,7 +209,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       const nLog = route && route.legCount || 0, basis = route && (route.destIata || route.originIata) && !route.landed ? `${isConfirmed(route) ? 'confirmed' : 'worked out'} from its track, ${nLog ? `its own flight log (${nLog} earlier flight${nLog === 1 ? '' : 's'}${route.base ? ', based at ' + route.base : ''})` : 'no earlier flights of its own on record'}${popTxt()} and public ADS-B` : '';
       const routeHtml = route ? routeCells(route, '', basis) : (st && st.working ? gridHtml([cellHtml('Destination' + tagHtml('Predicted', 'pred'), '<span class="tl-spin"></span> <span class="tl-muted">working out the route…</span>', '', true)]) : '');
       // (no data-source credit: the hex, then whether it was just verified and the owner's town)
-      const tail = [rec.verifiedAt && now() - rec.verifiedAt < 120000 ? 'verified' : '', hx.ownerCity ? esc(placeName(hx.ownerCity)) : ''].filter(Boolean).join(' · ');
+      const tail = [rec.verifiedAt && now() - rec.verifiedAt < 120000 ? 'verified' : '', hx.ownerCity ? esc(placeName(ENGINE.placeShort(hx.ownerCity))) : ''].filter(Boolean).join(' · ');
       const idCell = cellHtml('Identified from public ADS-B' + tagHtml(badge, 'ladd'), `${esc(hexU || '?')}${tail ? ` <span class="tl-muted">· ${tail}</span>` : ''}`, '', true);
       html = rowHtml('plane', `${gridHtml([idCell])}${routeHtml ? '<hr class="border border-white">' + routeHtml : ''}${links ? `<div class="tl-links">${links}</div>` : ''}<div class="tl-links">${toolLinks(rec)}</div>${healthHtml()}${bridgeWarnHtml()}`);
     }
