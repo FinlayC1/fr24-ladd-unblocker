@@ -94,6 +94,11 @@ console.log('built', dest, (out.length / 1024).toFixed(0) + ' KB', out.split('\n
 //   dist/fr24-ladd-unblocker-extension.zip   the same, packed
 const header = rd('src/header.js'), meta = k => (header.match(new RegExp('@' + k + '\\s+(.+)')) || [])[1] || '';
 const version = meta('version').trim();
+// (the version typed by hand elsewhere - package.json, the README's badge, the website's byline - must be this one)
+for (const [f, re] of [['package.json', /"version": "([^"]+)"/], ['README.md', /badge\/version-([0-9.]+)-/], ['site/index.html', /Version ([0-9.]+) ·/]]) {
+  const got = (rd(f).match(re) || [])[1];
+  if (got !== version) { console.error(`build: ${f} says version ${got}, src/header.js says ${version} - bring them in line`); process.exit(1); }
+}
 const hosts = [...header.matchAll(/@connect\s+(\S+)/g)].map(m => m[1]).filter(h => /\./.test(h));
 const hostPerm = h => h === 'sslip.io' ? ['https://*.sslip.io/*'] : ['https://' + h + '/*'];
 const manifest = {
