@@ -51,8 +51,6 @@
   }
   // (what to say of a helicopter's take-off from a site: its name when it has one - London Heliport, Southmead Hospital)
   const siteTakeoffNote = sp => sp.known === 'platform' ? 'took off from an offshore platform' : sp.name && !/^Private site/.test(sp.name) ? 'took off from ' + sp.name : 'took off from a private site';
-  // The flight's track so far: adsb.lol's trace of the current leg (it usually starts on the runway), then FR24's
-  // own trail, then whatever the feed has shown us.
   // FR24's trail points as the engine reads them. FR24 leaves out a height it does not have, so the point reads 0 ft: on
   // the ground when slow, on the runway when at a field just after being low over it - but at speed away from every
   // airfield, or just after being heard far above the field it is over, it has no height at all. KSK16 (a Challenger 605,
@@ -71,6 +69,8 @@
       return q;
     });
   }
+  // The flight's track so far: adsb.lol's trace of the current leg (it usually starts on the runway), then FR24's
+  // own trail, then whatever the feed has shown us.
   function trailFor(id, hex, pos) {
     const tr = fr24Trail.get(id), ft = feedTrail.get(id) || [], td = hex ? todayCache.get(hex) : null;
     let out = [], cut = false, gapFrom = null;
@@ -268,7 +268,15 @@
       const g = ENGINE.landingInGap(trail.gapFrom, trail[0], { cls: ENGINE.classify(ac), type: ac.type });
       if (g) { o0 = { airport: g.airport, conf: 'low', note: `took off from ${apCode(g.airport)}, out of ADS-B coverage`, departedAt: Math.round(trail[0].t - g.db / 500 * 3600 - 120) }; }
     }
-    const origin = rememberOrigin(rec0, o0, trail[0], !!trail.cut);
+    // (a take-off it cannot have made: from there at that time it could not be where it is now, at any speed it has
+    // flown. G-IOOS, a helicopter at 137 kt over Swansea Bay at 08:33Z, was "took off from MAN, 08:09Z" - 230 km in 24
+    // minutes - while FR24 had been showing it on its way from the Welsh border since before 08:00. Not kept, not shown.)
+    const vMax = Math.max(100, fin(pos.gs) ? pos.gs : 0, ...trail.map(p => fin(p.gs) && p.gs < 700 ? p.gs : 0)) * 1.852 * 1.5;
+    const couldHave = o => !o || !o.airport || !(o.departedAt > 0) || pos.t <= o.departedAt || ENGINE.dist(o.airport.lat, o.airport.lon, pos.lat, pos.lon) <= 30 + vMax * (pos.t - o.departedAt) / 3600;
+    if (rec0 && rec0.origin && rec0.origin.id && !couldHave({ airport: apById(rec0.origin.id), departedAt: rec0.origin.departedAt })) rec0.origin = null;
+    const f0 = trail[0] || pos, unseen = { airport: null, conf: '', note: fin(f0.alt) ? `first seen at ${f0.alt >= 18000 ? 'FL' + Math.round(f0.alt / 100) : Math.round(f0.alt) + ' ft'}` : 'first seen airborne', departedAt: 0 };
+    let origin = rememberOrigin(rec0, couldHave(o0) ? o0 : unseen, trail[0], !!trail.cut);
+    if (!couldHave(origin)) origin = unseen;
     const maxAltSeen = Math.max(st.maxAlt || 0, ...trail.map(p => p.alt || 0));
     const r = { computedAt: now(), quick: !!(opts && opts.quick), onGround: !!pos.gnd, landed: false, originId: 0, destId: 0, destConf: '', destReason: '', originNote: '', originConf: '', alternatives: [], phase: '', std: 0, sta: 0, atd: 0, ata: 0, eta: 0, etd: 0, departedAt: 0, groundAirportId: 0, progress: null, legCount: hs.n, base: hs.base ? apCode(apById(hs.base)) : '' };
     const setO = (a, note, conf) => { if (!a) return; r.originId = a.id; r.originIata = apCode(a); r.originCity = a.city || a.name; r.originNote = note || ''; r.originConf = conf || ''; };
