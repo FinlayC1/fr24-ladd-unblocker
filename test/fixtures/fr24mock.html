@@ -1,0 +1,98 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Flightradar24 mock</title>
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;font-family:Arial,Helvetica,sans-serif;font-size:14px}
+.map{position:fixed;inset:0;background:#123 linear-gradient(135deg,#1d3b5a,#0e2236)}
+.left{position:absolute;left:8px;top:8px;width:336px;bottom:72px;pointer-events:none}
+.left>*{pointer-events:auto}
+.win{position:absolute;left:0;top:0;width:336px;max-height:100%;display:flex;flex-direction:column;background:#f4f4f4;color:#393939;border-radius:8px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,.4)}
+.win-head{flex:none;height:40px;position:relative;display:flex;align-items:center;justify-content:center;background:#393939;color:#fff;font-size:16px;font-weight:700}
+.win-x{position:absolute;right:8px;top:8px;width:24px;height:24px;border:0;background:none;color:#fff;cursor:pointer;font-size:18px}
+.win-body{flex:1 1 auto;min-height:0;overflow-y:auto;padding:0}
+.row{display:flex;justify-content:space-between;align-items:center;padding:12px 8px 6px;font-weight:700;text-transform:uppercase}
+.info{margin:0;padding:0 8px 10px;font-size:12px}
+.wrow{padding:10px 8px;border-top:1px solid #fff}
+.wt{font-weight:700;text-transform:uppercase}
+.pic{position:relative;width:110px;height:72px;background:#8a8a8a;margin-top:4px;cursor:pointer}
+.pic .lbl{position:absolute;left:0;right:0;bottom:0;text-align:center;font-weight:700;background:#f8c023;color:#fff}
+.pic .lbl.off{background:rgba(0,0,0,.5)}
+.col{position:absolute;left:0;top:0;width:336px;display:flex;flex-direction:column;gap:8px}
+.card{background:#2b2b2b;color:#eee;border-radius:8px;padding:8px;height:150px}
+.card h3{margin:0 0 6px;font-size:14px}
+.bar{position:absolute;left:50%;transform:translateX(-50%);bottom:8px;height:56px;display:flex;gap:4px;background:#1b1b1b;border-radius:10px;padding:4px 8px}
+.bar-btn{display:flex;flex-direction:column;align-items:center;justify-content:center;width:72px;border:0;background:none;color:#fff;cursor:pointer;font-size:12px;border-radius:6px}
+.bar-btn.is-on{color:#f8c023;background:#333}
+.bar-btn .ind{position:absolute;bottom:0;left:20%;right:20%;height:3px;background:#f8c023}
+.bar-btn{position:relative}
+.ac{position:absolute;left:0;top:0;width:336px;height:400px;background:#222;color:#fff;border-radius:8px;padding:10px}
+.win-enter-active,.win-leave-active{transition:opacity .3s ease,transform .3s ease}
+.win-enter-from,.win-leave-to{opacity:0;transform:translateY(30px)}
+.col-enter-active,.col-leave-active{transition:opacity .3s}
+.col-enter-from,.col-leave-to{opacity:0}
+#openFlight{position:absolute;right:20px;top:20px}
+#openAirport{position:absolute;right:20px;top:50px}
+.ap{position:absolute;left:0;top:0;width:336px;bottom:0;background:#fff;color:#393939;border-radius:8px;overflow:auto}
+.aph{background:#222;color:#f8c023;padding:8px}
+.apscroll{padding:8px}
+.wxc{border:1px solid #ddd;border-radius:6px;padding:6px;margin-bottom:8px}
+.dd{border:1px solid #ddd;border-radius:6px;padding:4px;margin-bottom:8px;background:#f6f6f6}
+.dd>button,.dd section>button{display:flex;align-items:center;justify-content:space-between;width:100%;border:0;background:none;font-weight:700;text-transform:uppercase;padding:6px}
+</style>
+<script src="/__vue.js"></script>
+</head><body><div id="app"></div>
+<script>
+const Q = new URLSearchParams(location.search), MODE = Q.get('mode') || 'keyed', IND = Q.get('ind') === '1', LI = Q.get('li') === '1', ODD = Q.get('odd') === '1', ASYNC = Q.get('async') === '1';
+const { createApp, reactive, defineAsyncComponent } = Vue;
+const saved = (() => { try { return JSON.parse(localStorage.getItem('mock.widgets') || 'null'); } catch (e) { return null; } })();
+const S = reactive({ open: null, flight: false, enabled: true, airport: false, events: ['Runway 09/27 works'],
+  widgets: saved || [
+    { k: 'mt', title: 'Most tracked flights', desc: 'See the top 10 flights other users are following right now.', on: true },
+    { k: 'ad', title: 'Airport disruptions', desc: 'See the top 10 airports with the most cancellations.', on: true },
+    { k: 'bm', title: 'Bookmarks', desc: 'Add your favorite aircraft, flights, airports and locations in one place.', on: true },
+    { k: 'st', title: 'Statistics', desc: 'The number of aircraft currently tracked by each data source', on: false },
+    { k: 'lc', title: 'Last-clicked flights', desc: 'See the last 10 flights you have interacted with.', on: false },
+    { k: 'lb', title: 'Latest blog posts', desc: 'Links to our latest blog posts.', on: false } ] });
+window.__S = S;
+const save = () => localStorage.setItem('mock.widgets', JSON.stringify(S.widgets));
+const BARS = ['Settings', 'Weather', 'Filters', 'Widgets', 'Playback'];
+const Win = { props: ['title'], emits: ['close'], template: `<div class="win" :data-win="title"><div class="win-head"><span class="win-title">{{ title }}</span><button class="win-x" @click="$emit('close')">×</button></div><div class="win-body"><slot/></div></div>` };
+const WidgetsList = { setup() { return { S, toggle(w) { w.on = !w.on; save(); } }; }, template: `<div><div class="row"><span>Enable widgets</span><button class="tg" @click="S.enabled=!S.enabled">{{ S.enabled ? 'yes' : 'no' }}</button></div><p class="info">Drag and drop the widget panels to choose the order in which they appear on the map</p><div v-for="w in S.widgets" :key="w.k" class="wrow"><div class="wt">{{ w.title }}</div><div class="pic" @click="toggle(w)"><span class="lbl" :class="{off: !w.on}">{{ w.on ? 'On' : 'Off' }}</span></div><p>{{ w.desc }}</p></div></div>` };
+const WidgetsLazy = defineAsyncComponent(() => new Promise(r => setTimeout(() => r(WidgetsList), 400)));
+const Other = { props: ['name'], template: `<div style="padding:8px"><p v-for="i in 12" :key="i">{{ name }} option {{ i }}</p></div>` };
+const WinLazy = defineAsyncComponent(() => new Promise(r => setTimeout(() => r({ components: { Win, WidgetsList }, emits: ['close'], template: `<Win title="Widgets" @close="$emit('close')"><WidgetsList/></Win>` }), 400)));
+const tpl = {
+  keyed: BARS.slice(0, 4).map(b => `<Transition name="win"><Win v-if="S.open==='${b}'" title="${ODD && b === 'Widgets' ? 'Map widgets' : b}" @close="S.open=null">${b === 'Widgets' ? '<WidgetsList/>' : `<Other name="${b}"/>`}</Win></Transition>`).join(''),
+  async: BARS.slice(0, 4).map(b => b === 'Widgets' ? `<Transition name="win"><WinLazy v-if="S.open==='Widgets'" @close="S.open=null"/></Transition>` : `<Transition name="win"><Win v-if="S.open==='${b}'" title="${b}" @close="S.open=null"><Other name="${b}"/></Win></Transition>`).join(''),
+  shared: `<Transition name="win"><Win v-if="S.open && S.open!=='Playback'" :title="S.open" @close="S.open=null"><WidgetsList v-if="S.open==='Widgets'"/><Other v-else :name="S.open"/></Win></Transition>`,
+  show: BARS.slice(0, 4).map(b => `<Transition name="win"><Win v-show="S.open==='${b}'" title="${b}" @close="S.open=null">${b === 'Widgets' ? '<WidgetsList/>' : `<Other name="${b}"/>`}</Win></Transition>`).join('')
+}[MODE];
+createApp({
+  components: { Win, WidgetsList, Other, WinLazy },
+  setup() {
+    return { S, BARS, IND, LI,
+      toggle(b) { if (b === 'Playback') return; S.flight = false; S.open = S.open === b ? null : b; },
+      openFlight() { S.open = null; S.flight = true; } };
+  },
+  template: `<div class="map">
+    <div class="left">
+      ${tpl}
+      <Transition name="col"><div v-if="!S.open && !S.flight && S.enabled" class="col"><template v-for="w in S.widgets" :key="w.k"><div v-if="w.on" class="card" :data-card="w.k"><h3>{{ w.title }}</h3><p>...</p></div></template></div></Transition>
+      <Transition name="win"><div v-if="S.flight" class="ac" data-testid="aircraft-panel">Flight UAL941 <button @click="S.flight=false">x</button></div></Transition>
+      <div v-if="S.airport" data-testid="airport-panel" class="ap"><div class="aph"><h2>Liverpool John Lennon Airport</h2><p>LPL / EGGP</p></div>
+        <div class="apscroll"><div class="wxc"><p>Overcast · 13 °C</p><button>More weather &amp; METAR</button></div>
+          <div class="dds">
+            <div class="dd"><button><span>Disruptions</span><svg width="16" height="16" viewBox="0 0 16 16"><path d="M2 5l6 6 6-6" stroke="#393939" fill="none"/></svg></button></div>
+            <div class="dd evbox"><section><button><span>Latest events</span><svg width="16" height="16" viewBox="0 0 16 16"><path d="M2 5l6 6 6-6" stroke="#393939" fill="none"/></svg></button><div class="list"><p v-for="e in S.events" :key="e">{{ e }}</p></div></section><svg class="spacer" width="16" height="2"></svg></div>
+            <div class="dd"><button><span>Airport statistics</span><svg width="16" height="16" viewBox="0 0 16 16"><path d="M2 5l6 6 6-6" stroke="#393939" fill="none"/></svg></button></div>
+            <div class="dd"><button><span>Airport &amp; runway details</span><svg width="16" height="16" viewBox="0 0 16 16"><path d="M2 5l6 6 6-6" stroke="#393939" fill="none"/></svg></button></div>
+          </div></div></div>
+    </div>
+    <nav v-if="!LI" class="bar"><button v-for="b in BARS" :key="b" type="button" :class="['bar-btn', S.open===b ? 'is-on' : '']" :data-testid="'map-bar__' + b.toLowerCase()" @click="toggle(b)">
+      <svg width="24" height="24" viewBox="0 0 24 24" :fill="IND && S.open===b ? 'currentColor' : 'none'" stroke="currentColor"><circle cx="12" cy="12" r="8"/></svg><span class="bar-label">{{ b }}</span><div v-if="IND && S.open===b" class="ind"></div></button></nav>
+    <nav v-else class="bar"><div v-for="b in BARS" :key="b" class="item" :data-testid="'map-bar__' + b.toLowerCase()"><button type="button" :class="['bar-btn', S.open===b ? 'is-on' : '']" style="height:100%" @click="toggle(b)"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="8"/></svg><span class="bar-label">{{ b }}</span></button></div></nav>
+    <button id="openFlight" @click="openFlight">flight</button>
+    <button id="openAirport" @click="S.airport = !S.airport; S.open = null">airport</button>
+  </div>`
+}).mount('#app');
+</script></body></html>

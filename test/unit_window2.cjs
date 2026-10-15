@@ -49,14 +49,13 @@ function makeWin({ latest, seen, store }) {
   return { win, doc: win.document, reqs };
 }
 const click = (win, el) => el.dispatchEvent(new win.MouseEvent('click', { bubbles: true, cancelable: true }));
-const act = (w, a) => w.querySelector(`[data-ub-act="${a}"]`);
 
 (async () => {
   // ---- a first install, up to date: no dot, no note
   {
     const { win, doc } = makeWin({ latest: VERSION });
     const btn = await until(() => doc.querySelector('.tl-ub-btn'), 4000);
-    click(win, btn); const w = doc.querySelector('.tl-ub');
+    click(win, btn); const w = await until(() => doc.querySelector('.tl-ub'), 4000);
     await until(() => /up to date/.test(w.querySelector('#tl-ub-upd').textContent), 3000);
     check('first install, up to date: no dot on the button, no "what\'s new", no out-of-date line', !btn.querySelector('.tl-ub-dot') && !w.querySelector('.tl-ub-new') && !w.querySelector('.tl-ub-alert'));
     check('... the version is noted as seen (a first install is not an update)', win.localStorage.getItem('tweeks.fr24.ladd.seenver') === VERSION);
@@ -67,7 +66,7 @@ const act = (w, a) => w.querySelector(`[data-ub-act="${a}"]`);
     const { win, doc, reqs } = makeWin({ latest: '99.1.0', seen: '22.20.0' });
     const btn = await until(() => doc.querySelector('.tl-ub-btn'), 4000);
     check('after an update: a blue dot on the button before the window is opened', (await until(() => btn.querySelector('.tl-ub-dot'), 2000)) && btn.querySelector('.tl-ub-dot').dataset.k === 'new');
-    click(win, btn); const w = doc.querySelector('.tl-ub');
+    click(win, btn); const w = await until(() => doc.querySelector('.tl-ub'), 4000);
     const note = w.querySelector('.tl-ub-new');
     check('... the window opens with "Updated to v' + VERSION + '" and this version\'s headlines (at most 3), a link to all of them', !!note && note.textContent.includes('Updated to v' + VERSION) && note.querySelectorAll('li').length >= 1 && note.querySelectorAll('li').length <= 3 && !!note.querySelector('a[href*="CHANGELOG"]'), note && note.textContent.replace(/\s+/g, ' ').slice(0, 300));
     await until(() => w.querySelector('.tl-ub-alert'), 3000);
@@ -92,7 +91,7 @@ const act = (w, a) => w.querySelector(`[data-ub-act="${a}"]`);
     click(win, doc.querySelector('[data-tl-act="monSave"]'));
     await sleep(400);
     // (reopened: asked again at once)
-    click(win, act(doc.querySelector('.tl-ub'), 'close')); click(win, btn);
+    click(win, doc.querySelector('.tl-ub .tl-ub-x')); await sleep(300); check('(closed by its close button)', !doc.querySelector('.tl-ub')); click(win, btn);
     const upd = await until(() => doc.querySelector('#tl-ub-mon [data-ub-act="monUpdate"]'), 6000);
     const mt2 = doc.querySelector('#tl-ub-mon').textContent.replace(/\s+/g, ' ');
     check('with the secret: Update, Restart and Log buttons; the update button names the newer version', !!upd && /Update to v99\.1\.0/.test(upd.textContent) && !!doc.querySelector('#tl-ub-mon [data-ub-act="monRestart"]') && !!doc.querySelector('#tl-ub-mon [data-ub-act="monLog"]'), mt2.slice(-300));

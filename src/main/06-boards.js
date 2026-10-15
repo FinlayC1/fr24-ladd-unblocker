@@ -154,7 +154,7 @@
   // (what a flight seen flying adds to FR24's own row of it: the aircraft that flew it - its type over the one planned,
   // "A320" for the A319 G-EZBX that flew U281 - and, for a row still "Scheduled" or "Estimated", that it went: when)
   function takeActual(o, r) {
-    for (const f of ['reg', 'hex', 'dsc', 'cs']) if (!o[f] && r[f]) o[f] = r[f];
+    for (const f of ['reg', 'hex', 'dsc', 'cs', 't2']) if (!o[f] && r[f]) o[f] = r[f];
     const ty = /^[A-Z][A-Z0-9]{2,3}$/.test(r.ty || '') && (r.src === 'log' || r.src === 'live') ? r.ty : '';
     if (ty) o.ty = ty;
     const went = /^(landed|departed)$/.test(r.st || '') && /^(scheduled|estimated|delayed|)$/.test(o.st || '') ? r.st : '';
@@ -205,7 +205,7 @@
       if (dup) {
         const o = out[dup.i];
         if (r.src === 'log' || r.src === 'live') { takeActual(o, r); dup.took = true; }
-        for (const f of ['ap', 'fid', 'reg', 'hex', 'ty', 'dsc', 'al']) if (!o[f] && r[f]) o[f] = r[f];
+        for (const f of ['ap', 'fid', 'reg', 'hex', 'ty', 'dsc', 'al', 't2']) if (!o[f] && r[f]) o[f] = r[f];
         if (!o.alId && r.alId && alOk(r.alId, r.al)) o.alId = r.alId;
         if (o.nat && !o.nat.airportId && r.ap) o.nat = Object.assign({}, o.nat, { airportId: r.ap });
         // (and the operator - and its logo - FR24's own row of a club aircraft leaves out: G-RVRN, Ravenair)
@@ -251,7 +251,8 @@
   const boardTags = new Map();     // callsign / registration of a remembered row -> its aircraft's flags (the board tags)
   function boardSend(apId, b) {
     const pre = boardPrefixes(Object.values(b.arr).concat(Object.values(b.dep))), arr = boardList(b.arr, pre), dep = boardList(b.dep, pre);
-    for (const r of arr.concat(dep)) { const hx = r.hex && store.getHex(r.hex); if (!hx || !(hx.ladd || hx.fr24Blocked || hx.pia || hx.mil)) continue; const t = { hex: r.hex, ladd: !!(hx.ladd || hx.fr24Blocked), pia: !!hx.pia, mil: !!hx.mil }; for (const k of [r.cs, r.reg]) if (k) boardTags.set(String(k).toUpperCase(), t); }
+    // (and a blocked aircraft's rows say so to the page: their Playback is the ADS-B track's - FR24 has none)
+    for (const r of arr.concat(dep)) { const hx = r.hex && store.getHex(r.hex); if (!hx || !(hx.ladd || hx.fr24Blocked || hx.pia || hx.mil)) continue; const t = { hex: r.hex, ladd: !!(hx.ladd || hx.fr24Blocked), pia: !!hx.pia, mil: !!hx.mil }; if (t.ladd) r.blk = 1; for (const k of [r.cs, r.reg]) if (k) boardTags.set(String(k).toUpperCase(), t); }
     if (boardTags.size > 5000) for (const k of [...boardTags.keys()].slice(0, 1000)) boardTags.delete(k);
     postToPage('boardArch', { apId, arr, dep });
     if (now() - (boardAsked.get(apId) || 0) < 20 * 60000) { boardNaFill(arr); boardNaFill(dep); }
@@ -325,8 +326,8 @@
     // (down away from FR24's airports - a strip, a private site: the landing place learned there)
     const ds = route.landed && !boardOk(to) ? (to && apById(to)) || route.destSite : null;
     const site = ds && fin(ds.lat) ? learnSite(ds.lat, ds.lon, { heli: ENGINE.classify({ type: who.ty }) === 'heli' }) : 0;
-    if (boardOk(from) && dep > 0 && route.originConf !== 'history') boardPut(from, 'departures', Object.assign({ k: 'f' + fid, src: 'live', drop: false, fid, cs, t: dep, sch: route.std || dep, est: dep, st: 'departed', col: 'green', ap: boardOk(to) && (route.landed || ['filed', 'confirmed', 'landed'].includes(route.destConf)) ? to : site, gc: route.landed ? 1 : 0 }, who));
-    if (boardOk(to) && route.landed && route.ata > 0) boardPut(to, 'arrivals', Object.assign({ k: 'f' + fid, src: 'live', drop: false, fid, cs, t: route.ata, sch: route.sta || route.ata, est: route.ata, st: 'landed', col: 'green', ap: boardOk(from) ? from : 0, gc: 1 }, who));
+    if (boardOk(from) && dep > 0 && route.originConf !== 'history') boardPut(from, 'departures', Object.assign({ k: 'f' + fid, src: 'live', drop: false, fid, cs, t: dep, sch: route.std || dep, est: dep, st: 'departed', col: 'green', ap: boardOk(to) && (route.landed || ['filed', 'confirmed', 'landed'].includes(route.destConf)) ? to : site, gc: route.landed ? 1 : 0, t2: route.landed && route.ata > dep ? route.ata : 0 }, who));
+    if (boardOk(to) && route.landed && route.ata > 0) boardPut(to, 'arrivals', Object.assign({ k: 'f' + fid, src: 'live', drop: false, fid, cs, t: route.ata, sch: route.sta || route.ata, est: route.ata, st: 'landed', col: 'green', ap: boardOk(from) ? from : 0, gc: 1, t2: dep > 0 && dep < route.ata ? dep : 0 }, who));
   }
   // How a leg's end was seen, for fakeRow: 'ground' (on the ground there), 'low' (heard there below 3,000 ft, within
   // 15 km - not a landing guessed inside a hole in coverage, which is also 'low'), else how it was guessed
@@ -374,10 +375,10 @@
       const nearOk = (e, la, lo2) => !e || e.conf !== 'near' || (a => !!a && fin(la) && ENGINE.dist(la, lo2, a.lat, a.lon) <= 30)(apById(e.id));
       const fromOk = local || l.startedOnGround || (!!l.from && l.from.conf !== 'history' && nearOk(l.from, l.startLat, l.startLon));
       const toOk = (landed || !!toSite) && nearOk(l.to, l.endLat, l.endLon);
-      if (boardOk(from) && fromOk) boardPut(from, 'departures', Object.assign({ k, src: 'log', drop: false, cs: l.cs || '', t: off, sch: off, est: off, st: 'departed', col: 'green', ap: toOk ? (boardOk(to) ? to : toSite) : 0, gc: toOk && landed && l.to.conf === 'ground' ? 1 : 0, oc: endSeen(local ? { id: to, conf: 'low' } : l.from, l.startedOnGround, l.startLat, l.startLon, l.startAlt), dc: endSeen(l.to, false, l.endLat, l.endLon, l.endAlt) }, who));
+      if (boardOk(from) && fromOk) boardPut(from, 'departures', Object.assign({ k, src: 'log', drop: false, cs: l.cs || '', t: off, sch: off, est: off, st: 'departed', col: 'green', ap: toOk ? (boardOk(to) ? to : toSite) : 0, gc: toOk && landed && l.to.conf === 'ground' ? 1 : 0, t2: on > off ? on : l.tEnd > off ? l.tEnd : 0, oc: endSeen(local ? { id: to, conf: 'low' } : l.from, l.startedOnGround, l.startLat, l.startLon, l.startAlt), dc: endSeen(l.to, false, l.endLat, l.endLon, l.endAlt) }, who));
       // (a row an older build kept from such a guess goes: HZ-AR27's on Liverpool's board)
       else if (boardOk(from) && l.from && l.from.conf === 'near') boardPut(from, 'departures', { k, src: 'log', t: off, drop: true });
-      if (boardOk(to) && toOk && on) boardPut(to, 'arrivals', Object.assign({ k, src: 'log', drop: false, cs: l.cs || '', t: on, sch: on, est: on, st: 'landed', col: 'green', ap: fromOk ? (boardOk(from) ? from : fromSite) : 0, gc: l.to.conf === 'ground' ? 1 : 0, oc: endSeen(local ? { id: to, conf: 'low' } : l.from, l.startedOnGround, l.startLat, l.startLon, l.startAlt), dc: endSeen(l.to, false, l.endLat, l.endLon, l.endAlt) }, who));
+      if (boardOk(to) && toOk && on) boardPut(to, 'arrivals', Object.assign({ k, src: 'log', drop: false, cs: l.cs || '', t: on, sch: on, est: on, st: 'landed', col: 'green', ap: fromOk ? (boardOk(from) ? from : fromSite) : 0, gc: l.to.conf === 'ground' ? 1 : 0, t2: off < on ? off : 0, oc: endSeen(local ? { id: to, conf: 'low' } : l.from, l.startedOnGround, l.startLat, l.startLon, l.startAlt), dc: endSeen(l.to, false, l.endLat, l.endLon, l.endAlt) }, who));
       else if (boardOk(to) && landed && on && l.to.conf === 'near') boardPut(to, 'arrivals', { k, src: 'log', t: on, drop: true });
     }
   }

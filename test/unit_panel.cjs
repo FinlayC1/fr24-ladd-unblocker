@@ -151,6 +151,23 @@ const PANEL = `<div data-testid="airport-panel"><div class="head"><h2>Caernarfon
     await Promise.resolve(); await Promise.resolve();
     check('... and on a board\'s own page', !shown('li.pad') && shown('li.p1') && shown('li.p2') && shown('ul.rows'));
   }
+  // ---- FR24's dropdowns (Liverpool, 15 Oct): Disruptions, then the events in a bordered box of their own (an empty box
+  // beside them in it), then the statistics, the details, Travelers. The events' box goes with them - no thin empty bar left
+  // between Disruptions and Airport statistics - and so does any other box in that list with nothing in it to see; one FR24
+  // fills comes back
+  doc.querySelectorAll('[data-testid="airport-panel"]').forEach(e => e.remove());
+  w.history.pushState({}, '', '/airport/lpl');
+  const DD = t => `<div class="dd rounded border"><button class="flex"><svg></svg><span>${t}</span><svg class="chev"></svg></button></div>`;
+  doc.body.insertAdjacentHTML('beforeend', `<div data-testid="airport-panel"><div class="head"><h2>Liverpool John Lennon Airport</h2></div>
+    <div class="scroll"><div class="wxc"><p>Conditions</p><p>Overcast</p><button>More weather &amp; METAR</button></div>
+      <div class="dds">${DD('Disruptions')}<div class="evbox rounded border p-1"><section class="ev4"><div class="t"><button><span>Latest events</span><svg></svg></button></div><div class="list"></div></section><div class="mt-1"><!----></div></div>${DD('Airport statistics')}<div class="blank2 rounded border p-1"><div><span> </span><svg></svg></div></div>${DD('Airport &amp; runway details')}${DD('Travelers')}</div>
+    </div></div>`);
+  await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+  check('the events\' own bordered box between Disruptions and Airport statistics: gone with them, before the browser paints', !shown('.evbox') && !shown('section.ev4'), q('.evbox') && q('.evbox').outerHTML.slice(0, 200));
+  check('... an empty box in the dropdowns\' list (only an empty icon in it): gone too', !shown('.blank2'));
+  check('... every dropdown with words in it stays: Disruptions, statistics, details, Travelers, and the weather', [...doc.querySelectorAll('.dds > .dd')].every(e => w.getComputedStyle(e).display !== 'none') && doc.querySelectorAll('.dds > .dd').length === 4 && shown('.wxc') && shown('.dds'));
+  q('.blank2 span').textContent = 'Runway 09/27 closed'; await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+  check('... the empty box FR24 fills later: back the moment it has words in it', shown('.blank2'));
   console.log(fails ? `\n${fails} failed` : '\nall passed');
   process.exit(fails ? 1 : 0);
 })().catch(e => { console.log('FAIL  crashed ' + (e && e.stack || e)); process.exit(1); });

@@ -2,6 +2,17 @@
 
 All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PATCH`. The userscript and the monitor are released together.
 
+## [22.28.6] - 2026-10-15
+
+### Changed
+- **LADD Unblock now opens in FR24's own window, like every other option on the bar.** Pressing it opens FR24's Widgets window under the name "LADD Unblock", with the script's switches in it: so it is FR24's size, title bar, text and movement at any zoom, whatever window was open drops back with FR24's own animation, and only LADD Unblock is lit on the bar. Opening a flight, an airport or another option closes it the way FR24 closes its own, and pressing Widgets brings Widgets back. If FR24's window is ever not found, a copy of it is used instead.
+- Tests: `unit_native` runs the window in Chromium on a Vue 3 page built like FR24's (`test/fixtures/fr24mock.html`), in seven layouts, frame by frame, in CI.
+
+### Fixed
+- **Playback on a LADD flight opens its airplanes.live track from every airport board and from search.** N600EB's departure from LaGuardia on Tuesday opened the aircraft's FR24 page: only today's rows of a flight still flying were known. Rows kept from earlier days, the flight or the aircraft found in the search, and a middle-click now open the track, from take-off to landing. Other flights keep FR24's playback.
+- **The empty bar between "Disruptions" and "Airport statistics" on airport panels is gone.** It was the box the latest events sat in, still counted as showing something because of an empty box FR24 keeps beside them. Any box in that list with nothing in it to see is hidden before it is drawn, and comes back when FR24 puts something in it.
+- **FR24's Bookmarks widget is switched off in FR24's own Widgets list**, so FR24 no longer puts it on the map at all; anywhere it would still be put in, it is hidden before the page is drawn, never for a moment.
+
 ## [22.28.5] - 2026-10-15
 
 ### Changed
