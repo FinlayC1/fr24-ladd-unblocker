@@ -2,6 +2,15 @@
 
 All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PATCH`. The userscript and the monitor are released together.
 
+## [22.27.3] - 2026-10-15
+
+### Fixed
+- **A flight FR24 has no destination for, in map playback, gets one where FR24's own track ended.** CAPTR33, a Hawk out of Leeming on 15 Oct, was heard only by multilateration and lost out over the Irish Sea, so its public track had no landing and the panel said "QKG → N/A". Where the public track has no end, FR24's own track of the flight (its free playback) is read at the same time, and an end of it down at a field (low and slow, within 7 km of an airport or 2 km of a strip; a landing site for a helicopter or light aircraft) is the destination or origin. It goes into FR24's panel answer, which now waits for the route as well as the track (1.5 s at most). One that comes after FR24 has drawn the panel is written into its own "N/A" boxes, with the city under the code.
+- **Playback panels the page never identified are filled from the panel itself.** When the page's message about a flight's aircraft did not arrive, nothing was filled in: no route, the serial number and squawk padlocked, the age "N/A". The ICAO address on the panel is now used once it is the new flight's (not the one before, still on screen for a moment).
+- **The serial number, age, country and squawk in playback are filled where FR24 shows "N/A" as well as where it shows a padlock.** The squawk comes from the flight's track at the moment shown. Everything written for one flight is taken out again when another is opened.
+- **"Private Site" is shown in the playback header of an aircraft's page.** G-FRGP's row read Liverpool → Private Site, but the header of its playback said "To: -". FR24 builds that panel when Play is pressed and fills it from its own request, after the page's checks had run. The header's "-" ends are now checked as the playback runs, and are read from the row itself when needed.
+- **A LADD aircraft's pictures in playback come in about a second instead of tens of seconds.** They were asked for only after the register lookups had finished, and then at the back of the queue. They are now asked for the moment the flight is opened or named, at the front of the queue, in parallel with the registers. FR24's panel answer waits for them (2.5 s at most), and pictures that come later are put into the slideshow. Blocked aircraft named on the playback map have theirs fetched in the background (40 at most), so the one clicked usually has them already.
+
 ## [22.27.2] - 2026-10-15
 
 ### Changed
