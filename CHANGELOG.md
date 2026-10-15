@@ -2,6 +2,11 @@
 
 All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PATCH`. The userscript and the monitor are released together.
 
+## [22.25.2] - 2026-10-15
+
+### Fixed
+- **A take-off seen by FR24 was lost, and the departure shown as "unknown, first seen at FL368".** KSK16, a Challenger 605 out of Ankara (Etimesgut) for Nairobi, had FR24's own trail from the runway climbing out south-west of Ankara, yet the panel had no departure. FR24 leaves out a height it does not have, so such a point of its trail reads 0 ft. One of them after the climb was taken for the aircraft down low, the hole in coverage after it for a landing, and the take-off before it for an earlier flight, which was cut off. A point of FR24's trail at 0 ft is now read as having no height when the aircraft is moving at speed away from every airfield, or was heard more than 3,000 ft above the field under it within the previous three minutes. A take-off or landing roll at 0 ft on a runway is read as before, at fields high up too (Etimesgut is at 2,600 ft). This is worked out in the browser, so the monitor does not need updating for it.
+
 ## [22.25.1] - 2026-10-15
 
 ### Fixed

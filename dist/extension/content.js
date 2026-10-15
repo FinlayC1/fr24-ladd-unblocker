@@ -44,7 +44,7 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
 // ==UserScript==
 // @name         Flightradar24 LADD / N-A Unblocker (feed-level)
 // @namespace    tweeks.io
-// @version      22.25.1
+// @version      22.25.2
 // @description  Identifies every LADD / N/A / blocked military aircraft on Flightradar24 from public ADS-B, and injects callsign, registration, operator, age, country, MSN, squawk, vertical speed, GPS altitude, airspeeds, wind, photos, a reasoned origin/destination with a wind-corrected ETA (also for ordinary flights FR24 shows as N/A - military, private, GA, helicopters, with private landing sites; learned from 63 days of every aircraft worldwide, with live weather and closures), airport-board entries and a rebuilt 7-month flight log straight into FR24's own data - so it all renders like normal FR24 traffic.
 // @author       Finlay Clarke
 // @match        https://www.flightradar24.com/*
@@ -131,7 +131,7 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "22.25.1";
+    var BRIDGE_V = "22.25.2";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
 
     var resolved = new Map();     // fr24 flight id -> identity record (incl. photos)
@@ -4878,7 +4878,7 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '22.25.1';
+  const VERSION = '22.25.2';
   const NM_KM = 1.852;
   const AREA_RADIUS_NM = 220;           // aggregator "point" radius for viewport sweeps (APIs cap at 250)
   const TARGET_RADIUS_NM = 40;          // radius for the immediate lookup of the selected aircraft
@@ -8213,6 +8213,24 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
   const siteTakeoffNote = sp => sp.known === 'platform' ? 'took off from an offshore platform' : sp.name && !/^Private site/.test(sp.name) ? 'took off from ' + sp.name : 'took off from a private site';
   // The flight's track so far: adsb.lol's trace of the current leg (it usually starts on the runway), then FR24's
   // own trail, then whatever the feed has shown us.
+  // FR24's trail points as the engine reads them. FR24 leaves out a height it does not have, so the point reads 0 ft: on
+  // the ground when slow, on the runway when at a field just after being low over it - but at speed away from every
+  // airfield, or just after being heard far above the field it is over, it has no height at all. KSK16 (a Challenger 605,
+  // 15 Oct) climbed out of Ankara and was lost by FR24 south-west of it; a point of that kind after the climb, at "0 ft",
+  // was taken for a landing in a hole in coverage, the take-off was cut off with it, and the panel said "departure
+  // unknown, first seen at FL368" (test/unit_ksk16.cjs).
+  function fr24Pts(pts, heli, gndKt) {
+    let real = null;
+    return pts.map(p => {
+      const q = { t: p.t, lat: p.lat, lon: p.lon, alt: p.alt, gs: p.gs, trk: p.trk, gnd: p.alt <= 0 && p.gs < (gndKt || (heli ? 3 : 50)) };
+      if (p.alt > 0) real = p;
+      else if (!q.gnd && !heli && fin(p.lat) && fin(p.lon)) {
+        const fa = ENGINE.placeAt(p.lat, p.lon, 8, 3);
+        if (!fa || (real && p.t - real.t < 180 && real.alt - (fa.airport.alt || 0) > 3000)) q.alt = null;
+      }
+      return q;
+    });
+  }
   function trailFor(id, hex, pos) {
     const tr = fr24Trail.get(id), ft = feedTrail.get(id) || [], td = hex ? todayCache.get(hex) : null;
     let out = [], cut = false, gapFrom = null;
@@ -8232,10 +8250,10 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
     }
     const lastT = out.length ? out[out.length - 1].t : 0;
     const firstT = out.length ? out[0].t : Infinity;
-    const hv = isHeliId(id), fr = tr && tr.pts ? tr.pts.map(p => ({ t: p.t, lat: p.lat, lon: p.lon, alt: p.alt, gs: p.gs, trk: p.trk, gnd: p.alt <= 0 && p.gs < (hv ? 3 : 50) })) : [];
+    const hv = isHeliId(id), fr = tr && tr.pts ? fr24Pts(tr.pts, hv) : [];
     if (fr.length && fr[0].t < firstT - 120) out = fr.filter(p => p.t < firstT).concat(out);
     // (FR24's very first point of this flight - where it began - always leads)
-    if (tr && tr.first && fin(tr.first.lat) && (!out.length || tr.first.t < out[0].t - 60)) out.unshift({ t: tr.first.t, lat: tr.first.lat, lon: tr.first.lon, alt: tr.first.alt, gs: tr.first.gs, trk: tr.first.trk, gnd: tr.first.alt <= 0 && tr.first.gs < 50 });
+    if (tr && tr.first && fin(tr.first.lat) && (!out.length || tr.first.t < out[0].t - 60)) out.unshift(fr24Pts([tr.first], hv, 50)[0]);
     out = out.concat(fr.filter(p => p.t > lastT + 10));
     // FR24's own points where adsb.lol has a hole (out of its coverage): a landing and take-off there is then seen
     if (fr.length && out.length > 1) {

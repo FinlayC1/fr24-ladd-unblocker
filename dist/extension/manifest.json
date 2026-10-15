@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "FR24 LADD Unblocker",
-  "version": "22.25.1",
+  "version": "22.25.2",
   "description": "Names blocked (LADD) and N/A aircraft on Flightradar24 from public ADS-B, with routes, predicted destinations and flight history.",
   "author": "Finlay Clarke",
   "icons": {
