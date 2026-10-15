@@ -29,16 +29,13 @@ M.legs.set('400003', new Map([[1, legAt('400003', nowS - 30000, { from: { id: E.
 // (and a blocked jet that landed there yesterday - FR24 shows it nowhere)
 const tday = t => new Date(t * 1000).toLocaleDateString('en-CA', { timeZone: 'Europe/London' });
 const yest = Date.parse(tday(nowS - 86400) + 'T11:00:00Z') / 1000, yLand = yest + 3600;   // (yesterday around noon, the airport's time)
-// (a flight of today, the airport's time: an hour ago - or, in the airport's first hour after midnight, just after it, so
-// it never falls on yesterday)
-const ukOff = Date.parse(new Date(nowS * 1000).toLocaleString('sv-SE', { timeZone: 'Europe/London' }).replace(' ', 'T') + 'Z') / 1000 - nowS;
-const tToday = Math.min(nowS - 1, Math.max(nowS - 3600, Date.parse(tday(nowS) + 'T00:00:00Z') / 1000 - ukOff + 30));
+const tNow = tday(nowS - 3600) === tday(nowS) ? nowS - 3600 : nowS - 30;   // (today's flight: an hour ago, or just now in the airport's first hour of the day)
 M.legs.set('43c0de', new Map([[1, legAt('43c0de', yLand - 1800, { reg: 'G-LADD', type: 'C25A', ladd: true, startedOnGround: true, tOn: yLand, tEnd: yLand + 60, from: { id: E.byIcao('EGNS').id, code: 'IOM', conf: 'ground' }, to: { id: qkc.id, code: 'QKC', conf: 'ground' }, rwyOn: '07' })]]));
 
 // ---- FR24's own answers: its airport list, an airport's runways, its schedule (one page each way)
 const sch = mode => { const k = mode === 'arrivals' ? 'arrival' : 'departure', fl = [];
   for (let i = 0; i < (mode === 'arrivals' ? 5 : 4); i++) fl.push({ flight: { identification: { id: mode[0] + i }, time: { scheduled: { [k]: yest - 3 * 86400 + i }, real: { [k]: yest + i * 60 } } } });
-  fl.push({ flight: { identification: { id: mode[0] + 'x' }, time: { scheduled: { [k]: tToday }, real: { [k]: tToday } } } });
+  fl.push({ flight: { identification: { id: mode[0] + 'x' }, time: { scheduled: { [k]: tNow }, real: { [k]: tNow } } } });
   return fl; };
 const asked = [];
 function answer(url, o) {

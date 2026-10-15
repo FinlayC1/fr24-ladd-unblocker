@@ -34,7 +34,7 @@ Every copy connects to the project's shared monitor by default. You can change t
   - the area your map shows (its centre and radius), for the aircraft there;
   - the aircraft you open, for their live figures;
   - the airport boards you open;
-  - the playback moments you play;
+  - the playback moments you play, with the flight id, position and type of each flight in them that has no name yet (nothing of these is kept);
   - the place your map is looking at, so the monitor can follow it (it keeps that place rounded to a whole degree).
 - **A report every minute:**
   - the flights without a callsign your Flightradar24 page shows (Flightradar24's flight id, position, type);

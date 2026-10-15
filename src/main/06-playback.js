@@ -20,7 +20,9 @@
       if (!pb.named.has(f.id)) { const c = store.getId(f.id); if (c && c.hex) pbAdopt(f.id, Object.assign({}, c), ts); }
     }
     if (pb.flights.size > 3000) for (const k of [...pb.flights.keys()].slice(0, 1000)) pb.flights.delete(k);
-    pbMatchSoon(1500);
+    // (the monitor names the whole moment in one answer: asked as soon as the frame is in; without it, the heatmap's
+    // wait as before)
+    pbMatchSoon(monUp() ? 100 : 1500);
   }
   function pbMatchSoon(ms) { if (!pb.matchT) pb.matchT = setTimeout(() => { pb.matchT = 0; pbMatch().catch(e => log('playback match', e)); }, ms); }
   // a flight named: the page labels it as FR24 would, and its route as flown follows
@@ -31,26 +33,33 @@
   }
   // Every unnamed flight of the moment against adsb.lol's heatmap of its half hour, in one pass. A file is read at most
   // every two minutes (one is ~25 MB) - at once for the flight opened in the panel - and each flight tried once a file.
-  // The monitor's archive first: every FR24 flight it named while it was live, any day it was running - the whole map's
-  // unnamed flights in one request, named at once, as they were named then
+  // The monitor first (22.23, /pbmatch): every FR24 flight it named while it was live, and every other from the tracks it
+  // keeps of the blocked aircraft (90 days) - the whole map's unnamed flights in one request, named at once, each with its
+  // flight as the monitor logged it. An older monitor: the names it gave live only (/names).
   async function pbFromMonitor(ts) {
     if (!monUp()) return 0;
-    const ids = [...pb.flights.values()].filter(f => f.ts === ts && !pb.named.has(f.id) && !pb.monAsked.has(f.id)).map(f => f.id).slice(0, 400);
-    if (!ids.length) return 0;
-    for (const id of ids) pb.monAsked.add(id);
+    const fl = [...pb.flights.values()].filter(f => f.ts === ts && !pb.named.has(f.id) && !pb.monAsked.has(f.id)).slice(0, 1500);
+    if (!fl.length) return 0;
+    for (const f of fl) pb.monAsked.add(f.id);
     if (pb.monAsked.size > 20000) pb.monAsked.clear();
-    const j = await monGet('/names?ids=' + ids.join(',') + '&t=' + Math.round(ts), { timeout: 10000 }).catch(e => { for (const id of ids) pb.monAsked.delete(id); log('playback names', String(e && e.message || e)); return null; });
+    const forget = e => { for (const f of fl) pb.monAsked.delete(f.id); log('playback names', String(e && e.message || e)); return null; };
+    let j = null;
+    if (!pb.monOld) j = await monPost('/pbmatch', { t: Math.round(ts), f: fl.map(f => [f.id, Math.round(f.lat * 1e4) / 1e4, Math.round(f.lon * 1e4) / 1e4, fin(f.alt) ? Math.round(f.alt) : 0, String(f.type || ''), f.gnd ? 1 : 0]) }).catch(e => { if (/HTTP 404/.test(String(e && e.message || e))) { pb.monOld = true; return null; } return forget(e); });
+    if (pb.monOld) j = await monGet('/names?ids=' + fl.slice(0, 400).map(f => f.id).join(',') + '&t=' + Math.round(ts), { timeout: 10000 }).catch(forget);
     let n = 0;
     for (const r of (j && Array.isArray(j.list) ? j.list : [])) {
-      const [id, hex, reg, type, cs, flags] = r;
+      const [id, hex, reg, type, cs, flags, how, leg] = r;
       if (!pb.flights.has(id) || pb.named.has(id) || !/^[0-9a-f]{6}$/.test(String(hex || ''))) continue;
-      const hx = store.getHex(hex) || {}, rec = { hex, cs: /^[A-Z0-9]{2,8}$/.test(String(cs || '')) ? cs : '', reg: reg || hx.reg || hexNNumber(hex), type: String(type || hx.type || '').toUpperCase(), desc: hx.desc || '', ladd: !!(flags & 1 || hx.ladd), mil: !!(flags & 2 || hx.mil), pia: !!(flags & 4 || hx.pia), src: 'monitor (named live)', matchedAt: now() };
+      const hx = store.getHex(hex) || {}, rec = { hex, cs: /^[A-Z0-9]{2,8}$/.test(String(cs || '')) ? cs : '', reg: reg || hx.reg || hexNNumber(hex), type: String(type || hx.type || '').toUpperCase(), desc: hx.desc || '', ladd: !!(flags & 1 || hx.ladd), mil: !!(flags & 2 || hx.mil), pia: !!(flags & 4 || hx.pia), src: how === 'track' ? 'monitor (its track)' : 'monitor (named live)', matchedAt: now() };
       store.mergeHex(hex, { reg: rec.reg, type: rec.type, ladd: rec.ladd || undefined, pia: rec.pia || undefined, mil: rec.mil || undefined });
       store.setId(id, Object.assign({ id }, rec));
+      if (leg && typeof leg === 'object') pbRouteFromLeg(id, hex, leg);
       pbAdopt(id, rec, ts); n++;
+      // (named from its track: kept on the monitor with that day, as a browser's playback name is - checked there)
+      if (how === 'track') { pbOut.set(id, [id, hex, rec.reg, rec.type, rec.cs, (rec.ladd ? 1 : 0) | (rec.mil ? 2 : 0) | (rec.pia ? 4 : 0), Math.round(ts)]); if (pbOut.size > 2000) pbOut.delete(pbOut.keys().next().value); }
       if (id === pb.sel) publicIdentity(hex, rec.reg).then(() => { pushToPage([rec]); syncPanelSoon(); }).catch(() => {});
     }
-    if (n) log('playback: named from the monitor', n);
+    if (n) log('playback: named from the monitor', n, 'of', fl.length);
     return n;
   }
   async function pbMatch() {
@@ -106,15 +115,27 @@
       if (s && !s.ended && s.tEnd > end - 900 && end < nowS() - 60) { pts = ENGINE.mergePoints(pts, await pbPoints(hex, end + 60)).sort((a, b) => a.t - b.t); end = Math.min(nowS(), end + 86400); s = pick(legsOf(pts, end)); }
       if (s && !s.startedOnGround && !s.from && s.tStart < day0 + 900) { pts = ENGINE.mergePoints(await pbPoints(hex, day0 - 60), pts).sort((a, b) => a.t - b.t); s = pick(legsOf(pts, end)); }
       if (!s) return null;
-      const end1 = (e, la, lo, down) => { const a = e ? apById(e.id) : null; const sid = (!a || a.id >= 1e7) && down ? learnSite(a ? a.lat : la, a ? a.lon : lo, { heli }) : 0; const b = sid ? apById(sid) : a; return b ? { id: fr24Ap(b.id) || 0, iata: apCode(b), city: b.city || b.name || '' } : null; };
-      const o = end1(s.from, s.startLat, s.startLon, s.startedOnGround), d = end1(s.to, s.endLat, s.endLon, s.ended);
-      const route = { hex, t0: s.tStart, t1: s.tEnd, originId: o ? o.id : 0, originIata: o ? o.iata : '', originCity: o ? o.city : '', destId: d ? d.id : 0, destIata: d ? d.iata : '', destCity: d ? d.city : '',
-        atd: s.tOff || (s.startedOnGround ? s.tStart : 0), ata: s.ended && d ? (s.tOn || s.tEnd) : 0, std: 0, sta: 0, eta: 0, landed: false, destConf: 'playback', destP: 0, progress: null, groundAirportId: 0, pb: true };
-      pb.routes.set(id, route); if (pb.routes.size > 3000) pb.routes.delete(pb.routes.keys().next().value);
-      postToPage('pbRoute', { id, route });
-      if (id === pb.sel) syncPanelSoon();
-      return route;
+      return pbRouteSet(id, pbRouteOf(hex, s, heli));
     } finally { pb.routing.delete(k); }
+  }
+  // (a flight - its summary, the engine's or the monitor's log's - as the strip and FR24's panel show a flight flown: an end
+  // away from FR24's airports, where it was seen down, is the landing place learned there)
+  function pbRouteOf(hex, s, heli) {
+    const end1 = (e, la, lo, down) => { const a = e ? apById(e.id) : null; const sid = (!a || a.id >= 1e7) && down && fin(a ? a.lat : la) ? learnSite(a ? a.lat : la, a ? a.lon : lo, { heli }) : 0; const b = sid ? apById(sid) : a; return b ? { id: fr24Ap(b.id) || 0, iata: apCode(b), city: b.city || b.name || '' } : null; };
+    const o = end1(s.from, s.startLat, s.startLon, s.startedOnGround), d = end1(s.to, s.endLat, s.endLon, s.ended);
+    return { hex, t0: s.tStart, t1: s.tEnd, originId: o ? o.id : 0, originIata: o ? o.iata : '', originCity: o ? o.city : '', destId: d ? d.id : 0, destIata: d ? d.iata : '', destCity: d ? d.city : '',
+      atd: s.tOff || (s.startedOnGround ? s.tStart : 0), ata: s.ended && d ? (s.tOn || s.tEnd) : 0, std: 0, sta: 0, eta: 0, landed: false, destConf: 'playback', destP: 0, progress: null, groundAirportId: 0, pb: true };
+  }
+  function pbRouteSet(id, route) {
+    pb.routes.set(id, route); if (pb.routes.size > 3000) pb.routes.delete(pb.routes.keys().next().value);
+    postToPage('pbRoute', { id, route });
+    if (id === pb.sel) syncPanelSoon();
+    return route;
+  }
+  // (the flight as the monitor logged it: no day trace to read - with airports loaded; otherwise read as before)
+  function pbRouteFromLeg(id, hex, leg) {
+    if (!airportsReady() || !fin(leg.tStart)) return null;
+    try { return pbRouteSet(id, pbRouteOf(hex, leg, ENGINE.classify(acOfHex(hex)) === 'heli')); } catch (e) { log('playback route', e); return null; }
   }
   // the open flight's track, for its padlocked figures as FR24 plays it: the flight's span, every report
   async function pbSendTrace(id, hex, ts) {

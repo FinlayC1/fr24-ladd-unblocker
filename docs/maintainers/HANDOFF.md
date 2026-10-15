@@ -133,6 +133,19 @@ Its store and state should move to the VM.
   the registers' live answers (their formats as the browser's code already read them), FR24's acceptance of the
   server's scan.
 
+## 4e. 22.23.0 (14 Oct, cloud session) - built and tested offline; deploy after the move to the Ampere VM
+
+- **Tracks.** `monitor/tracks.cjs` (`createTracks`): `put` from `buildLegs` (blocked rows past `x.trkAt`), `histDay`,
+  `backfillOne` and `fr24Leg`; saved every 600 s and on stop, pruned daily. `at(t)` interpolates (gap <= 900 s).
+- **`/pbmatch`.** `pbMatch(t, flights)`: live names first, then tracks within a 1-degree grid, type fit (`typeFits`),
+  one-to-one only. Browser: `pbFromMonitor` in `06-playback.js`, `/names` on 404 (`pb.monOld`).
+- **`/learned`.** `engine.learnCollector()` swaps the tables while `learnRow` runs and emits ops; browser
+  `applyLearned` applies the kept blob first, `replayLearned` skips rows it covers (`srvCovers`). The fetched snapshot
+  is used from the next page load only, because tables are rebuilt on load.
+- **Backfill waits** on `liveBusy()`.
+- A 24 GB Ampere VM: run node with `--max-old-space-size=12288`. Not verified here: memory and build time of
+  `/learned` over 90 real days (estimated 10-25 MB raw).
+
 ## 4d. 22.22.0 (14 Oct, cloud session) - built and tested offline; deploy with deploy.sh
 
 - **Public monitor, default for every copy.**

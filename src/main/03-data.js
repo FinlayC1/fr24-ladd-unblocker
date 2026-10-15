@@ -444,34 +444,38 @@
     return true;
   }
   function learnedStore() { if (!learnLoaded) learnLoad(); return learned; }
-  function replayLearned(x) {
-    const [, fromId, toId, tEnd, sqs, fmss, cls, mil, tStart, cs, type, flow] = x, from = ENGINE.byId(fromId), to = ENGINE.byId(toId); if (!from || !to) return;
-    ENGINE.learnLeg({ from, to, tEnd, tStart: tStart || 0, cs: cs || '', type: type || '', flow: flow ? String(flow).split('|') : [], sqs: sqs ? String(sqs).split(',') : [], fmss: fmss ? String(fmss).split(',') : [], cls, mil: !!mil });
-    const milK = !!mil && cls !== 'heavybiz' && cls !== 'bizjet';   // (a government business jet counts as a business jet)
-    const kind = milK ? 'useMil' : cls === 'piston' || cls === 'heli' ? 'useGA' : 'use', kindC = milK ? '' : cls === 'heavybiz' || cls === 'airliner' ? 'useHB' : cls === 'bizjet' ? 'useLJ' : '';
-    for (const a of [from, to]) if (a.icao) { ENGINE.addUsage(a.icao, 0.25, kind); if (kindC) ENGINE.addUsage(a.icao, 0.25, kindC); }
-  }
+  // (a flight of a blocked aircraft within the days the monitor's learning covers is in it already: not counted twice)
+  let srvLearned = null;   // { ver, from, asOf } of the monitor's learning added to the tables on this page
+  const srvCovers = x => { if (!srvLearned || typeof x[0] !== 'string') return false; const [hex, t] = x[0].split('|'), ts = +t || +x[8] || 0; return /^[0-9a-f]{6}$/.test(hex) && !!(store.getHex(hex) || {}).ladd && ts >= Date.parse(srvLearned.from + 'T00:00:00Z') / 1000 && ts < Date.parse(srvLearned.asOf + 'T00:00:00Z') / 1000 + 86400; };
+  function replayLearned(x) { if (!srvCovers(x)) ENGINE.learnRow(x); }
   // (read, then replayed in idle slices: 100,000 flights at once would hold the page for seconds)
   async function applyLearned() {
     if (learnedApplied || !airportsReady()) return; learnedApplied = true;
+    // (the monitor's learning kept from before: added first, so this browser's own flights it covers are not counted twice)
+    const kept = await store.getBlob('srvLearned').catch(() => null);
+    if (kept && kept.ver && Array.isArray(kept.ops)) await addSrvLearned(kept);
     try { const l = (await learnLoad()).slice(); await sliced(l, replayLearned, { ms: 8 }); if (l.length) log('learned from use', l.length, 'flights'); } catch (e) { log('learned replay', e); }
   }
-  // Every blocked aircraft's completed flights, worldwide, as the monitor rebuilt them each day (/learn): learned here as
-  // this browser's own are - where business aviation goes from where, its squawk blocks, levels and flows - so the
-  // destination engine knows today's habits of every LADD jet, not only those of the aircraft looked at here. The days
-  // not had yet, two weeks back at most, in idle moments; again every three hours.
+  async function addSrvLearned(j) {
+    srvLearned = { ver: j.ver, from: j.from, asOf: j.asOf };
+    let n = 0; await sliced(j.ops, o => { if (ENGINE.addLearnedOp(o)) n++; }, { ms: 8 });
+    log('learned on the monitor', j.flights, 'flights of', j.days, 'days (' + j.from + ' to ' + j.asOf + '),', n, 'increments');
+  }
+  // The monitor's learning: every blocked aircraft's completed flights of the last 90 days, worldwide, learned there into
+  // increments of the tables (GET /learned, a few MB, rebuilt a few times a day) - where business aviation goes from
+  // where, its squawk blocks, levels and flows, today's habits of every LADD jet. Kept here and added as the page opens; a
+  // newer one is fetched in an idle moment and used from the next page load: one already added cannot be taken out
+  // again, and this page's own flights it covers have been counted already.
   let srvLearnBusy = false;
   async function syncSrvLearn() {
     if (srvLearnBusy || !monUp() || !learnedApplied) return;
     srvLearnBusy = true;
     try {
-      const from = String(store.kvGet('srvLearnDay') || '');
-      const j = await monGet('/learn' + (from ? '?from=' + from : ''), { idle: true });
-      if (!j || !Array.isArray(j.rows) || !Array.isArray(j.days)) return;
-      let n = 0;
-      await sliced(j.rows.filter(x => Array.isArray(x) && x.length >= 12), x => { if (learnAppend(x)) { replayLearned(x); n++; } }, { ms: 8 });
-      if (j.days.length) store.kvSet('srvLearnDay', j.days[j.days.length - 1]);
-      if (n) log('learned from the monitor', n, 'flights of', j.days.length, 'days');
+      const have = srvLearned ? srvLearned.ver : String(((await store.getBlob('srvLearned').catch(() => null)) || {}).ver || '');
+      const j = await monGet('/learned?have=' + encodeURIComponent(have), { idle: true, timeout: 120000 });
+      if (!j || j.same || j.none || !j.ver || !Array.isArray(j.ops)) return;
+      await store.setBlob('srvLearned', j);
+      log('learned on the monitor: a copy of', j.flights, 'flights kept for the next page load', j.ver);
     } catch (e) { log('monitor learning', String(e && e.message || e)); }
     finally { srvLearnBusy = false; }
   }

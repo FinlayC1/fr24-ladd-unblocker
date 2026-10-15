@@ -246,7 +246,7 @@ function createRouteEngine() {
     }
     return [fin1, par, icpt, dnw];
   }
-  function addUsage(icao, w, kind) { if (!icao) return; kind = kind || 'use'; const m = usageRaw[kind], k = icao.toUpperCase(); m.set(k, (m.get(k) || 0) + (w || 1)); const a = byIcao.get(k); if (a) a[kind] = m.get(k); }
+  function addUsage(icao, w, kind) { if (!icao) return; kind = kind || 'use'; const m = usageRaw[kind], k = icao.toUpperCase(); m.set(k, (m.get(k) || 0) + (w || 1)); if (collecting) return; const a = byIcao.get(k); if (a) a[kind] = m.get(k); }
   // ---- airfields FR24 does not list: OurAirports small and medium airports and strips ------------------------------
   // Most European light aircraft fly from and to fields FR24's list does not have (Borkenberge, Slany, a farm strip):
   // over three weeks of European GA, 8% of landings were at such a field and more ended out of coverage near one.
@@ -1284,6 +1284,95 @@ function createRouteEngine() {
     }
     return out;
   }
+  // ---- (22.23) learning done on the monitor ---------------------------------------------------------------------------
+  // learnRow: one completed flight in the /learn row format ([hex|take-off, from id, to id, landed, squawk blocks, FMS
+  // levels, class, military, take-off, callsign, type, flow cells]) into the tables - as the browser has always replayed
+  // its own. learnCollector: what a set of such rows adds to the tables, gathered apart from them - the monitor learns its
+  // 90 days into one, never into the tables it scores with - as a list of increments (ops). addLearnedOp: one increment
+  // added to these tables; every browser adds the monitor's list to the tables it was shipped with, once per page load.
+  let collecting = false, T2addPending = [];
+  function learnRow(x) {
+    if (!Array.isArray(x)) return false;
+    const [, fromId, toId, tEnd, sqs, fmss, cls, mil, tStart, cs, type, flow] = x, from = byId.get(fromId), to = byId.get(toId);
+    if (!from || !to) return false;
+    learnLeg({ from, to, tEnd, tStart: tStart || 0, cs: cs || '', type: type || '', flow: flow ? String(flow).split('|') : [], sqs: sqs ? String(sqs).split(',') : [], fmss: fmss ? String(fmss).split(',') : [], cls, mil: !!mil });
+    const milK = !!mil && cls !== 'heavybiz' && cls !== 'bizjet';   // (a government business jet counts as a business jet)
+    const kind = milK ? 'useMil' : cls === 'piston' || cls === 'heli' ? 'useGA' : 'use', kindC = milK ? '' : cls === 'heavybiz' || cls === 'airliner' ? 'useHB' : cls === 'bizjet' ? 'useLJ' : '';
+    for (const a of [from, to]) if (a.icao) { addUsage(a.icao, 0.25, kind); if (kindC) addUsage(a.icao, 0.25, kindC); }
+    return true;
+  }
+  const USE_KINDS = ['use', 'useGA', 'useMil', 'useHB', 'useLJ'];
+  function learnCollector() {
+    const S = { TB: { arrHour: new Array(24).fill(0) }, T2: { flow: {}, flowC: new Map(), aphAll: [0, 1, 2, 3].map(() => [0, 0, 0, 0, 0, 0]) }, OD: new Map(), ODN: new Map(), use: {}, flights: 0 };
+    for (const k of USE_KINDS) S.use[k] = new Map();
+    // (the collector's tables in place of these for one synchronous run - never across an await: the monitor scores
+    // flights with these tables between two runs)
+    function swap() {
+      let t = TB; TB = S.TB; S.TB = t; t = T2; T2 = S.T2; S.T2 = t; t = OD; OD = S.OD; S.OD = t; t = ODN; ODN = S.ODN; S.ODN = t;
+      for (const k of USE_KINDS) { t = usageRaw[k]; usageRaw[k] = S.use[k]; S.use[k] = t; }
+      collecting = !collecting;
+    }
+    function add(rows) { swap(); try { for (const x of rows || []) if (learnRow(x)) S.flights++; } finally { swap(); } return S.flights; }
+    // (the increments, numbers rounded to what they count: whole flights, quarter-weights of airport use)
+    function ops() {
+      const out = [], r = v => Math.round(v * 100) / 100, nz = a => a.some(v => v);
+      const tb = S.TB;
+      for (const tbl of ['sqBase', 'sq', 'fmsBase', 'fms']) for (const [k, v] of Object.entries(tb[tbl] || {})) if (nz(v)) out.push(['tb', tbl, k, v]);
+      if (nz(tb.arrHour)) out.push(['ah', tb.arrHour]);
+      for (const [k, v] of S.OD) if (v) out.push(['od', k, r(v)]);
+      for (const kind of USE_KINDS) for (const [k, v] of S.use[kind]) if (v) out.push(['use', kind, k, r(v)]);
+      const t2 = S.T2;
+      for (const tbl of ['od2', 'odt', 'apd']) for (const [k, v] of Object.entries(t2[tbl] || {})) if (nz(v)) out.push(['t2', tbl, k, v]);
+      for (const [k, v] of Object.entries(t2.seq || {})) if (v) out.push(['seq', k, v]);
+      for (const [ap, gs] of Object.entries(t2.aph || {})) gs.forEach((v, g) => { if (Array.isArray(v) && nz(v)) out.push(['aph', ap, g, v]); });
+      t2.aphAll.forEach((v, g) => { if (nz(v)) out.push(['aphAll', g, v]); });
+      for (const [pg, m] of Object.entries(t2.pgu || {})) for (const [ap, v] of Object.entries(m)) if (v) out.push(['pgu', pg, ap, v]);
+      for (const [cs, l] of Object.entries(t2.csr || {})) out.push(['csr', cs, l]);
+      for (const [k, v] of Object.entries(t2.flow || {})) out.push(['flow', k, v]);
+      return out;
+    }
+    return { add, ops, get flights() { return S.flights; } };
+  }
+  const addArr = (T, k, v) => { if (!Array.isArray(v)) return; const c = T[k] || (T[k] = new Array(v.length).fill(0)); for (let i = 0; i < v.length && i < c.length; i++) c[i] += +v[i] || 0; };
+  function odAddKey(k, w) {
+    const [a, b] = String(k).split('|'); if (!a || !b || !(w > 0)) return;
+    const v = (OD.get(k) || 0) + w; OD.set(k, v);
+    for (const [p, q] of [[a, b], [b, a]]) {
+      const l = ODN.get(p) || ODN.set(p, []).get(p), e = l.find(x => x[0] === q);
+      if (e) e[1] = v; else l.push([q, v]);
+      l.sort((u, x) => x[1] - u[1]);
+    }
+  }
+  function addLearnedOp(o) {
+    if (!Array.isArray(o)) return false;
+    const k = o[0];
+    if (k === 'tb') { if (!TB || !/^(sqBase|sq|fmsBase|fms)$/.test(o[1])) return false; addArr(TB[o[1]] = TB[o[1]] || {}, o[2], o[3]); return true; }
+    if (k === 'ah') { if (!TB || !Array.isArray(TB.arrHour) || TB.arrHour.length !== 24 || !Array.isArray(o[1])) return false; for (let i = 0; i < 24; i++) TB.arrHour[i] += +o[1][i] || 0; return true; }
+    if (k === 'od') { odAddKey(o[1], +o[2]); return true; }
+    if (k === 'use') { if (!USE_KINDS.includes(o[1])) return false; addUsage(String(o[2]), +o[3] || 0, o[1]); return true; }
+    // (the population tables come in after the page opens: their increments wait for them)
+    if (!T2) { T2addPending.push(o); return true; }
+    if (k === 't2') { if (!/^(od2|odt|apd)$/.test(o[1])) return false; addArr(T2[o[1]] = T2[o[1]] || {}, o[2], o[3]); return true; }
+    if (k === 'seq') { const T = T2.seq = T2.seq || {}; T[o[1]] = (T[o[1]] || 0) + (+o[2] || 0); return true; }
+    if (k === 'aph') { const T = T2.aph = T2.aph || {}, v = T[o[1]] || (T[o[1]] = [0, 0, 0, 0]), g = o[2] | 0; if (g < 0 || g > 3 || !Array.isArray(o[3])) return false; if (!v[g]) v[g] = [0, 0, 0, 0, 0, 0]; addArr(v, g, o[3]); return true; }
+    if (k === 'aphAll') { const g = o[1] | 0; if (T2.aphAll && T2.aphAll[g]) addArr(T2.aphAll, g, o[2]); return true; }
+    if (k === 'pgu') { const T = T2.pgu = T2.pgu || {}, m = T[o[1]] || (T[o[1]] = {}); m[o[2]] = (m[o[2]] || 0) + (+o[3] || 0); return true; }
+    if (k === 'csr') {
+      if (!Array.isArray(o[2])) return false;
+      const T = T2.csr = T2.csr || {}, l = T[o[1]] || (T[o[1]] = []);
+      for (let j = 0; j + 2 < o[2].length; j += 3) { const ai = o[2][j], bi = o[2][j + 1], w = +o[2][j + 2] || 0; let hit = false; for (let i = 0; i + 2 < l.length; i += 3) if (l[i] === ai && l[i + 1] === bi) { l[i + 2] += w; hit = true; break; } if (!hit) l.push(ai, bi, w); }
+      return true;
+    }
+    if (k === 'flow') {
+      const d = o[2]; if (!T2.flow || !Array.isArray(d)) return false;
+      let v = T2.flow[o[1]]; if (!v) v = T2.flow[o[1]] = [0, 0];
+      v[0] += +d[0] || 0; v[1] += +d[1] || 0;
+      for (let j = 2; j + 2 < d.length; j += 3) { const bi = d[j]; let hit = false; for (let i = 2; i + 2 < v.length; i += 3) if (v[i] === bi) { v[i + 1] += +d[j + 1] || 0; v[i + 2] += +d[j + 2] || 0; hit = true; break; } if (!hit && v.length < 2 + 3 * 24) v.push(bi, +d[j + 1] || 0, +d[j + 2] || 0); }
+      if (T2.flowC) T2.flowC.clear();
+      return true;
+    }
+    return false;
+  }
   function setTables(t) { TB = t || null; if (t) { setUsage(t.usage || {}, 'use'); setUsage(t.usageGA || {}, 'useGA'); setUsage(t.usageMil || {}, 'useMil'); setUsage(t.usageHB || {}, 'useHB'); setUsage(t.usageLJ || {}, 'useLJ'); OD = new Map(Object.entries(t.od || {})); if (t.odG) for (const [a0, s] of Object.entries(t.odG)) for (const p of String(s).split(',')) { const i = p.indexOf(':'); if (i > 0) OD.set(a0 + '|' + p.slice(0, i), +p.slice(i + 1)); } ODN = new Map(); for (const [k, v] of OD) { const [x, y] = k.split('|'); for (const [p, q] of [[x, y], [y, x]]) (ODN.get(p) || ODN.set(p, []).get(p)).push([q, v]); } for (const l of ODN.values()) l.sort((u, w) => w[1] - u[1]); } }
   const groupOf = cls => cls === 'heli' || cls === 'piston' || cls === 'fighter' ? cls : cls === 'turboprop' ? 'tprop' : 'jet';
   function tq(key, grp, bin) {
@@ -1356,7 +1445,7 @@ function createRouteEngine() {
   // cruise speed, where its descent starts, the shortest runway it uses), and the flow field - where aircraft at a
   // place, heading and height ended up. The userscript adds what it sees itself (learn2).
   let T2 = null;
-  function setTables2(t) { T2 = t || null; if (T2) { T2.flowC = new Map(); const p = T2pending; T2pending = []; for (const o of p) learnLeg2(o); } }
+  function setTables2(t) { T2 = t || null; if (T2) { T2.flowC = new Map(); const p = T2pending; T2pending = []; for (const o of p) learnLeg2(o); const q = T2addPending; T2addPending = []; for (const o of q) addLearnedOp(o); } }
   const G6 = { bizjet: 0, heavybiz: 0, airliner: 1, turboprop: 2, piston: 3, heli: 4, fighter: 5, milheavy: 5, unknown: 1 };
   const grp6 = (cls, mil) => mil && cls !== 'bizjet' && cls !== 'heavybiz' ? 5 : (G6[cls] != null ? G6[cls] : 1);
   const grp4 = g => g === 0 || g === 2 ? 0 : g === 1 ? 1 : g === 3 || g === 4 ? 2 : 3;
@@ -2108,7 +2197,7 @@ function createRouteEngine() {
     return res;
   }
 
-  return { setTables2, get T2() { return T2; }, fieldShortName, setApproach, approachCell, approachPath, apprGroup, apprKey, trackAgree, heatNear, heatMatch, reckon, trackErr, remotePath, flowKeysOf, pgrpOf, grp6, sunElev, airData, gsAlong, minutesTo, flowAt, pathOf, pathDev, ownerKey, parseRunwayLengths, setRunwayLengths, csvLine, SQ_NOINFO, tripBin, regionOf, learnLeg, odAdd: (x, y, w) => { const k = odKey(String(x).toUpperCase(), String(y).toUpperCase()), v = (OD.get(k) || 0) + w; if (v > 1e-9) OD.set(k, v); else OD.delete(k); }, odWeight: (x, y) => OD.get(odKey(String(x).toUpperCase(), String(y).toUpperCase())) || 0, odCount: () => OD.size, setAirports, setUsage, addUsage, setRunways, parseRunwaysCsv, runwayFit, setWeights, setTables, setLogit, calibrated, mergePoints, finalTo, longFinal, typeRangeKm, FEAT, groupOf, W, classify, isStepClimb, rangeKm, parseTrace, legsFromPoints, summarizeLeg, stitchLegs, chainLegs, histStats, inferOrigin, predict, privateSite, rwyImpossible, typeDesc, heliSpots, heliAirportAt, landedSum, localFlew, approachTo, downAndUp, landingInGap, circuits, mergeCircuits, setFields, fieldAt, placeAt, isField, nearbyFields, fieldCount: () => FL.length, airportAt, departureFromClimb, arrivalFromDescent, nearby, dist, brg, xtat, destPoint, angDiff, get airports() { return AP; }, byId: id => byId.get(id), byIcao: c => byIcao.get(String(c || '').toUpperCase()) };
+  return { setTables2, get T2() { return T2; }, fieldShortName, setApproach, approachCell, approachPath, apprGroup, apprKey, trackAgree, heatNear, heatMatch, reckon, trackErr, remotePath, flowKeysOf, pgrpOf, grp6, sunElev, airData, gsAlong, minutesTo, flowAt, pathOf, pathDev, ownerKey, parseRunwayLengths, setRunwayLengths, csvLine, SQ_NOINFO, tripBin, regionOf, learnLeg, learnRow, learnCollector, addLearnedOp, odAdd: (x, y, w) => { const k = odKey(String(x).toUpperCase(), String(y).toUpperCase()), v = (OD.get(k) || 0) + w; if (v > 1e-9) OD.set(k, v); else OD.delete(k); }, odWeight: (x, y) => OD.get(odKey(String(x).toUpperCase(), String(y).toUpperCase())) || 0, odCount: () => OD.size, setAirports, setUsage, addUsage, setRunways, parseRunwaysCsv, runwayFit, setWeights, setTables, setLogit, calibrated, mergePoints, finalTo, longFinal, typeRangeKm, FEAT, groupOf, W, classify, isStepClimb, rangeKm, parseTrace, legsFromPoints, summarizeLeg, stitchLegs, chainLegs, histStats, inferOrigin, predict, privateSite, rwyImpossible, typeDesc, heliSpots, heliAirportAt, landedSum, localFlew, approachTo, downAndUp, landingInGap, circuits, mergeCircuits, setFields, fieldAt, placeAt, isField, nearbyFields, fieldCount: () => FL.length, airportAt, departureFromClimb, arrivalFromDescent, nearby, dist, brg, xtat, destPoint, angDiff, get airports() { return AP; }, byId: id => byId.get(id), byIcao: c => byIcao.get(String(c || '').toUpperCase()) };
 }
 /* ==/ENGINE== */
 if (typeof module !== 'undefined') module.exports = { createRouteEngine };
