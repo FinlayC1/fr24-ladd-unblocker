@@ -2,6 +2,12 @@
 
 All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PATCH`. The userscript and the monitor are released together.
 
+## [22.24.1] - 2026-10-15
+
+### Fixed
+- **The flight an aircraft is flying now showed up in its own "Recent flights" list** as a past flight, "Manchester -> N/A, Unknown" (N212AP as WWI21 to Teterboro, VQ-BXF as PEX28F to London City). For a flight FR24 routes itself, the script has no route of its own, so it took the aircraft to be on the ground. It now goes by FR24's own plan of the flight (departed, not arrived) or by where the aircraft is (in the air within the last 20 minutes). Where the aircraft is wins: one on the ground after landing still has its last flight listed first, even when FR24's plan never says it arrived.
+- In the same list, an older flight last heard high (lost from hearing in the air) was left out while the aircraft was flying. Only the flight on screen is left out now.
+
 ## [22.24.0] - 2026-10-15
 
 Playback names flights at once with no N/A or padlocks, and the airport boards lose their made-up flights.
