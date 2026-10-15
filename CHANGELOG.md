@@ -2,6 +2,11 @@
 
 All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PATCH`. The userscript and the monitor are released together.
 
+## [22.28.7] - 2026-10-15
+
+### Fixed
+- **The LADD Unblock window's colours are FR24's again.** In FR24's own window its body was dark, the grey of the title bar, so the dark words on it could not be seen. It now has the light grey body of FR24's other windows (Weather, Filters) under the dark text.
+
 ## [22.28.6] - 2026-10-15
 
 ### Changed
