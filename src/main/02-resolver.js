@@ -779,6 +779,22 @@
     else if (!rec.origin) { const f = pending.get(rec.id); loadToday(rec.hex, 600000, { bg: !!(f && f.bg), idle: true }).then(() => { if (live.get(rec.id) === rec) publishRoute(rec.id, composeRoute(rec.id, rec.hex)); }).catch(() => {}); }
   }
   const revokedIds = new Set();   // withdrawn this session: not carried over from an older snapshot
+  // Flights FR24 names itself - its own registration for them in its feed, only no callsign (the transponder sends none: an
+  // easyJet on the stand after landing, G-EZWZ at Liverpool, 15 Oct): not blocked, never taken over. One taken over before
+  // - just now, or in a record kept from an earlier visit - is let go: the page told, the panel FR24's own again
+  const fr24Named = new Set();
+  function noteFr24Named(ids) {
+    for (const x of ids || []) {
+      const id = Number(x); if (!id) continue;
+      if (!fr24Named.has(id)) { fr24Named.add(id); revokedIds.add(id); pending.delete(id); attempts.delete(id); strikes.delete(id); }
+      const rec = live.get(id) || store.getId(id); if (!rec) continue;
+      log('FR24 names it itself: let go', id.toString(16), rec.hex || '');
+      live.delete(id); store.delId(id); routeState.delete(id); planState.delete(id); telemetry.delete(id);
+      postToPage('revoke', { ids: [id] });
+      if (onScreen(id)) syncPanelSoon();
+    }
+    if (fr24Named.size > 20000) { const it = fr24Named.values(); for (let i = 0; i < 5000; i++) fr24Named.delete(it.next().value); }
+  }
   function revoke(id, why) {
     const rec = live.get(id); if (!rec) return;
     revokedIds.add(id);

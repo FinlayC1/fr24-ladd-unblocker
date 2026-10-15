@@ -120,5 +120,54 @@ const near = (t, hhmm, tol) => { const [h, m] = hhmm.split(':').map(Number), x =
   const ls = E.legsFromPoints(pts, { cls: 'airliner', type: 'B738' }), s = ls.length ? E.summarizeLeg(ls[ls.length - 1], { cls: 'airliner', type: 'B738', grp: E.groupOf('airliner') }) : null;
   check('airliner lost low over the sea heading for Dubrovnik: to DBV (inferred)', !!s && !!s.to && s.to.id === DBV.id && s.to.conf === 'near', s && s.to);
 }
+// easyJets climbing out of Gatwick past Biggin Hill, Ryanairs out of Manchester towards Liverpool or turning back over
+// the field (Oct): lost climbing, out of the receivers' hearing - not landed at the field below or ahead of them
+{
+  const mv = (lat, lon, trk, km) => [lat + km * Math.cos(trk * Math.PI / 180) / 110.57, lon + km * Math.sin(trk * Math.PI / 180) / (111.32 * Math.cos(lat * Math.PI / 180))];
+  const climbOut = (lat, lon, rwyTrk, turnTo, step, lostAlt, vr) => {
+    const rows = []; let t = 0, alt = 300, gs = 160, trk = rwyTrk;
+    for (; t < 600; t += step) rows.push([t, lat, lon, 'ground', 5, rwyTrk, 0, 0, null]);
+    while (alt < lostAlt) { rows.push([t, lat, lon, Math.round(alt), gs, Math.round(trk), 0, vr ? 2200 : null, null]); t += step; [lat, lon] = mv(lat, lon, trk, gs * 1.852 * step / 3600); alt += 2200 * step / 60; gs = Math.min(280, gs + step * 0.6); if (t > 780) trk = turnTo; }
+    rows.push([t, lat, lon, Math.round(alt), gs, Math.round(trk), 0, vr ? 2200 : null, null]);
+    let t2 = t + 4 * 3600; for (let k = 0; k < 20; k++) { rows.push([t2, 52.0, -1.0, 35000, 450, 140, 0, 0, null]); t2 += 60; }
+    return E.parseTrace({ timestamp: 1791868500, trace: rows });
+  };
+  const runs = [];
+  for (const step of [5, 60]) for (const alt of [3500, 5000, 7500]) for (const vr of [true, false]) {
+    runs.push(['EZY A320 out of Gatwick, NE', 'A320', climbOut(51.1530, -0.1720, 78, 45, step, alt, vr), step, alt, vr]);
+    runs.push(['RYR B738 out of Manchester 23R, west', 'B738', climbOut(53.3655, -2.2620, 232, 268, step, alt, vr), step, alt, vr]);
+    runs.push(['RYR B738 out of Manchester 23R, turning back', 'B738', climbOut(53.3655, -2.2620, 232, 52, step, alt, vr), step, alt, vr]);
+  }
+  const bad = [];
+  for (const [name, type, pts, step, alt, vr] of runs) for (const dataEnd of [undefined, pts[pts.length - 1].t + 86400]) {
+    const S = E.legsFromPoints(pts, { cls: 'airliner', type, dataEnd }).map(l => E.summarizeLeg(l, { cls: 'airliner', type, grp: E.groupOf('airliner') }));
+    const o = S.find(x => x.startedOnGround);
+    if (o && o.to) bad.push(`${name} ${step}s ${alt}ft vr:${vr}${dataEnd ? ' day' : ''}: ${sig(o)}`);
+  }
+  check('jets lost climbing out of Gatwick and Manchester: no landing at Biggin Hill, Southend, Liverpool or Manchester', !bad.length, bad.slice(0, 4));
+  // (one heard climbing out, then on final 25 minutes later - a real short hop - still lands)
+  const rows = []; let t = 0, lat = 53.3655, lon = -2.2620;
+  for (; t < 300; t += 10) rows.push([t, lat, lon, 'ground', 5, 232, 0, 0, null]);
+  for (let alt = 300; alt < 6000; alt += 400) { rows.push([t, lat, lon, alt, 220, 270, 0, 2400, null]); t += 10; [lat, lon] = mv(lat, lon, 270, 220 * 1.852 * 10 / 3600); }
+  const LPL = E.byIcao('EGGP'), out = []; for (let i = 0; i <= 30; i++) { const p = E.destPoint(LPL.lat, LPL.lon, 85, 3 + (30 - i) * 0.6); out.push([t + 900 + i * 10, p[0], p[1], Math.round(300 + (30 - i) * 100), 150, 265, 0, -700, null]); }
+  for (let i = 0; i < 6; i++) out.push([t + 1210 + i * 10, LPL.lat, LPL.lon + 0.004, 'ground', 40, 265, 0, 0, null]);
+  const H = E.legsFromPoints(E.parseTrace({ timestamp: 1791868500, trace: rows.concat(out) }), { cls: 'airliner', type: 'B738' }).map(l => E.summarizeLeg(l, { cls: 'airliner', type: 'B738', grp: E.groupOf('airliner') }));
+  check('... a jet heard on final at Liverpool after the climb-out still landed there', H.some(x => x.to && x.to.code === 'LPL'), H.map(sig));
+}
+// The same, in flights kept before: a climb-out given a landing is found again and its end let go - but not a short hop
+{
+  const t = 1791868500, man = { id: 1, code: 'MAN', conf: 'ground' }, lpl = { id: 2, code: 'LPL', conf: 'near' };
+  const kept = { tStart: t, tOff: t + 60, tEnd: t + 232, startedOnGround: true, ended: true, how: 'gap-low', from: man, to: lpl, endAlt: 6300, maxAlt: 6300 };
+  const mon = { tStart: t, tOff: t + 60, tEnd: t + 232, startedOnGround: true, ended: true, from: man, to: lpl, maxAlt: 6300 };
+  check('a kept log\'s climb-out (lost at its highest, 3 minutes after take-off) is no landing', E.climbedOut(kept, 'airliner'));
+  check('... nor the monitor\'s copy of it (no end height kept)', E.climbedOut(mon, 'airliner'));
+  check('... but one rebuilt by these rules is left as it is', !E.climbedOut(Object.assign({}, kept, { endRules: 2 }), 'airliner'));
+  check('... one seen landing on the ground is left', !E.climbedOut(Object.assign({}, kept, { to: Object.assign({}, lpl, { conf: 'ground' }) }), 'airliner'));
+  check('... one whose end came from its next take-off is left', !E.climbedOut(Object.assign({}, mon, { to: Object.assign({}, lpl, { conf: 'chain' }) }), 'airliner'));
+  check('... one lost on the way down (1,000 ft below its highest) is left', !E.climbedOut(Object.assign({}, kept, { endAlt: 5300 }), 'airliner'));
+  check('... a light aircraft\'s is left', !E.climbedOut(kept, 'piston'));
+  check('... a blocked aircraft\'s short hop the monitor keeps for good is left (SF50 Wolverhampton -> Blackpool)', !E.climbedOut(Object.assign({}, mon, { ladd: true, maxAlt: 1550, tEnd: t + 420 }), 'bizjet'));
+  check('... and a low hop of any jet the monitor kept is left', !E.climbedOut(Object.assign({}, mon, { maxAlt: 1550 }), 'bizjet'));
+}
 console.log(fails ? `\n${fails} failed` : '\nall passed');
 process.exitCode = fails ? 1 : 0;

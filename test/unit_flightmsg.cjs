@@ -211,6 +211,25 @@ check('ordinary aircraft: FR24 data kept (registration, callsign, photos)', str(
   check('matching photos kept (Bombardier Global, Learjet under Bombardier, unnamed page)', H.photoFits(ps('n502vj-vista-america-bombardier-global-5000-bd-700-1a11'), gl5) && H.photoFits(ps('n10mb-private-bombardier-learjet-60'), lj) && H.photoFits(ps('n123ab-private'), c172));
   check('a Gulfstream photo refused for a Bombardier', !H.photoFits(ps('n502vj-private-gulfstream-g450'), gl5));
 }
+// 4b) G-EZWZ (easyJet A320) on the stand at Liverpool after landing, 15 Oct: no callsign in FR24's feed (its transponder
+//     sent none) but FR24's own registration for it - FR24 names it itself, so it is not blocked: never reported for
+//     naming, never drawn as ours, and one taken over before is let go (the userscript told)
+{
+  const fF = (fn, v) => { const b = new Uint8Array(5); b[0] = (fn << 3) | 5; new DataView(b.buffer).setFloat32(1, v, true); return b; };
+  const flt = (id, cs, reg, hex) => cat([H.fVar(1, id), fF(2, 53.3337), fF(3, -2.8497), H.fVar(4, 84), H.fVar(5, 0), H.fVar(6, 0), H.fVar(9, 1792015200), H.fVar(10, 1)].concat(cs ? [H.fStr(11, cs)] : []).concat([H.fLen(13, cat([].concat(reg ? [H.fStr(2, reg)] : [H.fStr(2, '')]).concat([H.fStr(4, 'A320')]).concat(hex ? [H.fVar(14, hex)] : [])))]));
+  const idB = 0x3c1a0001, idN = 0x3c1a0002, idC = 0x3c1a0003;
+  B.resolved.clear(); B.routes.clear(); posted.length = 0;
+  B.resolved.set(idN, { cs: 'GEZWZ', reg: 'G-EZWZ', hex: '406c72', type: 'A320', hexNum: 0x406c72, operatorId: 0 });
+  const body = cat([H.fLen(1, flt(idB, '', '', 0)), H.fLen(1, flt(idN, '', 'G-EZWZ', 0x406c72)), H.fLen(1, flt(idC, 'EZY12AB', 'G-EZAA', 0x4006aa))]);
+  const out = H.patchLiveFeed(body, false, 0), feed = posted.filter(d => d && d.__tweeksLadd === 'feed').pop();
+  check('a flight with neither callsign nor registration (blocked): reported for naming', !!feed && feed.flights.some(f => f.id === idB));
+  check('G-EZWZ, no callsign but FR24\'s registration: not reported for naming, the userscript told FR24 names it', !!feed && !feed.flights.some(f => f.id === idN) && feed.named.includes(idN) && !feed.named.includes(idC), feed && { flights: feed.flights.map(f => f.id), named: feed.named });
+  const fN = H.parse(out).filter(f => f.fn === 1).map(f => f.val).find(v => num(v, 1) === idN);
+  check('... taken over before: let go - FR24\'s own frame, no label of ours, the record gone', !B.resolved.has(idN) && !!fN && !one(fN, 11), fN && H.parse(fN).map(f => f.fn));
+  w.dispatchEvent(new w.MessageEvent('message', { data: { __tweeksLadd: 'resolve', entries: [{ id: idN, cs: 'GEZWZ', reg: 'G-EZWZ', hex: '406c72', type: 'A320' }, { id: idB, cs: 'N1AB', reg: 'N1AB', hex: 'a00001', type: 'C68A' }] }, source: w }));
+  check('... and never taken over again (a record sent for it later is not used; the blocked one\'s is)', !B.resolved.has(idN) && B.resolved.has(idB));
+  B.resolved.clear(); posted.length = 0;
+}
 // 5) pictures and a route arriving while the panel is open go into FR24's stream at once, as a frame of our own: FR24
 //    reads it when told the response has grown (tried on the live site: its store took it 7 ms later) - not at FR24's
 //    next update, and never only after reopening the panel

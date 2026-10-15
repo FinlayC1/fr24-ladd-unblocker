@@ -1,4 +1,4 @@
-// FR24 LADD Unblocker 22.23.0 - the page-world part (see src/page.js)
+// FR24 LADD Unblocker 22.24.0 - the page-world part (see src/page.js)
 (function () {
   'use strict';
   // ------------------------------------------------------------------------------------------------------------
@@ -7,7 +7,7 @@
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "22.23.0";
+    var BRIDGE_V = "22.24.0";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
 
     var resolved = new Map();     // fr24 flight id -> identity record (incl. photos)
@@ -22,6 +22,9 @@
     var naRecs = new Map(), naRoutes = new Map();
     var recOf = function (id) { return resolved.get(id) || naRecs.get(id); }, routeOf = function (id) { return routes.get(id) || naRoutes.get(id); };
     var curNa = null;             // (while a LiveFeed answer is read: its N/A flights)
+    // Flights FR24 names itself - its own registration in its feed - that had been taken for blocked ones (no callsign: the
+    // transponder sends none, an easyJet on the stand after landing - G-EZWZ at Liverpool, 15 Oct): never drawn as ours
+    var fr24Named = new Set(), curNamed = null;
     var hist = new Map();         // registration -> { data: [flight list entries], at } for the "Recent <reg> flights" dropdown
     var histWait = new Map();     // registration -> [resolve callbacks] waiting for the userscript to supply history
     var photoCache = new Map();   // HEX -> { photos, at, err, final } - the pictures shown (from the userscript)
@@ -251,7 +254,9 @@
       var id = idF.val, cs = strOf(fs, 11);
       var extraF = find(fs, 13), ex = extraF && extraF.wt === 2 ? parse(extraF.val) : [];
       var type = strOf(ex, 4), reg = strOf(ex, 2);
-      if (!cs) {
+      // (FR24's own registration for it: not blocked - one taken for blocked (no callsign) let go, here and by the userscript)
+      if (reg && (!cs || resolved.has(id))) { if (!fr24Named.has(id)) { fr24Named.add(id); if (fr24Named.size > 20000) fr24Named.delete(fr24Named.values().next().value); } if (resolved.has(id)) { resolved.delete(id); routes.delete(id); } if (curNamed && curNamed.length < 500) curNamed.push(id); }
+      if (!cs && !reg) {
         var rep = { id: id, lat: fltOf(fs, 2), lon: fltOf(fs, 3), trk: numOf(fs, 4), alt: numOf(fs, 5), spd: numOf(fs, 6), icon: numOf(fs, 7),
           ts: numOf(fs, 9), gnd: !!numOf(fs, 10), src: numOf(fs, 12), type: type, reg: reg, sel: !!selected };
         if (report) report.push(rep);
@@ -305,7 +310,7 @@
     var lastFeedTotal = 0;
     function patchLiveFeed(body, bg, pbTs) {
       var fs = parse(body), report = [], parts = [], changed = false, serverTime = 0, total = 0, at = Date.now();
-      curNa = bg || pbTs ? null : [];
+      curNa = bg || pbTs ? null : []; curNamed = pbTs ? null : [];
       for (var i = 0; i < fs.length; i++) {
         var f = fs[i];
         if (f.wt === 2 && (f.fn === 1 || f.fn === 3)) {
@@ -316,11 +321,11 @@
         } else { if (f.fn === 4 && f.wt === 0) serverTime = f.val; parts.push(f.raw); }
       }
       // (FR24's playback: the moment's unnamed flights, for the userscript to name as they were then - never as live ones)
-      if (pbTs) { post('pbFeed', { ts: pbTs, flights: report, at: at }); curNa = null; flushAir(); return changed ? concat(parts) : body; }
+      if (pbTs) { post('pbFeed', { ts: pbTs, flights: report, at: at }); curNa = null; curNamed = null; flushAir(); return changed ? concat(parts) : body; }
       if (!bg) stats.liveFeed++;
       lastFeedTotal = total; flushAir();
-      post('feed', { flights: report, na: curNa || [], serverTime: serverTime, total: total, at: at, bg: !!bg });
-      curNa = null;
+      post('feed', { flights: report, na: curNa || [], named: curNamed || [], serverTime: serverTime, total: total, at: at, bg: !!bg });
+      curNa = null; curNamed = null;
       return changed ? concat(parts) : body;
     }
     function patchFrames(buf, patchBody) {
@@ -1609,6 +1614,19 @@
       root = root || panel;
       saying(root, EVENTS_RE).forEach(function (e) { hidePart(eventsPart(e, panel), panel); });
       saying(root, BEG_RE).forEach(function (e) { hidePart(partOf(e, panel, '', 600), panel); });
+      saying(root, ADS_RE).forEach(function (e) { hideAd(e, panel); });
+    }
+    // FR24's "Remove ads" button where an advert sat in a board's list (the advert itself hidden by the userscript's style),
+    // and the empty slot around it: the button and every box that holds nothing else, and an advert's slot beside it, gone -
+    // the list closes up as if neither were there. On the boards' own pages too.
+    var ADS_RE = /^remove ads$/i, ADS_ONLY = /^((advert(isement)?|ads?|sponsored)\s*)*remove ads$/i;
+    var AD_MARK = '[id^="pb-slot-fr24-"],[id^="div-gpt-ad-"],[data-pb-ad-wrapper],ins.adsbygoogle,.ad-manager-wrapper';
+    function hideAd(el, stop) {
+      var cur = el;
+      while (cur.parentElement && cur.parentElement !== stop && cur.parentElement !== document.body && ADS_ONLY.test(textOf(cur.parentElement)) && !cur.parentElement.querySelector('.tl-panel, .tl-rwy')) cur = cur.parentElement;
+      tlHide(cur);
+      [cur.previousElementSibling, cur.nextElementSibling].forEach(function (x) { if (x && !textOf(x) && (x.matches(AD_MARK) || x.querySelector(AD_MARK))) tlHide(x); });
+      hideShell(cur, stop || document.body);
     }
     // FR24 draws those two parts and the panel is painted before the next tick: they are taken out as they are put in -
     // a mutation observer's answer comes before the browser paints - so they are never seen, not even for a moment
@@ -1625,9 +1643,13 @@
               if (r.type === 'characterData') panelHide(panel, t);
               else for (var j = 0; j < r.addedNodes.length; j++) { var a = r.addedNodes[j], el = a.nodeType === 1 ? a : a.nodeType === 3 ? a.parentElement : null; if (el) panelHide(panel, el); }
             } else if (r.type === 'childList') {
-              // (the panel itself put in, whole)
-              for (var k = 0; k < r.addedNodes.length; k++) { var n = r.addedNodes[k]; if (n.nodeType !== 1) continue; var p = n.matches(SEL_AP) ? n : n.querySelector(SEL_AP); if (p) panelHide(p); }
-            }
+              // (the panel itself put in, whole; elsewhere - a board's own page - the "Remove ads" button)
+              for (var k = 0; k < r.addedNodes.length; k++) {
+                var n = r.addedNodes[k], ne = n.nodeType === 1 ? n : n.nodeType === 3 ? n.parentElement : null; if (!ne) continue;
+                var p = ne.matches(SEL_AP) ? ne : ne.querySelector(SEL_AP); if (p) panelHide(p);
+                if (/remove ads/i.test(n.textContent || '')) saying(ne, ADS_RE).forEach(function (e) { if (!e.closest(SEL_AP)) hideAd(e, null); });
+              }
+            } else if (ADS_RE.test(textOf(t))) hideAd(t, null);
           } catch (e) { stats.errors++; stats.lastError = String(e); }
         }
       });
@@ -2114,7 +2136,7 @@
     function acceptEntries(entries) {
       if (!entries) return;
       for (var i = 0; i < entries.length; i++) {
-        var r = entries[i]; if (!r || r.id == null) continue;
+        var r = entries[i]; if (!r || r.id == null || fr24Named.has(Number(r.id))) continue;
         var hexNum = r.hex ? parseInt(String(r.hex), 16) : 0;
         var prev = resolved.get(Number(r.id));
         var photos = Array.isArray(r.photos) && r.photos.length ? r.photos : (prev && prev.photos) || [];
@@ -2288,7 +2310,7 @@
       else if (d.__tweeksLadd === 'hello') post('ready', { stats: stats, feedReady: !!feedHeaders, hdr: feedHdrPublic(), v: BRIDGE_V });
     });
     window[NS] = { resolved: resolved, routes: routes, naRecs: naRecs, naRoutes: naRoutes, telem: telem, hist: hist, lastPos: lastPos, photoCache: photoCache, psCache: psCache, stats: stats, fetchPhotos: fetchPhotos, hello: function () { post('ready', { stats: stats, feedReady: !!feedHeaders, v: BRIDGE_V }); }, v: BRIDGE_V };
-    if (window.__tlTestHook) try { window.__tlTestHook({ csOf: csOf, hist: hist, preloaded: function () { return preloaded; }, parse: parse, photoFits: photoFits, makerOf: makerOf, patchFollow: patchFollow, patchFlightMsg: patchFlightMsg, pushFollow: pushFollow, followSt: function () { return followSt; }, setFollowSt: function (s) { followSt = s; }, shownPhotos: shownPhotos, photoCache: photoCache, FOLLOW: FOLLOW, DETAILS: DETAILS, fLen: fLen, fStr: fStr, fVar: fVar, patchFlight: patchFlight, psState: function () { return { q: psQ.length, busy: psBusy, last: psLast, blockedFor: Math.max(0, psBlockedUntil - Date.now()), pri: Array.from(psPri), jobs: photoJobs.size, head: psQ.slice(0, 3).map(function (j) { return j.hex; }) }; }, acceptPubTel: acceptPubTel, pubTelFor: pubTelFor, fillNativeCard: fillNativeCard, regsOfCallsign: regsOfCallsign, categoryOf: categoryOf, nativeFill: nativeFill, natInfo: natInfo, telem: telem, b64Encode: b64Encode, b64DecodeInto: b64DecodeInto, frameHeader: frameHeader, concat: concat, varintInt32: varintInt32, PLAYBACK: PLAYBACK, patchPlayback: patchPlayback, patchPlaybackRequest: patchPlaybackRequest, pbRoutes: pbRoutes, pbTelAt: pbTelAt, setPbTrace: function (t) { pbTrace = t; }, patchList: patchList, acceptSites: acceptSites, listSig: listSig, mergeRoutes: mergeRoutes, applyRoutes: applyRoutes, routesAdd: routesAdd, applyAirport: applyAirport, applyBoardPage: applyBoardPage, applyStats: applyStats, mergeFlights: mergeFlights, apData: apData, telAt: telAt, noteTelem: noteTelem, pbTraceOf: function () { return pbTrace; }, logoOf: logoOf, archDetail: archDetail, tsOf: tsOf, noteAirportJson: noteAirportJson, rwyOf: rwyOf, rwyPanel: rwyPanel, panelTick: panelTick, panelData: panelData, promoSlots: promoSlots, acceptAirportPanel: acceptAirportPanel, unlockRunways: unlockRunways, mvRows: mvRows, mvKept: mvKept, dayOf: dayOf, pbPanelTick: pbPanelTick, logoFix: logoFix, liveEntries: liveEntries, pbPos: pbPos, unlockFeed: unlockFeed, derivedVs: derivedVs, altHist: altHist, acceptAir: acceptAir, airCache: airCache, flushAir: flushAir, airWant: function () { return airWant; }, lastPos: lastPos, resolved: resolved, stats: stats }); } catch (e) { /* ignore */ }
+    if (window.__tlTestHook) try { window.__tlTestHook({ csOf: csOf, hist: hist, preloaded: function () { return preloaded; }, parse: parse, photoFits: photoFits, makerOf: makerOf, patchFollow: patchFollow, patchFlightMsg: patchFlightMsg, pushFollow: pushFollow, followSt: function () { return followSt; }, setFollowSt: function (s) { followSt = s; }, shownPhotos: shownPhotos, photoCache: photoCache, FOLLOW: FOLLOW, DETAILS: DETAILS, fLen: fLen, fStr: fStr, fVar: fVar, patchFlight: patchFlight, patchLiveFeed: patchLiveFeed, fr24Named: fr24Named, psState: function () { return { q: psQ.length, busy: psBusy, last: psLast, blockedFor: Math.max(0, psBlockedUntil - Date.now()), pri: Array.from(psPri), jobs: photoJobs.size, head: psQ.slice(0, 3).map(function (j) { return j.hex; }) }; }, acceptPubTel: acceptPubTel, pubTelFor: pubTelFor, fillNativeCard: fillNativeCard, regsOfCallsign: regsOfCallsign, categoryOf: categoryOf, nativeFill: nativeFill, natInfo: natInfo, telem: telem, b64Encode: b64Encode, b64DecodeInto: b64DecodeInto, frameHeader: frameHeader, concat: concat, varintInt32: varintInt32, PLAYBACK: PLAYBACK, patchPlayback: patchPlayback, patchPlaybackRequest: patchPlaybackRequest, pbRoutes: pbRoutes, pbTelAt: pbTelAt, setPbTrace: function (t) { pbTrace = t; }, patchList: patchList, acceptSites: acceptSites, listSig: listSig, mergeRoutes: mergeRoutes, applyRoutes: applyRoutes, routesAdd: routesAdd, applyAirport: applyAirport, applyBoardPage: applyBoardPage, applyStats: applyStats, mergeFlights: mergeFlights, apData: apData, telAt: telAt, noteTelem: noteTelem, pbTraceOf: function () { return pbTrace; }, logoOf: logoOf, archDetail: archDetail, tsOf: tsOf, noteAirportJson: noteAirportJson, rwyOf: rwyOf, rwyPanel: rwyPanel, panelTick: panelTick, panelData: panelData, promoSlots: promoSlots, acceptAirportPanel: acceptAirportPanel, unlockRunways: unlockRunways, mvRows: mvRows, mvKept: mvKept, dayOf: dayOf, pbPanelTick: pbPanelTick, logoFix: logoFix, liveEntries: liveEntries, pbPos: pbPos, unlockFeed: unlockFeed, derivedVs: derivedVs, altHist: altHist, acceptAir: acceptAir, airCache: airCache, flushAir: flushAir, airWant: function () { return airWant; }, lastPos: lastPos, resolved: resolved, stats: stats }); } catch (e) { /* ignore */ }
     post('ready', { stats: stats, feedReady: false, v: BRIDGE_V });
   }
 

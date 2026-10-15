@@ -2,7 +2,9 @@
 
 All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PATCH`. The userscript and the monitor are released together.
 
-## [Unreleased]
+## [22.24.0] - 2026-10-15
+
+Playback names flights at once with no N/A or padlocks, and the airport boards lose their made-up flights.
 
 ### Changed
 - **Playback names flights at once.** The browser no longer waits for the monitor before it looks for itself. As soon as a playback shows its first frame, it fetches adsb.lol's record of that half hour (the heatmap) and matches it at the same time as it asks the monitor. Whichever answers first names the flight, so a monitor that is slow or down costs nothing.
@@ -16,6 +18,15 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 ### Fixed
 - Owner names: "LLC" stayed on a name that is only a number ("756J LLC" is now 756J). Dubai free-zone forms are taken off too ("MAPA AVIATION DWC-LLC" is Mapa Aviation; also FZE, FZCO, FZ-LLC and DMCC).
 - The airport panel: the "Latest events" part left an empty box under the weather, and it and the plea to improve coverage showed for a moment before they were removed. They are now removed as FR24 adds them, before the browser draws them, and the box they sat in goes with them.
+- **Made-up flights on the airport boards.** Biggin Hill's arrivals were full of easyJets "from Gatwick", and Manchester's departures had Ryanairs and a Qatar 787 "to Manchester" and "to Liverpool". These were jets climbing out of the airport next door, given a landing they never made:
+  - A flight lost from hearing while still climbing was given a landing at the field below or ahead of it. A jet is now only landed where it was heard coming down (`climbingAt` in the engine). Flights kept by earlier versions and by the monitor are checked again before they reach a board (`climbedOut`).
+  - The live prediction routed an airline's departing jet to the next airport along its departure. An airline's jet flying its own flight number is no longer routed back to the field it left, or to one within 80 km.
+  - Rows already kept of such flights are removed when a board is opened. A row of an airline's jet is never kept with the field it left as its other end, with a field within 80 km unless it was seen landing there, or with no other end at all (FR24 shows that flight itself).
+  - A jet lost at cruise or climbing away no longer gets a "private site" under where it was lost as its destination.
+- FR24's "Remove ads" button, and the empty slot it sat in, stayed in the airport boards' lists. They are now removed as FR24 adds them, so the rows close up, on the boards' own pages too.
+- An aircraft FR24 names itself was taken over as a blocked one when its transponder sent no callsign (G-EZWZ, an easyJet on the stand at Liverpool). A flight is now only treated as blocked when FR24 has neither a callsign nor a registration for it, as the monitor already did. One taken over before is let go and shown as FR24 shows it.
+- The monitor now keeps each flight's end height, how it ended and the rules it was built with (`endAlt`, `how`, `endRules`), so browsers can tell its new flights from the ones it kept before this version.
+- Tests: `unit_tracks` failed when it ran in the hour or so after midnight UTC.
 
 ## [22.23.0] - 2026-10-14
 

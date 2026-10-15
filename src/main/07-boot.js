@@ -14,10 +14,11 @@
   }
   function onFeed(d) {
     const t = now();
+    if (d.named && d.named.length) noteFr24Named(d.named);
     if (d.na && d.na.length) noteNa(d.na, d.at || t);
     let fresh = 0; const cachedHits = [];
     for (const f of d.flights || []) {
-      if (!fin(f.lat) || !fin(f.lon)) continue;
+      if (!fin(f.lat) || !fin(f.lon) || fr24Named.has(f.id)) continue;
       const prev = pending.get(f.id);
       pending.set(f.id, Object.assign({}, f, { receivedAt: d.at || t, serverTime: d.serverTime || 0, type: f.type || (prev && prev.type) || '', reg: f.reg || (prev && prev.reg) || '', bg: d.bg ? (prev ? !!prev.bg : true) : false }));
       noteGroundState(f.id, f, d.at || t);
@@ -62,7 +63,7 @@
     // identity, telemetry and a route pushed here are in place for the panel's very first render.
     const id = Number(d.id) || null;
     if (id && id !== selectedId) { selectedId = id; telemLast = 0; syncPanelSoon(); }
-    if (id && !live.has(id)) { const c = store.getId(id); if (c && c.hex) live.set(id, hydrate(c)); }
+    if (id && !live.has(id) && !fr24Named.has(id)) { const c = store.getId(id); if (c && c.hex) live.set(id, hydrate(c)); }
     if (id && !live.has(id)) srvAdopt(id);       // (named by the monitor)
     if (id && !live.has(id)) pubPrime(id);   // an ordinary flight reopened: its reasoned route, before the first frame
     if (id && live.has(id)) {
@@ -318,5 +319,5 @@
     };
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true }); else start();
   }
-  try { (pageWindow()).__tweeksLadd = { version: VERSION, msgCount, schedOf, trailFor, get shownId() { return shownId; }, posStats, get bridgeV() { return bridgeV; }, hexOfId, currentPos, idHex, engine: ENGINE, live, pending, telemetry, store, routeState, planState, globalList, fr24, todayCache, sweep, resolveTargeted, routeFor, composeRoute, altsOf, holdTerminal, termHold, worldScan, refreshLists, quickRouteAll, historyPump, histPumped, learnedStore, regCountry, fr24Sched, pubRouted, pubRecs, privatePlace, loadSites, siteNear, sites, onSched, pubMem: () => pubMem, publishRoute, syncPanel, normalizeReadsb, telemOf, noteCands, csOfRec, warmHist, hostStat, loadT2, wantWx, wxMap, wantNotams, closedMap, estimateEta, nNumberHex, watchList, pollWatch, accStore, accNote, statsHtml, fleetList, checkHealth, health, exportCsv, predictForHex, verifyAgainstList, strikes, revokedIds, loadHistory, loadToday, fetchJetphotos, loadRunways, knownLegs, areaCache, pollView, saveSnapshot, boardNoteLegs, boardNoteFlight, boardNoteSched, boardScrub, boardLoad, naRouteOf, noteNa, naFeed, matchParked, matchByTraces, boardDrain, boardMem, onNeedBoard, operatorOf, shownOwner, enrich, userConfirm, userDestOf, loadApprTable, monGet, monPost, monCheck, monLive, monUp, MON_DEFAULTS, get monBase() { return monBase; }, liveSources, telOut, noteTelOut, reportTel, pbOut, srvIds, pullSrvIds, srvAdopt, reportToMonitor, syncSrvLearn, applyLearned, get feedHdr() { return feedHdr; }, boardMonFill, natRowOf, fnRows, buildSnapshot, bootHold, firAt, loadFir, onAirAsk, pb, onPbFeed, onPbFollow, onPbHex, pbRouteFor, pbMatch, pbFromMonitor, onNeedRoutes, onNeedAirportData, onNeedAirportPanel, liveBoardRows, runwaysOf, parseRunwayEnds, flightsOfCallsign, bootFlightPage, unlockExports, exportFile, rowWindow, hexOfFid, onNeedSearch, osmPick, wantOsmPlace, osmPlaceAt, learnSite, siteIdAt, siteBk, operatorIdOf, airlineIdByName, fr24Cat, onHistElsewhere, get viewBox() { return viewBox; }, get selectedId() { return currentId(); } }; } catch (_) { /* ignore */ }
+  try { (pageWindow()).__tweeksLadd = { version: VERSION, msgCount, schedOf, trailFor, get shownId() { return shownId; }, posStats, get bridgeV() { return bridgeV; }, hexOfId, currentPos, idHex, engine: ENGINE, live, pending, telemetry, store, routeState, planState, globalList, fr24, todayCache, sweep, resolveTargeted, routeFor, composeRoute, altsOf, holdTerminal, termHold, worldScan, refreshLists, quickRouteAll, historyPump, histPumped, learnedStore, regCountry, fr24Sched, pubRouted, pubRecs, privatePlace, loadSites, siteNear, sites, onSched, pubMem: () => pubMem, publishRoute, syncPanel, normalizeReadsb, telemOf, noteCands, csOfRec, warmHist, hostStat, loadT2, wantWx, wxMap, wantNotams, closedMap, estimateEta, nNumberHex, watchList, pollWatch, accStore, accNote, statsHtml, fleetList, checkHealth, health, exportCsv, predictForHex, verifyAgainstList, strikes, revokedIds, fr24Named, noteFr24Named, loadHistory, loadToday, fetchJetphotos, loadRunways, knownLegs, areaCache, pollView, saveSnapshot, boardNoteLegs, boardNoteFlight, boardNoteSched, boardScrub, boardLoad, naRouteOf, noteNa, naFeed, matchParked, matchByTraces, boardDrain, boardMem, onNeedBoard, operatorOf, shownOwner, enrich, userConfirm, userDestOf, loadApprTable, monGet, monPost, monCheck, monLive, monUp, MON_DEFAULTS, get monBase() { return monBase; }, liveSources, telOut, noteTelOut, reportTel, pbOut, srvIds, pullSrvIds, srvAdopt, reportToMonitor, syncSrvLearn, applyLearned, get feedHdr() { return feedHdr; }, boardMonFill, natRowOf, fnRows, buildSnapshot, bootHold, firAt, loadFir, onAirAsk, pb, onPbFeed, onPbFollow, onPbHex, pbRouteFor, pbMatch, pbFromMonitor, onNeedRoutes, onNeedAirportData, onNeedAirportPanel, liveBoardRows, runwaysOf, parseRunwayEnds, flightsOfCallsign, bootFlightPage, unlockExports, exportFile, rowWindow, hexOfFid, onNeedSearch, osmPick, wantOsmPlace, osmPlaceAt, learnSite, siteIdAt, siteBk, operatorIdOf, airlineIdByName, fr24Cat, onHistElsewhere, get viewBox() { return viewBox; }, get selectedId() { return currentId(); } }; } catch (_) { /* ignore */ }
   log('loaded v' + VERSION);

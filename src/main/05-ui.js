@@ -629,10 +629,13 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     if (id == null) return;
     shownId = id;
     if (!panel.__tlNA) { const dep = q(panel, SEL.depIata), arr = q(panel, SEL.arrIata); if (dep && arr && isNA(dep.dataset.tlVal ? dep.dataset.tlOrig : dep.textContent) && isNA(arr.dataset.tlVal ? arr.dataset.tlOrig : arr.textContent)) panel.__tlNA = true; }
-    const rec = live.get(id) || (() => { const c = store.getId(id); if (c && c.hex) { live.set(id, c); pushToPage([c]); return c; } return null; })();
+    const rec = live.get(id) || (() => { const c = !fr24Named.has(id) && store.getId(id); if (c && c.hex) { live.set(id, c); pushToPage([c]); return c; } return null; })();
+    // (a record let go - FR24 names the aircraft itself, or a match withdrawn: what was drawn from it goes)
+    if (!rec && panel.__tlLive === id) restore(panel);
+    panel.__tlLive = rec ? id : null;
     if (rec) { applyRecord(panel, rec); if (!routeState.get(id) && rec.hex) routeFor(rec).catch(e => log('route failed', e)); return; }
     let pub = pubRecs.get(id);
-    if (!panelLooksBlocked(panel)) {
+    if (!panelLooksBlocked(panel) || fr24Named.has(id)) {
       // an ordinary aircraft is recognised from the panel itself (its ICAO address is on screen) - no need to wait
       const shown = panelHex(panel);
       if (!pub) { const hx0 = shown; if (/^[0-9a-f]{6}$/.test(hx0) && hx0 !== panel.__tlPrevHex) pub = notePublicAircraft(id, hx0, clean(q(panel, SEL.registration) && q(panel, SEL.registration).textContent), clean(q(panel, SEL.model) && q(panel, SEL.model).textContent), clean(q(panel, SEL.callsign) && q(panel, SEL.callsign).textContent)); }

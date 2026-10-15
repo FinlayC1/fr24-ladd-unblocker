@@ -72,7 +72,8 @@ const dayOf = t => new Date(t * 1000).toISOString().slice(0, 10);
   fly('a22222', t1 + 180, lbg.lat, lbg.lon, -4.5, -1.5, 'GLF6');
   fly('a33333', t1, 40, -83, 0.5, 2, 'C68A');
   for (const h of ['a11111', 'a22222', 'a33333']) M.buildLegs(h, nowS);
-  const tk = M.tracks.of('a11111', dayOf(t1 + 1800));
+  // (both days' files when the flight crosses midnight UTC - one day's part alone can be short)
+  const tk = [...new Set([dayOf(t1 - 300), dayOf(nowS)])].flatMap(d => M.tracks.of('a11111', d));
   check('a blocked aircraft heard live: its track kept', tk.length > 50, tk.length);
   M.ingest({ hex: '400aaa', lat: 52, lon: 0, alt_baro: 20000, gs: 400, track: 0, seen_pos: 0, r: 'G-PLAIN', t: 'A320' }, nowS - 100);
   M.buildLegs('400aaa', nowS);

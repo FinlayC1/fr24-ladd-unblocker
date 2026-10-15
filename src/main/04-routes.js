@@ -718,6 +718,10 @@
     if (!appr && p < 0.6) return null;
     // (a field FR24 has no board for; back where it began - guessed, or without a real flight first)
     if (dest.id >= 1e7 || (home && home.id === dest.id && (!appr || !backOk(dest)))) return null;
+    // (an airline's jet flying its number is not going back to the field it left, nor to one close by: a climb-out turning
+    // over the field, or levelling off on a departure that points at the next airport - Ryanairs out of Manchester "to
+    // Manchester" and "to Liverpool" on its boards)
+    if (home && cls === 'airliner' && /^[A-Z]{3}\d/.test(String(f.cs || '').toUpperCase()) && ENGINE.dist(home.lat, home.lon, dest.lat, dest.lon) <= 80) return null;
     return { originId: fromAp ? fromAp.id : 0, originIata: fromAp ? apCode(fromAp) : '', originCity: fromAp ? fromAp.city : '', destId: dest.id, destIata: apCode(dest), destCity: dest.city,
       destConf: appr ? 'confirmed' : CONF_OF(p), destP: Math.round(p * 100), eta: estimateEta(pos, dest, cls) || 0, atd: departedAt, std: 0, sta: 0, landed: false, phase: r.phase || '' };
   }

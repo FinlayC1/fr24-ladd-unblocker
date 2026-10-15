@@ -131,6 +131,26 @@ const PANEL = `<div data-testid="airport-panel"><div class="head"><h2>Caernarfon
   const sec2 = q('section.ev2'), copy = sec2.cloneNode(true); copy.removeAttribute('data-tl-hidden'); copy.removeAttribute('style'); copy.querySelectorAll('[data-tl-hidden]').forEach(e => { e.removeAttribute('data-tl-hidden'); e.removeAttribute('style'); }); copy.className = 'p-1 ev3';
   sec2.after(copy); await Promise.resolve(); await Promise.resolve();
   check('... FR24 drawing the events again: gone again at once', !shown('section.ev3'));
+  // ---- FR24's "Remove ads" button in a board's list (Manchester's departures, 15 Oct), where an advert sat: gone the
+  // moment it is put in, with the empty slot round it - the rows close up. In the panel, and on a board's own page
+  { const box = q('.box');
+    box.insertAdjacentHTML('beforeend', `<div class="brd"><div class="row r1"><span>3:15 PM</span><span>Fuerteventura</span><span>LS909</span></div>
+      <div class="adw my-6"><div id="pb-slot-fr24-board-1"></div><div class="flex justify-center"><a href="/premium"><svg></svg><span>Remove ads</span></a></div></div>
+      <div class="row r2"><span>3:15 PM</span><span>Lanzarote</span><span>LS807</span></div>
+      <div class="slot2"><div id="div-gpt-ad-1234-0"></div></div><div class="btw"><button type="button"><svg></svg> REMOVE ADS </button></div>
+      <div class="row r3"><span>3:20 PM</span><span>Jersey</span><span>U2729</span></div></div>`);
+    await Promise.resolve(); await Promise.resolve();
+    check('a board\'s "Remove ads" button and the advert\'s slot round it: gone as soon as they are put in', !shown('.adw') && !shown('.btw') && !shown('.slot2'), [q('.adw') && q('.adw').getAttribute('style'), q('.btw') && q('.btw').getAttribute('style'), q('.slot2') && q('.slot2').getAttribute('style')]);
+    check('... the rows round them stay', shown('.r1') && shown('.r2') && shown('.r3') && shown('.brd'));
+    // (put in by FR24 a moment later - its text set after the button)
+    const late = doc.createElement('div'); late.className = 'late'; late.innerHTML = '<button><span></span></button>'; q('.brd').insertBefore(late, q('.r3'));
+    await Promise.resolve(); late.querySelector('span').textContent = 'Remove ads'; await Promise.resolve(); await Promise.resolve();
+    check('... one whose words FR24 writes in after the button: gone too', !shown('.late'));
+    // (a board's own page, no panel)
+    doc.body.insertAdjacentHTML('beforeend', '<main class="page"><ul class="rows"><li class="p1">Palma de Mallorca FR3441</li><li class="pad"><div class="ad-manager-wrapper"></div><p><a href="/premium">Remove ads</a></p></li><li class="p2">Gdansk FR4094</li></ul></main>');
+    await Promise.resolve(); await Promise.resolve();
+    check('... and on a board\'s own page', !shown('li.pad') && shown('li.p1') && shown('li.p2') && shown('ul.rows'));
+  }
   console.log(fails ? `\n${fails} failed` : '\nall passed');
   process.exit(fails ? 1 : 0);
 })().catch(e => { console.log('FAIL  crashed ' + (e && e.stack || e)); process.exit(1); });
