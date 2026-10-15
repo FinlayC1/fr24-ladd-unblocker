@@ -187,7 +187,9 @@ const lastReport = ip => { for (let i = reports.length - 1; i >= 0; i--) if (rep
     check('A\'s destination alone (no origin with it): B has it with the name, on its map', row[24] === 1 && row[10] === TEB.id && row[26] === 0 && !!p1 && p1.route.destIata === 'TEB', { row: row.slice(8, 13).concat(row.slice(24)), map: p1 && p1.route });
     M.ident.ids.get(ID).crowd.kmAt -= 3700; M.ident.prune(Date.now());
     await sleep(5); B.__posted.length = 0; await LB.pullSrvIds();
-    const p2 = await until(() => posted(B, 'route').find(m => m.id === ID), 1000);
+    // (a route post for the flight still on its way from the pull before can land after the clear: wait for the one
+    // that tells the drop)
+    const p2 = await until(() => posted(B, 'route').find(m => m.id === ID && (!m.route || m.route.destReason !== 'worked out by another browser')), 1000);
     check('... the flight no nearer it an hour on: dropped at the monitor, and B\'s map told at once', !M.ident.ids.get(ID).crowd && (LB.srvIds.rows.get(ID) || [])[24] === 0 && !!p2 && (!p2.route || p2.route.destReason !== 'worked out by another browser'), p2 && p2.route); }
 
   // ---- the flights a browser learns from, learned by every browser ---------------------------------------------------
