@@ -943,6 +943,29 @@
     rec = Object.assign({}, hx || {}, rec || {}, { reg });
     return { rec, hex };
   }
+  // The aircraft's flight now, when it is flying: our route of it says so, else FR24's own plan of it (departed, not
+  // arrived), else where it is - in the air within the last 20 minutes. { start, o, d, eta } (what is known), or null.
+  // (An ordinary flight FR24 routes itself has no route of ours: N212AP as WWI21, MAN -> TEB, and VQ-BXF as PEX28F,
+  // RTM -> LCY, were taken for on the ground, and their own flight was listed under them as "Manchester -> N/A, Unknown")
+  function flyingNow(hex, rec) {
+    const t = nowS(), aloft = p => !!p && fin(p.lat) && t - p.t < 1200 && !(p.gnd || p.gnd0) && !(fin(p.alt) && p.alt < 50 && fin(p.gs) && p.gs < 45);
+    // (the flight the registration was found under, and the one on screen - of this aircraft)
+    const ids = [rec.id, currentId()].filter((id, i, a) => id != null && a.indexOf(id) === i && hexOfId(id) === hex);
+    for (const id of ids) {
+      const st = routeState.get(id), r = (live.get(id) || pubRecs.get(id) || {}).route || (st && st.route);
+      if (r) { if (r.onGround) continue; return { start: r.departedAt || 0, o: r.originId || 0, d: r.destId || 0, eta: r.eta || 0 }; }
+      const s = fr24Sched.get(id), o = s && apById(s.o) ? s.o : 0, d = s && apById(s.d) ? s.d : 0, atd = s && s.atd && !s.ata && t - s.atd < 20 * 3600 ? s.atd : 0;
+      // (where it is decides while that is known - landed, FR24's plan may never say it arrived)
+      const p = currentPos(id);
+      if (p && fin(p.lat) && t - p.t < 1200) { if (aloft(p)) return { start: atd, o, d, eta: 0 }; continue; }
+      if (atd) return { start: atd, o, d, eta: 0 };
+    }
+    if (ids.length) return null;
+    // (none in view: its public ADS-B position, or the last report of its track of today)
+    const c = areaCache.get(hex);
+    if (c && fin(c.lat) && now() - seenAt(c) < 120000) return aloft({ t: Math.floor(seenAt(c) / 1000), lat: c.lat, alt: c.alt, gs: c.gs, gnd: !!c.gnd }) ? { start: 0, o: 0, d: 0, eta: 0 } : null;
+    return aloft((todayCache.get(hex) || {}).lastPt) ? { start: 0, o: 0, d: 0, eta: 0 } : null;
+  }
   // "Recent <reg> flights" before anyone opens it: the aircraft being looked at has its list handed to the page as soon
   // as its log is known (and again as it grows), so the dropdown fills the instant it is opened - FR24 asks only then.
   const histWarmAt = new Map();
@@ -965,13 +988,20 @@
     // (what is already in memory is answered at once; only a log never loaded is waited for, briefly)
     if (!warm && !store.peekHist(hex)) { try { await loadAirports(); await Promise.race([Promise.all([loadToday(hex, 300000).catch(() => {}), store.getHist(hex)]), sleep(1600)]); } catch (e) { /* use what we have */ } }
     // current flight first (FR24's list component always skips the first entry, which is the flight on screen)
-    const r = rec.route || (rec.id && routeState.get(rec.id) && routeState.get(rec.id).route);
-    const airborne = !!(r && !r.onGround && (r.originId || r.destId));
-    const headStart = airborne ? (r.departedAt || nowS() - 60) : 0;
-    // the trace's still-open leg is that same flight, so it is left out of the list below the (hidden) head
-    const past = () => knownLegs(hex).filter(l => (l.from || l.to) && !(airborne && (!l.ended || l.tEnd >= headStart - 300))).sort((a, b) => b.tStart - a.tStart);
-    const build = legs => {
-      const head = airborne ? [{ tStart: headStart, tEnd: r.eta || nowS(), eta: r.eta, from: r.originId ? { id: r.originId } : null, to: r.destId ? { id: r.destId } : null, cs: rec.cs, ended: false, live: true }] : legs.slice(0, 1);
+    const fly = flyingNow(hex, rec);
+    const past = () => knownLegs(hex).filter(l => l.from || l.to).sort((a, b) => b.tStart - a.tStart);
+    const build = all => {
+      let legs = all, head = all.slice(0, 1);
+      if (fly) {
+        // the trace's leg of that same flight (the newest, still open, heard within 12 hours) is left out of the list
+        // below the (hidden) head, and so is any part of it a hole in coverage cut off; an older flight last heard high
+        // stays, "-> N/A"
+        const open = all[0] && !all[0].ended && nowS() - all[0].tEnd < 12 * 3600 ? all[0] : null;
+        const t0 = fly.start || (open && open.tStart) || nowS() - 60, cur = open && open.tEnd >= t0 - 300 ? open : null;
+        legs = all.filter(l => l.tEnd < t0 - 300);
+        const o = fly.o || (cur && cur.from && cur.from.id) || 0, d = fly.d || (cur && cur.to && cur.to.id) || 0;
+        head = [{ tStart: t0, tEnd: fly.eta || nowS(), eta: fly.eta || 0, from: o ? { id: o } : null, to: d ? { id: d } : null, cs: rec.cs, ended: false, live: true }];
+      }
       const list = head.concat(legs).slice(0, 30);
       histShown.set(reg, { hex, legs: list });
       return list.map((l, i) => flightListEntry(l, rec, i));

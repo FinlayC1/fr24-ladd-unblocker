@@ -1,4 +1,4 @@
-// FR24 LADD Unblocker 22.24.0 - the page-world part (see src/page.js)
+// FR24 LADD Unblocker 22.24.1 - the page-world part (see src/page.js)
 (function () {
   'use strict';
   // ------------------------------------------------------------------------------------------------------------
@@ -7,7 +7,7 @@
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "22.24.0";
+    var BRIDGE_V = "22.24.1";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
 
     var resolved = new Map();     // fr24 flight id -> identity record (incl. photos)
@@ -455,7 +455,10 @@
     var shotKeyP = function (p) { return fileKey(p && (p.large || p.medium || p.thumb)); };
     var imgKeyA = function (im) { return fileKey(strOf(im, 5) || strOf(im, 4) || strOf(im, 3) || strOf(im, 1)); };
     var realImg = function (im) { return !adImg(im) && (has(im, 3) || has(im, 4) || has(im, 5)); };
-    function goodPhotos(l) { return (l || []).filter(function (p) { return p && !adJson(p); }); }
+    // JetPhotos' "cb" sizes have the photographer's credit bar burnt into the bottom of the picture: the same size without
+    // "cb" is the clean photo (FR24 strips it on its own medium / large path, not on the thumbnail it takes verbatim)
+    var noBar = function (u) { return typeof u === 'string' ? u.replace(/(\/\/cdn\.jetphotos\.com\/\d+)cb\//i, '$1/') : u; };
+    function goodPhotos(l) { return (l || []).filter(function (p) { return p && !adJson(p); }).map(function (p) { return p.large === noBar(p.large) && p.medium === noBar(p.medium) && p.thumb === noBar(p.thumb) ? p : Object.assign({}, p, { large: noBar(p.large), medium: noBar(p.medium), thumb: noBar(p.thumb) }); }); }
     function ourPhotosFor(hexU) { var c = photoCache.get(hexU); var l = goodPhotos(c && c.photos); if (!l.length) l = goodPhotos((psCache.get(hexU) || {}).photos); return l; }
     function photoParts(photos) {
       // url (1), copyright (2), thumbnail (3): FR24 then uses the thumbnail verbatim as the image and url as the link
@@ -1057,7 +1060,7 @@
     var hasPhotos = function (rec) { return shownPhotos(rec).length > 0; };
     // warm: ask now, so the card has its pictures when opened (nothing waits on the answer)
     function warmPhotos(rec, pri) { if (rec && rec.hex && !((photoCache.get(String(rec.hex).toUpperCase()) || {}).final)) photosFor(rec, pri); }
-    var boardImage = function (ph) { var img = ph.large || ph.medium || ph.thumb; return { copyright: ph.credit || ph.source || '', link: ph.link || img, thumbnail: ph.thumb || img, url: img }; };
+    var boardImage = function (ph) { var img = noBar(ph.large || ph.medium || ph.thumb); return { copyright: ph.credit || ph.source || '', link: ph.link || img, thumbnail: noBar(ph.thumb) || img, url: img }; };
     function withTimeout(p, ms, dflt) { return Promise.race([p, new Promise(function (res) { setTimeout(function () { res(dflt); }, ms); })]); }
 
     // ---- fetch shim: search box, airport boards (list + detail card), "Recent <reg> flights" ---------------------------
