@@ -18,55 +18,62 @@
   const UB_WHATS_NEW = '__TL_WHATSNEW__';
   // (an aircraft with an open padlock: FR24's outline style - 24 grid, 1.5 stroke in the text colour)
   const UB_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
-  const UB_X = '<svg viewBox="0 0 14 14" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M2 2l10 10M12 2L2 12"/></svg>';
+  const UB_X = '<svg viewBox="0 0 14 14" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5l11 11M12.5 1.5l-11 11"/></svg>';
+  // (the size of the window's text: 1.2 is as large as the text of the bar's own buttons; this scales it)
+  const UB_SIZE_KEY = 'tweeks.fr24.ladd.textsize', UB_SIZES = [['S', 0.9], ['M', 1], ['L', 1.15], ['XL', 1.3]];
+  const ubSize = () => { const v = parseInt(lsGet(UB_SIZE_KEY), 10); return v >= 0 && v < UB_SIZES.length ? v : 1; };
   const UB_STYLE = `
-.tl-ub{position:fixed;z-index:2147482000;left:10px;top:70px;width:252px;max-height:calc(100vh - 160px);display:flex;flex-direction:column;background:#f4f4f4;color:#393939;border-radius:8px;box-shadow:0 2px 12px rgba(0,0,0,.35);overflow:hidden;font-family:inherit;font-size:12px;line-height:1.35;text-align:left}
+.tl-ub{position:fixed;z-index:2147482000;left:10px;top:70px;width:252px;max-height:calc(100vh - 160px);display:flex;flex-direction:column;background:#f4f4f4;color:#393939;border-radius:8px;box-shadow:0 2px 12px rgba(0,0,0,.35);overflow:hidden;font-family:inherit;font-size:calc(var(--tl-f,1.2)*12px);line-height:1.35;text-align:left}
 .tl-ub *{box-sizing:border-box}
-.tl-ub-head{flex:none;position:relative;height:30px;display:flex;align-items:center;justify-content:center;background:#393939;color:#fff;font-size:13px;font-weight:700}
-.tl-ub-x{position:absolute;right:7px;top:5px;width:20px;height:20px;padding:0;border:0;background:none;color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.tl-ub-head{flex:none;position:relative;height:30px;display:flex;align-items:center;justify-content:center;background:#393939;color:#fff;font-size:15px;font-weight:700}
+.tl-ub-x{position:absolute;right:6px;top:4px;width:22px;height:22px;padding:0;border:0;background:none;color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center}
 .tl-ub-body{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#f8c023 transparent}
 .tl-ub-body::-webkit-scrollbar{width:5px}
 .tl-ub-body::-webkit-scrollbar-thumb{background:#f8c023;border-radius:3px}
 .tl-ub-row{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .tl-ub-top{padding:12px 7px 6px}
-.tl-ub-t{font-size:11px;font-weight:600;color:#6d6d6d;text-transform:uppercase}
-.tl-ub-info{display:flex;gap:4px;padding:0 7px 9px;font-size:10px;line-height:1.35;color:#5c5c5c}
+.tl-ub-t{font-size:calc(var(--tl-f,1.2)*11px);font-weight:600;color:#6d6d6d;text-transform:uppercase}
+.tl-ub-info{display:flex;gap:4px;padding:0 7px 9px;font-size:calc(var(--tl-f,1.2)*10px);line-height:1.35;color:#5c5c5c}
 .tl-ub-info svg{flex:none;margin-top:1px}
 .tl-ub-item{padding:10px 7px 10px;border-top:1px solid #fff}
-.tl-ub-item p{margin:3px 0 0;font-size:11px;line-height:1.4;color:#393939}
+.tl-ub-item p{margin:3px 0 0;font-size:calc(var(--tl-f,1.2)*11px);line-height:1.4;color:#393939}
 .tl-ub-off .tl-ub-feat{opacity:.45}
 .tl-ub-tg{flex:none;position:relative;width:36px;height:20px;padding:0;border:0;border-radius:10px;background:#c4c4c4;cursor:pointer;transition:background .15s}
 .tl-ub-tg[aria-checked="true"]{background:#f8c023}
 .tl-ub-tg i{position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.3);transition:left .15s}
 .tl-ub-tg[aria-checked="true"] i{left:18px}
-.tl-ub-reload{position:sticky;top:0;z-index:1;display:flex;align-items:center;justify-content:space-between;gap:6px;padding:6px 7px;background:#fff4d1;border-bottom:1px solid #f8c023;font-size:11px;font-weight:600}
+.tl-ub-reload{position:sticky;top:0;z-index:1;display:flex;align-items:center;justify-content:space-between;gap:6px;padding:6px 7px;background:#fff4d1;border-bottom:1px solid #f8c023;font-size:calc(var(--tl-f,1.2)*11px);font-weight:600}
 .tl-ub-reload[hidden]{display:none}
-.tl-ub-b{flex:none;padding:4px 10px;border:0;border-radius:4px;background:#f8c023;color:#1b1b1b;font:inherit;font-size:11px;font-weight:700;cursor:pointer}
+.tl-ub-b{flex:none;padding:4px 10px;border:0;border-radius:4px;background:#f8c023;color:#1b1b1b;font:inherit;font-size:calc(var(--tl-f,1.2)*11px);font-weight:700;cursor:pointer}
 .tl-ub-b2{background:#e2e2e2}
 .tl-ub-b:disabled{opacity:.5;cursor:default}
-.tl-ub-kv{display:flex;justify-content:space-between;gap:6px;margin-top:4px;font-size:11px}
+.tl-ub-kv{display:flex;justify-content:space-between;gap:6px;margin-top:4px;font-size:calc(var(--tl-f,1.2)*11px)}
 .tl-ub-kv span:first-child{color:#5c5c5c}
 .tl-ub-btns{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
-.tl-ub-note{margin-top:6px;font-size:10px;line-height:1.4;color:#5c5c5c}
+.tl-ub-note{margin-top:6px;font-size:calc(var(--tl-f,1.2)*10px);line-height:1.4;color:#5c5c5c}
 .tl-ub a{color:#327db6;text-decoration:none}
 .tl-ub a:hover{text-decoration:underline}
 .tl-ub .tl-muted{opacity:.75}
 .tl-ub .tl-warn{color:#b35c00;font-weight:600}
-.tl-ub .tl-pop-row{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 6px;padding:3px 0;border-top:1px solid rgba(0,0,0,.06);font-size:11px}
-.tl-ub #tl-ub-sources>.tl-muted{font-size:10px;line-height:1.4}
-.tl-ub .tl-in{flex:1 1 100%;min-width:0;margin:1px 0;padding:4px 6px;background:#fff;color:#393939;border:1px solid #c8c8c8;border-radius:4px;font:inherit;font-size:11px}
+.tl-ub .tl-pop-row{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 6px;padding:3px 0;border-top:1px solid rgba(0,0,0,.06);font-size:calc(var(--tl-f,1.2)*11px)}
+.tl-ub #tl-ub-sources>.tl-muted{font-size:calc(var(--tl-f,1.2)*10px);line-height:1.4}
+.tl-ub .tl-in{flex:1 1 100%;min-width:0;margin:1px 0;padding:4px 6px;background:#fff;color:#393939;border:1px solid #c8c8c8;border-radius:4px;font:inherit;font-size:calc(var(--tl-f,1.2)*11px)}
 .tl-ub-going{pointer-events:none}
 .tl-ub-btn-on,.tl-ub-btn-on *{color:#f8c023!important}
 .tl-ub-btn [data-tl-ub-label]{white-space:nowrap}
 .tl-ub-dot{position:absolute;top:3px;left:calc(50% + 6px);width:7px;height:7px;border-radius:50%;background:#f8c023;box-shadow:0 0 0 1.5px rgba(0,0,0,.55);pointer-events:none}
 .tl-ub-dot[data-k="new"]{background:#4ea1e8}
-.tl-ub-new{position:relative;margin:8px 7px 2px;padding:6px 22px 6px 8px;background:#e8f1fa;border-radius:6px;font-size:11px;line-height:1.4;color:#393939}
+.tl-ub-new{position:relative;margin:8px 7px 2px;padding:6px 22px 6px 8px;background:#e8f1fa;border-radius:6px;font-size:calc(var(--tl-f,1.2)*11px);line-height:1.4;color:#393939}
 .tl-ub-new ul{margin:3px 0 2px;padding-left:14px}
 .tl-ub-new li{margin:1px 0}
 .tl-ub-new .tl-ub-x{top:3px;right:2px;color:#5c5c5c}
-.tl-ub-alert{margin-top:6px;padding:5px 7px;background:#fff4d1;border-left:3px solid #f8c023;border-radius:3px;font-size:11px;line-height:1.4}
+.tl-ub-alert{margin-top:6px;padding:5px 7px;background:#fff4d1;border-left:3px solid #f8c023;border-radius:3px;font-size:calc(var(--tl-f,1.2)*11px);line-height:1.4}
 .tl-ub-grid .tl-ub-kv span:last-child{text-align:right}
 .tl-ub-log{margin:6px 0 0;max-height:160px;overflow:auto;padding:5px 6px;background:#fff;border:1px solid #dcdcdc;border-radius:4px;font:10px/1.35 ui-monospace,Consolas,monospace;white-space:pre-wrap;word-break:break-word;color:#393939}
+.tl-ub-seg{display:flex;gap:4px}
+.tl-ub-seg button{min-width:30px;padding:3px 6px;border:0;border-radius:4px;background:#e2e2e2;color:#393939;font:inherit;font-weight:700;cursor:pointer}
+.tl-ub-seg button[aria-pressed="true"]{background:#f8c023;color:#1b1b1b}
+.tl-ub-gone,.tl-ub-hid{display:none!important}
 html.tl-no-strip .tl-strip{display:none!important}`;
   // the switches, in the order shown; 'reload': takes effect when FR24 is loaded again
   const UB_FEATURES = [
@@ -277,6 +284,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     return `<div class="tl-ub-reload"${ubNeedReload ? '' : ' hidden'}><span>Reload FR24 to apply</span><button type="button" class="tl-ub-b" data-ub-act="reload">Reload</button></div>${whatsNewHtml()}
       <div class="tl-ub-row tl-ub-top"><span class="tl-ub-t">Enable LADD Unblock</span>${tgHtml('on', 'Enable LADD Unblock')}</div>
       <div class="tl-ub-info">${info}<span>Names blocked (LADD) and N/A aircraft from public ADS-B, with routes, predicted destinations and flight history.${opt.on ? '' : ' Switched off: FR24 is left as it is.'}</span></div>
+      <div class="tl-ub-item"><div class="tl-ub-row"><span class="tl-ub-t">Text size</span><div class="tl-ub-seg">${UB_SIZES.map(([n], i) => `<button type="button" data-ub-size="${i}" aria-pressed="${i === ubSize() ? 'true' : 'false'}" title="Text size ${n}">${n}</button>`).join('')}</div></div></div>
       ${UB_FEATURES.map(([k, t, d]) => `<div class="tl-ub-item tl-ub-feat"><div class="tl-ub-row"><span class="tl-ub-t">${esc(t)}</span>${tgHtml(k, t)}</div><p>${esc(d)}</p></div>`).join('')}
       <div class="tl-ub-item"><span class="tl-ub-t">Updates</span><div id="tl-ub-upd">${updatesHtml()}</div></div>
       <div class="tl-ub-item"><span class="tl-ub-t">Monitor</span><div id="tl-ub-mon">${opt.on ? monHtml() : '<p>Switched off.</p>'}</div></div>
@@ -312,6 +320,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     const left = L.left >= 0 && L.left < vw - 150 ? L.left : UB_LOOK0.left, top = L.top >= 0 && L.top < vh - 200 ? L.top : UB_LOOK0.top;
     const barTop = ubBar && ubBar.isConnected ? ubBar.getBoundingClientRect().top : 0;
     const bottom = L.bottom > top + 240 && L.bottom <= vh ? L.bottom : barTop > top + 240 ? barTop - 10 : vh - 20;
+    ubWin.style.setProperty('--tl-f', String(Math.round(1.2 * UB_SIZES[ubSize()][1] / k * 1000) / 1000));
     ubWin.style.left = left / k + 'px'; ubWin.style.top = top / k + 'px'; ubWin.style.width = width / k + 'px';
     ubWin.style.maxHeight = Math.max(240, bottom - top) / k + 'px';
   }
@@ -336,8 +345,9 @@ html.tl-no-strip .tl-strip{display:none!important}`;
       ubWin = document.createElement('div'); ubWin.className = 'tl-ub'; ubWin.setAttribute('role', 'dialog'); ubWin.setAttribute('aria-label', 'LADD Unblock');
       ubWin.innerHTML = `<div class="tl-ub-head"><span>LADD Unblock</span><button type="button" class="tl-ub-x" data-ub-act="close" aria-label="Close" title="Close">${UB_X}</button></div><div class="tl-ub-body"></div>`;
       ubWin.addEventListener('click', ev => {
-        const t = ev.target && ev.target.closest ? ev.target.closest('[data-ub-opt],[data-ub-act]') : null; if (!t) return;
+        const t = ev.target && ev.target.closest ? ev.target.closest('[data-ub-opt],[data-ub-act],[data-ub-size]') : null; if (!t) return;
         ev.preventDefault(); ev.stopPropagation();
+        if (t.dataset.ubSize) { lsSet(UB_SIZE_KEY, t.dataset.ubSize); placeUnblockWindow(); return renderUnblockWindow(); }
         if (t.dataset.ubOpt) return setOpt(t.dataset.ubOpt, !opt[t.dataset.ubOpt]);
         const act = t.dataset.ubAct;
         if (act === 'close') closeUnblockWindow();
@@ -358,13 +368,82 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     ubBadge();
     checkLatest(false);
     if (opt.on) monStart();
+    sweepNative();
   }
   function closeUnblockWindow() {
-    monStop();
+    monStop(); unhideAll();
     if (ubWin) { const w = ubWin; ubWin = null; w.classList.add('tl-ub-going'); ubAnimate(w, ubLook().anim.out, () => w.remove()); }
     if (ubBtn) ubBtn.classList.remove('tl-ub-btn-on');
   }
   const unblockWindowOpen = () => !!(ubWin && ubWin.isConnected);
+
+  // ---- making way, and cleaning up --------------------------------------------------------------------------------------
+  // FR24's own widget panels on the map and the window of another bottom-bar button give way to this window while it is
+  // open, as they do for each other; and what is left of FR24's Bookmarks widget, and of an empty "Disruptions" dropdown
+  // on the airport panel, is taken away. All found by their words, not by FR24's class names (it is a Vue app).
+  const UB_WIDGET_TITLES = ['most tracked flights', 'airport disruptions', 'statistics', 'last-clicked flights', 'latest blog posts', 'bookmarks'];
+  let ubSweepAt = 0, ubSweepDirty = true, ubClosingNative = false;
+  const ubHidden = new Set(), ubGoneEmpty = new Set();
+  function leavesByText(wanted) {
+    const out = new Map(wanted.map(w => [w, []]));
+    if (!document.body) return out;
+    const tw = document.createTreeWalker(document.body, 4);
+    for (let n = tw.nextNode(); n; n = tw.nextNode()) {
+      const t = n.data; if (t.length > 40) continue;
+      const k = t.trim().toLowerCase(), list = out.get(k); if (!list) continue;
+      const el = n.parentElement; if (!el || el.closest('.tl-ub,.tl-ub-btn,.tl-pop,script,style') || (ubBar && ubBar.contains(el))) continue;
+      list.push(el);
+    }
+    return out;
+  }
+  // the whole widget round its title: up until the next box would hold another widget's title (or is wider than a panel),
+  // and no further than a box that is placed on the page itself
+  function boxOf(leaf, others) {
+    let best = null;
+    for (let a = leaf.parentElement, d = 0; a && a !== document.body && a !== document.documentElement && d < 8; a = a.parentElement, d++) {
+      if (a.offsetWidth > 520 || others.some(o => o !== leaf && a.contains(o))) break;
+      best = a;
+      const pos = getComputedStyle(a).position; if (pos === 'fixed' || pos === 'absolute') break;
+    }
+    return best;
+  }
+  const emptyBox = e => !e.textContent.trim() && !e.querySelector('img,svg,canvas,video,input,button,select,textarea');
+  function goneEmpty(e) { if (!e.classList.contains('tl-ub-gone')) { e.classList.add('tl-ub-gone'); ubGoneEmpty.add(e); } }
+  function unhideAll() { for (const e of ubHidden) e.classList.remove('tl-ub-hid'); ubHidden.clear(); }
+  function sweepNative() {
+    ubSweepDirty = false; ubSweepAt = now();
+    if (!opt.on || !document.body) return;
+    const titles = [...UB_WIDGET_TITLES, 'weather', 'settings', 'filters', 'widgets', 'disruptions', 'airport statistics'];
+    const L = leavesByText(titles), allWidget = UB_WIDGET_TITLES.flatMap(t => L.get(t));
+    // an emptied box that has been filled since comes back
+    for (const e of [...ubGoneEmpty]) if (!e.isConnected) ubGoneEmpty.delete(e); else if (!emptyBox(e)) { e.classList.remove('tl-ub-gone'); ubGoneEmpty.delete(e); }
+    // the Bookmarks widget: on the map and in the Widgets window's list, gone for good
+    for (const leaf of L.get('bookmarks')) { const b = boxOf(leaf, allWidget); if (b && b !== leaf) b.classList.add('tl-ub-gone'); }
+    // the empty body of the Disruptions dropdown on an airport's panel
+    for (const d of L.get('disruptions')) {
+      const st = L.get('airport statistics').find(x => { for (let a = d.parentElement, n = 0; a && n < 6; a = a.parentElement, n++) if (a.contains(x)) return true; return false; });
+      if (!st) continue;
+      let c = d.parentElement; while (c && !c.contains(st)) c = c.parentElement; if (!c) continue;
+      let h = d; while (h.parentElement && h.parentElement !== c) h = h.parentElement;
+      for (let sib = h.nextElementSibling; sib && !sib.contains(st); sib = sib.nextElementSibling) if (emptyBox(sib)) goneEmpty(sib);
+      let hh = d; while (hh.parentElement && hh.parentElement !== h) hh = hh.parentElement;
+      if (hh !== d || h !== d) for (let sib = hh.nextElementSibling; sib; sib = sib.nextElementSibling) if (sib !== hh && emptyBox(sib)) goneEmpty(sib);
+      const dr = d.getBoundingClientRect();
+      if (dr.height > 0) for (const e of h.querySelectorAll('*')) if (!e.contains(d) && e.getBoundingClientRect().top >= dr.bottom - 1 && emptyBox(e)) goneEmpty(e);
+    }
+    // this window open: another bottom-bar button's window is closed (as its own button would), and the widget panels
+    // go once none of them is left
+    if (!unblockWindowOpen()) { unhideAll(); return; }
+    let anyNative = false;
+    for (const label of ['Settings', 'Weather', 'Filters', 'Widgets']) {
+      if (!nativeWindowOf(label, L.get(label.toLowerCase()))) continue;
+      anyNative = true;
+      const item = ubItems.get(label);
+      if (item && !ubClosingNative) { ubClosingNative = true; try { item.click(); } finally { ubClosingNative = false; } }
+    }
+    if (anyNative) { setTimeout(() => { if (unblockWindowOpen()) sweepNative(); }, 450); return; }
+    for (const leaf of allWidget) { const b = boxOf(leaf, allWidget); if (b && b !== leaf && !b.classList.contains('tl-ub-gone')) { b.classList.add('tl-ub-hid'); ubHidden.add(b); } }
+  }
 
   // ---- the button on FR24's bar ---------------------------------------------------------------------------------------
   // (the elements holding exactly this text: the bar's labels - and a window's title, which the bar test below leaves out)
@@ -431,8 +510,8 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   // and the frames of their appear and disappear, for this window to copy ------------------------------------------------
   // (the window: the nearest fixed or absolute box round its title, sized like a window - its layout size, which an
   // animation's scale does not change; its title bar: the window's child holding the title)
-  function nativeWindowOf(label) {
-    for (const t of textLeaves(label)) {
+  function nativeWindowOf(label, leaves) {
+    for (const t of leaves || textLeaves(label)) {
       if (ubBar && ubBar.contains(t)) continue;
       for (let a = t.parentElement, d = 0; a && a !== document.body && d < 8; a = a.parentElement, d++) {
         const cs = getComputedStyle(a); if (cs.position !== 'fixed' && cs.position !== 'absolute') continue;
@@ -534,6 +613,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
       ubBar = found.bar;
       // (FR24's own buttons: this window makes way for theirs)
       ubBar.addEventListener('click', ev => {
+        if (ubClosingNative) return;
         const it = ev.target && ev.target.closest ? ev.target.closest('.tl-ub-btn') : null; if (it) return;
         if (unblockWindowOpen()) closeUnblockWindow();
         const lbl = [...ubItems.entries()].find(([, el]) => el.contains(ev.target));
@@ -553,8 +633,8 @@ html.tl-no-strip .tl-strip{display:none!important}`;
       addUnblockStyle(); if (opt.on) applyOptsLive();
       // (every second while FR24 builds its page; once the bar is there, every second to put the button back if FR24 drew
       // the bar again; a page without the bar is looked at less and less often)
-      try { new MutationObserver(() => { ubDirty = true; }).observe(document.body || document.documentElement, { childList: true, characterData: true, subtree: true }); } catch (e) { ubDirty = true; }
-      const tick = () => { ensureBarButton(); setTimeout(tick, ubMiss > 60 ? 5000 : 1000); };
+      try { new MutationObserver(() => { ubDirty = true; ubSweepDirty = true; }).observe(document.body || document.documentElement, { childList: true, characterData: true, subtree: true }); } catch (e) { ubDirty = true; }
+      const tick = () => { ensureBarButton(); if (ubSweepDirty && now() - ubSweepAt > 800) sweepNative(); setTimeout(tick, ubMiss > 60 ? 5000 : 1000); };
       tick();
       // (the newest version looked up a little after FR24 opens and every 6 hours: a dot on the button when one is out)
       setTimeout(() => { checkLatest(false); setInterval(() => checkLatest(false), 6 * 3600000); }, 20000);
