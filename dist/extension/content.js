@@ -44,7 +44,7 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
 // ==UserScript==
 // @name         Flightradar24 LADD / N-A Unblocker (feed-level)
 // @namespace    tweeks.io
-// @version      22.28.3
+// @version      22.28.4
 // @description  Identifies every LADD / N/A / blocked military aircraft on Flightradar24 from public ADS-B, and injects callsign, registration, operator, age, country, MSN, squawk, vertical speed, GPS altitude, airspeeds, wind, photos, a reasoned origin/destination with a wind-corrected ETA (also for ordinary flights FR24 shows as N/A - military, private, GA, helicopters, with private landing sites; learned from 63 days of every aircraft worldwide, with live weather and closures), airport-board entries and a rebuilt 7-month flight log straight into FR24's own data - so it all renders like normal FR24 traffic.
 // @author       Finlay Clarke
 // @updateURL    https://raw.githubusercontent.com/FinlayC1/fr24-ladd-unblocker/main/dist/fr24-ladd-unblocker.user.js
@@ -133,7 +133,7 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "22.28.3";
+    var BRIDGE_V = "22.28.4";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed
@@ -788,7 +788,17 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
             var x = ai[j];
             if ((x.fn === 1 && !x.val) || (x.fn === 2 && !x.val.length) || (x.fn === 3 && !x.val) || (x.fn === 7 && !x.val.length) || (x.fn === 13 && !x.val) || (x.fn === 14 && !x.val) || (x.fn === 16 && !x.val) || (x.fn === 10 && !x.val) || (x.fn === 15 && !x.val.length)) continue;
             if ((giveCountry && x.fn === 16) || (giveMsn && x.fn === 13) || (giveAge && x.fn === 14)) continue;   // our value: no padlock
-            if (x.fn === 11) { var im = parse(x.val); if (adImg(im)) continue; if (has(im, 3) || has(im, 4) || has(im, 5)) hasRealPhoto = true; else { sideviews.push(x.raw); continue; } }
+            if (x.fn === 11) {
+              var im = parse(x.val); if (adImg(im)) continue;
+              if (!(has(im, 3) || has(im, 4) || has(im, 5))) { sideviews.push(x.raw); continue; }
+              // FR24's own picture of a blocked airframe: given the way ours are (link, credit, the clean large picture as
+              // the image), so FR24 draws it like every other slide - its 640cb large size has JetPhotos' credit bar burnt
+              // into the bottom, and drawn as FR24 sent it the first slide came up short with that bar in it
+              hasRealPhoto = true;
+              var bigO = noBar(strOf(im, 5) || strOf(im, 4) || strOf(im, 3));
+              k2.push(fLen(11, concat([fStr(1, strOf(im, 1) || bigO), fStr(2, strOf(im, 2)), fStr(3, bigO)]))); touched = true;
+              continue;
+            }
             k2.push(x.raw);
           }
           if (rec.hexNum && !has(ai, 1)) { k2.push(fVar(1, rec.hexNum)); touched = true; }
@@ -2388,6 +2398,28 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
       return st;
     })();
     stats.adFree = adFree;
+    // No picture in JetPhotos' credit-bar size anywhere on the page, whichever way it got there (FR24 takes some of its
+    // picture URLs verbatim): the "cb" size has "© name - JetPhotos" burnt into a band along its bottom. The same picture
+    // without "cb" is the clean one.
+    (function () {
+      var CB = /\/\/cdn\.jetphotos\.com\/\d+cb\//i;
+      var CBG = /(\/\/cdn\.jetphotos\.com\/\d+)cb\//gi;
+      function fix(img) {
+        var s = img.getAttribute('src'), ss = img.getAttribute('srcset');
+        if (s && CB.test(s)) { img.setAttribute('src', noBar(s)); stats.cbFixed = (stats.cbFixed || 0) + 1; }
+        if (ss && CB.test(ss)) img.setAttribute('srcset', ss.replace(CBG, '$1/'));
+      }
+      function scan(el) { if (el.tagName === 'IMG') fix(el); else if (el.getElementsByTagName) { var l = el.getElementsByTagName('img'); for (var i = 0; i < l.length; i++) fix(l[i]); } }
+      try {
+        new MutationObserver(function (recs) {
+          for (var i = 0; i < recs.length; i++) {
+            var r = recs[i];
+            if (r.type === 'attributes') { if (r.target.tagName === 'IMG') fix(r.target); continue; }
+            for (var j = 0; j < r.addedNodes.length; j++) if (r.addedNodes[j].nodeType === 1) scan(r.addedNodes[j]);
+          }
+        }).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['src', 'srcset'] });
+      } catch (e) { /* ignore */ }
+    })();
     // "Playback" on a row of a rebuilt flight log: FR24 never recorded these flights, so its own playback has nothing to
     // show - the leg's ADS-B track is replayed on adsb.lol instead. The list FR24 renders is our data minus its first
     // entry (the flight on screen), so row i is entry i + 1; rows of FR24's own logs have no replay link and are untouched.
@@ -4927,7 +4959,7 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '22.28.3';
+  const VERSION = '22.28.4';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
@@ -12165,7 +12197,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // (the version whose "what's new" was put away, and the one whose dot on the button the window was opened for)
   const UB_SEEN_KEY = 'tweeks.fr24.ladd.seenver', UB_DOT_KEY = 'tweeks.fr24.ladd.dotver';
   // (the newest CHANGELOG section's headlines, written in by build.mjs: { v, items })
-  const UB_WHATS_NEW = {"v":"22.28.3","items":["One row for a flight that was planned again, and its card filled in.","The wrong airline's logo on a row.","Place names without their county."]};
+  const UB_WHATS_NEW = {"v":"22.28.4","items":["A LADD aircraft's slideshow no longer opens on a short picture with \"© name - JetPhotos\" burnt into its bottom."]};
   // (an aircraft with an open padlock: FR24's outline style - 24 grid, 1.5 stroke in the text colour)
   const UB_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
   const UB_X = '<svg viewBox="0 0 14 14" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M2 2l10 10M12 2L2 12"/></svg>';

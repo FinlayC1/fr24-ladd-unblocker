@@ -152,6 +152,19 @@ check('ordinary aircraft: FR24 data kept (registration, callsign, photos)', str(
   check('a JetPhotos picture in its credit-bar size: shown in the clean size (640, no "cb")', imgsH.length === 1 && imgsH[0] === 'https://cdn.jetphotos.com/640/6/123456_1790000000.jpg', imgsH);
   B.resolved.delete(fid4);
 }
+// 2g) FR24's own pictures of a blocked airframe in its first frame (JVW739 / OE-GAB, 15 Oct): the first slide came up
+//     short with "© name - JetPhotos" burnt into it. Each is given the way ours are: link, credit, the clean large picture
+{
+  posted.length = 0;
+  const fid5 = 1103986160, efi5 = cat(H.parse(efiReal).filter(f => f.fn !== 1).map(f => f.raw).concat([H.fVar(1, fid5)]));
+  B.resolved.set(fid5, { cs: 'JVW739', reg: 'OE-GAB', hex: '440418', hexNum: 0x440418, type: 'C25B', photos: [] });
+  const own = n => cat([H.fStr(1, 'https://www.jetphotos.com/photo/' + n), H.fStr(2, 'Tomas Scheffer'), H.fStr(3, 'https://cdn.jetphotos.com/200cb/6/' + n + '_tb.jpg'), H.fStr(4, 'https://cdn.jetphotos.com/400cb/6/' + n + '.jpg'), H.fStr(5, 'https://cdn.jetphotos.com/640cb/6/' + n + '.jpg')]);
+  const aiOwn = cat([aiStub, H.fLen(11, own('500001_1')), H.fLen(11, own('500002_2')), H.fLen(11, own('500003_3'))]);
+  const outI = H.patchFlightMsg(cat([H.fLen(1, aiOwn), H.fLen(5, efi5)]), { id: fid5 }, H.FOLLOW), aiI = one(outI, 1);
+  const slides = aiI ? fields(aiI.val, 11).map(f => ({ link: str(f.val, 1), credit: str(f.val, 2), img: str(f.val, 3), other: !!(one(f.val, 4) || one(f.val, 5)) })) : [];
+  check('FR24\'s own pictures of a blocked airframe: every slide the clean large picture (640, no "cb"), nothing in a credit-bar size', slides.length === 3 && slides.every((x, i) => x.img === 'https://cdn.jetphotos.com/640/6/50000' + (i + 1) + '_' + (i + 1) + '.jpg' && !x.other && x.credit === 'Tomas Scheffer' && /jetphotos\.com\/photo\//.test(x.link)), slides);
+  B.resolved.delete(fid5);
+}
 // 2d) "Playback" of a blocked flight (panel menu, airport-board card): its ADS-B track on adsb.lol, not FR24's empty one
 {
   const opened = []; w.open = u => { opened.push(u); return null; };
@@ -298,6 +311,16 @@ check('ordinary aircraft: FR24 data kept (registration, callsign, photos)', str(
     const aiA = cat([H.fVar(1, 0x400b1c), H.fStr(15, 'British Airways')]);
     const outA = H.patchFlightMsg(cat([H.fLen(1, aiA), H.fLen(5, efiO)]), { id: fidO + 1 }, H.FOLLOW);
     check('... a real operator FR24 names stays', str(one(outA, 1).val, 15) === 'British Airways', str(one(outA, 1).val, 15));
+  }
+  // A picture in JetPhotos' credit-bar size put on the page by any path (FR24 takes some URLs verbatim): the clean size
+  {
+    const img = w.document.createElement('img'); img.setAttribute('src', 'https://cdn.jetphotos.com/640cb/6/500001_1.jpg');
+    w.document.body.appendChild(img); await sleep(20);
+    const added = img.getAttribute('src');
+    img.setAttribute('src', 'https://cdn.jetphotos.com/400cb/6/500002_2.jpg'); img.setAttribute('srcset', 'https://cdn.jetphotos.com/640cb/6/500002_2.jpg 640w, https://cdn.jetphotos.com/400cb/6/500002_2.jpg 400w'); await sleep(20);
+    check('a credit-bar picture drawn on the page: shown in the clean size, when added and when its src changes', added === 'https://cdn.jetphotos.com/640/6/500001_1.jpg' && img.getAttribute('src') === 'https://cdn.jetphotos.com/400/6/500002_2.jpg' && !/cb\//.test(img.getAttribute('srcset')), { added, src: img.getAttribute('src'), srcset: img.getAttribute('srcset') });
+    const plain = w.document.createElement('img'); plain.setAttribute('src', 'https://t.plnspttrs.net/1/999_abc_280.jpg'); w.document.body.appendChild(plain); await sleep(20);
+    check('... other pictures left as they are', plain.getAttribute('src') === 'https://t.plnspttrs.net/1/999_abc_280.jpg');
   }
   console.log(fails ? `\n${fails} FAILED` : '\nall passed');
   process.exit(fails ? 1 : 0);

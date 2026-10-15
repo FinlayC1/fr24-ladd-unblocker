@@ -1,4 +1,4 @@
-// FR24 LADD Unblocker 22.28.3 - the page-world part (see src/page.js)
+// FR24 LADD Unblocker 22.28.4 - the page-world part (see src/page.js)
 (function () {
   'use strict';
   // ------------------------------------------------------------------------------------------------------------
@@ -7,7 +7,7 @@
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "22.28.3";
+    var BRIDGE_V = "22.28.4";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed
@@ -662,7 +662,17 @@
             var x = ai[j];
             if ((x.fn === 1 && !x.val) || (x.fn === 2 && !x.val.length) || (x.fn === 3 && !x.val) || (x.fn === 7 && !x.val.length) || (x.fn === 13 && !x.val) || (x.fn === 14 && !x.val) || (x.fn === 16 && !x.val) || (x.fn === 10 && !x.val) || (x.fn === 15 && !x.val.length)) continue;
             if ((giveCountry && x.fn === 16) || (giveMsn && x.fn === 13) || (giveAge && x.fn === 14)) continue;   // our value: no padlock
-            if (x.fn === 11) { var im = parse(x.val); if (adImg(im)) continue; if (has(im, 3) || has(im, 4) || has(im, 5)) hasRealPhoto = true; else { sideviews.push(x.raw); continue; } }
+            if (x.fn === 11) {
+              var im = parse(x.val); if (adImg(im)) continue;
+              if (!(has(im, 3) || has(im, 4) || has(im, 5))) { sideviews.push(x.raw); continue; }
+              // FR24's own picture of a blocked airframe: given the way ours are (link, credit, the clean large picture as
+              // the image), so FR24 draws it like every other slide - its 640cb large size has JetPhotos' credit bar burnt
+              // into the bottom, and drawn as FR24 sent it the first slide came up short with that bar in it
+              hasRealPhoto = true;
+              var bigO = noBar(strOf(im, 5) || strOf(im, 4) || strOf(im, 3));
+              k2.push(fLen(11, concat([fStr(1, strOf(im, 1) || bigO), fStr(2, strOf(im, 2)), fStr(3, bigO)]))); touched = true;
+              continue;
+            }
             k2.push(x.raw);
           }
           if (rec.hexNum && !has(ai, 1)) { k2.push(fVar(1, rec.hexNum)); touched = true; }
@@ -2262,6 +2272,28 @@
       return st;
     })();
     stats.adFree = adFree;
+    // No picture in JetPhotos' credit-bar size anywhere on the page, whichever way it got there (FR24 takes some of its
+    // picture URLs verbatim): the "cb" size has "© name - JetPhotos" burnt into a band along its bottom. The same picture
+    // without "cb" is the clean one.
+    (function () {
+      var CB = /\/\/cdn\.jetphotos\.com\/\d+cb\//i;
+      var CBG = /(\/\/cdn\.jetphotos\.com\/\d+)cb\//gi;
+      function fix(img) {
+        var s = img.getAttribute('src'), ss = img.getAttribute('srcset');
+        if (s && CB.test(s)) { img.setAttribute('src', noBar(s)); stats.cbFixed = (stats.cbFixed || 0) + 1; }
+        if (ss && CB.test(ss)) img.setAttribute('srcset', ss.replace(CBG, '$1/'));
+      }
+      function scan(el) { if (el.tagName === 'IMG') fix(el); else if (el.getElementsByTagName) { var l = el.getElementsByTagName('img'); for (var i = 0; i < l.length; i++) fix(l[i]); } }
+      try {
+        new MutationObserver(function (recs) {
+          for (var i = 0; i < recs.length; i++) {
+            var r = recs[i];
+            if (r.type === 'attributes') { if (r.target.tagName === 'IMG') fix(r.target); continue; }
+            for (var j = 0; j < r.addedNodes.length; j++) if (r.addedNodes[j].nodeType === 1) scan(r.addedNodes[j]);
+          }
+        }).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['src', 'srcset'] });
+      } catch (e) { /* ignore */ }
+    })();
     // "Playback" on a row of a rebuilt flight log: FR24 never recorded these flights, so its own playback has nothing to
     // show - the leg's ADS-B track is replayed on adsb.lol instead. The list FR24 renders is our data minus its first
     // entry (the flight on screen), so row i is entry i + 1; rows of FR24's own logs have no replay link and are untouched.
