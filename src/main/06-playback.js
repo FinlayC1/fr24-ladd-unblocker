@@ -10,7 +10,7 @@
   // track of that day: where it took off and where it landed, the strip's tag "Playback" in red. The flight open in the
   // panel gets its padlocked figures from that track, moment by moment (the page reads them from it as FR24 plays).
   const pbOut = new Map();   // FR24 flight id -> a name found here in a playback, for the monitor (02 reportToMonitor)
-  const pb = { ts: 0, at: 0, flights: new Map(), named: new Map(), routes: new Map(), sel: 0, selTs: 0, hexOf: new Map(), naming: new Set(), heatBusy: false, heatAgain: false, tried: new Map(), routing: new Set(), traceKey: '', matchT: 0, monAsked: new Set() };
+  const pb = { ts: 0, at: 0, flights: new Map(), named: new Map(), routes: new Map(), sel: 0, selTs: 0, hexOf: new Map(), naming: new Set(), heatBusy: false, heatAgain: false, tried: new Map(), routing: new Set(), traceKey: '', matchT: 0, monAsked: new Map() };
   function pbMode() { return /^\/\d{4}-\d\d-\d\d\/\d\d:\d\d\//.test(location.pathname); }
   // (a flight is tried against its half hour's file once a two-minute step of it: tried again further on - one that has
   // since taken off, or come out of a hole in coverage)
@@ -50,12 +50,15 @@
   const pbTaken = (hex, id, ts) => { for (const r of pb.named.values()) if (r.hex === hex && r.id !== id && Math.abs((pb.flights.get(r.id) || {}).ts - ts) < 600) return true; return false; };
   // The monitor (22.23, /pbmatch): every FR24 flight it named while it was live, and every other from the tracks it
   // keeps of the blocked aircraft (90 days) - the whole map's unnamed flights in one request, named at once, each with its
-  // flight as the monitor logged it. An older monitor: the names it gave live only (/names).
+  // flight as the monitor logged it. An older monitor: the names it gave live only (/names). (22.25) One it has no name
+  // for is asked about again every 45 s while the playback is open, at the moment shown then: the monitor keeps working
+  // on it meanwhile - each moment adds to its path, carried across the holes in the tracks - until one aircraft fits.
+  const PB_REASK_MS = 45000;
   async function pbFromMonitor(ts) {
     if (!monUp()) return 0;
-    const fl = [...pb.flights.values()].filter(f => f.ts === ts && !pb.named.has(f.id) && !pb.monAsked.has(f.id)).slice(0, 1500);
+    const t = now(), fl = [...pb.flights.values()].filter(f => f.ts === ts && !pb.named.has(f.id) && t - (pb.monAsked.get(f.id) || 0) >= PB_REASK_MS).slice(0, 1500);
     if (!fl.length) return 0;
-    for (const f of fl) pb.monAsked.add(f.id);
+    for (const f of fl) pb.monAsked.set(f.id, t);
     if (pb.monAsked.size > 20000) pb.monAsked.clear();
     const forget = e => { for (const f of fl) pb.monAsked.delete(f.id); log('playback names', String(e && e.message || e)); return null; };
     let j = null;
@@ -65,7 +68,7 @@
     for (const r of (j && Array.isArray(j.list) ? j.list : [])) {
       const [id, hex, reg, type, cs, flags, how, leg] = r;
       if (!pb.flights.has(id) || pb.named.has(id) || !/^[0-9a-f]{6}$/.test(String(hex || '')) || pbTaken(hex, id, ts)) continue;
-      const hx = store.getHex(hex) || {}, rec = { hex, cs: /^[A-Z0-9]{2,8}$/.test(String(cs || '')) ? cs : '', reg: reg || hx.reg || hexNNumber(hex), type: String(type || hx.type || '').toUpperCase(), desc: hx.desc || '', ladd: !!(flags & 1 || hx.ladd), mil: !!(flags & 2 || hx.mil), pia: !!(flags & 4 || hx.pia), src: how === 'track' ? 'monitor (its track)' : 'monitor (named live)', matchedAt: now() };
+      const hx = store.getHex(hex) || {}, rec = { hex, cs: /^[A-Z0-9]{2,8}$/.test(String(cs || '')) ? cs : '', reg: reg || hx.reg || hexNNumber(hex), type: String(type || hx.type || '').toUpperCase(), desc: hx.desc || '', ladd: !!(flags & 1 || hx.ladd), mil: !!(flags & 2 || hx.mil), pia: !!(flags & 4 || hx.pia), src: PB_HOW[how] || 'monitor (named live)', matchedAt: now() };
       store.mergeHex(hex, { reg: rec.reg, type: rec.type, ladd: rec.ladd || undefined, pia: rec.pia || undefined, mil: rec.mil || undefined });
       store.setId(id, Object.assign({ id }, rec));
       if (leg && typeof leg === 'object') pbRouteFromLeg(id, hex, leg);
@@ -77,6 +80,10 @@
     if (n) log('playback: named from the monitor', n, 'of', fl.length);
     return n;
   }
+  const PB_HOW = { track: 'monitor (its track)', reckon: 'monitor (its track, carried across a gap)', path: 'monitor (worked out from its path)', live: 'monitor (named live)' };
+  // (a playback left open, paused or not: the monitor asked again about the flights still unnamed - adsb.lol's heatmap
+  // not again, it has nothing new for them)
+  setInterval(() => { if (pb.ts && now() - pb.at < 15 * 60000 && !document.hidden && pbMode()) pbFromMonitor(pb.ts).catch(e => log('playback names', e)); }, PB_REASK_MS);
   function pbOutSet(id, rec, ts) { pbOut.set(id, [id, rec.hex, rec.reg, rec.type, rec.cs, (rec.ladd ? 1 : 0) | (rec.mil ? 2 : 0) | (rec.pia ? 4 : 0), Math.round(ts)]); if (pbOut.size > 2000) pbOut.delete(pbOut.keys().next().value); }
   // the monitor and the heatmap side by side: whichever answers first names a flight
   async function pbMatch() {

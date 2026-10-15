@@ -1,6 +1,7 @@
 // Every name the monitor gives an FR24 flight, kept for good - so a flight is named in FR24's playback as it was live,
 // any day the monitor was running, without a heatmap or a guess. One line per name, one file per day (the day it was
-// given): STORE/names/YYYY-MM-DD.jsonl - [FR24 id, hex, reg, type, callsign, flags (1 LADD 2 mil 4 PIA), named at (s)].
+// given): STORE/names/YYYY-MM-DD.jsonl - [FR24 id, hex, reg, type, callsign, flags (1 LADD 2 mil 4 PIA), named at (s),
+// how - none: named live; 'track' / 'reckon': worked out later from the tracks (22.25)].
 // A name withdrawn (the aircraft turned out elsewhere) is written again with an empty hex: the last line of an id wins.
 // The last two weeks are held in memory; an older day is read when a playback of it asks (the last few kept).
 const fs = require('fs'), path = require('path');
@@ -22,6 +23,7 @@ function createNames(env) {
     id = Number(id); const hex = String(rec.hex || '').toLowerCase();
     if (!(id > 0) || !/^[0-9a-f]{6}$/.test(hex)) return false;
     const row = [id, hex, String(rec.reg || ''), String(rec.type || ''), String(rec.cs || ''), rec.flags | 0, Math.round(fin(t) ? t : Date.now() / 1000)];
+    if (rec.how) row.push(String(rec.how).slice(0, 12));
     const cur = mem.get(id); if (cur && cur[1] === row[1] && cur[2] === row[2] && cur[5] === row[5]) return false;
     mem.set(id, row); write(row); stats.added++;
     { const d = dayOf(row[6]); if (old.has(d)) old.get(d).set(id, row); }   // (a day already read: as it is now)

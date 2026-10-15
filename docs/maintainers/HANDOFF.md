@@ -133,6 +133,39 @@ Its store and state should move to the VM.
   the registers' live answers (their formats as the browser's code already read them), FR24's acceptance of the
   server's scan.
 
+## 4h. 22.25.0 (15 Oct, cloud session) - built and tested offline; deploy with deploy.sh
+
+- **Waiting list.** `monitor/waiting.cjs` (`createWaiting`): FR24 ids not named yet, `src` 'pb' (from /pbmatch) or
+  'live' (`waitLive`: ident flights unnamed 5 min+). `note` keeps up to 60 points a flight (one per 30 s), 10,000
+  flights (the oldest tenth dropped when full), three days. `tryOne` samples 10 points, candidates from `tracks.atAll`
+  on a 2-degree grid (one per minute, cached per round), fits each by `tracks.estimate` (x = distance / (R + tol); 9 on a
+  height or ground/air mismatch), needs 80% fitting and no slip (one in six+), carried-only needs two points 2 min apart
+  or one very close of the same type; unique (`c.nF < 0.6 b.nF` or clearly worse) and no `rival` (another waiting
+  flight where that aircraft could be). `round` every 15 s (`waitLoop`, `CFG.waitMs` 400 ms); backoff 1-60 min (10 max
+  while recent; 6 h after three tries with no candidate); `kick` on `tracks.onChange` of past days. Named: live ->
+  `ident.assign(..., 'path')`; else `names.add(id, {..., how})` (row `[7]`). Saved as STORE/waiting.json.
+- **Dead reckoning.** `tracks.estimate(hex, t, o)` over the window's day maps: interpolation (gap <= 900 s), edges
+  (120 s), parked (both ends on the ground within 2 km), great circle across a hole (airborne both ends, 120 kt+), one
+  side (10,000 ft+, 150 kt+; 15 min, or 3 h where `o.remote` says open water: `E.remotePath`). Returns `tol` (km) and
+  `how` ('track', 'reckon', 'parked').
+- **/pbmatch** notes every unnamed flight first, then tries them (`CFG.pbReckonMs` 400 ms a request, at most 1 s of
+  every 5 s over all requests: `pbSpend`). The browser re-asks every 45 s (`PB_REASK_MS`, `pb.monAsked` is a Map).
+- **Crowd routes.** Browser `noteRouteOut` (from `publishRoute`): only for a flight in `srvIds.rows` with the same hex,
+  not quick, not from the crowd, and only with `legCount > 0`, `originConf === 'ground'` or `destConf === 'confirmed'`;
+  `crowdO`/`crowdD` parts and a 'landed' destination left out. Monitor `ident.crowdRoute` keeps each end on its own
+  (`ot`/`oOwn`, `dt`/`dOwn`): an end from the owner (no IP) stands 20 min; a confirmed destination stands; another
+  airport 10+ points less sure is refused for 20 min; destinations behind the flight refused. `ident.prune` drops a
+  destination (not confirmed) the flight is no nearer to an hour on (`km`/`kmAt`) and marks the row changed; the origin
+  lasts as long as the name. `table()` cols 24-26. Browser `crowdOf`, `srvRoute`
+  labels, `composeRoute` uses it when better by 10 points or confirmed; `pullSrvIds` replans a live flight whose
+  crowd route changed.
+- **Crowd learning.** Browser `learnFromLeg` queues rows without monitor `lx` (`learnOut`); `/report` `learn` ->
+  `learnFromCrowd` (checks in `learnCheck`, dups of a monitor leg skipped, per-IP cap) into STORE/learn-crowd/<day>.json
+  with the report's number `learnSeq` at [12]; the reply's `learnNot` lists the rows not taken. `learnedBuild` saves
+  first, takes rows numbered up to `builtSeq` (`crowdRows`), and publishes `builtSeq`. The browser marks a taken row
+  with `learnSeq` and leaves it out of its tables when `x[12] <= builtSeq` (`srvCovers`). No clocks compared.
+- Tests: `unit_waiting` (monitor), `unit_shared` (two browsers in jsdom with the real monitor between them).
+
 ## 4g. 22.24.1 (15 Oct, cloud session) - userscript only, tested offline
 
 - **"Recent <reg> flights".** `onNeedHist` (`04-routes.js`) now asks `flyingNow(hex, rec)` whether the aircraft is

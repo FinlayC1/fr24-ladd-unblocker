@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Flightradar24 LADD / N-A Unblocker (feed-level)
 // @namespace    tweeks.io
-// @version      22.24.1
+// @version      22.25.0
 // @description  Identifies every LADD / N/A / blocked military aircraft on Flightradar24 from public ADS-B, and injects callsign, registration, operator, age, country, MSN, squawk, vertical speed, GPS altitude, airspeeds, wind, photos, a reasoned origin/destination with a wind-corrected ETA (also for ordinary flights FR24 shows as N/A - military, private, GA, helicopters, with private landing sites; learned from 63 days of every aircraft worldwide, with live weather and closures), airport-board entries and a rebuilt 7-month flight log straight into FR24's own data - so it all renders like normal FR24 traffic.
 // @author       Finlay Clarke
 // @match        https://www.flightradar24.com/*
@@ -88,7 +88,7 @@
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "22.24.1";
+    var BRIDGE_V = "22.25.0";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
 
     var resolved = new Map();     // fr24 flight id -> identity record (incl. photos)
@@ -4835,7 +4835,7 @@
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '22.24.1';
+  const VERSION = '22.25.0';
   const NM_KM = 1.852;
   const AREA_RADIUS_NM = 220;           // aggregator "point" radius for viewport sweeps (APIs cap at 250)
   const TARGET_RADIUS_NM = 40;          // radius for the immediate lookup of the selected aircraft
@@ -5820,7 +5820,9 @@
   // FR24's very first frame of any of those flights is drawn named. A flight on screen becomes a full identification at once
   // (photos, owner, the browser's own route); the rest stay light until they are on screen. This browser's own
   // identification stays the backup: flights the monitor has no name for are matched here as before.
-  // rows: [id, hex, reg, type, callsign, flags (1 LADD 2 mil 4 PIA), how, named at, origin id, origin conf, dest id, dest %, ...]
+  // rows: [id, hex, reg, type, callsign, flags (1 LADD 2 mil 4 PIA), how, named at, origin id, origin conf, dest id, dest %, ...,
+  // (22.25) 24: whose route - 0 the monitor's rough destination, 1 another browser's, 2 confirmed in another browser; 25: the
+  // destination's word when it is another browser's; 26: 1 when the origin is]
   const srvIds = { rows: new Map(), since: 0, at: 0, busy: false, scanOk: false, pushed: new Set() };
   function srvRec(r) {
     if (r[5] & 7) noteDbFlags(String(r[1] || '').toLowerCase(), (r[5] & 1 ? 8 : 0) | (r[5] & 2 ? 1 : 0) | (r[5] & 4 ? 4 : 0));
@@ -5835,10 +5837,19 @@
     const rt = srvRoute(r); if (rt) rec.route = rt;
     return rec;
   }
-  // (its rough destination, as a route of the page's kind - until this browser works out its own for a flight on screen)
+  // (its rough destination, as a route of the page's kind - until this browser works out its own for a flight on screen;
+  // 22.25: the route another browser worked out for it, its own engine and the aircraft's whole log, or confirmed there)
+  const crowdOf = r => {
+    if (!Array.isArray(r) || !(r[24] >= 1)) return null;
+    const d = !!r[25], o = !!r[26];
+    return { by: r[24], o: o ? r[8] || 0 : 0, oc: o ? String(r[9] || '') : '', d: d ? r[10] || 0 : 0, p: d ? r[11] || 0 : 0, dc: d ? String(r[25]) : '', eta: d ? r[18] || 0 : 0, atd: o ? r[19] || 0 : 0, at: r[12] || 0 };
+  };
   function srvRoute(r) {
     const o = r[8] ? apById(r[8]) : null, d = r[10] ? apById(r[10]) : null; if (!o && !d) return null;
-    return { originId: o ? o.id : 0, originIata: apCode(o), originCity: o ? o.city || o.name || '' : '', destId: d ? d.id : 0, destIata: apCode(d), destCity: d ? d.city || d.name || '' : '', destConf: d ? 'predicted' : '', destP: d ? Math.min(0.99, (r[11] || 0) / 100) : 0, destReason: d ? 'rough destination worked out by the monitor' : '', quick: true, computedAt: (r[12] || nowS()) * 1000,
+    const c = crowdOf(r), cd = !!c && !!c.d, sure = cd && c.by === 2;
+    return { originId: o ? o.id : 0, originIata: apCode(o), originCity: o ? o.city || o.name || '' : '', originNote: o && c && c.o ? 'worked out by another browser' : '', destId: d ? d.id : 0, destIata: apCode(d), destCity: d ? d.city || d.name || '' : '',
+      destConf: d ? (sure ? 'confirmed' : cd && /^(likely|probable|possible|filed)$/.test(c.dc) ? c.dc : 'predicted') : '', destP: d ? (sure ? 100 : Math.min(99, Math.round(r[11] || 0))) : 0,
+      destReason: d ? (sure ? 'confirmed in another browser' : cd ? 'worked out by another browser' : 'rough destination worked out by the monitor') : '', quick: true, crowd: !!c, computedAt: (r[12] || nowS()) * 1000,
       eta: d && r[18] > 0 ? r[18] : 0, atd: o && r[19] > 0 ? r[19] : 0, departedAt: o && r[19] > 0 ? r[19] : 0 };
   }
   // A flight FR24 is drawing now in view (or opened) that the monitor has named: identified at once, as if matched here
@@ -5882,7 +5893,10 @@
       // (everything: what the monitor no longer names is withdrawn here too)
       if (j.full) { const keep = new Set(rows.map(r => r[0])); srvDrop([...srvIds.rows.keys()].filter(id => !keep.has(id))); }
       else if (Array.isArray(j.gone) && j.gone.length) srvDrop(j.gone.filter(id => srvIds.rows.has(id) || (live.get(id) || {}).srv));
-      for (const r of rows) srvIds.rows.set(r[0], r);
+      // (22.25: another browser's route for a flight identified here - on screen, opened: its route worked out again now;
+      // and when the monitor drops it - the flight went elsewhere)
+      const routeKey = r => String(r.slice(8, 12).concat(r.slice(18, 20), r.slice(24, 27)));
+      for (const r of rows) { const old = srvIds.rows.get(r[0]); srvIds.rows.set(r[0], r); if ((r[24] >= 1 || (old && old[24] >= 1)) && live.has(r[0]) && (!old || routeKey(old) !== routeKey(r))) scheduleReplan(r[0], 250); }
       srvIds.since = j.now; srvIds.at = now();
       srvPush(rows);
       // (named flights that only moved: their new places, for the page's boards)
@@ -5911,6 +5925,24 @@
   const ownersOut = new Map();   // hex -> what this browser found of a blocked aircraft's owner / operator, for the monitor
   function noteFeedHdr(h) { if (h && typeof h === 'object' && h['fr24-device-id']) { if (!feedHdr || JSON.stringify(feedHdr) !== JSON.stringify(h)) feedHdrSent = false; feedHdr = h; } }
   const rnd4 = v => Math.round(v * 1e4) / 1e4;
+  // (22.25) The routes this browser worked out itself (04 publishRoute) for flights the monitor names - the flight
+  // opened: its own engine with the aircraft's whole log, its take-off seen, a destination seen or confirmed: with the
+  // next report, the monitor hands them out with the names, and every other browser shows them the moment the flight is
+  // opened or searched. Not a guess made without any of those (the monitor's own rough one is as good); never one that
+  // came from another browser, nor a landing (where the aircraft is: every browser sees that itself - and FR24 keeps the
+  // id while it taxis out again); each again only when its airports, chance or word change.
+  // [id, hex, origin id, its word, destination id, its chance (%), its word, ETA, departed]
+  const routesOut = new Map(), routesSent = new Map();
+  function noteRouteOut(id, route) {
+    const r = srvIds.rows.get(id), rec = live.get(id);
+    if (!r || !rec || !rec.hex || rec.hex !== String(r[1] || '').toLowerCase() || !route || route.quick || route.crowd) return;
+    if (!(route.legCount > 0 || (route.originConf === 'ground' && !route.crowdO) || (route.destConf === 'confirmed' && !route.crowdD))) return;
+    const o = !route.crowdO && route.originId > 0 ? route.originId : 0, d = !route.crowdD && route.destId > 0 && route.destConf !== 'landed' ? route.destId : 0;
+    if (!o && !d) return;
+    const row = [id, rec.hex, o, o ? String(route.originConf || '') : '', d, d ? Math.round(route.destP || 0) : 0, d ? String(route.destConf || '') : '', d && route.eta > 0 ? Math.round(route.eta) : 0, o ? Math.round(route.atd || route.departedAt || 0) : 0];
+    if (routesSent.get(id) === row.slice(2, 7).join('|')) return;
+    routesOut.set(id, row); if (routesOut.size > 500) routesOut.delete(routesOut.keys().next().value);
+  }
   async function reportToMonitor() {
     if (!monUp()) return;
     const t = now(), flights = [], ids = [];
@@ -5923,10 +5955,17 @@
     // never to the shared one, which would then ask FR24 under this browser's device id)
     const mine = (r => !!(r && r.token))(monRemote());
     const hdr = mine && feedHdr && !feedHdrSent ? feedHdr : null, own = [...ownersOut].slice(0, 500), pbIds = [...pbOut.values()].slice(0, 500);
-    if (!flights.length && !ids.length && !hdr && !own.length && !pbIds.length) return;
-    const j = await monPost('/report', { hdr: hdr || undefined, ua: hdr ? navigator.userAgent : undefined, flights, ids, owners: own.length ? own : undefined, pbIds: pbIds.length ? pbIds : undefined }).catch(e => { log('report to monitor', String(e && e.message || e)); return null; });
+    const routes = [...routesOut.values()].slice(0, 300), learn = learnOutTake(300);
+    if (!flights.length && !ids.length && !hdr && !own.length && !pbIds.length && !routes.length && !learn.length) return;
+    const j = await monPost('/report', { hdr: hdr || undefined, ua: hdr ? navigator.userAgent : undefined, flights, ids, owners: own.length ? own : undefined, pbIds: pbIds.length ? pbIds : undefined, routes: routes.length ? routes : undefined, learn: learn.length ? learn.map(x => x.slice(0, 12)) : undefined }).catch(e => { log('report to monitor', String(e && e.message || e)); return null; });
     if (j && j.ok && hdr) feedHdrSent = true;
-    if (j && j.ok) { for (const [h, o] of own) if (ownersOut.get(h) === o) ownersOut.delete(h); for (const r of pbIds) if (pbOut.get(r[0]) === r) pbOut.delete(r[0]); }
+    if (j && j.ok) {
+      for (const [h, o] of own) if (ownersOut.get(h) === o) ownersOut.delete(h); for (const r of pbIds) if (pbOut.get(r[0]) === r) pbOut.delete(r[0]);
+      for (const r of routes) { routesSent.set(r[0], r.slice(2, 7).join('|')); if (routesOut.get(r[0]) === r) routesOut.delete(r[0]); }
+      if (routesSent.size > 3000) for (const k of [...routesSent.keys()].slice(0, 1000)) routesSent.delete(k);
+      // (a monitor older than 22.25 learns none of them: none marked sent)
+      if (typeof j.learned === 'number' && j.learnSeq > 0) learnSentMark(learn, j.learnNot, j.learnSeq);
+    } else learnOutBack(learn);
   }
   setInterval(() => { idleSlice().then(reportToMonitor).catch(() => {}); }, 60000);
   // What this browser's own polls of adsb.lol / adsb.fi found around its map, to the monitor every 30 s: every other
@@ -6882,9 +6921,30 @@
     return true;
   }
   function learnedStore() { if (!learnLoaded) learnLoad(); return learned; }
-  // (a flight of a blocked aircraft within the days the monitor's learning covers is in it already: not counted twice)
-  let srvLearned = null;   // { ver, from, asOf } of the monitor's learning added to the tables on this page
-  const srvCovers = x => { if (!srvLearned || typeof x[0] !== 'string') return false; const [hex, t] = x[0].split('|'), ts = +t || +x[8] || 0; return /^[0-9a-f]{6}$/.test(hex) && !!(store.getHex(hex) || {}).ladd && ts >= Date.parse(srvLearned.from + 'T00:00:00Z') / 1000 && ts < Date.parse(srvLearned.asOf + 'T00:00:00Z') / 1000 + 86400; };
+  // (22.25) Every flight learned here goes to the monitor too (02 reportToMonitor): learned there with every other
+  // browser's and its own, every browser's engine has it with its next /learned. A flight the monitor took is marked
+  // with the number it gave that report (x[12]), kept with it: a learning of the monitor's that has it says so
+  // (builtSeq), and it is not counted twice here (srvCovers)
+  const learnOut = [];
+  function learnOutTake(n) { return learnOut.splice(0, n); }
+  function learnOutBack(rows) { if (rows && rows.length) learnOut.unshift(...rows); if (learnOut.length > 2000) learnOut.splice(2000); }
+  // (not: the places in the list of those the monitor did not take - refused, or past its hour's share: learned here only)
+  function learnSentMark(rows, not, seq) {
+    if (!rows || !rows.length || !(seq > 0)) return;
+    const skip = new Set(Array.isArray(not) ? not : []);
+    rows.forEach((x, i) => { if (!skip.has(i)) x[12] = seq; });
+    // (the chunks they are in written again - the newest two: a flight is sent within a minute or two of being learned)
+    if (learnLoaded) for (const i of [learnMeta.last - 1, learnMeta.last]) { const c = learnChunks.get(i); if (c && rows.some(x => c.includes(x))) store.setBlob('learn3:' + i, c); }
+  }
+  // (a flight of a blocked aircraft within the days the monitor's learning covers is in it already - and one sent from
+  // here that it has: not counted twice)
+  let srvLearned = null;   // { ver, from, asOf, builtSeq } of the monitor's learning added to the tables on this page
+  const srvCovers = x => {
+    if (!srvLearned || typeof x[0] !== 'string') return false;
+    const [hex, t] = x[0].split('|'), ts = +t || +x[8] || 0;
+    if (!(ts >= Date.parse(srvLearned.from + 'T00:00:00Z') / 1000 && ts < Date.parse(srvLearned.asOf + 'T00:00:00Z') / 1000 + 86400)) return false;
+    return (/^[0-9a-f]{6}$/.test(hex) && !!(store.getHex(hex) || {}).ladd) || (x[12] > 0 && x[12] <= (srvLearned.builtSeq || 0));
+  };
   function replayLearned(x) { if (!srvCovers(x)) ENGINE.learnRow(x); }
   // (read, then replayed in idle slices: 100,000 flights at once would hold the page for seconds)
   async function applyLearned() {
@@ -6895,7 +6955,7 @@
     try { const l = (await learnLoad()).slice(); await sliced(l, replayLearned, { ms: 8 }); if (l.length) log('learned from use', l.length, 'flights'); } catch (e) { log('learned replay', e); }
   }
   async function addSrvLearned(j) {
-    srvLearned = { ver: j.ver, from: j.from, asOf: j.asOf };
+    srvLearned = { ver: j.ver, from: j.from, asOf: j.asOf, builtSeq: j.builtSeq || 0 };
     let n = 0; await sliced(j.ops, o => { if (ENGINE.addLearnedOp(o)) n++; }, { ms: 8 });
     log('learned on the monitor', j.flights, 'flights of', j.days, 'days (' + j.from + ' to ' + j.asOf + '),', n, 'increments');
   }
@@ -6936,7 +6996,10 @@
     }
     const ok = Array.isArray(lx) && lx.length === 3, flow = ok ? String(lx[2] || '') : ENGINE.flowKeysOf((raw && raw.pts) || [], ENGINE.byId(s.to.id)).slice(0, 16).join('|');
     const x = [key, s.from.id, s.to.id, Math.round(s.tEnd), ok ? String(lx[0] || '') : [...sq].join(','), ok ? String(lx[1] || '') : [...fm].join(','), cls, mil ? 1 : 0, Math.round(s.tStart), s.cs || '', (acOfHex(hex).type || ''), flow];
-    if (learnAppend(x) && learnedApplied) replayLearned(x);
+    if (!learnAppend(x)) return;
+    if (learnedApplied) replayLearned(x);
+    // (rebuilt by the monitor's own learning already - from its lx: not sent back)
+    if (!ok) { learnOut.push(x); if (learnOut.length > 2000) learnOut.shift(); }
   }
 
   // The operator an aircraft flies for: FR24's own for it (by name, or from its id or ICAO code - its airline list is
@@ -8535,6 +8598,19 @@
       const ua = apById(uc.destId);
       if (ua) { setD(ua, 'confirmed', 'confirmed by you' + (uc.prev && uc.prev !== apCode(ua) ? ` (it was predicting ${uc.prev})` : '')); r.destP = 100; r.destSite = null; r.alternatives = []; r.userConfirmed = true; }
     }
+    // (22.25) The route another browser worked out for this flight - its own engine with the aircraft's whole log - or a
+    // destination confirmed there: shown where this browser has nothing as good yet (the panel opened before its own log
+    // of the aircraft is in). Never over FR24's own plan, a landing or final seen here, or the user's own word
+    const sr = !r.userConfirmed && !planDest && r.destConf !== 'confirmed' ? srvIds.rows.get(id) : null, cr = sr && String(sr[1] || '').toLowerCase() === hex ? crowdOf(sr) : null;
+    if (cr) {
+      const ca = cr.d ? apById(cr.d) : null;
+      if (ca && (cr.by === 2 || (!r.destId && !r.destSite) || (r.destP || 0) + 10 < cr.p)) {
+        setD(ca, cr.by === 2 ? 'confirmed' : CONF_OF(cr.p / 100), cr.by === 2 ? 'confirmed in another browser' : 'worked out by another browser');
+        r.destP = cr.by === 2 ? 100 : Math.min(99, cr.p); r.destSite = null; r.alternatives = (r.alternatives || []).filter(a => a.iata !== apCode(ca)); r.crowdD = true;
+      }
+      const co = cr.o ? apById(cr.o) : null;
+      if (co && !r.originId && !r.originSite) { setO(co, 'worked out by another browser', cr.oc || 'low'); r.crowdO = true; if (!r.departedAt && cr.atd) { r.departedAt = cr.atd; r.atd = r.atd || cr.atd; } }
+    }
     const destAp = apById(r.destId) || (r.destSite && fin(r.destSite.lat) ? r.destSite : null);
     r.eta = (plan && plan.eta && plan.eta > nowS() - 600 ? plan.eta : 0) || estimateEta(pos, destAp, cls);
     r.sta = (plan && plan.sta) || 0;
@@ -8583,6 +8659,7 @@
     if (!live.has(id) && pubRecs.has(id) && !pubRouted(id)) return;   // an ordinary flight FR24 has (by now) a route for
     postToPage('route', { id, route: (route.originId || route.destId || route.groundAirportId || route.destIata || route.originIata) ? routeForPage(route) : null });
     shareRoute(id, route);
+    noteRouteOut(id, route);
     const rec = live.get(id) || pubRecs.get(id);
     // (an ordinary flight opened in the panel, its destination reasoned: on its airports' boards like FR24's own N/A
     // flights - N77HG, confirmed into the Isle of Man, was on neither its arrivals nor Retford's departures)
@@ -11047,7 +11124,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // track of that day: where it took off and where it landed, the strip's tag "Playback" in red. The flight open in the
   // panel gets its padlocked figures from that track, moment by moment (the page reads them from it as FR24 plays).
   const pbOut = new Map();   // FR24 flight id -> a name found here in a playback, for the monitor (02 reportToMonitor)
-  const pb = { ts: 0, at: 0, flights: new Map(), named: new Map(), routes: new Map(), sel: 0, selTs: 0, hexOf: new Map(), naming: new Set(), heatBusy: false, heatAgain: false, tried: new Map(), routing: new Set(), traceKey: '', matchT: 0, monAsked: new Set() };
+  const pb = { ts: 0, at: 0, flights: new Map(), named: new Map(), routes: new Map(), sel: 0, selTs: 0, hexOf: new Map(), naming: new Set(), heatBusy: false, heatAgain: false, tried: new Map(), routing: new Set(), traceKey: '', matchT: 0, monAsked: new Map() };
   function pbMode() { return /^\/\d{4}-\d\d-\d\d\/\d\d:\d\d\//.test(location.pathname); }
   // (a flight is tried against its half hour's file once a two-minute step of it: tried again further on - one that has
   // since taken off, or come out of a hole in coverage)
@@ -11087,12 +11164,15 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   const pbTaken = (hex, id, ts) => { for (const r of pb.named.values()) if (r.hex === hex && r.id !== id && Math.abs((pb.flights.get(r.id) || {}).ts - ts) < 600) return true; return false; };
   // The monitor (22.23, /pbmatch): every FR24 flight it named while it was live, and every other from the tracks it
   // keeps of the blocked aircraft (90 days) - the whole map's unnamed flights in one request, named at once, each with its
-  // flight as the monitor logged it. An older monitor: the names it gave live only (/names).
+  // flight as the monitor logged it. An older monitor: the names it gave live only (/names). (22.25) One it has no name
+  // for is asked about again every 45 s while the playback is open, at the moment shown then: the monitor keeps working
+  // on it meanwhile - each moment adds to its path, carried across the holes in the tracks - until one aircraft fits.
+  const PB_REASK_MS = 45000;
   async function pbFromMonitor(ts) {
     if (!monUp()) return 0;
-    const fl = [...pb.flights.values()].filter(f => f.ts === ts && !pb.named.has(f.id) && !pb.monAsked.has(f.id)).slice(0, 1500);
+    const t = now(), fl = [...pb.flights.values()].filter(f => f.ts === ts && !pb.named.has(f.id) && t - (pb.monAsked.get(f.id) || 0) >= PB_REASK_MS).slice(0, 1500);
     if (!fl.length) return 0;
-    for (const f of fl) pb.monAsked.add(f.id);
+    for (const f of fl) pb.monAsked.set(f.id, t);
     if (pb.monAsked.size > 20000) pb.monAsked.clear();
     const forget = e => { for (const f of fl) pb.monAsked.delete(f.id); log('playback names', String(e && e.message || e)); return null; };
     let j = null;
@@ -11102,7 +11182,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     for (const r of (j && Array.isArray(j.list) ? j.list : [])) {
       const [id, hex, reg, type, cs, flags, how, leg] = r;
       if (!pb.flights.has(id) || pb.named.has(id) || !/^[0-9a-f]{6}$/.test(String(hex || '')) || pbTaken(hex, id, ts)) continue;
-      const hx = store.getHex(hex) || {}, rec = { hex, cs: /^[A-Z0-9]{2,8}$/.test(String(cs || '')) ? cs : '', reg: reg || hx.reg || hexNNumber(hex), type: String(type || hx.type || '').toUpperCase(), desc: hx.desc || '', ladd: !!(flags & 1 || hx.ladd), mil: !!(flags & 2 || hx.mil), pia: !!(flags & 4 || hx.pia), src: how === 'track' ? 'monitor (its track)' : 'monitor (named live)', matchedAt: now() };
+      const hx = store.getHex(hex) || {}, rec = { hex, cs: /^[A-Z0-9]{2,8}$/.test(String(cs || '')) ? cs : '', reg: reg || hx.reg || hexNNumber(hex), type: String(type || hx.type || '').toUpperCase(), desc: hx.desc || '', ladd: !!(flags & 1 || hx.ladd), mil: !!(flags & 2 || hx.mil), pia: !!(flags & 4 || hx.pia), src: PB_HOW[how] || 'monitor (named live)', matchedAt: now() };
       store.mergeHex(hex, { reg: rec.reg, type: rec.type, ladd: rec.ladd || undefined, pia: rec.pia || undefined, mil: rec.mil || undefined });
       store.setId(id, Object.assign({ id }, rec));
       if (leg && typeof leg === 'object') pbRouteFromLeg(id, hex, leg);
@@ -11114,6 +11194,10 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     if (n) log('playback: named from the monitor', n, 'of', fl.length);
     return n;
   }
+  const PB_HOW = { track: 'monitor (its track)', reckon: 'monitor (its track, carried across a gap)', path: 'monitor (worked out from its path)', live: 'monitor (named live)' };
+  // (a playback left open, paused or not: the monitor asked again about the flights still unnamed - adsb.lol's heatmap
+  // not again, it has nothing new for them)
+  setInterval(() => { if (pb.ts && now() - pb.at < 15 * 60000 && !document.hidden && pbMode()) pbFromMonitor(pb.ts).catch(e => log('playback names', e)); }, PB_REASK_MS);
   function pbOutSet(id, rec, ts) { pbOut.set(id, [id, rec.hex, rec.reg, rec.type, rec.cs, (rec.ladd ? 1 : 0) | (rec.mil ? 2 : 0) | (rec.pia ? 4 : 0), Math.round(ts)]); if (pbOut.size > 2000) pbOut.delete(pbOut.keys().next().value); }
   // the monitor and the heatmap side by side: whichever answers first names a flight
   async function pbMatch() {
@@ -12040,7 +12124,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     };
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true }); else start();
   }
-  try { (pageWindow()).__tweeksLadd = { version: VERSION, msgCount, schedOf, trailFor, get shownId() { return shownId; }, posStats, get bridgeV() { return bridgeV; }, hexOfId, currentPos, idHex, engine: ENGINE, live, pending, telemetry, store, routeState, planState, globalList, fr24, todayCache, sweep, resolveTargeted, routeFor, composeRoute, altsOf, holdTerminal, termHold, worldScan, refreshLists, quickRouteAll, historyPump, histPumped, learnedStore, regCountry, fr24Sched, pubRouted, pubRecs, privatePlace, loadSites, siteNear, sites, onSched, pubMem: () => pubMem, publishRoute, syncPanel, normalizeReadsb, telemOf, noteCands, csOfRec, warmHist, hostStat, loadT2, wantWx, wxMap, wantNotams, closedMap, estimateEta, nNumberHex, watchList, pollWatch, accStore, accNote, statsHtml, fleetList, checkHealth, health, exportCsv, predictForHex, verifyAgainstList, strikes, revokedIds, fr24Named, noteFr24Named, loadHistory, loadToday, fetchJetphotos, loadRunways, knownLegs, areaCache, pollView, saveSnapshot, boardNoteLegs, boardNoteFlight, boardNoteSched, boardScrub, boardLoad, naRouteOf, noteNa, naFeed, matchParked, matchByTraces, boardDrain, boardMem, onNeedBoard, operatorOf, shownOwner, enrich, userConfirm, userDestOf, loadApprTable, monGet, monPost, monCheck, monLive, monUp, MON_DEFAULTS, get monBase() { return monBase; }, liveSources, telOut, noteTelOut, reportTel, pbOut, srvIds, pullSrvIds, srvAdopt, reportToMonitor, syncSrvLearn, applyLearned, get feedHdr() { return feedHdr; }, boardMonFill, natRowOf, fnRows, buildSnapshot, bootHold, firAt, loadFir, onAirAsk, pb, onPbFeed, onPbFollow, onPbHex, pbRouteFor, pbMatch, pbFromMonitor, onNeedRoutes, onNeedAirportData, onNeedAirportPanel, liveBoardRows, runwaysOf, parseRunwayEnds, flightsOfCallsign, bootFlightPage, unlockExports, exportFile, rowWindow, hexOfFid, onNeedSearch, osmPick, wantOsmPlace, osmPlaceAt, learnSite, siteIdAt, siteBk, operatorIdOf, airlineIdByName, fr24Cat, onHistElsewhere, get viewBox() { return viewBox; }, get selectedId() { return currentId(); } }; } catch (_) { /* ignore */ }
+  try { (pageWindow()).__tweeksLadd = { version: VERSION, msgCount, schedOf, trailFor, get shownId() { return shownId; }, posStats, get bridgeV() { return bridgeV; }, hexOfId, currentPos, idHex, engine: ENGINE, live, pending, telemetry, store, routeState, planState, globalList, fr24, todayCache, sweep, resolveTargeted, routeFor, composeRoute, altsOf, holdTerminal, termHold, worldScan, refreshLists, quickRouteAll, historyPump, histPumped, learnedStore, regCountry, fr24Sched, pubRouted, pubRecs, privatePlace, loadSites, siteNear, sites, onSched, pubMem: () => pubMem, publishRoute, syncPanel, normalizeReadsb, telemOf, noteCands, csOfRec, warmHist, hostStat, loadT2, wantWx, wxMap, wantNotams, closedMap, estimateEta, nNumberHex, watchList, pollWatch, accStore, accNote, statsHtml, fleetList, checkHealth, health, exportCsv, predictForHex, verifyAgainstList, strikes, revokedIds, fr24Named, noteFr24Named, loadHistory, loadToday, fetchJetphotos, loadRunways, knownLegs, areaCache, pollView, saveSnapshot, boardNoteLegs, boardNoteFlight, boardNoteSched, boardScrub, boardLoad, naRouteOf, noteNa, naFeed, matchParked, matchByTraces, boardDrain, boardMem, onNeedBoard, operatorOf, shownOwner, enrich, userConfirm, userDestOf, loadApprTable, monGet, monPost, monCheck, monLive, monUp, MON_DEFAULTS, get monBase() { return monBase; }, liveSources, telOut, noteTelOut, reportTel, pbOut, srvIds, pullSrvIds, srvAdopt, reportToMonitor, syncSrvLearn, applyLearned, srvRoute, srvRec, crowdOf, routesOut, routesSent, noteRouteOut, learnFromLeg, learnOutTake, learnOutBack, get learnOutN() { return learnOut.length; }, srvCovers, get srvLearned() { return srvLearned; }, set srvLearned(v) { srvLearned = v; }, addSrvLearned, get feedHdr() { return feedHdr; }, boardMonFill, natRowOf, fnRows, buildSnapshot, bootHold, firAt, loadFir, onAirAsk, pb, onPbFeed, onPbFollow, onPbHex, pbRouteFor, pbMatch, pbFromMonitor, onNeedRoutes, onNeedAirportData, onNeedAirportPanel, liveBoardRows, runwaysOf, parseRunwayEnds, flightsOfCallsign, bootFlightPage, unlockExports, exportFile, rowWindow, hexOfFid, onNeedSearch, osmPick, wantOsmPlace, osmPlaceAt, learnSite, siteIdAt, siteBk, operatorIdOf, airlineIdByName, fr24Cat, onHistElsewhere, get viewBox() { return viewBox; }, get selectedId() { return currentId(); } }; } catch (_) { /* ignore */ }
   log('loaded v' + VERSION);
 
 })();

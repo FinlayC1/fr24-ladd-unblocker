@@ -295,17 +295,61 @@ function createIdent(env) {
     assign(F, hex, infoOf(hex, env.ac.get(hex)), 'client' + (how ? ':' + String(how).slice(0, 20) : ''), nowMs);
     return true;
   }
+  // ---- (22.25) a route a browser worked out for a flight named here --------------------------------------------------
+  // With its own engine and the aircraft's whole log - or the user's own word ("confirm"): handed out with the name, so
+  // every other browser shows it the moment the flight is opened or searched. Taken when it makes sense where FR24 has
+  // the flight now (both ends real airports, the destination not behind it). Each end on its own: a route with an origin
+  // only leaves the destination another browser sent as it was, and the other way round. An end the owner's browser sent
+  // stands over anyone else's for 20 minutes; a confirmed destination over one worked out; and for 20 minutes, one worked
+  // out over another airport more than 10 points less sure. r: { o, oc, d, p, dc, eta, atd }; by: '' the owner, else the
+  // browser's address (only whether it is the owner's is kept). Returns whether it was taken.
+  const away = (F, a) => !!F && !F.gnd && fin(F.trk) && F.spd > 100 && fin(F.lat) && E.dist(F.lat, F.lon, a.lat, a.lon) > 150 && E.angDiff(F.trk, E.brg(F.lat, F.lon, a.lat, a.lon)) > 100;
+  const kmTo = (F, a) => F && fin(F.lat) && fin(F.lon) ? Math.round(E.dist(F.lat, F.lon, a.lat, a.lon)) : -1;
+  const SHOWN = ['o', 'oc', 'atd', 'd', 'p', 'dc', 'eta'];
+  function crowdRoute(id, hex, r, by, nowMs) {
+    const R = ids.get(id), F = flights.get(id); if (!R || R.hex !== String(hex || '').toLowerCase() || !r) return false;
+    const o = r.o > 0 && E.byId(r.o) ? r.o : 0, da = r.d > 0 ? E.byId(r.d) : null, d = da ? r.d : 0;
+    if (!o && !d) return false;
+    if (da && away(F, da)) { stats.routeRefused = (stats.routeRefused || 0) + 1; return false; }
+    const conf = s => /^[a-z]{3,12}$/.test(String(s || '')) ? String(s) : '', nowS = Math.round(nowMs / 1000), mine = by ? 0 : 1, cur = R.crowd || null;
+    const c = Object.assign({ o: 0, oc: '', atd: 0, ot: 0, oOwn: 0, d: 0, p: 0, dc: '', eta: 0, dt: 0, dOwn: 0, km: -1, kmAt: 0 }, cur);
+    const held = (own, t) => own && !mine && nowS - t < 1200;   // (the owner's, lately)
+    let took = false;
+    if (o && !held(c.oOwn, c.ot)) { Object.assign(c, { o, oc: conf(r.oc), atd: r.atd > 1e9 ? Math.round(r.atd) : 0, ot: nowS, oOwn: mine }); took = true; }
+    const dc = conf(r.dc) || 'predicted', p = Math.max(0, Math.min(100, Math.round(+r.p || 0)));
+    if (d && !held(c.dOwn, c.dt) && !(c.d && c.dc === 'confirmed' && dc !== 'confirmed') && !(c.d && c.d !== d && dc !== 'confirmed' && p + 10 < c.p && nowS - c.dt < 1200)) {
+      Object.assign(c, { d, p, dc, eta: r.eta > 1e9 ? Math.round(r.eta) : 0, dt: nowS, dOwn: mine, km: kmTo(F, da), kmAt: nowS }); took = true;
+    }
+    if (!took) return false;
+    c.at = nowS;
+    const same = !!cur && SHOWN.every(k => cur[k] === c[k]);
+    R.crowd = c; if (!same) { R.chg = nowMs; stats.routes = (stats.routes || 0) + 1; }
+    return true;
+  }
   // (flights FR24 no longer draws: gone after keepFlightH hours, their names with them)
   function prune(nowMs) {
     for (const [id, F] of flights) if (nowMs - F.seen > C.keepFlightH * 3600e3) { flights.delete(id); unassign(id, nowMs, 'expired'); }
     for (let i = trailQ.length - 1; i >= 0; i--) if (!flights.has(trailQ[i])) trailQ.splice(i, 1);
     for (const [id, k] of claims) if (nowMs - k.at > 30 * 60000 || ids.has(id)) claims.delete(id);
+    // (a browser's destination worked out, not confirmed, that the flight has come no nearer to in an hour - another way
+    // after all, or round and round somewhere: dropped, the monitor's own handed out again; a browser's origin stays)
+    const nowS = Math.round(nowMs / 1000);
+    for (const [id, R] of ids) {
+      const c = R.crowd; if (!c || !c.d || c.dc === 'confirmed' || nowS - (c.kmAt || 0) < 3600) continue;
+      const a = E.byId(c.d), km = a ? kmTo(flights.get(id), a) : -1;
+      if (a && (km < 0 || c.km < 0 || km < 30 || km < c.km - 50)) { c.km = km; c.kmAt = nowS; continue; }
+      Object.assign(c, { d: 0, p: 0, dc: '', eta: 0, dt: 0, dOwn: 0, km: -1, kmAt: 0 }); if (!c.o) R.crowd = null;
+      R.chg = nowMs; stats.routeAged = (stats.routeAged || 0) + 1;
+    }
   }
 
   // ---- what the browsers get ---------------------------------------------------------------------------------------
   // rows: [FR24 id, hex, reg, type, callsign, flags (1 LADD, 2 military, 4 PIA), how, named at, origin airport id, how
   //        sure, destination airport id, its chance (%), worked out at, lat, lon, alt, on ground, FR24 position time,
-  //        estimated arrival, departure time, owner, operator name, FR24 operator id, operator ICAO]
+  //        estimated arrival, departure time, owner, operator name, FR24 operator id, operator ICAO, (22.25) whose route:
+  //        0 this side's rough destination, 1 a browser's, 2 confirmed in a browser; the destination's word when the
+  //        destination is a browser's (confirmed, likely, ...); 1 when the origin is] - a browser's route (crowdRoute) in
+  //        the route's places: its origin for as long as the flight is named, its destination until prune drops it
   // pos (with since): [id, lat, lon, alt, on ground, FR24 position time] of the named flights that only moved
   const r4 = v => fin(v) ? Math.round(v * 1e4) / 1e4 : null;
   const ownerCols = hex => { const o = env.ownerOf ? env.ownerOf(hex) : null; return o ? [o.owner || '', o.opName || '', o.opId || 0, o.opIcao || ''] : ['', '', 0, '']; };
@@ -315,20 +359,23 @@ function createIdent(env) {
     const rows = [], pos = [];
     for (const [id, R] of ids) {
       if (since && R.chg <= since) { if (R.pchg > since) pos.push([id, r4(R.lat), r4(R.lon), fin(R.alt) ? R.alt : null, R.gnd ? 1 : 0, R.ts || 0]); continue; }
+      const c = R.crowd && (R.crowd.o || R.crowd.d) ? R.crowd : null;
+      // (the part a browser's route leaves out - an origin only - this side's own)
+      if (c) { rows.push([id, R.hex, R.reg, R.type, R.cs, R.flags, R.how, R.at, c.o || (R.origin ? R.origin.id : 0), c.o ? c.oc : R.origin ? R.origin.conf : '', c.d || (R.dest ? R.dest.id : 0), c.d ? c.p : R.dest ? Math.round(R.dest.p * 100) : 0, c.at, r4(R.lat), r4(R.lon), fin(R.alt) ? R.alt : null, R.gnd ? 1 : 0, R.ts || 0, c.d ? c.eta : (R.dest && R.dest.eta) || 0, (c.o && c.atd) || (R.origin && R.origin.t) || 0].concat(ownerCols(R.hex), [c.d && c.dc === 'confirmed' ? 2 : 1, c.d ? c.dc : '', c.o ? 1 : 0])); continue; }
       rows.push([id, R.hex, R.reg, R.type, R.cs, R.flags, R.how, R.at, R.origin ? R.origin.id : 0, R.origin ? R.origin.conf : '', R.dest ? R.dest.id : 0, R.dest ? Math.round(R.dest.p * 100) : 0, R.dest ? R.dest.at : 0,
-        r4(R.lat), r4(R.lon), fin(R.alt) ? R.alt : null, R.gnd ? 1 : 0, R.ts || 0, R.dest && R.dest.eta || 0, R.origin && R.origin.t || 0].concat(ownerCols(R.hex)));
+        r4(R.lat), r4(R.lon), fin(R.alt) ? R.alt : null, R.gnd ? 1 : 0, R.ts || 0, R.dest && R.dest.eta || 0, R.origin && R.origin.t || 0].concat(ownerCols(R.hex), [0, '', 0]));
     }
     return { rows, pos, gone: since ? gone.filter(g => g.at > since).map(g => g.id) : [] };
   }
   // ---- kept on disk ---------------------------------------------------------------------------------------------------
-  function dump() { return { v: 1, ids: [...ids].map(([id, R]) => [id, R.hex, R.reg, R.type, R.cs, R.how, R.at, R.ver, R.flags, R.lat, R.lon, R.alt, R.gnd ? 1 : 0, R.ts, R.origin, R.dest]), flights: [...flights.values()].filter(F => ids.has(F.id)).map(F => [F.id, F.lat, F.lon, F.alt, F.trk, F.spd, F.ts, F.gnd ? 1 : 0, F.src, F.type, F.seen, F.first]) }; }
+  function dump() { return { v: 1, ids: [...ids].map(([id, R]) => [id, R.hex, R.reg, R.type, R.cs, R.how, R.at, R.ver, R.flags, R.lat, R.lon, R.alt, R.gnd ? 1 : 0, R.ts, R.origin, R.dest, R.crowd || null]), flights: [...flights.values()].filter(F => ids.has(F.id)).map(F => [F.id, F.lat, F.lon, F.alt, F.trk, F.spd, F.ts, F.gnd ? 1 : 0, F.src, F.type, F.seen, F.first]) }; }
   function restore(d, nowMs) {
     if (!d || d.v !== 1) return 0;
     for (const f of d.flights || []) { const [id, lat, lon, alt, trk, spd, ts, gnd, src, type, seen, first] = f; if (nowMs - seen > C.keepFlightH * 3600e3) continue; flights.set(id, { id, lat, lon, alt, trk, spd, ts, gnd: !!gnd, src, type: type || '', reg: '', icon: 0, seen, first: first || seen, via: 'disk', pts: [{ t: ts, lat, lon, alt: gnd ? 0 : alt, gs: spd, trk, gnd: !!gnd }], tries: 0, triedAt: 0 }); }
     let n = 0;
-    for (const r of d.ids || []) { const [id, hex, reg, type, cs, how, at, ver, flags, lat, lon, alt, gnd, ts, origin, dest] = r; if (!flights.has(id)) continue; ids.set(id, { hex, reg, type, cs, how, at, ver, flags, strikes: null, chg: nowMs, lat, lon, alt, gnd: !!gnd, ts, origin: origin || null, dest: dest || null }); byHex.set(hex, id); n++; }
+    for (const r of d.ids || []) { const [id, hex, reg, type, cs, how, at, ver, flags, lat, lon, alt, gnd, ts, origin, dest, crowd] = r; if (!flights.has(id)) continue; ids.set(id, { hex, reg, type, cs, how, at, ver, flags, strikes: null, chg: nowMs, lat, lon, alt, gnd: !!gnd, ts, origin: origin || null, dest: dest || null, crowd: crowd || null }); byHex.set(hex, id); n++; }
     return n;
   }
-  return { flights, ids, byHex, cache, gone, trailQ, stats, touch, observe, match, lookupAreas, addLookup, nextTrail, setTrail, clientId, prune, table, dump, restore, score, best, reckon, trailMatch, parked, typeRelation, assign, unassign, candidates, candOf };
+  return { flights, ids, byHex, cache, gone, trailQ, stats, touch, observe, match, lookupAreas, addLookup, nextTrail, setTrail, clientId, crowdRoute, prune, table, dump, restore, score, best, reckon, trailMatch, parked, typeRelation, assign, unassign, candidates, candOf };
 }
 module.exports = { createIdent, FLAG };

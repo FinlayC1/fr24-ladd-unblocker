@@ -34,12 +34,14 @@ Every copy connects to the project's shared monitor by default. You can change t
   - the area your map shows (its centre and radius), for the aircraft there;
   - the aircraft you open, for their live figures;
   - the airport boards you open;
-  - the playback moments you play, with the flight id, position and type of each flight in them that has no name yet (nothing of these is kept);
+  - the playback moments you play, with the flight id, position and type of each flight in them that has no name yet. The monitor keeps these positions, without your address, for up to three days while it works out which aircraft each flight is;
   - the place your map is looking at, so the monitor can follow it (it keeps that place rounded to a whole degree).
 - **A report every minute:**
   - the flights without a callsign your Flightradar24 page shows (Flightradar24's flight id, position, type);
   - the names your browser found for them, in live view and in playback;
-  - the owners it looked up in public registers.
+  - the owners it looked up in public registers;
+  - the routes it worked out for flights the monitor names (the airports, the chance, the times), so other browsers can show them;
+  - the flights it learned from: an aircraft's take-off and landing airports and times, callsign and type, as rebuilt from public ADS-B, so every browser's route engine learns from them.
 - **Every 30 seconds:** the public ADS-B reports your browser fetched from adsb.lol and adsb.fi around your map, so other browsers need not fetch them again.
 
 **What it never receives:** your Flightradar24 account, cookies, password or e-mail address, anything typed into a page, or Flightradar24's device id for your browser. That id is sent only to a monitor of your own (one you gave a secret).
@@ -48,13 +50,16 @@ Every copy connects to the project's shared monitor by default. You can change t
 
 - **About aircraft:** names of flights, owners of aircraft and flight logs, as described in [docs/monitor.md](docs/monitor.md#what-it-keeps). Owners who are private individuals are never served from it (see [docs/legal.md](docs/legal.md#5-personal-data)). What browsers send is checked before it is passed on:
   - a name or an owner is used only when two browsers agree, or the monitor's own data confirms it;
-  - an ADS-B report is used only when its values are physically possible and it does not contradict the monitor's own data. It is passed on only while it is current, about two minutes.
+  - an ADS-B report is used only when its values are physically possible and it does not contradict the monitor's own data. It is passed on only while it is current, about two minutes;
+  - a route is used only for the aircraft the monitor named, and is passed on with that flight's name for the life of the flight;
+  - a learned flight is used only when it reads as a real flight. It is kept for good with the flights the monitor learns from.
 - **About you:**
   - **Your IP address, with each request,** in three places:
     - the web server's access log, which also records the request, including the area or aircraft asked about. It is kept for 14 days at most;
     - the monitor's rate limit, for one minute;
     - its dashboard, without the request's details, in memory until the next restart. Only the owner of the server sees it.
   - **For a name or owner your browser reported,** your address is kept with it in memory, for six hours at most. That lets the monitor count how many different browsers agree.
+  - **For the routes and learned flights your browser sends,** and the aircraft and places it asks the monitor to follow, your address is counted in memory against an hourly allowance. The count is dropped when its hour is over. Neither the routes nor the flights are kept with your address.
   - **The places maps look at,** rounded to a degree, are kept for three days. They are not linked to any address.
 
 The author runs the shared monitor and receives nothing else from it: no profile, no history of what you looked at.
