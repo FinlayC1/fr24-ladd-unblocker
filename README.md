@@ -8,7 +8,7 @@
 
 <br><br>
 
-<a href="CHANGELOG.md"><img alt="Version 22.27.1" src="https://img.shields.io/badge/version-22.27.1-1f6feb?style=flat&labelColor=23272e"></a>
+<a href="CHANGELOG.md"><img alt="Version 22.27.2" src="https://img.shields.io/badge/version-22.27.2-1f6feb?style=flat&labelColor=23272e"></a>
 <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/actions/workflows/tests.yml"><img alt="Tests" src="https://github.com/FinlayC1/fr24-ladd-unblocker/actions/workflows/tests.yml/badge.svg"></a>
 <a href="LICENSE"><img alt="Licence: personal use" src="https://img.shields.io/badge/licence-personal%20use-1f6feb?style=flat&labelColor=23272e"></a>
 
@@ -80,7 +80,7 @@ For **Google Chrome**, **Microsoft Edge** and **Brave** (and other Chromium brow
 
 ### Firefox
 
-Firefox (desktop, version 140 or later) has its own build, [`fr24-ladd-unblocker-firefox.zip`](https://github.com/FinlayC1/fr24-ladd-unblocker/releases/latest/download/fr24-ladd-unblocker-firefox.zip), attached to each release. It is the file sent to [Firefox Add-ons](https://addons.mozilla.org) (add-on id `fr24-ladd-unblocker@finlayc1.github.io`); installed from there, Firefox keeps it up to date by itself. To try a build before it is listed, open <kbd>about:debugging#/runtime/this-firefox</kbd>, click **Load Temporary Add-on…** and choose the zip. Firefox removes it again when it restarts. The [userscript](#userscript) works in Firefox too.
+Firefox (desktop, version 140 or later) has its own build, [`fr24-ladd-unblocker-firefox.zip`](https://github.com/FinlayC1/fr24-ladd-unblocker/releases/latest/download/fr24-ladd-unblocker-firefox.zip), attached to each release. It is the file sent to [Firefox Add-ons](https://addons.mozilla.org) (add-on id `ladd-unblocker@finlayc1.github.io`); installed from there, Firefox keeps it up to date by itself. To try a build before it is listed, open <kbd>about:debugging#/runtime/this-firefox</kbd>, click **Load Temporary Add-on…** and choose the zip. Firefox removes it again when it restarts. The [userscript](#userscript) works in Firefox too.
 
 ### Userscript
 
