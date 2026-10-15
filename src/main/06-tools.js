@@ -3,6 +3,7 @@
 
   // Notifications: the userscript manager's own (no page permission needed), else the browser's.
   function notify(title, text, url) {
+    if (!opt.alerts) return;   // (switched off in the LADD Unblock window)
     try {
       const gmN = typeof GM_notification === 'function' ? GM_notification : (typeof GM !== 'undefined' && GM && typeof GM.notification === 'function' ? GM.notification.bind(GM) : null);
       const open = () => { try { window.focus(); if (url) location.href = url; } catch (_) { /* ignore */ } };
@@ -313,8 +314,7 @@
       (hx.owner || hx.operatorName) ? '<a href="#" data-tl-act="fleet" title="Other aircraft of the same owner">fleet</a>' : '',
       '<a href="#" data-tl-act="csv" title="Download the flight log">CSV</a>',
       '<a href="#" data-tl-act="stats" title="How the predictions have done">scorecard</a>',
-      '<a href="#" data-tl-act="sources" title="Which public ADS-B sources are answering; your ADS-B Exchange key">sources</a>',
-      `<span class="tl-muted" title="LADD unblocker version">v${VERSION}</span>`
+      `<a href="#" data-tl-act="ladd" class="tl-muted" title="LADD Unblock: its switches, data sources and updates (also on FR24's bottom bar)">v${VERSION}</a>`
     ].filter(Boolean).join(' · ');
   }
   // ---- sources: which data feeds answer, and the user's own ADS-B Exchange key --------------------------------------
@@ -328,13 +328,13 @@
     }).join('');
     const has = !!String(store.kvGet('adsbxKey') || '').trim();
     const mr = monRemote(), monRow = `<div class="tl-pop-row" style="margin-top:8px"><span>Monitor</span> ${mr ? '<span class="tl-muted">' + esc(mr.url) + (mr.dflt ? ' (the public monitor)' : mr.token ? ' (with your secret)' : '') + (monBase === mr.url && monOk ? ' - in use' : ' - not answering' + (monErr ? ' (' + esc(monErr) + ')' : '') + ', checked again within 5 min') + (monBase === mr.url && monLive.at ? ' · live list ' + monLive.n + ' aircraft, ' + ago(monLive.at) + (monLive.ok ? '' : ' (stale - own lists used)') : '') + (monBase === mr.url && srvIds.at ? ' · names ' + srvIds.rows.size + ' FR24 flights, ' + ago(srvIds.at) + (srvIds.scanOk ? '' : ' (its FR24 scan not working - this browser\'s reports keep it going)') : '') + '</span>' : '<span class="tl-muted">turned off - this browser works alone</span>'}</div>
-      <div class="tl-pop-row"><input id="tl-mon-url" autocomplete="off" placeholder="${MON_DEFAULT_URL}" value="${mr && !mr.dflt ? esc(mr.url) : ''}" style="flex:1;min-width:0;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:4px;padding:3px 6px"> <input id="tl-mon-token" type="password" autocomplete="off" placeholder="owner's secret (optional)" style="flex:1;min-width:0;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:4px;padding:3px 6px"> <a href="#" data-tl-act="monSave">save</a>${mr && !mr.dflt ? ' · <a href="#" data-tl-act="monClear">public monitor</a>' : ''}${mr ? ' · <a href="#" data-tl-act="monOff">turn off</a>' : ' · <a href="#" data-tl-act="monClear">turn on</a>'}</div>
+      <div class="tl-pop-row"><input id="tl-mon-url" autocomplete="off" placeholder="${MON_DEFAULT_URL}" value="${mr && !mr.dflt ? esc(mr.url) : ''}" class="tl-in"> <input id="tl-mon-token" type="password" autocomplete="off" placeholder="owner's secret (optional)" class="tl-in"> <a href="#" data-tl-act="monSave">save</a>${mr && !mr.dflt ? ' · <a href="#" data-tl-act="monClear">public monitor</a>' : ''}${mr ? ' · <a href="#" data-tl-act="monOff">turn off</a>' : ' · <a href="#" data-tl-act="monClear">turn on</a>'}</div>
       <div class="tl-muted" style="margin-top:4px">The monitor is a server that watches FR24's whole map and public ADS-B all the time: it names every blocked flight, works out a rough destination, keeps every blocked aircraft's flights and owners - and this browser gets all of it the moment FR24 opens. Every copy of the script uses the project's public monitor; nothing to set up. Another address here uses your own monitor instead (monitor/monitor.cjs), and its secret gives you its full answers. Turned off, this browser identifies what it sees itself. All of it is kept in this browser only.</div>`;
     return rows + monRow + `<div class="tl-pop-row" style="margin-top:8px"><span>ADS-B Exchange key</span></div>
-      <div class="tl-pop-row"><input id="tl-adsbx-key" type="password" autocomplete="off" placeholder="${has ? 'saved - paste a new one to replace it' : 'paste your RapidAPI key'}" style="flex:1;min-width:0;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:4px;padding:3px 6px"> <a href="#" data-tl-act="adsbxSave">save</a>${has ? ' · <a href="#" data-tl-act="adsbxClear">remove</a>' : ''}</div>
+      <div class="tl-pop-row"><input id="tl-adsbx-key" type="password" autocomplete="off" placeholder="${has ? 'saved - paste a new one to replace it' : 'paste your RapidAPI key'}" class="tl-in"> <a href="#" data-tl-act="adsbxSave">save</a>${has ? ' · <a href="#" data-tl-act="adsbxClear">remove</a>' : ''}</div>
       <div class="tl-muted" style="margin-top:4px">Optional. Your own key for the ADS-B Exchange API (rapidapi.com), which sees aircraft the free feeds miss. Used only when adsb.lol and adsb.fi cannot identify a flight or give no callsign, so a small plan lasts. Kept in this browser only.</div>
       <div class="tl-pop-row" style="margin-top:8px"><span>FAA NOTAM API key</span>${notamKey() ? ' <span class="tl-muted">saved</span>' : ''}</div>
-      <div class="tl-pop-row"><input id="tl-faa-id" type="password" autocomplete="off" placeholder="client_id" style="flex:1;min-width:0;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:4px;padding:3px 6px"> <input id="tl-faa-secret" type="password" autocomplete="off" placeholder="client_secret" style="flex:1;min-width:0;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:4px;padding:3px 6px"> <a href="#" data-tl-act="faaSave">save</a>${notamKey() ? ' · <a href="#" data-tl-act="faaClear">remove</a>' : ''}</div>
+      <div class="tl-pop-row"><input id="tl-faa-id" type="password" autocomplete="off" placeholder="client_id" class="tl-in"> <input id="tl-faa-secret" type="password" autocomplete="off" placeholder="client_secret" class="tl-in"> <a href="#" data-tl-act="faaSave">save</a>${notamKey() ? ' · <a href="#" data-tl-act="faaClear">remove</a>' : ''}</div>
       <div class="tl-muted" style="margin-top:4px">Optional, free from api.faa.gov. With it, an airport closed by NOTAM at the arrival time is taken out of the predictions (the three likeliest fields of the aircraft you are looking at, every few hours). Weather (METARs) needs no key.</div>`;
   }
   // (22.10) the population behind every prediction: what the tables were learned from
@@ -361,12 +361,12 @@
     if (act === 'unwatch') { const l = watchList(); delete l[a.dataset.hex]; saveWatch(); syncPanelSoon(); const b = popEl && popEl.querySelector('.tl-pop-body'); if (b) b.innerHTML = watchListHtml(); return; }
     if (act === 'watchlist') { showPop(a, 'Watchlist', watchListHtml()); return; }
     if (act === 'stats') { showPop(a, 'Prediction scorecard', statsHtml()); return; }
-    if (act === 'sources') { showPop(a, 'Data sources', sourcesHtml()); return; }
+    if (act === 'ladd') { closePop(); openUnblockWindow(); return; }
     if (act === 'faaSave' || act === 'faaClear') {
       const id = String((document.getElementById('tl-faa-id') || {}).value || '').trim(), sec = String((document.getElementById('tl-faa-secret') || {}).value || '').trim();
       if (act === 'faaSave' && !(id && sec)) return;
       store.kvSet('faaNotam', act === 'faaClear' ? {} : { id, secret: sec }); deadHosts.delete('external-api.faa.gov'); notamCache.clear();
-      const b = popEl && popEl.querySelector('.tl-pop-body'); if (b) b.innerHTML = sourcesHtml();
+      refreshSources();
       return;
     }
     if (act === 'monSave' || act === 'monClear' || act === 'monOff') {
@@ -377,14 +377,14 @@
       // (the browser extension reaches only the hosts its manifest lists: a monitor elsewhere is asked for - the browser
       // opens a page where the user allows it - and looked at again once allowed)
       const asked = act === 'monSave' && typeof TL_HOST_ACCESS === 'function' && !MON_DEFAULTS.includes(url) && !/\.sslip\.io$/.test(new URL(url).host) ? TL_HOST_ACCESS(new URL(url).origin) : Promise.resolve(true);
-      asked.then(has => monCheck(true).catch(() => {}).then(() => { if (!has && !monOk) monErr = 'allow the extension to reach it, on the page the browser opened'; const b = popEl && popEl.querySelector('.tl-pop-body'); if (b) b.innerHTML = sourcesHtml(); }));
+      asked.then(has => monCheck(true).catch(() => {}).then(() => { if (!has && !monOk) monErr = 'allow the extension to reach it, on the page the browser opened'; refreshSources(); }));
       return;
     }
     if (act === 'adsbxSave' || act === 'adsbxClear') {
       const inp = document.getElementById('tl-adsbx-key'), v = act === 'adsbxClear' ? '' : String(inp && inp.value || '').trim();
       if (act === 'adsbxSave' && !v) return;
       store.kvSet('adsbxKey', v); deadHosts.delete('adsbexchange-com1.p.rapidapi.com');
-      const b = popEl && popEl.querySelector('.tl-pop-body'); if (b) b.innerHTML = sourcesHtml();
+      refreshSources();
       return;
     }
     if (act === 'confirm' || act === 'confirmPick' || act === 'confirmClear') {

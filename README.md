@@ -8,7 +8,7 @@
 
 <br><br>
 
-<a href="CHANGELOG.md"><img alt="Version 22.25.1" src="https://img.shields.io/badge/version-22.25.1-1f6feb?style=flat&labelColor=23272e"></a>
+<a href="CHANGELOG.md"><img alt="Version 22.25.1" src="https://img.shields.io/badge/version-22.26.0-1f6feb?style=flat&labelColor=23272e"></a>
 <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/actions/workflows/tests.yml"><img alt="Tests" src="https://github.com/FinlayC1/fr24-ladd-unblocker/actions/workflows/tests.yml/badge.svg"></a>
 <a href="LICENSE"><img alt="Licence: personal use" src="https://img.shields.io/badge/licence-personal%20use-1f6feb?style=flat&labelColor=23272e"></a>
 
@@ -92,11 +92,27 @@ For any browser with a userscript manager such as [Tampermonkey](https://www.tam
 
 Every copy of the script connects to the shared public monitor by default, so it knows every blocked flight worldwide from the moment FR24 opens, along with each aircraft's history. There is nothing to set up.
 
-To turn it off, or point it at [your own monitor](#run-your-own-monitor), open any aircraft's panel, click **sources** on the strip under the photo, and use the **Monitor** row. An address and secret you enter there stay in your browser. With the extension, a monitor at an address of your own opens a page where your browser asks you to allow it, once. Turned off, your browser identifies what it sees on its own.
+To turn it off, or point it at [your own monitor](#run-your-own-monitor), click **LADD Unblock** on FR24's bottom bar (next to Playback) and use the **Monitor** row under **Data sources**. An address and secret you enter there stay in your browser. With the extension, a monitor at an address of your own opens a page where your browser asks you to allow it, once. Turned off, your browser identifies what it sees on its own.
+
+### The LADD Unblock window
+
+Every setting is in one place: click **LADD Unblock** on FR24's bottom bar, next to Playback (or the version number on the strip under an aircraft's photo). It opens a window like FR24's own Widgets and Weather windows, with:
+
+- **Enable LADD Unblock**, to switch the whole thing off and leave FR24 as it is (applies after a reload).
+- A switch for each feature: the aircraft panel details, airport boards, search, aircraft and flight pages, take-off and landing alerts, and hiding ads and upgrade prompts.
+- **Updates**: the version you have, the latest one, and an **Update** button.
+- **Data sources**: which feeds are answering, the monitor, and your optional ADS-B Exchange and FAA NOTAM keys.
+
+The switches are kept in your browser only.
 
 ### Updating
 
-Download the new zip, replace the folder's contents, and click **↻ Reload** on the extension's card. For the userscript, open the new file again. What's new is in the [changelog](CHANGELOG.md).
+Open the LADD Unblock window and click **Update**.
+
+- **Extension:** an unpacked extension cannot replace its own files, so **Update** downloads the new zip. Unzip it over the old folder (replace its contents), then click **Reload extension** in the same window. (Or click **↻ Reload** on the extension's card in `chrome://extensions`.)
+- **Userscript:** **Update** opens the new file, and your userscript manager offers to update. Tampermonkey and Violentmonkey also check for updates on their own.
+
+What's new is in the [changelog](CHANGELOG.md).
 
 ## Run your own monitor
 
@@ -142,7 +158,7 @@ No. Background work runs in short slices while the browser is idle, and pauses w
 <summary><b>Do I need to run a monitor?</b></summary>
 <br>
 
-No. Every copy connects to the shared public monitor by default. You can turn it off, or use your own instead, in the **sources** menu (see [The monitor](#the-monitor)).
+No. Every copy connects to the shared public monitor by default. You can turn it off, or use your own instead, under **Data sources** in the LADD Unblock window (see [The monitor](#the-monitor)).
 </details>
 
 <details>

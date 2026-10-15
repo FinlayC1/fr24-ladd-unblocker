@@ -1,4 +1,4 @@
-// FR24 LADD Unblocker 22.25.1 - the page-world part (see src/page.js)
+// FR24 LADD Unblocker 22.26.0 - the page-world part (see src/page.js)
 (function () {
   'use strict';
   // ------------------------------------------------------------------------------------------------------------
@@ -7,8 +7,13 @@
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "22.25.1";
+    var BRIDGE_V = "22.26.0";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
+    // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
+    // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed
+    var opts = (function () { try { var o = JSON.parse(localStorage.getItem('tweeks.fr24.ladd.opts1') || 'null'); return o && typeof o === 'object' ? o : {}; } catch (e) { return {}; } })();
+    var optOn = function (k) { return opts[k] !== false; };
+    if (!optOn('on')) return;
 
     var resolved = new Map();     // fr24 flight id -> identity record (incl. photos)
     // The callsign shown: the one the transponder sends; when none is known yet, the registration the way a transponder
@@ -1948,7 +1953,7 @@
             }, function () { return res; });
           });
         }
-        if (/\/v1\/search\/web\/find\?/.test(url)) {
+        if (optOn('search') && /\/v1\/search\/web\/find\?/.test(url)) {
           var qm = url.match(/[?&]query=([^&]*)/); var q = qm ? decodeURIComponent(qm[1].replace(/\+/g, ' ')).trim().toUpperCase() : '';
           if (q.length < 2) return p;
           var mine = askSearch(q);     // (asked of the userscript at once, answered while FR24's own search runs)
@@ -2020,7 +2025,7 @@
             }, function () { return res; });
           });
         }
-        if ((m = url.match(/\/api\/v1\/airports\/(\d+)\/(departures|arrivals|on-grounds)\b/))) {
+        if (optOn('boards') && (m = url.match(/\/api\/v1\/airports\/(\d+)\/(departures|arrivals|on-grounds)\b/))) {
           var apId = Number(m[1]), kind = m[2];
           var pageM = url.match(/[?&]page=(-?\d+)/), page = pageM ? Number(pageM[1]) : 1;
           var whole = kind !== 'on-grounds' && page === 1;
@@ -2164,14 +2169,14 @@
       function store(s) {
         if (!s || done.has(s)) return;
         try {
-          if (s.$id === 'sidebar') { s.isSidebarVisible = OFF; done.add(s); st.sidebar++; }
+          if (s.$id === 'sidebar') { if (!optOn('noAds')) return; s.isSidebarVisible = OFF; done.add(s); st.sidebar++; }
           // FR24's 30-minute "Your session has timed out" (free accounts: its 'session' store, map.timeout.mins) - set
           // back the moment its timer sets it, before the overlay is drawn
           else if (s.$id === 'session') {
             var keep = function () { try { if (s.sessionSuspended) { s.$patch({ sessionSuspended: false }); st.session++; } } catch (e) { /* ignore */ } };
             s.$subscribe(keep, { flush: 'sync', detached: true }); keep(); done.add(s);
           }
-          else if (s.$id === 'freeTrialPromo') { s.hasEligibilityToShowModal = false; s.showFreeTrialModal = OFF; done.add(s); st.trial++; }
+          else if (s.$id === 'freeTrialPromo') { if (!optOn('noAds')) return; s.hasEligibilityToShowModal = false; s.showFreeTrialModal = OFF; done.add(s); st.trial++; }
         } catch (e) { /* ignore */ }
       }
       function app(a) {
@@ -2192,6 +2197,7 @@
       // the carousel's props are resolved against options Vue normalises once per component and shares, so its first
       // instance turns the promo off for every later one too
       function promoOff(img) {
+        if (!optOn('noAds')) return;
         var host = img.closest('[data-v-app]'), root = host && host._vnode; if (!root) return;
         var stack = [root], n = 0, v, c, i;
         while (stack.length && n++ < 200000) {
@@ -2310,6 +2316,7 @@
       else if (d.__tweeksLadd === 'scan') runScan(d.regions || [], d.opts || {});
       // (the health check's figures - the extension's script runs in its own world and cannot read this one's objects)
       else if (d.__tweeksLadd === 'stats?') post('stats', { stats: stats });
+      else if (d.__tweeksLadd === 'opts') { if (d.opts && typeof d.opts === 'object') opts = d.opts; }
       else if (d.__tweeksLadd === 'hello') post('ready', { stats: stats, feedReady: !!feedHeaders, hdr: feedHdrPublic(), v: BRIDGE_V });
     });
     window[NS] = { resolved: resolved, routes: routes, naRecs: naRecs, naRoutes: naRoutes, telem: telem, hist: hist, lastPos: lastPos, photoCache: photoCache, psCache: psCache, stats: stats, fetchPhotos: fetchPhotos, hello: function () { post('ready', { stats: stats, feedReady: !!feedHeaders, v: BRIDGE_V }); }, v: BRIDGE_V };

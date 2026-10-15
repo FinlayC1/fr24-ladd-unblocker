@@ -1,7 +1,12 @@
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '22.25.1';
+  const VERSION = '22.26.0';
+  // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
+  // part read them synchronously at document start; the page part is told of a change at once ('opts')
+  const OPT_KEY = 'tweeks.fr24.ladd.opts1';
+  const OPT_DEFAULTS = { on: true, strip: true, boards: true, search: true, acPages: true, alerts: true, noAds: true };
+  const opt = (() => { let o = null; try { o = JSON.parse(localStorage.getItem(OPT_KEY) || 'null'); } catch (_) { o = null; } return Object.assign({}, OPT_DEFAULTS, o && typeof o === 'object' ? o : {}); })();
   const NM_KM = 1.852;
   const AREA_RADIUS_NM = 220;           // aggregator "point" radius for viewport sweeps (APIs cap at 250)
   const TARGET_RADIUS_NM = 40;          // radius for the immediate lookup of the selected aircraft
@@ -437,7 +442,7 @@
   const noteHost = (host, ok, err) => { const h = hostStat.get(host) || { ok: 0, fail: 0, lastOk: 0, lastErr: 0, err: '' }; if (ok) { h.ok++; h.lastOk = now(); } else { h.fail++; h.lastErr = now(); h.err = err || ''; } hostStat.set(host, h); };
   // The monitor (monitor/monitor.cjs) on a server. It watches FR24's whole map and public ADS-B all the time; this browser
   // asks it first for everything it has. Every copy of the script uses the project's own public monitor from the start -
-  // nothing to set up; strip > sources > "Monitor" sets another one, the owner's secret (the full answers), or turns it
+  // nothing to set up; the LADD Unblock window (FR24's bottom bar) > Data sources > "Monitor" sets another one, the owner's secret (the full answers), or turns it
   // off. Only a monitor on a server: none on this computer is ever asked (127.0.0.1 is not among the hosts this script may
   // reach). Used once it has answered a quick check - one missing never holds anything up - and checked again every 5 minutes.
   const MON_DEFAULT_URL = 'https://143-47-224-210.sslip.io';
