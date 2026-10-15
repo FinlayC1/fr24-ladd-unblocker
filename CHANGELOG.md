@@ -2,6 +2,16 @@
 
 All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PATCH`. The userscript and the monitor are released together.
 
+## [22.26.0] - 2026-10-15
+
+### Added
+- **LADD Unblock on FR24's bottom bar.** A new button after Playback, with its own icon (an aircraft with an open padlock), opens a window drawn like FR24's own Widgets and Weather windows. It holds every setting in one place:
+  - **Enable LADD Unblock**, to switch the whole thing off and leave FR24 as it is. The button and window stay so it can be switched back on. Applies after a reload.
+  - A switch for each feature: the aircraft panel details (the strip under the photo), airport boards, search, aircraft and flight pages, take-off and landing alerts, and hiding ads and upgrade prompts. Each takes effect at once except where it says otherwise.
+  - **Updates**: the version installed and the latest one. For the userscript, **Update** opens the new file and your userscript manager offers to update. An unpacked extension cannot replace its own files, so **Update** downloads the new zip; unzip it over the old folder and click **Reload extension**, which loads it again and reloads FR24.
+  - **Data sources**: which feeds are answering, the monitor, and the ADS-B Exchange and FAA NOTAM keys. These used to be behind **sources** on the strip, which is gone; the version number on the strip now opens this window.
+- The button is found by the bar's labels and copies one of FR24's own buttons, so it takes the bar's look. If FR24 draws the bar again, the button is put back. The window takes the place and width of FR24's own windows once one of them has been opened.
+- The userscript names its update address (`@updateURL`, `@downloadURL`), so userscript managers check for new versions on their own.
 ## [22.25.2] - 2026-10-15
 
 ### Fixed

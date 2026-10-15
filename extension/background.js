@@ -21,7 +21,7 @@ chrome.runtime.onConnect.addListener(port => {
   });
   port.onDisconnect.addListener(() => { for (const c of running.values()) c.abort(); running.clear(); });
 });
-// A monitor of the user's own (the Sources menu) at an address the manifest does not list: the browser asks the user to
+// A monitor of the user's own (the LADD Unblock window's Data sources) at an address the manifest does not list: the browser asks the user to
 // allow it, on the extension's own page (grant.html) - only a click there may grant a host. Answered true when it is
 // allowed already.
 chrome.runtime.onMessage.addListener((m, sender, reply) => {
@@ -34,4 +34,14 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
     reply(!!has);
   });
   return true;
+});
+// The LADD Unblock window's Updates: "Reload extension" loads it again from its folder (an unpacked one, after its files
+// were replaced with a new version); a store install is asked to look for its update now - and restarts with one found.
+chrome.runtime.onMessage.addListener((m, sender, reply) => {
+  if (!m || sender.id !== chrome.runtime.id) return;
+  if (m.tlReload === true) { reply(true); setTimeout(() => chrome.runtime.reload(), 150); return; }
+  if (m.tlUpdateCheck === true) {
+    try { chrome.runtime.requestUpdateCheck((status) => { reply(status); if (status === 'update_available') setTimeout(() => chrome.runtime.reload(), 500); }); } catch (e) { reply('unsupported'); }
+    return true;
+  }
 });

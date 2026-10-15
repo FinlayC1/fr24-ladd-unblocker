@@ -22,11 +22,13 @@ The settings you enter yourself are kept in the same place: your monitor's addre
 
 To fill in what Flightradar24 leaves blank, your browser makes requests to public data services. These are the ADS-B networks, aircraft registers, photo sites, weather and airport data, all listed in [docs/data-sources.md](docs/data-sources.md). Like any web request, these reveal your IP address to the service asked. They contain the aircraft or place being looked up, never anything about you.
 
+When you open the LADD Unblock window, it reads this project's `package.json` from GitHub (raw.githubusercontent.com) to see whether a newer version is out, at most every half hour. Nothing is sent with it.
+
 On flightradar24.com the extension works inside the page you opened. It reads Flightradar24's answers to that page in order to add to them. It does not read your Flightradar24 account details, cookies or passwords, and sends nothing from them anywhere.
 
 ## The shared monitor
 
-Every copy connects to the project's shared monitor by default. You can change this in the strip's **Sources** menu: point it at your own monitor, or turn it off. With it off, nothing below is sent.
+Every copy connects to the project's shared monitor by default. You can change this under **Data sources** in the LADD Unblock window (on FR24's bottom bar): point it at your own monitor, or turn it off. With it off, nothing below is sent.
 
 **What your browser sends it**
 
