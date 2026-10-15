@@ -35,7 +35,23 @@ const BAR = '<nav class="bar">' + ['Settings', 'Weather', 'Filters', 'Widgets', 
   fs.cpSync(src, ext, { recursive: true });
   const man = JSON.parse(fs.readFileSync(path.join(ext, 'manifest.json'), 'utf8'));
   const built = JSON.parse(fs.readFileSync(path.join(src, 'manifest.json'), 'utf8'));
-  check('manifest: MV3, the page part in the page\'s own world at document start, then the script; no 127.0.0.1 or localhost among its hosts', built.manifest_version === 3 && built.content_scripts[0].world === 'MAIN' && built.content_scripts[0].run_at === 'document_start' && built.content_scripts[1].js[0] === 'content.js' && !built.host_permissions.some(h => /127\.0\.0\.1|localhost/.test(h)) && built.host_permissions.includes('https://*.sslip.io/*'), built.host_permissions.length);
+  check('manifest: MV3, the page part in the page\'s own world at document start, then the script; no 127.0.0.1 or localhost among its hosts', built.manifest_version === 3 && built.content_scripts[0].world === 'MAIN' && built.content_scripts[0].run_at === 'document_start' && built.content_scripts[1].js[built.content_scripts[1].js.length - 1] === 'content.js' && built.content_scripts[1].js.slice(0, -1).every(f => /^data-\d+\.js$/.test(f)) && !built.host_permissions.some(h => /127\.0\.0\.1|localhost/.test(h)) && built.host_permissions.includes('https://*.sslip.io/*'), built.host_permissions.length);
+  // (the Firefox zip: what addons.mozilla.org's check asks - a background script, the add-on's id - the rest as Chrome's,
+  // and no file it reads over 5 MB)
+  {
+    const zlib = require('zlib'), z = fs.readFileSync(path.join(root, 'dist', 'fr24-ladd-unblocker-firefox.zip')), files = {};
+    for (let o = z.readUInt32LE(z.length - 6), i = 0; i < z.readUInt16LE(z.length - 12); i++) {
+      const nl = z.readUInt16LE(o + 28), el = z.readUInt16LE(o + 30), cl = z.readUInt16LE(o + 32), lo = z.readUInt32LE(o + 42), name = z.toString('utf8', o + 46, o + 46 + nl);
+      const start = lo + 30 + z.readUInt16LE(lo + 26) + z.readUInt16LE(lo + 28);
+      files[name] = zlib.inflateRawSync(z.subarray(start, start + z.readUInt32LE(o + 20)));
+      o += 46 + nl + el + cl;
+    }
+    const ff = JSON.parse(files['manifest.json']), g = ff.browser_specific_settings && ff.browser_specific_settings.gecko;
+    const same = k => JSON.stringify(ff[k]) === JSON.stringify(built[k]);
+    check('the Firefox zip: a background script, no service worker; its add-on id and data collection said; the same version, hosts and scripts as Chrome\'s', ff.background && ff.background.scripts && ff.background.scripts[0] === 'background.js' && !ff.background.service_worker && g && g.id === 'fr24-ladd-unblocker@finlayc1.github.io' && g.data_collection_permissions && Array.isArray(g.data_collection_permissions.required) && ['version', 'host_permissions', 'optional_host_permissions', 'content_scripts'].every(same) && !('minimum_chrome_version' in ff), ff.background);
+    const big = Object.entries(files).filter(([n, b]) => !/\.png$/.test(n) && b.length >= 5 * 1024 * 1024).map(([n]) => n);
+    check('... every file in it as built, none of its scripts 5 MB or more', Object.keys(files).filter(n => n !== 'manifest.json').every(n => fs.existsSync(path.join(src, n)) && fs.readFileSync(path.join(src, n)).equals(files[n])) && !big.length, big);
+  }
   man.host_permissions.push('http://127.0.0.1/*');
   fs.writeFileSync(path.join(ext, 'manifest.json'), JSON.stringify(man));
   const ctx = await chromium.launchPersistentContext(fs.mkdtempSync(path.join(os.tmpdir(), 'tlprof-')), { executablePath: exe, headless: true, args: ['--disable-extensions-except=' + ext, '--load-extension=' + ext] });

@@ -2,6 +2,18 @@
 
 All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PATCH`. The userscript and the monitor are released together.
 
+## [22.27.0] - 2026-10-15
+
+### Added
+- **A Firefox build of the extension, ready for Firefox Add-ons.** The extension zip failed addons.mozilla.org's check with three errors: its background was a service worker only (Firefox runs a background script instead), it had no add-on id, and its script, at 8 MB, was too large for the check to read. Each release now also has `fr24-ladd-unblocker-firefox.zip`, which passes Mozilla's own check (addons-linter) with no errors:
+  - its background is `background.js` as a background script;
+  - its add-on id is `fr24-ladd-unblocker@finlayc1.github.io`, and it says what it sends (what FR24's page shows, to the shared monitor, as set out in PRIVACY.md);
+  - it needs Firefox 140 or later, on the desktop.
+- In Firefox, the LADD Unblock window's **Updates** shows "Firefox add-on": Firefox updates it from Firefox Add-ons by itself, so **Update** downloads nothing.
+
+### Changed
+- **The extension's learned tables are in files of their own** (`data-1.js` and so on, beside `content.js`), each well under the 5 MB Firefox's check reads; `content.js` is now about 1 MB. The Chrome and Edge extension works as before. To update an unpacked one, unzip the new zip over the old folder as usual (the new files are added) and click **Reload extension**.
+
 ## [22.26.1] - 2026-10-15
 
 ### Fixed

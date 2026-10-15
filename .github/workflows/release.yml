@@ -59,7 +59,7 @@ jobs:
             const i = s.indexOf('## [' + v + ']'); if (i < 0) { console.log('Version ' + v); process.exit(0); }
             const j = s.indexOf('\n## [', i + 1); console.log(s.slice(s.indexOf('\n', i) + 1, j < 0 ? undefined : j).trim());
           " "$TAG" > notes.md
-          printf '\n\n---\n**Install:** Chrome / Edge - download `fr24-ladd-unblocker-extension.zip`, unzip it, then *Load unpacked* in `chrome://extensions` (Developer mode). Tampermonkey - open `fr24-ladd-unblocker.user.js`.\n' >> notes.md
+          printf '\n\n---\n**Install:** Chrome / Edge - download `fr24-ladd-unblocker-extension.zip`, unzip it, then *Load unpacked* in `chrome://extensions` (Developer mode). Firefox - `fr24-ladd-unblocker-firefox.zip` is the build for Firefox Add-ons (or *Load Temporary Add-on* in `about:debugging`). Tampermonkey - open `fr24-ladd-unblocker.user.js`.\n' >> notes.md
       - name: Publish
         if: steps.v.outputs.skip != '1'
         env:
@@ -70,8 +70,8 @@ jobs:
           # (a release already made on GitHub's page for this tag: the files and notes added to it; otherwise made here,
           # its tag on the commit that was tested)
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" dist/fr24-ladd-unblocker-extension.zip dist/fr24-ladd-unblocker.user.js --clobber
+            gh release upload "$TAG" dist/fr24-ladd-unblocker-extension.zip dist/fr24-ladd-unblocker-firefox.zip dist/fr24-ladd-unblocker.user.js --clobber
             gh release edit "$TAG" --title "FR24 LADD Unblocker $TAG" --notes-file notes.md
           else
-            gh release create "$TAG" dist/fr24-ladd-unblocker-extension.zip dist/fr24-ladd-unblocker.user.js --target "$SHA" --title "FR24 LADD Unblocker $TAG" --notes-file notes.md
+            gh release create "$TAG" dist/fr24-ladd-unblocker-extension.zip dist/fr24-ladd-unblocker-firefox.zip dist/fr24-ladd-unblocker.user.js --target "$SHA" --title "FR24 LADD Unblocker $TAG" --notes-file notes.md
           fi

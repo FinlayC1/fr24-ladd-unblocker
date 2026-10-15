@@ -7,6 +7,7 @@
 
 # The built userscript and packed data are generated: collapsed in diffs and left out of language statistics
 dist/*.user.js linguist-generated=true -diff
+dist/extension/data-*.js linguist-generated=true -diff
 src/tables*.json linguist-generated=true
 src/logit.json linguist-generated=true
 src/approach.json linguist-generated=true

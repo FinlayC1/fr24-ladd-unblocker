@@ -21,8 +21,9 @@ The modules share one scope; they are not separate ES modules.
 
 The same build also writes the **browser extension**:
 
-- `dist/extension/` holds `manifest.json` (its hosts are the header's `@connect` list), `page.js` (in FR24's own world), `content.js` (`extension/shim.js` plus the whole script), `background.js` (the service worker making requests) and the icons from `extension/icons/` (rendered from `docs/assets/icon.svg`).
+- `dist/extension/` holds `manifest.json` (its hosts are the header's `@connect` list), `page.js` (in FR24's own world), `data-<n>.js` (the learned tables, in parts), `content.js` (`extension/shim.js` plus the whole script, which reads the tables from the data files), `background.js` (the service worker making requests) and the icons from `extension/icons/` (rendered from `docs/assets/icon.svg`).
 - `dist/fr24-ladd-unblocker-extension.zip` is the same, zipped. The build is reproducible: the same sources give the same zip, byte for byte.
+- `dist/fr24-ladd-unblocker-firefox.zip` is the same files with Firefox's manifest: `background.js` as a background script (Firefox has no extension service workers), the add-on id `fr24-ladd-unblocker@finlayc1.github.io` (fixed for good once on addons.mozilla.org) and what it sends, as addons.mozilla.org asks. Mozilla's check reads no script of 5 MB or more, which is why the tables are in parts; the build stops if any file reaches 4 MB. To run that check yourself: `npx addons-linter dist/fr24-ladd-unblocker-firefox.zip` (0 errors expected; the warnings are the script's `innerHTML` and Firefox lacking `runtime.requestUpdateCheck`).
 
 ## Testing
 

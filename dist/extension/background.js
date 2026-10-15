@@ -1,5 +1,5 @@
-// FR24 LADD Unblocker - browser extension (Manifest V3): the service worker. It makes the content script's requests to
-// other sites (see shim.js) - only to the hosts the manifest grants, nothing else - and answers each with its status and
+// FR24 LADD Unblocker - browser extension (Manifest V3): the service worker (Firefox: the background script). It makes
+// the content script's requests to other sites (see shim.js) - only to the hosts the manifest grants, nothing else - and answers each with its status and
 // body (text, or base64 for binary files such as adsb.lol's heatmaps).
 const toB64 = u => { let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); };
 chrome.runtime.onConnect.addListener(port => {
@@ -41,6 +41,8 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
   if (!m || sender.id !== chrome.runtime.id) return;
   if (m.tlReload === true) { reply(true); setTimeout(() => chrome.runtime.reload(), 150); return; }
   if (m.tlUpdateCheck === true) {
+    // (Firefox has no such call: it looks for updates on addons.mozilla.org by itself)
+    if (typeof chrome.runtime.requestUpdateCheck !== 'function') { reply('unsupported'); return; }
     try { chrome.runtime.requestUpdateCheck((status) => { reply(status); if (status === 'update_available') setTimeout(() => chrome.runtime.reload(), 500); }); } catch (e) { reply('unsupported'); }
     return true;
   }
