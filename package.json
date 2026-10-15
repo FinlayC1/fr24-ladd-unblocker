@@ -1,6 +1,6 @@
 {
   "name": "fr24-ladd-unblocker",
-  "version": "22.27.0",
+  "version": "22.27.1",
   "private": true,
   "description": "Fills in what Flightradar24 hides: identity, live data, route and history of blocked (LADD) and N/A aircraft from public ADS-B - a Tampermonkey userscript and its permanent monitor service",
   "author": "Finlay Clarke",

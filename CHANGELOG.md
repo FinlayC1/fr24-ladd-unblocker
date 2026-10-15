@@ -2,6 +2,11 @@
 
 All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PATCH`. The userscript and the monitor are released together.
 
+## [22.27.1] - 2026-10-15
+
+### Changed
+- The same as 22.27.0, under a new version number, so the Firefox build can go on Firefox Add-ons as a listed add-on (the site takes each version number only once, and 22.27.0 went up as a self-distributed one).
+
 ## [22.27.0] - 2026-10-15
 
 ### Added
