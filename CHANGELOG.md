@@ -2,6 +2,17 @@
 
 All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PATCH`. The userscript and the monitor are released together.
 
+## [22.28.1] - 2026-10-15
+
+### Fixed
+- **One row for a flight that was planned again, and its card filled in.** Liverpool's departures showed Cranwell FTU's CWL52 to Glasgow twice: FR24's own row at 15:30 (estimated 15:40) with an empty card - airline N/A, aircraft N/A - and the schedule's at 16:15 (16:25) with a filled card. The two were exactly 45 minutes apart, and a flight counted as the same one only when its times were *less than* 45 minutes apart. Now the same callsign to the same airport within two hours is one row (FR24's own), when the flight has not been flown yet; two flights already flown 45 minutes apart (circuits, shuttles) are still two. The kept row's operator and aircraft go into the card FR24 leaves empty - and a card is filled from what is kept of a flight even when its aircraft is not known.
+- **The wrong airline's logo on a row.** That second row carried Ryanair's logo on Cranwell FTU's flight. An airline id is now used only where it is the airline the row names; where the two disagree the name stands, with the logo FR24 lists under it, or none.
+- **Place names without their county.** "Rotherham, South Yorkshire" (OurAirports' name for the town by Wentworth Private Airstrip, which was on a board row as "Rotherham, S...") is now Rotherham, and "Private site near Rotherham, South Yorkshire" is "Private site near Rotherham". A place is the part before its first comma, on boards, in panels, in playback and in search: landing places, airfields, heliports, owners' towns. Two different places that would read the same - "Newport, Wales" and "Newport, Isle of Wight" - keep their whole names. Landing places kept by an older version are cut when shown.
+
+### Changed
+- `ENGINE.placeShort` (and `ENGINE.placeLabels` for a list) is the one cut for place names; the page half has the same three lines and `test/unit_places.cjs` checks they agree.
+- Tests: `unit_dupes`, `unit_places`.
+
 ## [22.28.0] - 2026-10-15
 
 ### Added
