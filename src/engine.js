@@ -344,6 +344,8 @@ function createRouteEngine() {
     let tas = NaN, ws = NaN, wd = NaN, hdg = NaN, airT = -1e12;
     // (and, for the playback: GPS altitude and indicated airspeed - readsb's point carries them, or its last full state)
     let iasX = NaN, iasT = -1e12, geomX = NaN, geomT = -1e12;
+    // (and Mach and the outside air temperature - readsb's from the aircraft's own air data - for the playback panel)
+    let machX = NaN, machT = -1e12, oatX = NaN, oatT = -1e12;
     for (const p of (j && Array.isArray(j.trace) ? j.trace : [])) {
       if (!Array.isArray(p) || !fin(p[1]) || !fin(p[2])) continue;
       const t = base + (+p[0] || 0);
@@ -359,12 +361,14 @@ function createRouteEngine() {
         if (ex.category) cat = ex.category;
         if (own && fin(ex.ias)) { iasX = ex.ias; iasT = t; }
         if (own && fin(ex.alt_geom)) { geomX = ex.alt_geom; geomT = t; }
+        if (own && ex.mach > 0) { machX = ex.mach; machT = t; }
+        if (own && fin(ex.oat)) { oatX = ex.oat; oatT = t; }
         if (own && (fin(ex.tas) || fin(ex.ws))) { tas = fin(ex.tas) ? ex.tas : NaN; ws = fin(ex.ws) ? ex.ws : NaN; wd = fin(ex.wd) ? ex.wd : NaN; hdg = fin(ex.true_heading) ? ex.true_heading : NaN; airT = t; }
       }
       const flags = +p[6] || 0, a = p[3];
       const altGeom = fin(p[10]) ? p[10] : t - geomT < 60 ? geomX : NaN, ias = fin(p[12]) ? p[12] : t - iasT < 60 ? iasX : NaN;
       const air = t - airT < 300;
-      out.push({ t, lat: p[1], lon: p[2], altGeom, ias, alt: a === 'ground' ? null : (fin(a) ? a : null), gnd0: a === 'ground', gs: fin(p[4]) ? p[4] : null, trk: fin(p[5]) ? p[5] : null, vr: fin(p[7]) ? p[7] : null, stale: !!(flags & 1), newLeg: !!(flags & 2), own, cs, sq, mcp: t - mcpT < 900 ? mcp : NaN, fms: t - fmsT < 900 ? fms : NaN, cat, tas: air ? tas : NaN, ws: air ? ws : NaN, wd: air ? wd : NaN, hdg: air ? hdg : NaN });
+      out.push({ t, lat: p[1], lon: p[2], altGeom, ias, alt: a === 'ground' ? null : (fin(a) ? a : null), gnd0: a === 'ground', gs: fin(p[4]) ? p[4] : null, trk: fin(p[5]) ? p[5] : null, vr: fin(p[7]) ? p[7] : null, stale: !!(flags & 1), newLeg: !!(flags & 2), own, cs, sq, mcp: t - mcpT < 900 ? mcp : NaN, fms: t - fmsT < 900 ? fms : NaN, cat, tas: air ? tas : NaN, ws: air ? ws : NaN, wd: air ? wd : NaN, hdg: air ? hdg : NaN, mach: t - machT < 60 ? machX : NaN, oat: t - oatT < 60 ? oatX : NaN });
     }
     return out;
   }
@@ -522,19 +526,28 @@ function createRouteEngine() {
   // three slices and more, on average within 1.5 km, and no other there a third as often or nearer than three times
   // as far: that flight. (M-ARNZ's PC-24 at FL250 off Blackpool, 9 Oct 12:35: 424c60 in 10 slices, mean 1.1 km; the
   // nearest other 3.8 km off and 10,000 ft higher.) Returns, per query, the address or ''.
+  // (each slice's queries by 0.1-degree cell: a record is held against those of its own cell and the eight around it only
+  // - the same answer as against every query, a fraction of the work with a whole screen of flights)
   function heatMatch(buf, t, qs) {
-    const dv = new DataView(buf), res = qs.map(() => new Map()); let at = null;
+    const dv = new DataView(buf), res = qs.map(() => new Map()); let at = null, grid = null;
     const along = (q, dt) => { if (!fin(q.trk) || !(q.gs > 0) || q.gnd) return [q.lat, q.lon]; const km = q.gs * 1.852 * dt / 3600; return [q.lat + km * Math.cos(q.trk * D2R) / 111.2, q.lon + km * Math.sin(q.trk * D2R) / (111.2 * Math.max(0.05, Math.cos(q.lat * D2R)))]; };
     for (let o = 0; o + 16 <= dv.byteLength; o += 16) {
       const h = dv.getUint32(o, true);
-      if (h === 0x0e7f7c9d) { const st = (dv.getInt32(o + 4, true) * 4294967296 + dv.getUint32(o + 8, true)) / 1000; at = Math.abs(st - t) <= 60 ? qs.map(q => along(q, st - t)) : null; continue; }
+      if (h === 0x0e7f7c9d) {
+        const st = (dv.getInt32(o + 4, true) * 4294967296 + dv.getUint32(o + 8, true)) / 1000; at = Math.abs(st - t) <= 60 ? qs.map(q => along(q, st - t)) : null; grid = null;
+        if (at) { grid = new Map(); for (let i = 0; i < at.length; i++) { const k = Math.floor(at[i][0] * 10) * 4000 + Math.floor(at[i][1] * 10), l = grid.get(k); if (l) l.push(i); else grid.set(k, [i]); } }
+        continue;
+      }
       if (!at) continue;
-      const la = dv.getInt32(o + 4, true) / 1e6, lo = dv.getInt32(o + 8, true) / 1e6;
-      for (let i = 0; i < qs.length; i++) {
-        const p = at[i], q = qs[i]; if (Math.abs(la - p[0]) > 0.05 || Math.abs(lo - p[1]) > 0.08) continue;
-        const r = q.r || 3, d = dist(la, lo, p[0], p[1]); if (d > r) continue;
-        if (!q.gnd && fin(q.alt) && q.alt > 1500 && Math.abs(dv.getInt16(o + 12, true) * 25 - q.alt) > 1500) continue;
-        const hex = (h & 0xffffff).toString(16).padStart(6, '0'), e = res[i].get(hex) || { n: 0, sum: 0 }; e.n++; e.sum += d; res[i].set(hex, e);
+      const la = dv.getInt32(o + 4, true) / 1e6, lo = dv.getInt32(o + 8, true) / 1e6, cy = Math.floor(la * 10), cx = Math.floor(lo * 10);
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const l = grid.get((cy + dy) * 4000 + cx + dx); if (!l) continue;
+        for (const i of l) {
+          const p = at[i], q = qs[i]; if (Math.abs(la - p[0]) > 0.05 || Math.abs(lo - p[1]) > 0.08) continue;
+          const r = q.r || 3, d = dist(la, lo, p[0], p[1]); if (d > r) continue;
+          if (!q.gnd && fin(q.alt) && q.alt > 1500 && Math.abs(dv.getInt16(o + 12, true) * 25 - q.alt) > 1500) continue;
+          const hex = (h & 0xffffff).toString(16).padStart(6, '0'), e = res[i].get(hex) || { n: 0, sum: 0 }; e.n++; e.sum += d; res[i].set(hex, e);
+        }
       }
     }
     return res.map((m, i) => {

@@ -448,7 +448,8 @@
     var pbRoutes = new Map(), pbSent = {}, pbTrace = null;   // (the userscript's: each flight as flown; the open flight's track)
     // The figures FR24 padlocks, at the moment being played, from the open flight's ADS-B track: what changes steadily -
     // heights, speeds, climb - in proportion between two reports at most two minutes apart, the squawk and the wind from
-    // the nearer. Rows: [t, alt, GPS alt, vertical rate, IAS, TAS, squawk, wind dir, wind speed, sent by the aircraft 1/0]
+    // the nearer. Rows: [t, alt, GPS alt, vertical rate, IAS, TAS, squawk, wind dir, wind speed, sent by the aircraft 1/0,
+    // FIR name, FIR code, Mach, outside air temperature]
     function pbTelAt(id, ts) {
       var tr = pbTrace; if (!tr || tr.id !== id || !ts || !tr.pts.length) return null;
       var P = tr.pts, lo = 0, hi = P.length - 1; while (lo < hi) { var m = (lo + hi) >> 1; if (P[m][0] < ts) lo = m + 1; else hi = m; }
@@ -456,7 +457,7 @@
       var f = b[0] > a[0] && ts > a[0] && ts < b[0] && b[0] - a[0] <= 120 ? (ts - a[0]) / (b[0] - a[0]) : (Math.abs(a[0] - ts) <= Math.abs(b[0] - ts) ? 0 : 1), near = f < 0.5 ? a : b;
       var mix = function (k) { var x = a[k], y = b[k]; return fin(x) && fin(y) ? x + (y - x) * f : fin(near[k]) ? near[k] : NaN; };
       var own = near[9] !== 0, n = function (v) { return fin(v) ? v : NaN; };
-      return { vr: own ? mix(3) : NaN, agps: own ? mix(2) : NaN, ias: own ? mix(4) : NaN, tas: own ? mix(5) : NaN, mach: NaN, oat: NaN, wd: n(near[7]), ws: n(near[8]), sq: near[6] ? parseInt(near[6], 8) || 0 : 0, air: near[10] || '', airId: near[11] || '', at: Date.now() };
+      return { vr: own ? mix(3) : NaN, agps: own ? mix(2) : NaN, ias: own ? mix(4) : NaN, tas: own ? mix(5) : NaN, mach: own ? mix(12) : NaN, oat: own ? mix(13) : NaN, wd: n(near[7]), ws: n(near[8]), sq: near[6] ? parseInt(near[6], 8) || 0 : 0, air: near[10] || '', airId: near[11] || '', at: Date.now() };
     }
     // FR24's playback - the map's, an aircraft's, a log's - moves its own figures (altitude, speed, track) along the open
     // flight's trail with its clock; the ones supplied here follow the same clock, set in the panel's own state each time the
@@ -472,7 +473,10 @@
       if (t.sq > 0) fi.squawk = squawkWire(t.sq);
       if (t.air) { fi.airspace = t.air; if (t.airId) fi.airspaceId = t.airId; }
       var e = Object.assign({}, fi.emsInfo || {}), ch = false, set = function (k, v) { if (fin(v)) { e[k] = Math.round(v); ch = true; } };
-      set('agps', t.agps); set('ias', t.ias > 0 ? t.ias : NaN); set('tas', t.tas > 0 ? t.tas : NaN); set('windDir', t.wd); set('windSpd', t.ws);
+      set('agps', t.agps); set('ias', t.ias > 0 ? t.ias : NaN); set('tas', t.tas > 0 ? t.tas : NaN); set('windDir', t.wd); set('windSpd', t.ws); set('oat', t.oat);
+      // (Mach as the panel's state holds it: the wire's thousandths, as decoded - or, should a value already there be the
+      // number itself, that)
+      if (t.mach > 0) { e.mach = fin(e.mach) && e.mach > 0 && e.mach < 5 ? Math.round(t.mach * 1000) / 1000 : Math.round(t.mach * 1000); ch = true; }
       if (ch) fi.emsInfo = e;
     }
     setInterval(pbPanelTick, 250);
@@ -1650,11 +1654,68 @@
       }
       return cur;
     }
-    function tlHide(el) { if (el && el.style.display !== 'none') { el.style.display = 'none'; el.setAttribute('data-tl-hidden', '1'); } }
-    function panelHide(panel) {
-      saying(panel, /^latest events$/i).forEach(function (e) { tlHide(partOf(e, panel, 'Latest events', 4000)); });
-      saying(panel, /help us improve|improve (our |the )?(ground )?coverage/i).forEach(function (e) { tlHide(partOf(e, panel, '', 600)); });
+    // (kept hidden when FR24 rewrites the element's style)
+    function tlHide(el) { if (el && (el.style.getPropertyValue('display') !== 'none' || el.style.getPropertyPriority('display') !== 'important' || !el.hasAttribute('data-tl-hidden'))) { el.style.setProperty('display', 'none', 'important'); el.setAttribute('data-tl-hidden', '1'); } }
+    // (what is left of a part once it is hidden - the box it sat in, its border and padding, with nothing else in it: the
+    // thin empty bar under the weather - goes too, up to the panel, while nothing else in it is shown)
+    function shownChild(c) {
+      if (c.hasAttribute('data-tl-hidden') || /^(SCRIPT|STYLE|TEMPLATE)$/.test(c.tagName)) return false;
+      if (c.style && c.style.display === 'none') return false;
+      try { return getComputedStyle(c).display !== 'none'; } catch (e) { return true; }
     }
+    function hideShell(el, panel) {
+      for (var cur = el; cur && cur.parentElement && cur.parentElement !== panel; cur = cur.parentElement) {
+        var up = cur.parentElement, kids = up.children, any = false;
+        if (up.querySelector('.tl-panel, .tl-rwy')) return;
+        for (var i = 0; i < kids.length && !any; i++) if (shownChild(kids[i])) any = true;
+        for (var n = up.firstChild; n && !any; n = n.nextSibling) if (n.nodeType === 3 && /\S/.test(n.nodeValue || '')) any = true;
+        if (any) return;
+        tlHide(up);
+      }
+    }
+    var EVENTS_RE = /^(latest|live) events$/i, BEG_RE = /help us improve|improve (our |the )?(ground )?coverage/i;
+    function hidePart(el, panel) { if (!el || el === panel) return; tlHide(el); hideShell(el, panel); }
+    // (the events' own section - FR24 builds the panel of sections, the events' the one its title opens - whatever is in it)
+    function firstText(el) {
+      var w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT), t;
+      while ((t = w.nextNode())) { var v = String(t.nodeValue || '').replace(/\s+/g, ' ').trim(); if (v) return v; }
+      return '';
+    }
+    function eventsPart(e, panel) {
+      var sec = e.closest('section');
+      if (sec && sec !== panel && panel.contains(sec) && !sec.contains(panel) && EVENTS_RE.test(firstText(sec)) && !sec.querySelector('[data-testid^="airport-panel__tab"], [data-testid^="airport-panel__schedules"], [data-testid^="airport-panel__promo-"], .tl-panel, .tl-rwy')) return sec;
+      return partOf(e, panel, 'Latest events', 4000);
+    }
+    function panelHide(panel, root) {
+      root = root || panel;
+      saying(root, EVENTS_RE).forEach(function (e) { hidePart(eventsPart(e, panel), panel); });
+      saying(root, BEG_RE).forEach(function (e) { hidePart(partOf(e, panel, '', 600), panel); });
+    }
+    // FR24 draws those two parts and the panel is painted before the next tick: they are taken out as they are put in -
+    // a mutation observer's answer comes before the browser paints - so they are never seen, not even for a moment
+    var hideMo = null;
+    function hideWatch() {
+      if (hideMo || typeof MutationObserver !== 'function' || !document.documentElement) return;
+      var SEL_AP = '[data-testid="airport-panel"]';
+      hideMo = new MutationObserver(function (recs) {
+        for (var i = 0; i < recs.length; i++) {
+          var r = recs[i], t = r.type === 'characterData' ? r.target.parentElement : r.target; if (!t || t.nodeType !== 1) continue;
+          try {
+            var panel = t.closest(SEL_AP);
+            if (panel) {
+              if (r.type === 'characterData') panelHide(panel, t);
+              else for (var j = 0; j < r.addedNodes.length; j++) { var a = r.addedNodes[j], el = a.nodeType === 1 ? a : a.nodeType === 3 ? a.parentElement : null; if (el) panelHide(panel, el); }
+            } else if (r.type === 'childList') {
+              // (the panel itself put in, whole)
+              for (var k = 0; k < r.addedNodes.length; k++) { var n = r.addedNodes[k]; if (n.nodeType !== 1) continue; var p = n.matches(SEL_AP) ? n : n.querySelector(SEL_AP); if (p) panelHide(p); }
+            }
+          } catch (e) { stats.errors++; stats.lastError = String(e); }
+        }
+      });
+      hideMo.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+    }
+    hideWatch();
+    if (!hideMo) document.addEventListener('DOMContentLoaded', hideWatch, { once: true });
     // (FR24's locked pictures: by their name, else by the title they sit under)
     function kindNear(el, panel) {
       var img = el.matches('img') ? el : el.querySelector('img[alt]'), alt = img ? String(img.getAttribute('alt') || '') : '';
@@ -2657,6 +2718,8 @@
       let tas = NaN, ws = NaN, wd = NaN, hdg = NaN, airT = -1e12;
       // (and, for the playback: GPS altitude and indicated airspeed - readsb's point carries them, or its last full state)
       let iasX = NaN, iasT = -1e12, geomX = NaN, geomT = -1e12;
+      // (and Mach and the outside air temperature - readsb's from the aircraft's own air data - for the playback panel)
+      let machX = NaN, machT = -1e12, oatX = NaN, oatT = -1e12;
       for (const p of (j && Array.isArray(j.trace) ? j.trace : [])) {
         if (!Array.isArray(p) || !fin(p[1]) || !fin(p[2])) continue;
         const t = base + (+p[0] || 0);
@@ -2672,12 +2735,14 @@
           if (ex.category) cat = ex.category;
           if (own && fin(ex.ias)) { iasX = ex.ias; iasT = t; }
           if (own && fin(ex.alt_geom)) { geomX = ex.alt_geom; geomT = t; }
+          if (own && ex.mach > 0) { machX = ex.mach; machT = t; }
+          if (own && fin(ex.oat)) { oatX = ex.oat; oatT = t; }
           if (own && (fin(ex.tas) || fin(ex.ws))) { tas = fin(ex.tas) ? ex.tas : NaN; ws = fin(ex.ws) ? ex.ws : NaN; wd = fin(ex.wd) ? ex.wd : NaN; hdg = fin(ex.true_heading) ? ex.true_heading : NaN; airT = t; }
         }
         const flags = +p[6] || 0, a = p[3];
         const altGeom = fin(p[10]) ? p[10] : t - geomT < 60 ? geomX : NaN, ias = fin(p[12]) ? p[12] : t - iasT < 60 ? iasX : NaN;
         const air = t - airT < 300;
-        out.push({ t, lat: p[1], lon: p[2], altGeom, ias, alt: a === 'ground' ? null : (fin(a) ? a : null), gnd0: a === 'ground', gs: fin(p[4]) ? p[4] : null, trk: fin(p[5]) ? p[5] : null, vr: fin(p[7]) ? p[7] : null, stale: !!(flags & 1), newLeg: !!(flags & 2), own, cs, sq, mcp: t - mcpT < 900 ? mcp : NaN, fms: t - fmsT < 900 ? fms : NaN, cat, tas: air ? tas : NaN, ws: air ? ws : NaN, wd: air ? wd : NaN, hdg: air ? hdg : NaN });
+        out.push({ t, lat: p[1], lon: p[2], altGeom, ias, alt: a === 'ground' ? null : (fin(a) ? a : null), gnd0: a === 'ground', gs: fin(p[4]) ? p[4] : null, trk: fin(p[5]) ? p[5] : null, vr: fin(p[7]) ? p[7] : null, stale: !!(flags & 1), newLeg: !!(flags & 2), own, cs, sq, mcp: t - mcpT < 900 ? mcp : NaN, fms: t - fmsT < 900 ? fms : NaN, cat, tas: air ? tas : NaN, ws: air ? ws : NaN, wd: air ? wd : NaN, hdg: air ? hdg : NaN, mach: t - machT < 60 ? machX : NaN, oat: t - oatT < 60 ? oatX : NaN });
       }
       return out;
     }
@@ -2835,19 +2900,28 @@
     // three slices and more, on average within 1.5 km, and no other there a third as often or nearer than three times
     // as far: that flight. (M-ARNZ's PC-24 at FL250 off Blackpool, 9 Oct 12:35: 424c60 in 10 slices, mean 1.1 km; the
     // nearest other 3.8 km off and 10,000 ft higher.) Returns, per query, the address or ''.
+    // (each slice's queries by 0.1-degree cell: a record is held against those of its own cell and the eight around it only
+    // - the same answer as against every query, a fraction of the work with a whole screen of flights)
     function heatMatch(buf, t, qs) {
-      const dv = new DataView(buf), res = qs.map(() => new Map()); let at = null;
+      const dv = new DataView(buf), res = qs.map(() => new Map()); let at = null, grid = null;
       const along = (q, dt) => { if (!fin(q.trk) || !(q.gs > 0) || q.gnd) return [q.lat, q.lon]; const km = q.gs * 1.852 * dt / 3600; return [q.lat + km * Math.cos(q.trk * D2R) / 111.2, q.lon + km * Math.sin(q.trk * D2R) / (111.2 * Math.max(0.05, Math.cos(q.lat * D2R)))]; };
       for (let o = 0; o + 16 <= dv.byteLength; o += 16) {
         const h = dv.getUint32(o, true);
-        if (h === 0x0e7f7c9d) { const st = (dv.getInt32(o + 4, true) * 4294967296 + dv.getUint32(o + 8, true)) / 1000; at = Math.abs(st - t) <= 60 ? qs.map(q => along(q, st - t)) : null; continue; }
+        if (h === 0x0e7f7c9d) {
+          const st = (dv.getInt32(o + 4, true) * 4294967296 + dv.getUint32(o + 8, true)) / 1000; at = Math.abs(st - t) <= 60 ? qs.map(q => along(q, st - t)) : null; grid = null;
+          if (at) { grid = new Map(); for (let i = 0; i < at.length; i++) { const k = Math.floor(at[i][0] * 10) * 4000 + Math.floor(at[i][1] * 10), l = grid.get(k); if (l) l.push(i); else grid.set(k, [i]); } }
+          continue;
+        }
         if (!at) continue;
-        const la = dv.getInt32(o + 4, true) / 1e6, lo = dv.getInt32(o + 8, true) / 1e6;
-        for (let i = 0; i < qs.length; i++) {
-          const p = at[i], q = qs[i]; if (Math.abs(la - p[0]) > 0.05 || Math.abs(lo - p[1]) > 0.08) continue;
-          const r = q.r || 3, d = dist(la, lo, p[0], p[1]); if (d > r) continue;
-          if (!q.gnd && fin(q.alt) && q.alt > 1500 && Math.abs(dv.getInt16(o + 12, true) * 25 - q.alt) > 1500) continue;
-          const hex = (h & 0xffffff).toString(16).padStart(6, '0'), e = res[i].get(hex) || { n: 0, sum: 0 }; e.n++; e.sum += d; res[i].set(hex, e);
+        const la = dv.getInt32(o + 4, true) / 1e6, lo = dv.getInt32(o + 8, true) / 1e6, cy = Math.floor(la * 10), cx = Math.floor(lo * 10);
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+          const l = grid.get((cy + dy) * 4000 + cx + dx); if (!l) continue;
+          for (const i of l) {
+            const p = at[i], q = qs[i]; if (Math.abs(la - p[0]) > 0.05 || Math.abs(lo - p[1]) > 0.08) continue;
+            const r = q.r || 3, d = dist(la, lo, p[0], p[1]); if (d > r) continue;
+            if (!q.gnd && fin(q.alt) && q.alt > 1500 && Math.abs(dv.getInt16(o + 12, true) * 25 - q.alt) > 1500) continue;
+            const hex = (h & 0xffffff).toString(16).padStart(6, '0'), e = res[i].get(hex) || { n: 0, sum: 0 }; e.n++; e.sum += d; res[i].set(hex, e);
+          }
         }
       }
       return res.map((m, i) => {
@@ -4777,15 +4851,17 @@
     return w[0] + w.slice(1).toLowerCase();
   }
   // The legal form is not part of the name people know: "BALLYCASTLE AVIATION LIMITED PARTNERSHIP INCORPORATED" is
-  // Ballycastle Aviation, "Pad Aviation Service GmbH" is Pad Aviation Service (taken off the end, repeatedly; a name that
-  // would be nothing without it is kept whole)
-  const LEGAL_FORM = /[\s,]+(limited\s+liability\s+(company|partnership)|limited\s+partnership|l\.?\s?l\.?\s?[cp]\.?|l\.?\s?p\.?|ltd\.?|limited|unlimited|inc\.?|incorporated|corp\.?|corporation|co\.?|company|plc|ulc|dac|gmbh(\s*(&|and)\s*co\.?\s*kg)?|(&|and)\s*co\.?\s*kg|kg|ag|s\.?\s?a\.?\s?(de\s+c\.?\s?v\.?|s\.?|r\.?\s?l\.?)?|s\.?\s?r\.?\s?[lo]\.?|s\.?\s?p\.?\s?a\.?|b\.?\s?v\.?|n\.?\s?v\.?|oy|ab|asa|aps|a\/s|pty\.?(\s+ltd\.?)?|pte\.?(\s+ltd\.?)?|sdn\.?\s+bhd\.?|bhd\.?|jsc|pjsc|ojsc|cjsc|ltda\.?|lda\.?|kft\.?|zrt\.?|sp\.?\s*z\s*o\.?\s*o\.?|d\.?\s?o\.?\s?o\.?|ehf\.?|e\.?\s?v\.?|m\.?\s?b\.?\s?h\.?)\s*[.,]?\s*$/i;
+  // Ballycastle Aviation, "Pad Aviation Service GmbH" is Pad Aviation Service, "756J LLC" is 756J (taken off the end,
+  // repeatedly; a name that would be nothing without it - "LLC" alone - is kept whole). A company of one of Dubai's free
+  // zones carries the zone in its form: "MAPA AVIATION DWC-LLC" is Mapa Aviation (Dubai World Central), as are FZE, FZCO,
+  // FZ-LLC and DMCC ones.
+  const LEGAL_FORM = /[\s,]+(dwc(\s*-\s*|\s+)?l\.?\s?l\.?\s?c\.?|dwc|fz\s*-?\s*l\.?\s?l\.?\s?c\.?|fz\s*-?\s*co|fz\s*-?\s*e|fzc|dmcc|limited\s+liability\s+(company|partnership)|limited\s+partnership|l\.?\s?l\.?\s?[cp]\.?|l\.?\s?p\.?|ltd\.?|limited|unlimited|inc\.?|incorporated|corp\.?|corporation|co\.?|company|plc|ulc|dac|gmbh(\s*(&|and)\s*co\.?\s*kg)?|(&|and)\s*co\.?\s*kg|kg|ag|s\.?\s?a\.?\s?(de\s+c\.?\s?v\.?|s\.?|r\.?\s?l\.?)?|s\.?\s?r\.?\s?[lo]\.?|s\.?\s?p\.?\s?a\.?|b\.?\s?v\.?|n\.?\s?v\.?|oy|ab|asa|aps|a\/s|pty\.?(\s+ltd\.?)?|pte\.?(\s+ltd\.?)?|sdn\.?\s+bhd\.?|bhd\.?|jsc|pjsc|ojsc|cjsc|ltda\.?|lda\.?|kft\.?|zrt\.?|sp\.?\s*z\s*o\.?\s*o\.?|d\.?\s?o\.?\s?o\.?|ehf\.?|e\.?\s?v\.?|m\.?\s?b\.?\s?h\.?)\s*[.,]?\s*$/i;
   function withoutLegalForm(s) {
     // (a name in brackets after the legal form is a trading or former name: "PAL Aerospace Ltd (Provincial Aerospace)"
     // is PAL Aerospace - while "Gama Aviation (UK) Limited" keeps its own brackets)
     const alias = s.match(/^(.*\S)\s*\([^()]*\)\s*\.?$/);
     if (alias && LEGAL_FORM.test(alias[1])) s = alias[1];
-    for (let i = 0; i < 4; i++) { const t = s.replace(LEGAL_FORM, '').replace(/[\s,&]+$/, ''); if (t === s || !/[A-Za-z]{2}/.test(t)) break; s = t; }
+    for (let i = 0; i < 4; i++) { const t = s.replace(LEGAL_FORM, '').replace(/[\s,&-]+$/, ''); if (t === s || !/[A-Za-z0-9]{2}/.test(t)) break; s = t; }
     return s;
   }
   // A trust company holding the registration for an owner who stays unnamed (the FAA register's "TVPX AIRCRAFT SOLUTIONS
@@ -5379,21 +5455,58 @@
   }
   // adsb.lol's history of every aircraft it heard, every 20 s (its heatmap: a file per half hour, ~27 MB, records of 16
   // bytes - address, lat and lon x1e6, altitude /25 ft, speed x10 kt - after a marker with the time): who was where FR24's
-  // track had the flight at that moment. Read only when nothing cheaper named a flight - one file in two minutes for the
-  // flight opened, one in fifteen otherwise - and kept until another is needed.
+  // track had the flight at that moment. Read for the ocean pass only when nothing cheaper named a flight - one file in
+  // two minutes for the flight opened, one in fifteen otherwise; for FR24's playback (06-playback) as soon as it opens.
+  // The files read are kept: the last two in memory, the last six half hours long over on disk (the browser's cache
+  // storage) - a playback opened again, after a reload too, has its file at once. One request per file at a time; one
+  // refused, asked again after a minute.
   const heat = { url: '', buf: null, selAt: 0, bgAt: 0 };
+  const heatMem = new Map(), heatJobs = new Map(), heatFail = new Map(), HEAT_STORE = 'tl-heat-v1', HEAT_DISK = 6;
+  const heatUrlOf = t => { const d = new Date(t * 1000); return `https://adsb.lol/globe_history/${dayStr(t * 1000)}/heatmap/${String(d.getUTCHours() * 2 + (d.getUTCMinutes() >= 30 ? 1 : 0)).padStart(2, '0')}.bin.ttf`; };
+  // (the half hour a file covers is over, with time to spare for it to be written whole: only then kept on disk)
+  const heatDone = t => Math.floor(t / 1800) * 1800 + 1800 < nowS() - 15 * 60;
   function gmBinary(url, timeout) {
     const gm = typeof GM_xmlhttpRequest === 'function' ? GM_xmlhttpRequest : (typeof GM !== 'undefined' && GM && typeof GM.xmlHttpRequest === 'function' ? GM.xmlHttpRequest : null);
     return new Promise((res, rej) => { if (!gm) return rej(new Error('GM_xmlhttpRequest unavailable')); gm({ method: 'GET', url, responseType: 'arraybuffer', timeout, onload: r => r.status === 200 && r.response ? res(r.response) : rej(new Error('HTTP ' + r.status)), onerror: () => rej(new Error('network error')), ontimeout: () => rej(new Error('timeout')) }); });
   }
+  const heatCaches = () => { try { return typeof caches !== 'undefined' && caches && typeof caches.open === 'function' ? caches : null; } catch (e) { return null; } };
+  async function heatDiskGet(url) {
+    const cs = heatCaches(); if (!cs) return null;
+    try { const c = await cs.open(HEAT_STORE), r = await c.match(url); if (!r) return null; const b = await r.arrayBuffer(); return b && b.byteLength >= 16 ? b : null; } catch (e) { return null; }
+  }
+  async function heatDiskPut(url, buf) {
+    const cs = heatCaches(); if (!cs) return;
+    try {
+      const c = await cs.open(HEAT_STORE); await c.put(url, new Response(buf, { headers: { 'Content-Type': 'application/octet-stream' } }));
+      const keys = await c.keys(); for (const k of keys.slice(0, Math.max(0, keys.length - HEAT_DISK))) await c.delete(k);
+    } catch (e) { log('heatmap kept', String(e && e.message || e)); }
+  }
+  const heatHave = url => heatMem.get(url) || null;
+  function heatLoad(t) {
+    const url = heatUrlOf(t);
+    const m = heatMem.get(url); if (m) { heatMem.delete(url); heatMem.set(url, m); return Promise.resolve(m); }
+    if (heatJobs.has(url)) return heatJobs.get(url);
+    if (now() - (heatFail.get(url) || 0) < 60000) return Promise.reject(new Error('heatmap refused a moment ago'));
+    const done = heatDone(t);
+    const job = (async () => {
+      let buf = done ? await heatDiskGet(url) : null;
+      if (!buf) { buf = await gmBinary(url, 180000); if (done) heatDiskPut(url, buf).catch(() => {}); }
+      heatMem.set(url, buf); while (heatMem.size > 2) heatMem.delete(heatMem.keys().next().value);
+      heat.url = url; heat.buf = buf;
+      return buf;
+    })();
+    heatJobs.set(url, job);
+    job.then(() => heatJobs.delete(url), e => { heatJobs.delete(url); heatFail.set(url, now()); if (heatFail.size > 50) heatFail.delete(heatFail.keys().next().value); log('heatmap', String(e && e.message || e)); });
+    return job;
+  }
   async function heatNear(t, posAt, altFt, sel) {
-    const d = new Date(t * 1000), url = `https://adsb.lol/globe_history/${dayStr(t * 1000)}/heatmap/${String(d.getUTCHours() * 2 + (d.getUTCMinutes() >= 30 ? 1 : 0)).padStart(2, '0')}.bin.ttf`;
-    if (heat.url !== url) {
+    const url = heatUrlOf(t);
+    if (!heatHave(url) && !heatJobs.has(url)) {
       if (now() - (sel ? heat.selAt : Math.max(heat.selAt, heat.bgAt)) < (sel ? 2 : 15) * 60000) return [];
       if (sel) heat.selAt = now(); else heat.bgAt = now();
-      try { heat.buf = await gmBinary(url, 180000); heat.url = url; } catch (e) { log('heatmap', String(e)); return []; }
     }
-    return ENGINE.heatNear(heat.buf, t, posAt, altFt);
+    let buf; try { buf = await heatLoad(t); } catch (e) { return []; }
+    return ENGINE.heatNear(buf, t, posAt, altFt);
   }
   async function matchByTraces(f) {
     if (traceBusy || !f || live.has(f.id) || f.gnd || !(f.alt > 10000) || now() - (traceAsked.get(f.id) || 0) < 10 * 60000) return false;
@@ -10754,15 +10867,19 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // ---- FR24's map playback: the whole map at any moment of FR24's week -------------------------------------------------
   // FR24 replays its feed as it was (Feed/Playback) and the panel of a flight opened in it (Feed/PlaybackFlight); the page
   // reports the moment and the flights it shows with no callsign. Each is named as it was then - from what this script
-  // already knew of that very flight (identified while it was live), else from adsb.lol's heatmap of that half hour: the
+  // already knew of that very flight (identified while it was live), from the monitor, and - at the same time, not after
+  // it, so a monitor that is slow, down or has no answer costs nothing - from adsb.lol's heatmap of that half hour: the
   // one aircraft heard where FR24 had it, at its height, of the type FR24 gives (M-ARNZ's PC-24 off Blackpool, 9 Oct
-  // 12:35). A named flight - and an ordinary one FR24 has no destination for - gets the flight as flown, from its ADS-B
+  // 12:35). The heatmap is read the moment a playback opens and kept (02 heatLoad), so the names are there as the map
+  // is. A named flight - and an ordinary one FR24 has no destination for - gets the flight as flown, from its ADS-B
   // track of that day: where it took off and where it landed, the strip's tag "Playback" in red. The flight open in the
   // panel gets its padlocked figures from that track, moment by moment (the page reads them from it as FR24 plays).
   const pbOut = new Map();   // FR24 flight id -> a name found here in a playback, for the monitor (02 reportToMonitor)
-  const pb = { ts: 0, at: 0, flights: new Map(), named: new Map(), routes: new Map(), sel: 0, selTs: 0, hexOf: new Map(), busy: false, heatAt: 0, tried: new Map(), routing: new Set(), traceKey: '', matchT: 0, monAsked: new Set() };
+  const pb = { ts: 0, at: 0, flights: new Map(), named: new Map(), routes: new Map(), sel: 0, selTs: 0, hexOf: new Map(), naming: new Set(), heatBusy: false, heatAgain: false, tried: new Map(), routing: new Set(), traceKey: '', matchT: 0, monAsked: new Set() };
   function pbMode() { return /^\/\d{4}-\d\d-\d\d\/\d\d:\d\d\//.test(location.pathname); }
-  const heatUrlOf = t => { const d = new Date(t * 1000); return `https://adsb.lol/globe_history/${dayStr(t * 1000)}/heatmap/${String(d.getUTCHours() * 2 + (d.getUTCMinutes() >= 30 ? 1 : 0)).padStart(2, '0')}.bin.ttf`; };
+  // (a flight is tried against its half hour's file once a two-minute step of it: tried again further on - one that has
+  // since taken off, or come out of a hole in coverage)
+  const pbTryKey = ts => heatUrlOf(ts) + '|' + Math.floor(ts / 120);
   function onPbFeed(d) {
     const ts = Number(d.ts) || 0; if (!ts) return;
     pb.ts = ts; pb.at = now();
@@ -10772,20 +10889,31 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       if (!pb.named.has(f.id)) { const c = store.getId(f.id); if (c && c.hex) pbAdopt(f.id, Object.assign({}, c), ts); }
     }
     if (pb.flights.size > 3000) for (const k of [...pb.flights.keys()].slice(0, 1000)) pb.flights.delete(k);
-    // (the monitor names the whole moment in one answer: asked as soon as the frame is in; without it, the heatmap's
-    // wait as before)
-    pbMatchSoon(monUp() ? 100 : 1500);
+    pbHeatWarm(ts);
+    pbMatchSoon(50);
   }
   function pbMatchSoon(ms) { if (!pb.matchT) pb.matchT = setTimeout(() => { pb.matchT = 0; pbMatch().catch(e => log('playback match', e)); }, ms); }
+  // The heatmap of the moment shown read at once - and, in the last ten minutes of a half hour, the next one's too, as
+  // the playback runs into it (two files at most on the way at a time: a quick scrub through the day asks for no more)
+  function pbHeatWarm(ts) {
+    const want = [ts], next = Math.floor(ts / 1800) * 1800 + 1800;
+    if (ts - (next - 1800) >= 1200 && next + 1800 < nowS() - 300) want.push(next);
+    for (const t of want) {
+      const u = heatUrlOf(t); if (heatHave(u) || heatJobs.has(u) || now() - (heatFail.get(u) || 0) < 60000) continue;
+      if (heatJobs.size >= 2) break;
+      const back = () => { if (heatUrlOf(pb.ts) === u) pbMatchSoon(0); };
+      heatLoad(t).then(back, back);
+    }
+  }
   // a flight named: the page labels it as FR24 would, and its route as flown follows
   function pbAdopt(id, rec, ts) {
     rec.id = id; pb.named.set(id, rec); pushToPage([rec]);
     if (rec.hex) pbRouteFor(id, rec.hex, ts).catch(e => log('playback route', e));
     if (id === pb.sel) { pbSendTrace(id, rec.hex, pb.selTs || ts).catch(() => {}); syncPanelSoon(); }
   }
-  // Every unnamed flight of the moment against adsb.lol's heatmap of its half hour, in one pass. A file is read at most
-  // every two minutes (one is ~25 MB) - at once for the flight opened in the panel - and each flight tried once a file.
-  // The monitor first (22.23, /pbmatch): every FR24 flight it named while it was live, and every other from the tracks it
+  // (one aircraft, one flight: an aircraft already named for another flight of about that moment is not this one too)
+  const pbTaken = (hex, id, ts) => { for (const r of pb.named.values()) if (r.hex === hex && r.id !== id && Math.abs((pb.flights.get(r.id) || {}).ts - ts) < 600) return true; return false; };
+  // The monitor (22.23, /pbmatch): every FR24 flight it named while it was live, and every other from the tracks it
   // keeps of the blocked aircraft (90 days) - the whole map's unnamed flights in one request, named at once, each with its
   // flight as the monitor logged it. An older monitor: the names it gave live only (/names).
   async function pbFromMonitor(ts) {
@@ -10801,53 +10929,86 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     let n = 0;
     for (const r of (j && Array.isArray(j.list) ? j.list : [])) {
       const [id, hex, reg, type, cs, flags, how, leg] = r;
-      if (!pb.flights.has(id) || pb.named.has(id) || !/^[0-9a-f]{6}$/.test(String(hex || ''))) continue;
+      if (!pb.flights.has(id) || pb.named.has(id) || !/^[0-9a-f]{6}$/.test(String(hex || '')) || pbTaken(hex, id, ts)) continue;
       const hx = store.getHex(hex) || {}, rec = { hex, cs: /^[A-Z0-9]{2,8}$/.test(String(cs || '')) ? cs : '', reg: reg || hx.reg || hexNNumber(hex), type: String(type || hx.type || '').toUpperCase(), desc: hx.desc || '', ladd: !!(flags & 1 || hx.ladd), mil: !!(flags & 2 || hx.mil), pia: !!(flags & 4 || hx.pia), src: how === 'track' ? 'monitor (its track)' : 'monitor (named live)', matchedAt: now() };
       store.mergeHex(hex, { reg: rec.reg, type: rec.type, ladd: rec.ladd || undefined, pia: rec.pia || undefined, mil: rec.mil || undefined });
       store.setId(id, Object.assign({ id }, rec));
       if (leg && typeof leg === 'object') pbRouteFromLeg(id, hex, leg);
       pbAdopt(id, rec, ts); n++;
       // (named from its track: kept on the monitor with that day, as a browser's playback name is - checked there)
-      if (how === 'track') { pbOut.set(id, [id, hex, rec.reg, rec.type, rec.cs, (rec.ladd ? 1 : 0) | (rec.mil ? 2 : 0) | (rec.pia ? 4 : 0), Math.round(ts)]); if (pbOut.size > 2000) pbOut.delete(pbOut.keys().next().value); }
+      if (how === 'track') pbOutSet(id, rec, ts);
       if (id === pb.sel) publicIdentity(hex, rec.reg).then(() => { pushToPage([rec]); syncPanelSoon(); }).catch(() => {});
     }
     if (n) log('playback: named from the monitor', n, 'of', fl.length);
     return n;
   }
+  function pbOutSet(id, rec, ts) { pbOut.set(id, [id, rec.hex, rec.reg, rec.type, rec.cs, (rec.ladd ? 1 : 0) | (rec.mil ? 2 : 0) | (rec.pia ? 4 : 0), Math.round(ts)]); if (pbOut.size > 2000) pbOut.delete(pbOut.keys().next().value); }
+  // the monitor and the heatmap side by side: whichever answers first names a flight
   async function pbMatch() {
-    if (pb.busy || !pb.ts) return;
-    const ts = pb.ts, url = heatUrlOf(ts);
-    await pbFromMonitor(ts).catch(e => log('playback names', e));
-    if (pb.ts !== ts) { pbMatchSoon(500); return; }
-    const list = [...pb.flights.values()].filter(f => f.ts === ts && !pb.named.has(f.id) && pb.tried.get(f.id) !== url && f.src !== 4 && (f.gnd || f.spd > 40 || f.alt > 1500));
-    if (!list.length) return;
-    const selWaiting = list.some(f => f.id === pb.sel);
-    if (heat.url !== url && now() - pb.heatAt < 2 * 60000 && !selWaiting) { pbMatchSoon(30000); return; }
-    pb.busy = true;
+    const ts = pb.ts; if (!ts) return;
+    pbHeatWarm(ts);
+    await Promise.all([pbFromMonitor(ts).catch(e => log('playback names', e)), pbFromHeat(ts).catch(e => log('playback heatmap', e))]);
+  }
+  // Every unnamed flight of the moment against adsb.lol's heatmap of its half hour, in one pass
+  async function pbFromHeat(ts) {
+    const url = heatUrlOf(ts), key = pbTryKey(ts);
+    const want = () => [...pb.flights.values()].filter(f => f.ts === ts && !pb.named.has(f.id) && pb.tried.get(f.id) !== key && f.src !== 4 && (f.gnd || f.spd > 40 || f.alt > 1500));
+    if (!want().length) return;
+    // (on its way: pbHeatWarm comes back here the moment it is in; refused - none for that half hour yet - the flights
+    // are said not to be in it, and it is asked for again a minute on)
+    const buf = heatHave(url);
+    if (!buf) { if (heatFail.has(url) && !heatJobs.has(url) && now() - heatFail.get(url) < 60000) for (const f of want()) pb.tried.set(f.id, key); return; }
+    if (pb.heatBusy) { pb.heatAgain = true; return; }
+    pb.heatBusy = true;
     try {
-      if (heat.url !== url) { pb.heatAt = now(); try { heat.buf = await gmBinary(url, 180000); heat.url = url; } catch (e) { log('playback heatmap', String(e)); return; } }
       await idleSlice();
-      const res = ENGINE.heatMatch(heat.buf, ts, list.map(f => ({ lat: f.lat, lon: f.lon, trk: f.trk, gs: f.spd, alt: f.alt, gnd: !!f.gnd, r: f.gnd ? 0.3 : 3 })));
+      if (pb.ts !== ts) { pb.heatAgain = true; return; }
+      const list = want(); if (!list.length) return;
+      const res = ENGINE.heatMatch(buf, ts, list.map(f => ({ lat: f.lat, lon: f.lon, trk: f.trk, gs: f.spd, alt: f.alt, gnd: !!f.gnd, r: f.gnd ? 0.3 : 3 })));
       const count = new Map(); res.forEach(h => { if (h) count.set(h, (count.get(h) || 0) + 1); });
       for (let i = 0; i < list.length; i++) {
-        const f = list[i], hex = res[i]; pb.tried.set(f.id, url);
-        if (!hex || count.get(hex) > 1 || [...pb.named.values()].some(r => r.hex === hex && r.id !== f.id && Math.abs((pb.flights.get(r.id) || {}).ts - ts) < 600)) continue;   // (one aircraft, one flight)
-        // its own track of that day: who it is (adsb.lol's database), its callsign then - and the type agreeing with FR24's
-        const pts = await pbPoints(hex, ts), tm = traceMeta.get(hex) || {}, hx = store.getHex(hex) || {};
-        const type = clean(tm.t || hx.type).toUpperCase();
-        if (f.type && type && typeRelation(type, f.type) === 'different') { log('playback match: types differ', f.id.toString(16), hex, type, f.type); continue; }
-        let cs = ''; { let best = 1e9; for (const p of pts) { const dt = Math.abs(p.t - ts); if (dt < best && p.cs) { best = dt; cs = p.cs; } if (p.t > ts + 3600) break; } }
-        const rec = { hex, cs: /^[A-Z0-9]{2,8}$/.test(cs) ? cs : '', reg: tm.r || hx.reg || hexNNumber(hex), type: type || clean(f.type).toUpperCase(), desc: tm.desc || hx.desc || '', ladd: !!(tm.flags & 8 || hx.ladd), pia: !!(tm.flags & 4 || hx.pia), mil: !!(tm.flags & 1 || hx.mil), src: 'adsb.lol (playback)', matchedAt: now() };
-        store.mergeHex(hex, { reg: rec.reg, type: rec.type, ladd: rec.ladd || undefined, pia: rec.pia || undefined, mil: rec.mil || undefined });
-        store.setId(f.id, Object.assign({ id: f.id }, rec));
-        log('playback: named', f.id.toString(16), hex, rec.reg, 'at', new Date(ts * 1000).toISOString().slice(11, 16));
-        pbAdopt(f.id, rec, ts);
-        // (and to the monitor: kept there for good with the day of the flight - any later playback of it, anyone's, named)
-        pbOut.set(f.id, [f.id, hex, rec.reg, rec.type, rec.cs, (rec.ladd ? 1 : 0) | (rec.mil ? 2 : 0) | (rec.pia ? 4 : 0), Math.round(ts)]); if (pbOut.size > 2000) pbOut.delete(pbOut.keys().next().value);
-        if (f.id === pb.sel) publicIdentity(hex, rec.reg).then(() => { pushToPage([rec]); syncPanelSoon(); }).catch(() => {});
+        const f = list[i], hex = res[i]; pb.tried.set(f.id, key);
+        if (!hex || count.get(hex) > 1 || pbTaken(hex, f.id, ts)) continue;
+        // (each named on its own - one whose track is still to come holds up neither the others nor the next moment)
+        pb.naming.add(f.id); pbHeatName(f, hex, ts).catch(e => log('playback name', e)).then(() => { pb.naming.delete(f.id); if (f.id === pb.sel) syncPanelSoon(); });
       }
-    } finally { pb.busy = false; }
-    if ([...pb.flights.values()].some(f => f.ts === pb.ts && !pb.named.has(f.id) && pb.tried.get(f.id) !== heatUrlOf(pb.ts))) pbMatchSoon(5000);
+      if (pb.tried.size > 20000) for (const k of [...pb.tried.keys()].slice(0, 5000)) pb.tried.delete(k);
+    } finally { pb.heatBusy = false; if (pb.heatAgain) { pb.heatAgain = false; pbMatchSoon(0); } }
+  }
+  // (its callsign at that moment, from its track of the day)
+  function pbCsAt(pts, ts) { let cs = '', best = 1e9; for (const p of pts || []) { const dt = Math.abs(p.t - ts); if (dt < best && p.cs) { best = dt; cs = p.cs; } if (p.t > ts + 3600) break; } return /^[A-Z0-9]{2,8}$/.test(cs) ? cs : ''; }
+  // A heatmap match named: at once from what is known of the aircraft here already (its registration and type - kept
+  // from the lists, earlier flights, its address for a US one), its type against FR24's; what is not known yet - an
+  // aircraft never seen here - from its track of that day first, the one request then. Its callsign then follows.
+  async function pbHeatName(f, hex, ts) {
+    const known = () => { const tm = traceMeta.get(hex) || {}, hx = store.getHex(hex) || {}; return { tm, hx, type: clean(tm.t || hx.type).toUpperCase(), reg: tm.r || hx.reg || hexNNumber(hex) }; };
+    const fType = clean(f.type).toUpperCase();
+    let k = known(), pts = null;
+    if ((fType && !k.type) || !k.reg) { pts = await pbPoints(hex, ts); k = known(); }
+    if (fType && k.type && typeRelation(k.type, fType) === 'different') { log('playback match: types differ', f.id.toString(16), hex, k.type, fType); return; }
+    if (pb.named.has(f.id) || pbTaken(hex, f.id, ts)) return;
+    const flagsOf = k => ({ ladd: !!(k.tm.flags & 8 || k.hx.ladd), pia: !!(k.tm.flags & 4 || k.hx.pia), mil: !!(k.tm.flags & 1 || k.hx.mil) });
+    const rec = Object.assign({ hex, cs: pts ? pbCsAt(pts, ts) : '', reg: k.reg, type: k.type || fType, desc: k.tm.desc || k.hx.desc || '' }, flagsOf(k), { src: 'adsb.lol (playback)', matchedAt: now() });
+    store.mergeHex(hex, { reg: rec.reg, type: rec.type, ladd: rec.ladd || undefined, pia: rec.pia || undefined, mil: rec.mil || undefined });
+    store.setId(f.id, Object.assign({ id: f.id }, rec));
+    log('playback: named', f.id.toString(16), hex, rec.reg, 'at', new Date(ts * 1000).toISOString().slice(11, 16));
+    pbAdopt(f.id, rec, ts);
+    // (and to the monitor: kept there for good with the day of the flight - any later playback of it, anyone's, named)
+    pbOutSet(f.id, rec, ts);
+    if (f.id === pb.sel) publicIdentity(hex, rec.reg).then(() => { pushToPage([rec]); syncPanelSoon(); }).catch(() => {});
+    if (pts) return;
+    // (named before its track was read: its callsign then - and anything the track's own record adds - once it is in)
+    const p2 = await pbPoints(hex, ts); if (pb.named.get(f.id) !== rec) return;
+    const k2 = known(), fl = flagsOf(k2), cs = pbCsAt(p2, ts), add = {};
+    if (cs && !rec.cs) add.cs = cs;
+    if (!rec.reg && k2.reg) add.reg = k2.reg;
+    if (!rec.desc && (k2.tm.desc || k2.hx.desc)) add.desc = k2.tm.desc || k2.hx.desc;
+    for (const x of ['ladd', 'pia', 'mil']) if (fl[x] && !rec[x]) add[x] = true;
+    if (!Object.keys(add).length) return;
+    Object.assign(rec, add);
+    store.mergeHex(hex, { reg: rec.reg || undefined, ladd: rec.ladd || undefined, pia: rec.pia || undefined, mil: rec.mil || undefined });
+    store.setId(f.id, Object.assign({ id: f.id }, rec)); pbOutSet(f.id, rec, ts);
+    pushToPage([rec]); if (f.id === pb.sel) syncPanelSoon();
   }
   // The flight as flown: its ADS-B track of that day (and of the next or the day before, across midnight) in legs - the
   // one it was flying at that moment, or about to fly from where it stood - with both its ends; an end away from FR24's
@@ -10889,6 +11050,29 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     if (!airportsReady() || !fin(leg.tStart)) return null;
     try { return pbRouteSet(id, pbRouteOf(hex, leg, ENGINE.classify(acOfHex(hex)) === 'heli')); } catch (e) { log('playback route', e); return null; }
   }
+  // Mach and the outside air temperature of a report: the aircraft's own (readsb's record of its air data), else worked
+  // out from its other figures - Mach from the indicated airspeed at its pressure altitude (compressible flow, the
+  // indicated airspeed taken for the calibrated), the temperature from the true airspeed against the speed of sound at
+  // that Mach, as readsb works it out (from Mach 0.395: below, the rounding of the figures sent makes it too inexact)
+  function machOf(ias, altFt) {
+    if (!(ias > 30) || !fin(altFt) || altFt > 60000) return NaN;
+    const p = altFt <= 36089 ? 101325 * Math.pow(1 - 6.8755856e-6 * altFt, 5.2558797) : 22632.06 * Math.exp(-4.806346e-5 * (altFt - 36089));
+    const qc = 101325 * (Math.pow(1 + 0.2 * Math.pow(ias / 661.4786, 2), 3.5) - 1), m = Math.sqrt(5 * (Math.pow(qc / p + 1, 2 / 7) - 1));
+    return m > 0.05 && m < 1 ? m : NaN;
+  }
+  // (one worked out is kept only where it makes sense: a temperature within 35 °C of the standard atmosphere's at that
+  // height - the figures of one report do not always belong together. Against the aircraft's own in the day tracks of
+  // test/fixtures/legs: Mach from the airspeed a median 0.001 off, the temperature 0.3 °C off from its own Mach, 0.8 °C
+  // from the worked-out one.)
+  const isaC = ft => 15 - 1.98 * Math.min(Math.max(ft, 0), 36089) / 1000;
+  const tempOf = (tas, mach, ft) => { const c = Math.pow(tas / (38.967854 * mach), 2) - 273.15; return Math.abs(c - isaC(ft)) <= 35 ? c : NaN; };
+  function pbAir(p) {
+    if (p.own === false || p.gnd0 || !fin(p.alt)) return [null, null];
+    let mach = p.mach > 0 && p.mach < 1 ? p.mach : NaN, oat = fin(p.oat) ? p.oat : NaN;
+    if (!fin(mach)) { const m = machOf(p.ias, p.alt); if (fin(m) && (!(p.tas > 0) || fin(tempOf(p.tas, m, p.alt)))) mach = m; }
+    if (!fin(oat) && mach >= 0.395 && p.tas > 0) oat = tempOf(p.tas, mach, p.alt);
+    return [fin(mach) ? Math.round(mach * 1000) / 1000 : null, fin(oat) ? Math.round(oat) : null];
+  }
   // the open flight's track, for its padlocked figures as FR24 plays it: the flight's span, every report
   async function pbSendTrace(id, hex, ts) {
     if (!hex || !ts) return;
@@ -10897,7 +11081,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     const lo = (r ? r.t0 : ts - 3 * 3600) - 600, hi = (r ? r.t1 : ts + 3 * 3600) + 600, nz = v => fin(v) ? Math.round(v) : null;
     // (and the airspace it was in - FIR / UIR by position and height - worked out once a minute along the way)
     let firT = -1e9, fir = null;
-    const rows = pts.filter(p => p.t >= lo && p.t <= hi).map(p => { if (p.t - firT >= 60) { firT = p.t; fir = firInfo(p.lat, p.lon, p.gnd0 ? 0 : p.alt); } return [Math.round(p.t), nz(p.alt), nz(p.altGeom), nz(p.vr), nz(p.ias), nz(p.tas), p.sq || '', nz(p.wd), nz(p.ws), p.own === false ? 0 : 1, fir ? fir.name : '', fir ? fir.code : '']; });
+    const rows = pts.filter(p => p.t >= lo && p.t <= hi).map(p => { if (p.t - firT >= 60) { firT = p.t; fir = firInfo(p.lat, p.lon, p.gnd0 ? 0 : p.alt); } const [mach, oat] = pbAir(p); return [Math.round(p.t), nz(p.alt), nz(p.altGeom), nz(p.vr), nz(p.ias), nz(p.tas), p.sq || '', nz(p.wd), nz(p.ws), p.own === false ? 0 : 1, fir ? fir.name : '', fir ? fir.code : '', mach, oat]; });
     postToPage('pbTrace', { id, hex, pts: rows });
     // (the other network's reports of that day, once in: the holes filled)
     const m = pbMore(hex, ts); if (m) m.then(all => { if (pb.traceKey !== key || all.length <= pts.length) return; pb.traceKey = ''; pbSendTrace(id, hex, ts).catch(() => {}); }).catch(() => {});
@@ -10923,14 +11107,31 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       else pbSendTrace(id, hex, Number(d.ts) || pb.selTs).catch(() => {});
     }
   }
+  // The panel's padlocked country of registration, serial number and age in playback, as on a live flight: FR24 answers a
+  // playback panel once, before the registers have answered for an aircraft just named - so written in its cells as they
+  // come (never the live airspeeds and the like: those of the moment played come from its track, 06 pbSendTrace). Only
+  // into a panel showing that very aircraft; anything of ours taken out again for another.
+  const PB_LOCKED = new Set(['country', 'msn', 'age']);
+  function pbLocked(panel, hx) {
+    const shown = panelHex(panel); if (hx && shown && hx.hex && shown !== hx.hex) hx = null;
+    let vals = null;
+    for (const cell of panel.querySelectorAll('[class*="col-span"]')) {
+      const label = cell.firstElementChild; if (!label || label.tagName !== 'P') continue;
+      const hit = LOCKED_FIELDS.find(x => x[0].test(clean(label.textContent))); if (!hit || !PB_LOCKED.has(hit[1])) continue;
+      if (!cell.querySelector('.tl-filled') && !lockOf(cell)) continue;
+      if (!vals) { const c = hx && hx.hex ? countryOf(hx.hex, hx.reg) : null; vals = hx ? { country: (regCountry(hx.reg) || {}).name || hx.country || (c && c.name) || '', msn: hx.msn || '', age: ageText(hx) } : {}; }
+      fillLockedCell(cell, vals[hit[1]] || '', hit[1]);
+    }
+  }
   // The strip in playback: who it was (a flight FR24 does not name) and the flight as flown, tagged "Playback" in red -
   // never a prediction: by then it was over
   function pbStrip(panel) {
     const id = pb.sel, rec = id ? pb.named.get(id) || null : null, route = id ? pb.routes.get(id) || null : null, f = id ? pb.flights.get(id) : null;
+    pbLocked(panel, rec ? withStored(rec) : (id && pb.hexOf.get(id) ? Object.assign({ hex: pb.hexOf.get(id) }, store.getHex(pb.hexOf.get(id)) || {}) : null));
     if (!rec && !route) {
       if (!f || !panelLooksBlocked(panel)) { panel.querySelectorAll('.tl-strip').forEach(e => e.remove()); return; }
       const el = strip(panel); el.dataset.state = 'playback';
-      const html = rowHtml('plane', gridHtml([cellHtml('Blocked aircraft' + tagHtml('LADD', 'ladd'), pb.tried.get(id) === heatUrlOf(f.ts) ? '<span class="tl-muted">not in the public ADS-B record of that moment</span>' : '<span class="tl-spin"></span> identifying from the public ADS-B record of that moment…', '', true)]));
+      const html = rowHtml('plane', gridHtml([cellHtml('Blocked aircraft' + tagHtml('LADD', 'ladd'), pb.tried.get(id) === pbTryKey(f.ts) && !pb.naming.has(id) ? '<span class="tl-muted">not in the public ADS-B record of that moment</span>' : '<span class="tl-spin"></span> identifying from the public ADS-B record of that moment…', '', true)]));
       if (el.__tlHtml !== html) { el.innerHTML = html; el.__tlHtml = html; }
       return;
     }

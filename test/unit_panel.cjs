@@ -109,6 +109,28 @@ const PANEL = `<div data-testid="airport-panel"><div class="head"><h2>Caernarfon
   await until(() => q('.tl-rwy') && /04\/22/.test(q('.tl-rwy').textContent) && q('.tl-panel[data-kind="usage"]') && /2 movements/.test(q('.tl-panel[data-kind="usage"]').textContent), 8000);
   const dt2 = q('.tl-rwy') ? q('.tl-rwy').textContent : '', u2 = q('.tl-panel[data-kind="usage"]'), ut2 = u2 ? u2.textContent : '';
   check('another airport opened (Hawarden, CEG): its own runway (04/22), its own runway use (two movements tracked, neither runway clear from the track)', /04\/22/.test(dt2) && !/02\/20/.test(dt2) && /04\s*0 \/ 0/.test(ut2) && /22\s*0 \/ 0/.test(ut2) && /2 movements/.test(ut2) && /for 0\./.test(ut2) && doc.querySelectorAll('.tl-rwy').length === 1 && doc.querySelectorAll('.tl-panel[data-kind="usage"]').length === 1, { dt2, ut2 });
+  // ---- FR24's own layout (Boscombe Down, 14 Oct): its parts are sections in one box - the weather, then the events
+  // (an event about the weather in its list), then the plea - and they are gone the moment they are put in, before the
+  // browser paints: no flash, and no empty box where the events were
+  panel.remove(); doc.querySelectorAll('[data-testid="airport-panel"]').forEach(e => e.remove());
+  w.history.pushState({}, '', '/airport/qua');
+  const PANEL2 = `<div data-testid="airport-panel"><div class="head"><h2>Amesbury MOD Boscombe Down</h2></div>
+    <div class="scroll"><div class="box">
+      <section class="p-1 wx"><div><p>Conditions</p><p>Clear</p><p>Temperature</p><p>13 °C</p></div><button>More weather &amp; METAR</button></section>
+      <section class="p-1 ev2"><div class="t"><button><span>Latest events</span><svg></svg></button></div><div class="list"><p>Weather warning: strong winds</p></div></section>
+      <section class="p-1 st2"><h3>Airport statistics</h3><p>Last 7 days</p></section>
+      <div class="beg2"><div class="in"><p>Help us improve ground coverage</p><a href="/apply">Apply for a free receiver</a></div></div>
+    </div></div></div>`;
+  doc.body.insertAdjacentHTML('beforeend', PANEL2);
+  await Promise.resolve(); await Promise.resolve();
+  const shown = s => { const e = q(s); return !!e && w.getComputedStyle(e).display !== 'none'; };
+  check('FR24\'s layout: the events\' whole section (its box too, not an empty bar) gone as soon as it is put in - before any timer, so never painted', !shown('section.ev2'), q('section.ev2') && q('section.ev2').outerHTML.slice(0, 160));
+  check('... the plea too, its box with it', !shown('.beg2'));
+  check('... the weather and the statistics stay', shown('section.wx') && shown('section.st2') && shown('.box'));
+  // (and drawn again by FR24 - a part put back, its title text set afresh: gone at once again)
+  const sec2 = q('section.ev2'), copy = sec2.cloneNode(true); copy.removeAttribute('data-tl-hidden'); copy.removeAttribute('style'); copy.querySelectorAll('[data-tl-hidden]').forEach(e => { e.removeAttribute('data-tl-hidden'); e.removeAttribute('style'); }); copy.className = 'p-1 ev3';
+  sec2.after(copy); await Promise.resolve(); await Promise.resolve();
+  check('... FR24 drawing the events again: gone again at once', !shown('section.ev3'));
   console.log(fails ? `\n${fails} failed` : '\nall passed');
   process.exit(fails ? 1 : 0);
 })().catch(e => { console.log('FAIL  crashed ' + (e && e.stack || e)); process.exit(1); });

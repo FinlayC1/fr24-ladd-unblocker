@@ -2,6 +2,21 @@
 
 All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PATCH`. The userscript and the monitor are released together.
 
+## [Unreleased]
+
+### Changed
+- **Playback names flights at once.** The browser no longer waits for the monitor before it looks for itself. As soon as a playback shows its first frame, it fetches adsb.lol's record of that half hour (the heatmap) and matches it at the same time as it asks the monitor. Whichever answers first names the flight, so a monitor that is slow or down costs nothing.
+  - A matched aircraft that the browser already knows (its registration and type) is named right away. Its callsign follows when its track arrives. Before, each match waited for that aircraft's track of the day, one after another.
+  - The heatmap file is fetched as soon as the playback opens, with no two-minute wait, and the next half hour's file too near its end. The last two stay in memory and the last six finished half hours stay on disk (the browser's cache storage), so a playback opened again, even after a reload, has its names at once.
+  - A flight that was not matched is tried again two minutes further on, instead of never again that half hour.
+  - Matching against the heatmap is about four times faster: each moment's flights are indexed by map cell (the same results; `heatMatch`).
+- **No "N/A" for Mach or temperature in playback.** The track's own Mach and outside air temperature are now used. Where the track has none, Mach is worked out from the indicated airspeed and altitude, and the temperature from the true airspeed and Mach (only at Mach 0.395 and above, and only within 35 °C of the standard atmosphere). Against the aircraft's own figures in the test tracks, both are typically within 0.001 Mach and 1 °C.
+- **No padlocks on country, serial number and age in playback.** FR24 sends a playback panel only once, often before the registers have answered. These cells are now filled in as the answers arrive, as on a live flight.
+
+### Fixed
+- Owner names: "LLC" stayed on a name that is only a number ("756J LLC" is now 756J). Dubai free-zone forms are taken off too ("MAPA AVIATION DWC-LLC" is Mapa Aviation; also FZE, FZCO, FZ-LLC and DMCC).
+- The airport panel: the "Latest events" part left an empty box under the weather, and it and the plea to improve coverage showed for a moment before they were removed. They are now removed as FR24 adds them, before the browser draws them, and the box they sat in goes with them.
+
 ## [22.23.0] - 2026-10-14
 
 Playback names blocked flights the moment they are shown, and the monitor keeps 90 days of tracks and learns from them.

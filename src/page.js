@@ -364,7 +364,8 @@
     var pbRoutes = new Map(), pbSent = {}, pbTrace = null;   // (the userscript's: each flight as flown; the open flight's track)
     // The figures FR24 padlocks, at the moment being played, from the open flight's ADS-B track: what changes steadily -
     // heights, speeds, climb - in proportion between two reports at most two minutes apart, the squawk and the wind from
-    // the nearer. Rows: [t, alt, GPS alt, vertical rate, IAS, TAS, squawk, wind dir, wind speed, sent by the aircraft 1/0]
+    // the nearer. Rows: [t, alt, GPS alt, vertical rate, IAS, TAS, squawk, wind dir, wind speed, sent by the aircraft 1/0,
+    // FIR name, FIR code, Mach, outside air temperature]
     function pbTelAt(id, ts) {
       var tr = pbTrace; if (!tr || tr.id !== id || !ts || !tr.pts.length) return null;
       var P = tr.pts, lo = 0, hi = P.length - 1; while (lo < hi) { var m = (lo + hi) >> 1; if (P[m][0] < ts) lo = m + 1; else hi = m; }
@@ -372,7 +373,7 @@
       var f = b[0] > a[0] && ts > a[0] && ts < b[0] && b[0] - a[0] <= 120 ? (ts - a[0]) / (b[0] - a[0]) : (Math.abs(a[0] - ts) <= Math.abs(b[0] - ts) ? 0 : 1), near = f < 0.5 ? a : b;
       var mix = function (k) { var x = a[k], y = b[k]; return fin(x) && fin(y) ? x + (y - x) * f : fin(near[k]) ? near[k] : NaN; };
       var own = near[9] !== 0, n = function (v) { return fin(v) ? v : NaN; };
-      return { vr: own ? mix(3) : NaN, agps: own ? mix(2) : NaN, ias: own ? mix(4) : NaN, tas: own ? mix(5) : NaN, mach: NaN, oat: NaN, wd: n(near[7]), ws: n(near[8]), sq: near[6] ? parseInt(near[6], 8) || 0 : 0, air: near[10] || '', airId: near[11] || '', at: Date.now() };
+      return { vr: own ? mix(3) : NaN, agps: own ? mix(2) : NaN, ias: own ? mix(4) : NaN, tas: own ? mix(5) : NaN, mach: own ? mix(12) : NaN, oat: own ? mix(13) : NaN, wd: n(near[7]), ws: n(near[8]), sq: near[6] ? parseInt(near[6], 8) || 0 : 0, air: near[10] || '', airId: near[11] || '', at: Date.now() };
     }
     // FR24's playback - the map's, an aircraft's, a log's - moves its own figures (altitude, speed, track) along the open
     // flight's trail with its clock; the ones supplied here follow the same clock, set in the panel's own state each time the
@@ -388,7 +389,10 @@
       if (t.sq > 0) fi.squawk = squawkWire(t.sq);
       if (t.air) { fi.airspace = t.air; if (t.airId) fi.airspaceId = t.airId; }
       var e = Object.assign({}, fi.emsInfo || {}), ch = false, set = function (k, v) { if (fin(v)) { e[k] = Math.round(v); ch = true; } };
-      set('agps', t.agps); set('ias', t.ias > 0 ? t.ias : NaN); set('tas', t.tas > 0 ? t.tas : NaN); set('windDir', t.wd); set('windSpd', t.ws);
+      set('agps', t.agps); set('ias', t.ias > 0 ? t.ias : NaN); set('tas', t.tas > 0 ? t.tas : NaN); set('windDir', t.wd); set('windSpd', t.ws); set('oat', t.oat);
+      // (Mach as the panel's state holds it: the wire's thousandths, as decoded - or, should a value already there be the
+      // number itself, that)
+      if (t.mach > 0) { e.mach = fin(e.mach) && e.mach > 0 && e.mach < 5 ? Math.round(t.mach * 1000) / 1000 : Math.round(t.mach * 1000); ch = true; }
       if (ch) fi.emsInfo = e;
     }
     setInterval(pbPanelTick, 250);
@@ -1566,11 +1570,68 @@
       }
       return cur;
     }
-    function tlHide(el) { if (el && el.style.display !== 'none') { el.style.display = 'none'; el.setAttribute('data-tl-hidden', '1'); } }
-    function panelHide(panel) {
-      saying(panel, /^latest events$/i).forEach(function (e) { tlHide(partOf(e, panel, 'Latest events', 4000)); });
-      saying(panel, /help us improve|improve (our |the )?(ground )?coverage/i).forEach(function (e) { tlHide(partOf(e, panel, '', 600)); });
+    // (kept hidden when FR24 rewrites the element's style)
+    function tlHide(el) { if (el && (el.style.getPropertyValue('display') !== 'none' || el.style.getPropertyPriority('display') !== 'important' || !el.hasAttribute('data-tl-hidden'))) { el.style.setProperty('display', 'none', 'important'); el.setAttribute('data-tl-hidden', '1'); } }
+    // (what is left of a part once it is hidden - the box it sat in, its border and padding, with nothing else in it: the
+    // thin empty bar under the weather - goes too, up to the panel, while nothing else in it is shown)
+    function shownChild(c) {
+      if (c.hasAttribute('data-tl-hidden') || /^(SCRIPT|STYLE|TEMPLATE)$/.test(c.tagName)) return false;
+      if (c.style && c.style.display === 'none') return false;
+      try { return getComputedStyle(c).display !== 'none'; } catch (e) { return true; }
     }
+    function hideShell(el, panel) {
+      for (var cur = el; cur && cur.parentElement && cur.parentElement !== panel; cur = cur.parentElement) {
+        var up = cur.parentElement, kids = up.children, any = false;
+        if (up.querySelector('.tl-panel, .tl-rwy')) return;
+        for (var i = 0; i < kids.length && !any; i++) if (shownChild(kids[i])) any = true;
+        for (var n = up.firstChild; n && !any; n = n.nextSibling) if (n.nodeType === 3 && /\S/.test(n.nodeValue || '')) any = true;
+        if (any) return;
+        tlHide(up);
+      }
+    }
+    var EVENTS_RE = /^(latest|live) events$/i, BEG_RE = /help us improve|improve (our |the )?(ground )?coverage/i;
+    function hidePart(el, panel) { if (!el || el === panel) return; tlHide(el); hideShell(el, panel); }
+    // (the events' own section - FR24 builds the panel of sections, the events' the one its title opens - whatever is in it)
+    function firstText(el) {
+      var w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT), t;
+      while ((t = w.nextNode())) { var v = String(t.nodeValue || '').replace(/\s+/g, ' ').trim(); if (v) return v; }
+      return '';
+    }
+    function eventsPart(e, panel) {
+      var sec = e.closest('section');
+      if (sec && sec !== panel && panel.contains(sec) && !sec.contains(panel) && EVENTS_RE.test(firstText(sec)) && !sec.querySelector('[data-testid^="airport-panel__tab"], [data-testid^="airport-panel__schedules"], [data-testid^="airport-panel__promo-"], .tl-panel, .tl-rwy')) return sec;
+      return partOf(e, panel, 'Latest events', 4000);
+    }
+    function panelHide(panel, root) {
+      root = root || panel;
+      saying(root, EVENTS_RE).forEach(function (e) { hidePart(eventsPart(e, panel), panel); });
+      saying(root, BEG_RE).forEach(function (e) { hidePart(partOf(e, panel, '', 600), panel); });
+    }
+    // FR24 draws those two parts and the panel is painted before the next tick: they are taken out as they are put in -
+    // a mutation observer's answer comes before the browser paints - so they are never seen, not even for a moment
+    var hideMo = null;
+    function hideWatch() {
+      if (hideMo || typeof MutationObserver !== 'function' || !document.documentElement) return;
+      var SEL_AP = '[data-testid="airport-panel"]';
+      hideMo = new MutationObserver(function (recs) {
+        for (var i = 0; i < recs.length; i++) {
+          var r = recs[i], t = r.type === 'characterData' ? r.target.parentElement : r.target; if (!t || t.nodeType !== 1) continue;
+          try {
+            var panel = t.closest(SEL_AP);
+            if (panel) {
+              if (r.type === 'characterData') panelHide(panel, t);
+              else for (var j = 0; j < r.addedNodes.length; j++) { var a = r.addedNodes[j], el = a.nodeType === 1 ? a : a.nodeType === 3 ? a.parentElement : null; if (el) panelHide(panel, el); }
+            } else if (r.type === 'childList') {
+              // (the panel itself put in, whole)
+              for (var k = 0; k < r.addedNodes.length; k++) { var n = r.addedNodes[k]; if (n.nodeType !== 1) continue; var p = n.matches(SEL_AP) ? n : n.querySelector(SEL_AP); if (p) panelHide(p); }
+            }
+          } catch (e) { stats.errors++; stats.lastError = String(e); }
+        }
+      });
+      hideMo.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+    }
+    hideWatch();
+    if (!hideMo) document.addEventListener('DOMContentLoaded', hideWatch, { once: true });
     // (FR24's locked pictures: by their name, else by the title they sit under)
     function kindNear(el, panel) {
       var img = el.matches('img') ? el : el.querySelector('img[alt]'), alt = img ? String(img.getAttribute('alt') || '') : '';
