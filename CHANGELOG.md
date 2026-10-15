@@ -2,6 +2,17 @@
 
 All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PATCH`. The userscript and the monitor are released together.
 
+## [22.28.5] - 2026-10-15
+
+### Changed
+- **The LADD Unblock window's text is now as large as FR24's own, and its title bar matches theirs.** The text, which was about three quarters of the size of the bottom bar's, is now the same size; the grey title bar has FR24's lettering and a larger, thinner close button.
+- **A "Text size" option in the window** (S, M, L, XL), kept between visits.
+- **It takes the place of FR24's panels instead of lying over them.** While the window is open, the widget panels FR24 always shows on the map go away, and opening it closes any other bottom-bar window that is open (Settings, Weather, Filters, Widgets). Closing it brings the widget panels back.
+
+### Removed
+- **FR24's Bookmarks widget, completely:** its panel on the map and its entry in the Widgets window.
+- **The empty space left under "Disruptions" on every airport's panel.** It comes back by itself if there is ever something in it.
+
 ## [22.28.4] - 2026-10-15
 
 ### Fixed

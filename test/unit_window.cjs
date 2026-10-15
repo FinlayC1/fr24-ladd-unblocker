@@ -115,6 +115,30 @@ const click = (win, el) => el.dispatchEvent(new win.MouseEvent('click', { bubble
   doc.querySelector('.bar-wrap').remove(); doc.body.insertAdjacentHTML('beforeend', BAR);
   const btn2 = await until(() => doc.querySelector('nav.bar .tl-ub-btn'), 3000);
   check('FR24 draws its bar again: the button is back, once', !!btn2 && doc.querySelectorAll('.tl-ub-btn').length === 1 && btn2.previousElementSibling && /Playback/.test(btn2.previousElementSibling.textContent));
+  // ---- text size, making way, and what is cleaned up (the sizes FR24's boxes would have are stubbed: jsdom has no layout)
+  const size = (el, w, h, top) => { Object.defineProperty(el, 'offsetWidth', { value: w, configurable: true }); Object.defineProperty(el, 'offsetHeight', { value: h, configurable: true }); if (top !== undefined) el.getBoundingClientRect = () => ({ top, bottom: top + h, left: 0, right: w, width: w, height: h }); };
+  doc.body.insertAdjacentHTML('beforeend', `<div id="col" style="position:fixed;left:10px"><div id="cardA" style="position:static"><div><span>Most tracked flights</span></div><p>1. UAL941</p></div><div id="cardB"><div><span>Bookmarks</span></div><p>your bookmarks</p></div></div>
+    <div id="ap"><div id="dis"><div class="hd"><span>Disruptions</span><svg></svg></div><div class="bd" id="band"></div></div><div id="stat"><div><span>Airport statistics</span></div><p>x</p></div></div>`);
+  await until(() => doc.getElementById('cardB').classList.contains('tl-ub-gone'), 3000);
+  check('FR24\'s Bookmarks widget is gone for good (hidden at once, nothing of it shown), its neighbour stays', doc.getElementById('cardB').classList.contains('tl-ub-gone') && !doc.getElementById('cardA').classList.contains('tl-ub-gone') && !doc.getElementById('cardA').classList.contains('tl-ub-hid'));
+  await until(() => doc.getElementById('band').classList.contains('tl-ub-gone'), 3000);
+  check('the empty body of the Disruptions dropdown on an airport panel is taken away, its heading stays', doc.getElementById('band').classList.contains('tl-ub-gone') && !doc.querySelector('#dis .hd').classList.contains('tl-ub-gone'));
+  doc.getElementById('band').textContent = 'Delays at EGLL'; doc.getElementById('band').insertAdjacentHTML('afterend', '<i></i>');
+  await until(() => !doc.getElementById('band').classList.contains('tl-ub-gone'), 3000);
+  check('... and comes back once there is something in it', !doc.getElementById('band').classList.contains('tl-ub-gone'));
+  // FR24's Widgets window is open: opening this one closes it (by its own bar button) and then FR24's widget panels give way
+  const fw = doc.querySelector('.fr24-win'); fw.style.position = 'fixed'; size(fw, 252, 600);
+  const barClicks = []; doc.querySelector('nav.bar [data-testid="map-bar__widgets"]').addEventListener('click', () => { barClicks.push(1); fw.remove(); });
+  const btn3 = doc.querySelector('nav.bar .tl-ub-btn'); click(win, btn3);
+  const w3 = doc.querySelector('.tl-ub');
+  await until(() => barClicks.length && doc.getElementById('cardA').classList.contains('tl-ub-hid'), 4000);
+  check('opening it closes the Widgets window already open, as that button would, and stays open itself', barClicks.length === 1 && !!doc.querySelector('.tl-ub') && w3 === doc.querySelector('.tl-ub'));
+  check('... FR24\'s widget panels on the map give way to it, while it is open', doc.getElementById('cardA').classList.contains('tl-ub-hid'));
+  check('... the text size: as large as the bar\'s own text (1.2), the window\'s own scale in the CSS var', w3.style.getPropertyValue('--tl-f') === '1.2' && /--tl-f,1\.2/.test(SRC) && w3.querySelectorAll('[data-ub-size]').length === 4 && w3.querySelector('[data-ub-size="1"]').getAttribute('aria-pressed') === 'true');
+  click(win, w3.querySelector('[data-ub-size="3"]'));
+  check('... a text size option: XL scales the text up and is kept', w3.style.getPropertyValue('--tl-f') === '1.56' && win.localStorage.getItem('tweeks.fr24.ladd.textsize') === '3' && doc.querySelector('.tl-ub [data-ub-size="3"]').getAttribute('aria-pressed') === 'true');
+  click(win, btn3);
+  check('closing it brings the widget panels back', !doc.querySelector('.tl-ub') && !doc.getElementById('cardA').classList.contains('tl-ub-hid') && doc.getElementById('cardB').classList.contains('tl-ub-gone'));
   win.close();
 
   // ---- LADD Unblock switched off: FR24 left alone, the button and window there to switch it on again
