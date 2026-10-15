@@ -57,6 +57,7 @@ npm run test:all       # also the live end-to-end runs (normal and Tampermonkey-
 | `unit_waiting` | Monitor: dead reckoning across the holes in a track (`tracks.estimate`), the flights not named yet tried again until one aircraft fits (`waiting.cjs`: playback and live, one aircraft one flight), browsers' routes and learned flights taken, checked and handed out | – |
 | `unit_shared` | Two built userscripts with the real monitor between them: a route worked out in one shown in the other (map and panel, confirmed destinations, never sent back), learned flights in every engine counted once, a playback flight asked about again and named once the monitor has worked it out | – |
 | `unit_extension` | The built extension in a real Chromium: service worker, both worlds, requests through the worker | – (needs Playwright and Chromium; skipped without them) |
+| `unit_native` | The built userscript's LADD Unblock window in a real Chromium, frame by frame, on a Vue 3 page made like FR24's map (`fixtures/fr24mock.html`) in seven layouts: opens in FR24's Widgets window, one bar item open, closes with flights and other options, Bookmarks switched off, the airport panel's empty bar never drawn | – (needs Playwright, Chromium and Vue 3's `vue.global.js` as `VUE_PATH`; skipped without them) |
 | `unit_new` | Built userscript: playback, airline/airport lists, boards, sites, routes page | FR24 |
 | `panels1`, `panels2` | Reported panels replayed through the built script | FR24, adsb.lol |
 | `replay` | Live aircraft replayed through the built script | FR24, adsb.lol, others |
@@ -72,7 +73,8 @@ Suites that need the network must be reported as **not run**, never as passed, w
 - FR24 playback answers;
 - a heatmap slice;
 - OpenStreetMap answers;
-- panel cases.
+- panel cases;
+- a Vue 3 page made like FR24's map, its bottom bar and windows (`fr24mock.html`, for `unit_native`).
 
 A bug report from real use should end up as a fixture and a check named after the flight.
 

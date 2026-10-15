@@ -1625,22 +1625,76 @@
     }
     // (kept hidden when FR24 rewrites the element's style)
     function tlHide(el) { if (el && (el.style.getPropertyValue('display') !== 'none' || el.style.getPropertyPriority('display') !== 'important' || !el.hasAttribute('data-tl-hidden'))) { el.style.setProperty('display', 'none', 'important'); el.setAttribute('data-tl-hidden', '1'); } }
-    // (what is left of a part once it is hidden - the box it sat in, its border and padding, with nothing else in it: the
-    // thin empty bar under the weather - goes too, up to the panel, while nothing else in it is shown)
-    function shownChild(c) {
-      if (c.hasAttribute('data-tl-hidden') || /^(SCRIPT|STYLE|TEMPLATE)$/.test(c.tagName)) return false;
-      if (c.style && c.style.display === 'none') return false;
-      try { return getComputedStyle(c).display !== 'none'; } catch (e) { return true; }
+    // (what is left of a part once it is hidden - the box it sat in, its border and padding, nothing in it to see: the thin
+    // empty bar under "Disruptions" where the events were - goes too, up to the panel, while nothing in it is seen. Seen:
+    // words, or a picture, icon or field drawn with a size, outside anything hidden. An empty box FR24 keeps beside the
+    // hidden part - its body, a spacer - counts for nothing: it was what left the bar standing)
+    var SEEN_TAGS = { IMG: 1, PICTURE: 1, VIDEO: 1, CANVAS: 1, IFRAME: 1, svg: 1, SVG: 1, INPUT: 1, SELECT: 1, TEXTAREA: 1 };
+    function sized(el) { try { var r = el.getBoundingClientRect(); return r.width > 1 && r.height > 1; } catch (e) { return false; } }
+    function blankBox(box) {
+      if (/^(SCRIPT|STYLE|TEMPLATE)$/.test(box.tagName)) return false;
+      if (box.matches('.tl-panel, .tl-rwy') || box.querySelector('.tl-panel, .tl-rwy')) return false;
+      var seen = false, cs0 = null;
+      try { cs0 = getComputedStyle(box); } catch (e) { /* none */ }
+      if (cs0 && cs0.backgroundImage && cs0.backgroundImage !== 'none' && sized(box)) return false;
+      var w = document.createTreeWalker(box, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, { acceptNode: function (n) {
+        if (n.nodeType === 3) { if (/\S/.test(n.nodeValue || '')) seen = true; return seen ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP; }
+        if (n.hasAttribute('data-tl-hidden') || /^(SCRIPT|STYLE|TEMPLATE)$/.test(n.tagName)) return NodeFilter.FILTER_REJECT;
+        var cs = null; try { cs = getComputedStyle(n); } catch (e) { /* none */ }
+        if (cs && (cs.display === 'none' || cs.visibility === 'hidden')) return NodeFilter.FILTER_REJECT;
+        if ((SEEN_TAGS[n.tagName] || (cs && cs.backgroundImage && cs.backgroundImage !== 'none')) && sized(n)) seen = true;
+        return seen ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
+      } });
+      w.nextNode();
+      return !seen;
     }
     function hideShell(el, panel) {
-      for (var cur = el; cur && cur.parentElement && cur.parentElement !== panel; cur = cur.parentElement) {
-        var up = cur.parentElement, kids = up.children, any = false;
-        if (up.querySelector('.tl-panel, .tl-rwy')) return;
-        for (var i = 0; i < kids.length && !any; i++) if (shownChild(kids[i])) any = true;
-        for (var n = up.firstChild; n && !any; n = n.nextSibling) if (n.nodeType === 3 && /\S/.test(n.nodeValue || '')) any = true;
-        if (any) return;
+      for (var cur = el; cur && cur.parentElement && cur.parentElement !== panel && cur.parentElement !== document.body; cur = cur.parentElement) {
+        var up = cur.parentElement;
+        if (!blankBox(up)) return;
         tlHide(up);
       }
+    }
+    // (and any box in the panel's list of dropdowns - Disruptions, the events, statistics, details - with nothing in it to
+    // see, or no words in it and no taller than a bar: the empty bar between Disruptions and Airport statistics. Hidden at
+    // once, and back the moment FR24 puts something in it)
+    var PART_RE = /^(disruptions|airport statistics|airport & runway details|airport and runway details)$/i, WX_RE = /^more weather & metar$/i;
+    function commonBox(ts) {
+      var a = ts[0];
+      for (var i = 1; i < ts.length; i++) { while (a && !a.contains(ts[i])) a = a.parentElement; }
+      return a;
+    }
+    function partsList(panel) {
+      var ts = saying(panel, PART_RE); if (ts.length < 2) ts = ts.concat(saying(panel, WX_RE)); if (ts.length < 2) return null;
+      var a = commonBox(ts);
+      return a && a !== panel && panel.contains(a) && a.children.length > 1 ? a : a === panel ? panel : null;
+    }
+    function wordless(box) {
+      if (box.matches('.tl-panel, .tl-rwy') || box.querySelector('.tl-panel, .tl-rwy')) return false;
+      var w = document.createTreeWalker(box, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, { acceptNode: function (n) {
+        if (n.nodeType === 3) return /\S/.test(n.nodeValue || '') ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
+        if (n.hasAttribute('data-tl-hidden')) return NodeFilter.FILTER_REJECT;
+        var cs = null; try { cs = getComputedStyle(n); } catch (e) { /* none */ }
+        return cs && (cs.display === 'none' || cs.visibility === 'hidden') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_SKIP;
+      } });
+      return !w.nextNode();
+    }
+    function emptyPart(c) { return blankBox(c) || (wordless(c) && c.getBoundingClientRect().height < 32); }
+    function blankParts(panel) {
+      var list = partsList(panel); if (!list) return;
+      for (var i = 0; i < list.children.length; i++) {
+        var c = list.children[i];
+        if (c.hasAttribute('data-tl-blank')) { c.style.removeProperty('display'); var back = !emptyPart(c); c.style.setProperty('display', 'none', 'important'); if (back) { c.style.removeProperty('display'); c.removeAttribute('data-tl-blank'); c.removeAttribute('data-tl-hidden'); } continue; }
+        if (c.hasAttribute('data-tl-hidden') || /^(SCRIPT|STYLE|TEMPLATE)$/.test(c.tagName)) continue;
+        if (emptyPart(c)) { tlHide(c); c.setAttribute('data-tl-blank', '1'); }
+      }
+    }
+    // (once per change, after FR24 has done its part - and still before the browser paints)
+    var blankDue = [];
+    function blankSoon(panel) {
+      if (blankDue.indexOf(panel) >= 0) return;
+      blankDue.push(panel);
+      if (blankDue.length === 1) Promise.resolve().then(function () { var l = blankDue; blankDue = []; l.forEach(function (p) { try { if (p.isConnected) blankParts(p); } catch (e) { stats.errors++; stats.lastError = String(e); } }); });
     }
     var EVENTS_RE = /^(latest|live) events$/i, BEG_RE = /help us improve|improve (our |the )?(ground )?coverage/i;
     function hidePart(el, panel) { if (!el || el === panel) return; tlHide(el); hideShell(el, panel); }
@@ -1660,6 +1714,7 @@
       saying(root, EVENTS_RE).forEach(function (e) { hidePart(eventsPart(e, panel), panel); });
       saying(root, BEG_RE).forEach(function (e) { hidePart(partOf(e, panel, '', 600), panel); });
       saying(root, ADS_RE).forEach(function (e) { hideAd(e, panel); });
+      blankSoon(panel);
     }
     // FR24's "Remove ads" button where an advert sat in a board's list (the advert itself hidden by the userscript's style),
     // and the empty slot around it: the button and every box that holds nothing else, and an advert's slot beside it, gone -
@@ -2305,28 +2360,86 @@
       ev.preventDefault(); ev.stopImmediatePropagation();
       window.open(entry.__tlTrace, '_blank', 'noopener');
     }, true);
-    // "Playback" of a flight FR24 blocks - in the panel's menu, or on an airport board's card - finds nothing on FR24
-    // ("flight was not found"): the flight's ADS-B track is replayed on airplanes.live instead. Other flights keep FR24's.
+    // "Playback" of a flight FR24 blocks - in the panel's menu, on an airport board's card (today's, or one of the days kept
+    // from before), on a live search result's card - finds nothing on FR24 ("flight was not found", or the aircraft's own
+    // page): the flight's ADS-B track is replayed on airplanes.live instead. Other flights keep FR24's.
+    // (N600EB's departure from LaGuardia two days before - a kept row - and the same flight found in the search opened its
+    // FR24 page: only today's rows of a flight still live were known here)
     var hhmmZ = function (t) { return new Date(t * 1000).toISOString().slice(11, 16); };
+    function traceUrl(hex, t0, t1) {
+      return 'https://globe.airplanes.live/?icao=' + encodeURIComponent(String(hex).toLowerCase()) + '&showTrace=' + new Date(t0 * 1000).toISOString().slice(0, 10) + '&startTime=' + hhmmZ(t0 - 300) + '&endTime=' + hhmmZ(Math.max(t1, t0 + 600) + 300);
+    }
     function replayOf(rec, route) {
       var nowS = Math.floor(Date.now() / 1000), t0 = (route && (route.atd || route.departedAt)) || nowS - 3 * 3600, t1 = route && route.landed && route.ata ? route.ata : nowS;
-      return 'https://globe.airplanes.live/?icao=' + encodeURIComponent(String(rec.hex).toLowerCase()) + '&showTrace=' + new Date(t0 * 1000).toISOString().slice(0, 10) + '&startTime=' + hhmmZ(t0 - 300) + '&endTime=' + hhmmZ(Math.max(t1, t0 + 600) + 300);
+      return traceUrl(rec.hex, t0, t1);
     }
-    document.addEventListener('click', function (ev) {
-      var el = ev.target && ev.target.closest ? ev.target.closest('[data-testid="aircraft__playback"], a, button') : null; if (!el) return;
-      var inMenu = el.matches('[data-testid="aircraft__playback"]'), card = el.closest('li[id^="airport_schedule_"]');
-      if (!inMenu && !(card && /^\s*playback\s*$/i.test(el.textContent || ''))) return;
-      var id = 0, rec = null;
-      if (inMenu) { id = curFollowId; rec = resolved.get(id) || null; }
-      else {
-        var row = Number(String(card.id).split('_').pop()) || 0;
-        if (row >= 9000000000) { id = row - 9000000000; rec = resolved.get(id) || null; }
-        if (!rec) { var regEl = card.querySelector('[data-testid="airport-flight-details__registration"]'), reg = regEl ? String(regEl.textContent || '').trim().toUpperCase() : ''; if (reg) resolved.forEach(function (r, k) { if (!rec && r.reg && r.reg.toUpperCase() === reg) { rec = r; id = k; } }); }
+    var isHex = function (h) { return /^[0-9a-f]{6}$/i.test(String(h || '')); };
+    // (a flight of a blocked aircraft the page knows - by flight id, else by registration: [id, rec])
+    function knownByReg(reg) { reg = String(reg || '').replace(/\s+/g, '').toUpperCase(); var hit = null; if (!reg) return null; resolved.forEach(function (r, k) { if (r && r.reg && String(r.reg).toUpperCase() === reg && (!hit || (lastPos.get(k) || {}).at > (lastPos.get(hit[0]) || {}).at)) hit = [k, r]; }); return hit; }
+    // (a kept row: its aircraft and its two ends - the other end as the row has it, else its row on the other airport's
+    // board, else three hours either way)
+    function keptReplay(ar) {
+      var r = ar.r || {}, hex = isHex(r.hex) ? r.hex : '', t = Number(r.t) || 0;
+      if (!hex && r.reg) { var k = knownByReg(r.reg); if (k && isHex(k[1].hex)) hex = k[1].hex; }
+      if (!hex || !t) return '';
+      var dep = ar.kind === 'departures', nowS = Math.floor(Date.now() / 1000), t2 = Number(r.t2) || 0;
+      if (!t2 && r.ap && boardArch.has(Number(r.ap))) { var o = boardArch.get(Number(r.ap)), m = (dep ? o.arr : o.dep).filter(function (x) { return x && x.k === r.k; })[0]; if (m) t2 = Number(m.t) || 0; }
+      var t0 = dep ? t : (t2 && t2 < t ? t2 : t - 3 * 3600), t1 = dep ? (t2 > t ? t2 : Math.min(t + 3 * 3600, nowS)) : t;
+      return traceUrl(hex, t0, t1);
+    }
+    // (the aircraft a card is about: the action's own link to it, else the card's "Aircraft info" link beside it)
+    function regNear(el) {
+      var a0 = el.closest('a[href]'), h0 = a0 ? a0.getAttribute('href') || '' : '', m = h0.match(/\/data\/aircraft\/([^\/#?]+)/i);
+      if (m) return decodeURIComponent(m[1]).toUpperCase();
+      for (var a = el.parentElement, d = 0; a && a !== document.body && d < 4; a = a.parentElement, d++) {
+        if (String(a.textContent || '').length > 2000) return '';           // (a card, not the page round it)
+        var ls = a.querySelectorAll('a[href*="/data/aircraft/"]'), regs = [];
+        for (var i = 0; i < ls.length; i++) { var mm = (ls[i].getAttribute('href') || '').match(/\/data\/aircraft\/([^\/#?]+)/i); if (mm && regs.indexOf(mm[1].toUpperCase()) < 0) regs.push(decodeURIComponent(mm[1]).toUpperCase()); }
+        if (regs.length === 1) return regs[0];
+        if (regs.length > 1) return '';
       }
-      if (!rec || !rec.hex) return;
+      return '';
+    }
+    // (the "Playback" action clicked: its words, or a test id saying so - outside the aircraft panel, whose own are above)
+    function pbAction(t) {
+      for (var a = t, d = 0; a && a.nodeType === 1 && a !== document.body && d < 5; a = a.parentElement, d++) {
+        var tx = String(a.textContent || '').replace(/\s+/g, ' ').trim();
+        if (/^playback$/i.test(tx) || /playback/i.test(a.getAttribute('data-testid') || '')) {
+          var top = a; while (top.parentElement && top.parentElement !== document.body && /^playback$/i.test(String(top.parentElement.textContent || '').replace(/\s+/g, ' ').trim())) top = top.parentElement;
+          return top.closest('[data-testid^="aircraft-panel"], [data-testid="flight-actions__action-playback"]') ? null : top;
+        }
+        if (tx.length > 40) return null;
+      }
+      return null;
+    }
+    // (where it goes instead, or '' - FR24's own playback then)
+    function pbReplay(el) {
+      var card = el.closest('[id^="airport_schedule_"]'), row = card ? Number(String(card.id).split('_').pop()) || 0 : 0;
+      // (a kept row: one of this script's own - FR24 has no such flight - or a blocked aircraft's; FR24's own row of any
+      // other flight keeps FR24's playback, unless its aircraft is one named here below)
+      if (row && archById.has(row)) { var ar = archById.get(row); if (row >= 20000000000 || (ar.r && ar.r.blk)) { var u = keptReplay(ar); if (u) return u; } }
+      if (row >= 9000000000 && row < 20000000000) { var id = row - 9000000000, rec = recOf(id); if (rec && isHex(rec.hex)) return replayOf(rec, routeNow(id) || routeOf(id)); }
+      // (a search result: its live flight, or its aircraft's)
+      var sr = el.closest('[data-testid="search__result-row"]'), key = sr && sr.querySelector('[data-search-result]'), sk = key ? String(key.getAttribute('data-search-result') || '') : '';
+      var lm = /^live:([0-9a-f]+)$/i.exec(sk); if (lm) { var lid = parseInt(lm[1], 16), lr = resolved.get(lid); if (lr && isHex(lr.hex)) return replayOf(lr, routeNow(lid) || routeOf(lid)); }
+      var am = /^aircraft:(.+)$/i.exec(sk); if (am) { var ka = knownByReg(am[1]); if (ka && isHex(ka[1].hex)) return replayOf(ka[1], routeNow(ka[0]) || routeOf(ka[0])); }
+      // (by the aircraft: a board card's registration, else the card's links)
+      var regEl = card && card.querySelector('[data-testid="airport-flight-details__registration"]'), reg = regEl ? String(regEl.textContent || '').trim().toUpperCase() : regNear(el);
+      var k = knownByReg(reg); if (k && isHex(k[1].hex)) return replayOf(k[1], routeNow(k[0]) || routeOf(k[0]));
+      return '';
+    }
+    function onPlayback(ev) {
+      if (ev.type === 'auxclick' && ev.button !== 1) return;
+      var t = ev.target && ev.target.nodeType === 1 ? ev.target : ev.target && ev.target.parentElement; if (!t || !t.closest) return;
+      var menu = t.closest('[data-testid="aircraft__playback"]'), url = '';
+      if (menu) { var rec = resolved.get(curFollowId); if (rec && isHex(rec.hex)) url = replayOf(rec, routes.get(curFollowId)); }
+      else { var el = pbAction(t); if (el) url = pbReplay(el); }
+      if (!url) return;
       ev.preventDefault(); ev.stopImmediatePropagation();
-      window.open(replayOf(rec, routes.get(id)), '_blank', 'noopener');
-    }, true);
+      window.open(url, '_blank', 'noopener');
+    }
+    document.addEventListener('click', onPlayback, true);
+    document.addEventListener('auxclick', onPlayback, true);
     window.addEventListener('message', function (ev) {
       if (ev.source !== window || !ev.data || typeof ev.data !== 'object') return;
       var d = ev.data;
