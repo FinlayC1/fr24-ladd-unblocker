@@ -2,6 +2,11 @@
 
 All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PATCH`. The userscript and the monitor are released together.
 
+## [22.28.9] - 2026-10-15
+
+### Fixed
+- **The bottom of the LADD Unblock window is no longer cut off once it has finished opening.** The window was held above the bottom bar's top edge, a few moments after it opened, although FR24's windows reach lower, beside the bar (which is in the middle). It now ends where FR24's own windows end, such as Settings and Weather.
+
 ## [22.28.8] - 2026-10-15
 
 ### Fixed

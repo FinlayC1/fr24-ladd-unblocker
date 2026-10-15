@@ -82,7 +82,7 @@ async function run(browser, mode) {
   if (mode === 'odd') return oddFlow(page, ctx, errors, rec, last, ours, bar, st);
   // ---- Weather open, then this: Weather goes back, this comes up in FR24's Widgets window, never showing "Widgets"
   await page.click(bar('Weather')); await sleep(500);
-  const wRect = await page.evaluate(() => { const w = document.querySelector('.win[data-win="Weather"]'); const r = w.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, head: w.querySelector('.win-head').getBoundingClientRect().height }; });
+  const wRect = await page.evaluate(() => { const w = document.querySelector('.win[data-win="Weather"]'); const r = w.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height, head: w.querySelector('.win-head').getBoundingClientRect().height }; });
   f = await rec(() => page.click(ours));
   const L1 = last(f);
   check('opened from Weather: Weather drawn going back while this comes up (both drawn at once in some frames)', f.some(x => x.titles.includes('Weather') && x.titles.includes('LADD Unblock')) || f.some(x => x.titles.includes('Weather')) && L1.titles.join() === 'LADD Unblock', f.map(x => x.titles.join('+')).filter((v, i, a) => v !== a[i - 1]));
@@ -93,7 +93,9 @@ async function run(browser, mode) {
   check('... FR24\'s window: its place, its width, its 40 px title bar - as Weather\'s', oRect.x === wRect.x && oRect.y === wRect.y && oRect.w === wRect.w && oRect.head === 40 && oRect.list === 'none' && oRect.c, { oRect, wRect });
   const cols = await page.evaluate(() => { const b = id => getComputedStyle(id).backgroundColor; const ours = document.querySelector('.tl-ub-in'), wb = [...document.querySelectorAll('.win-body')].find(e => getComputedStyle(e).display !== 'none' && !e.closest('[data-tl-ub-host]')); const t = ours && ours.querySelector('.tl-ub-t'); return { ours: ours && b(ours), text: t && getComputedStyle(t).color, theirs: wb ? b(wb) : 'rgb(237, 237, 237)' }; });
   check('... FR24\'s light body under dark text, as Weather\'s (not the dark frame)', cols.ours === cols.theirs && cols.text === 'rgb(57, 57, 57)', cols);
-  check('... its scroll ends above the bar', oRect.y + oRect.h <= 860 - 72, oRect);
+  await sleep(600);
+  const oFin = await page.evaluate(() => { const t = [...document.querySelectorAll('.win-title')].find(e => e.textContent.trim() === 'LADD Unblock'); const r = t.closest('.win').getBoundingClientRect(); return { y: r.y, h: r.height }; });
+  check('... settled, it ends where Weather\'s window ends (FR24\'s own height; nothing cut off its bottom after the movement)', Math.abs((oFin.y + oFin.h) - (wRect.y + wRect.h)) <= 1 && Math.abs((oRect.y + oRect.h) - (wRect.y + wRect.h)) <= 1, { oRect, oFin, wRect });
   check('... FR24\'s Bookmarks switched off in FR24\'s own Widgets list (as if its "On" was pressed)', (await st()).bm === false, await st());
   await shot(page, `${mode}-ours`);
   // ---- the text size

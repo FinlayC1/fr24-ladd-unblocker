@@ -602,9 +602,11 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   const layoutTop = el => { let y = 0; for (let a = el, n = 0; a && n < 40; a = a.offsetParent, n++) y += a.offsetTop || 0; return y; };
   function fitBody() {
     if (!ubBody || !ubBody.isConnected || !HJ.host) return;
-    const vh = window.innerHeight || 800, barTop = ubBar && ubBar.isConnected ? layoutTop(ubBar) : vh, top = layoutTop(ubBody);
-    if (!(top > 0) || !(barTop > top)) return;
-    let mh = Math.max(160, Math.min(vh, barTop) - top - 10);
+    // (FR24's windows reach down beside the bar - it is in the middle - to where the window's own limit puts them: this is
+    // let as tall as the page, and the window's limit, found below, cuts it to the same height as FR24's own)
+    const vh = window.innerHeight || 800, top = layoutTop(ubBody);
+    if (!(top > 0) || !(vh > top)) return;
+    let mh = Math.max(160, vh - top - 10);
     ubBody.style.maxHeight = mh + 'px';
     const host = HJ.host, over = host.scrollHeight - host.clientHeight;
     if (over > 1 && getComputedStyle(host).overflowY !== 'visible') { mh = Math.max(120, mh - over); ubBody.style.maxHeight = mh + 'px'; }
