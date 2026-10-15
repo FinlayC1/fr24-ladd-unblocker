@@ -392,7 +392,7 @@
       }
       setField('SERIAL NUMBER (MSN)', hx.msn);
       setField('AGE', ageText(hx), ageTitle(hx));
-      setField('OPERATOR', shownOwner(hx, hx.cs) || '', hx.ownerCity && ownerName(hx.owner) ? 'Registered to ' + (ownerName(hx.owner) || '') + ', ' + placeName(hx.ownerCity) : '');
+      setField('OPERATOR', shownOwner(hx, hx.cs) || '', hx.ownerCity && ownerName(hx.owner) ? 'Registered to ' + (ownerName(hx.owner) || '') + ', ' + placeName(ENGINE.placeShort(hx.ownerCity)) : '');
       // (an aircraft FR24 lists under "Private owner": its registered owner / operator there instead - a real airline
       // FR24 names stays)
       {

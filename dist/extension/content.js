@@ -1410,9 +1410,23 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
       // (indexed by callsign and number: an airport's six days are thousands of rows)
       var fids = {}, cst = {}, nmt = {}, add = function (o, k, t, e) { (o[k] || (o[k] = [])).push({ t: t, e: e }); }, near = function (o, k, t, w) { return k ? (o[k] || []).find(function (x) { return Math.abs(x.t - t) < w; }) || null : null; };
       nat.forEach(function (e) { if (e.flight && e.flight.id) fids[String(e.flight.id)] = e; if (e.flight && e.flight.callsign) add(cst, String(e.flight.callsign).toUpperCase(), e.estimatedTime || e.scheduledTime || 0, e); if (e.flight && e.flight.number) add(nmt, String(e.flight.number).toUpperCase(), e.scheduledTime || 0, e); });
+      // (the same callsign to the same airport with its time moved - a flight not flown yet planned again: FR24's own row of
+      // CWL52 to Glasgow at 15:30 (estimated 15:40), the schedule's at 16:15 (16:25), exactly 45 minutes apart - within two
+      // hours by any of their times; two flights already flown within 45 minutes)
+      var went = function (x) { return /^(departed|landed)$/.test(x || ''); };
+      var nearCs = function (k, r) {
+        if (!k) return null;
+        var rt = [r.est, r.sch, r.t].filter(Boolean), ra = went(r.st), rap = (r.nat && r.nat.airportId) || r.ap || 0;
+        return (cst[k] || []).find(function (x) {
+          var e = x.e;
+          if (ra && went(e.status && e.status.name)) return Math.abs(x.t - (r.est || r.t)) < 2700;
+          if (e.airportId && rap && e.airportId === rap) return [e.estimatedTime, e.scheduledTime].filter(Boolean).some(function (a) { return rt.some(function (b) { return Math.abs(a - b) < 7200; }); });
+          return Math.abs(x.t - (r.est || r.t)) < 2700;
+        }) || null;
+      };
       var pick = rows.filter(function (r) {
         var t = r.sch || r.t; if (!(t >= nowS - 3 * 86400 && t <= nowS + 3 * 86400)) return false;
-        var hit = (r.fid && fids[r.fid]) || near(nmt, String(r.num || '').toUpperCase(), r.sch || r.t, 1800) || near(cst, String(r.cs || '').toUpperCase(), r.est || r.t, 2700);
+        var hit = (r.fid && fids[r.fid]) || near(nmt, String(r.num || '').toUpperCase(), r.sch || r.t, 1800) || nearCs(String(r.cs || '').toUpperCase(), r);
         if (!hit) return true;
         // (FR24's own row of it stands - what it leaves out, "N/A" where the flight went or came from, the aircraft of
         // its card, from the kept one: G-PTRK)
@@ -1473,6 +1487,9 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
       var need = !ac.registration || !ac.type, priv = !d.airline || /private owner/i.test(d.airline);
       var known = String(ac.hex || ac.icao24 || ac.modeS || '').toLowerCase();
       var got = info && (info.reg || info.hex) ? Promise.resolve(info) : need ? infoOfCallsign(d.flight && d.flight.callsign) : priv && !/^[0-9a-f]{6}$/.test(known) && ac.registration ? regInfo(ac.registration) : Promise.resolve(known ? { hex: known } : null);
+      // (what was kept of the flight without its aircraft - the type and operator its schedule gave: CWL52's card, Cranwell
+      // FTU, E50P - stands with what the lookup adds)
+      if (info && !(info.reg || info.hex) && (info.ty || info.al)) got = got.then(function (x) { var o = Object.assign({}, info); Object.keys(x || {}).forEach(function (k) { if (x[k]) o[k] = x[k]; }); return o; });
       return got.then(function (x) {
         if (x) {
           if (!ac.registration && x.reg) ac.registration = x.reg;
@@ -1533,7 +1550,14 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
     function logoOf(id) { return !id ? '' : LOGO_ADD[id] ? LOGO_ADD[id].source : 'https://cdn.flightradar24.com/assets/airlines/logotypes/' + id + '.png'; }
     function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
     function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* full or blocked */ } }
-    var siteRows = (function () { try { var l = JSON.parse(lsGet('tl.sites') || '[]'); return Array.isArray(l) ? l : []; } catch (e) { return []; } })();
+    // (a place is its part before the first comma - "Rotherham, South Yorkshire" is Rotherham: the same cut as the userscript's
+    // ENGINE.placeShort, which test/unit_places.cjs checks them against. The landing places kept from before, cut here; the
+    // userscript's own list, which keeps both names where two places would read the same, replaces them at once)
+    function placeShort(n) {
+      var s = String(n == null ? '' : n).replace(/\s+/g, ' ').trim(), i = s.indexOf(',');
+      return i < 0 ? s : s.slice(0, i).trim() || s.replace(/^[,\s]+|[,\s]+$/g, '').replace(/,\s*/g, ', ');
+    }
+    var siteRows = (function () { try { var l = JSON.parse(lsGet('tl.sites') || '[]'); return Array.isArray(l) ? l.map(function (r) { return r && typeof r === 'object' ? Object.assign({}, r, { name: placeShort(r.name), city: placeShort(r.city) }) : r; }) : []; } catch (e) { return []; } })();
     function listSig(kind) { return kind === 'airlines' ? LISTS_V : LISTS_V + ':' + hashStr(JSON.stringify(siteRows)); }
     function patchList(kind, j) {
       if (!j || !Array.isArray(j.rows) || j.rows.length < 100) return false;
@@ -2446,7 +2470,7 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
       else if (d.__tweeksLadd === 'hello') post('ready', { stats: stats, feedReady: !!feedHeaders, hdr: feedHdrPublic(), v: BRIDGE_V });
     });
     window[NS] = { resolved: resolved, routes: routes, naRecs: naRecs, naRoutes: naRoutes, telem: telem, hist: hist, lastPos: lastPos, photoCache: photoCache, psCache: psCache, stats: stats, fetchPhotos: fetchPhotos, hello: function () { post('ready', { stats: stats, feedReady: !!feedHeaders, v: BRIDGE_V }); }, v: BRIDGE_V };
-    if (window.__tlTestHook) try { window.__tlTestHook({ csOf: csOf, hist: hist, preloaded: function () { return preloaded; }, parse: parse, photoFits: photoFits, makerOf: makerOf, patchFollow: patchFollow, patchFlightMsg: patchFlightMsg, pushFollow: pushFollow, followSt: function () { return followSt; }, setFollowSt: function (s) { followSt = s; }, shownPhotos: shownPhotos, photoCache: photoCache, FOLLOW: FOLLOW, DETAILS: DETAILS, fLen: fLen, fStr: fStr, fVar: fVar, patchFlight: patchFlight, patchLiveFeed: patchLiveFeed, fr24Named: fr24Named, psState: function () { return { q: psQ.length, busy: psBusy, last: psLast, blockedFor: Math.max(0, psBlockedUntil - Date.now()), pri: Array.from(psPri), jobs: photoJobs.size, head: psQ.slice(0, 3).map(function (j) { return j.hex; }) }; }, acceptPubTel: acceptPubTel, pubTelFor: pubTelFor, fillNativeCard: fillNativeCard, regsOfCallsign: regsOfCallsign, categoryOf: categoryOf, nativeFill: nativeFill, natInfo: natInfo, telem: telem, b64Encode: b64Encode, b64DecodeInto: b64DecodeInto, frameHeader: frameHeader, concat: concat, varintInt32: varintInt32, PLAYBACK: PLAYBACK, patchPlayback: patchPlayback, patchPlaybackRequest: patchPlaybackRequest, pbRoutes: pbRoutes, pbTelAt: pbTelAt, setPbTrace: function (t) { pbTrace = t; }, patchList: patchList, acceptSites: acceptSites, listSig: listSig, mergeRoutes: mergeRoutes, applyRoutes: applyRoutes, routesAdd: routesAdd, applyAirport: applyAirport, applyBoardPage: applyBoardPage, applyStats: applyStats, mergeFlights: mergeFlights, apData: apData, telAt: telAt, noteTelem: noteTelem, pbTraceOf: function () { return pbTrace; }, logoOf: logoOf, archDetail: archDetail, tsOf: tsOf, noteAirportJson: noteAirportJson, rwyOf: rwyOf, rwyPanel: rwyPanel, panelTick: panelTick, panelData: panelData, promoSlots: promoSlots, acceptAirportPanel: acceptAirportPanel, unlockRunways: unlockRunways, mvRows: mvRows, mvKept: mvKept, dayOf: dayOf, pbPanelTick: pbPanelTick, logoFix: logoFix, liveEntries: liveEntries, pbPos: pbPos, unlockFeed: unlockFeed, derivedVs: derivedVs, altHist: altHist, acceptAir: acceptAir, airCache: airCache, flushAir: flushAir, airWant: function () { return airWant; }, lastPos: lastPos, resolved: resolved, stats: stats }); } catch (e) { /* ignore */ }
+    if (window.__tlTestHook) try { window.__tlTestHook({ csOf: csOf, hist: hist, preloaded: function () { return preloaded; }, parse: parse, photoFits: photoFits, makerOf: makerOf, patchFollow: patchFollow, patchFlightMsg: patchFlightMsg, pushFollow: pushFollow, followSt: function () { return followSt; }, setFollowSt: function (s) { followSt = s; }, shownPhotos: shownPhotos, photoCache: photoCache, FOLLOW: FOLLOW, DETAILS: DETAILS, fLen: fLen, fStr: fStr, fVar: fVar, patchFlight: patchFlight, patchLiveFeed: patchLiveFeed, fr24Named: fr24Named, psState: function () { return { q: psQ.length, busy: psBusy, last: psLast, blockedFor: Math.max(0, psBlockedUntil - Date.now()), pri: Array.from(psPri), jobs: photoJobs.size, head: psQ.slice(0, 3).map(function (j) { return j.hex; }) }; }, acceptPubTel: acceptPubTel, pubTelFor: pubTelFor, fillNativeCard: fillNativeCard, regsOfCallsign: regsOfCallsign, categoryOf: categoryOf, placeShort: placeShort, nativeFill: nativeFill, natInfo: natInfo, addArch: addArch, acceptBoardArch: acceptBoardArch, telem: telem, b64Encode: b64Encode, b64DecodeInto: b64DecodeInto, frameHeader: frameHeader, concat: concat, varintInt32: varintInt32, PLAYBACK: PLAYBACK, patchPlayback: patchPlayback, patchPlaybackRequest: patchPlaybackRequest, pbRoutes: pbRoutes, pbTelAt: pbTelAt, setPbTrace: function (t) { pbTrace = t; }, patchList: patchList, acceptSites: acceptSites, listSig: listSig, mergeRoutes: mergeRoutes, applyRoutes: applyRoutes, routesAdd: routesAdd, applyAirport: applyAirport, applyBoardPage: applyBoardPage, applyStats: applyStats, mergeFlights: mergeFlights, apData: apData, telAt: telAt, noteTelem: noteTelem, pbTraceOf: function () { return pbTrace; }, logoOf: logoOf, archDetail: archDetail, tsOf: tsOf, noteAirportJson: noteAirportJson, rwyOf: rwyOf, rwyPanel: rwyPanel, panelTick: panelTick, panelData: panelData, promoSlots: promoSlots, acceptAirportPanel: acceptAirportPanel, unlockRunways: unlockRunways, mvRows: mvRows, mvKept: mvKept, dayOf: dayOf, pbPanelTick: pbPanelTick, logoFix: logoFix, liveEntries: liveEntries, pbPos: pbPos, unlockFeed: unlockFeed, derivedVs: derivedVs, altHist: altHist, acceptAir: acceptAir, airCache: airCache, flushAir: flushAir, airWant: function () { return airWant; }, lastPos: lastPos, resolved: resolved, stats: stats }); } catch (e) { /* ignore */ }
     post('ready', { stats: stats, feedReady: false, v: BRIDGE_V });
   }
 
@@ -2725,6 +2749,21 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
       }
       return t.length >= 3 ? t : s;
     }
+    // A place as the extension shows it: the part before the first comma - "Rotherham, South Yorkshire" is Rotherham,
+    // "Pirrinuan, QLD 4405" Pirrinuan, "Baker," Baker. One place name everywhere it is shown (boards, panels, playback,
+    // search); page.js carries the same three lines for the page, and test/unit_places.cjs checks they agree.
+    function placeShort(n) {
+      const s = String(n == null ? '' : n).replace(/\s+/g, ' ').trim(), i = s.indexOf(',');
+      return i < 0 ? s : s.slice(0, i).trim() || s.replace(/^[,\s]+|[,\s]+$/g, '').replace(/,\s*/g, ', ');
+    }
+    // Many places at once: each by its short name, unless two different places would then read the same - "Newport,
+    // Wales" and "Newport, Isle of Wight" - and those keep their full names. Returns a Map of full name -> label.
+    function placeLabels(fulls) {
+      const by = new Map(), out = new Map();
+      for (const f of fulls || []) { const full = String(f == null ? '' : f).trim(), k = placeShort(full).toLowerCase(); if (!full || !k) continue; (by.get(k) || by.set(k, new Set()).get(k)).add(full.toLowerCase()); }
+      for (const f of fulls || []) { const full = String(f == null ? '' : f).trim(); if (!full || out.has(full)) continue; const sh = placeShort(full), set = by.get(sh.toLowerCase()); out.set(full, set && set.size > 1 ? full : sh); }
+      return out;
+    }
     function setFields(rows) {
       fieldRows = rows || null;
       for (const f of FL) { if (byId.get(f.id) === f) byId.delete(f.id); if (byIcao.get(f.icao) === f) byIcao.delete(f.icao); }
@@ -2739,7 +2778,7 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
         let listed = false; nearby(r.lat, r.lon, 5.5, (a, d) => { if (d <= Math.max(2.5, 1.5 + Math.min(3.5, Math.log10(1 + (a.size || 0)) * 0.7) + 0.5)) listed = true; }); if (listed) continue;
         const id = fieldId(ident); if (byId.has(id)) continue;
         const ref = airportAt(r.lat, r.lon, 150);                            // (its country and time zone: the nearest airport's)
-        const a = { id, iata: '', icao: ident, name: r.name || ident, city: fieldShortName(r.name) || r.city || '', town: r.city || '', country: ref ? ref.airport.country : '', countryId: ref ? ref.airport.countryId : 0, lat: r.lat, lon: r.lon, alt: +r.alt || 0, size: 0, tz: ref ? ref.airport.tz : null, tzName: ref ? ref.airport.tzName : '', field: true };
+        const a = { id, iata: '', icao: ident, name: r.name || ident, city: placeShort(fieldShortName(r.name)) || placeShort(r.city), town: placeShort(r.city), townFull: r.city || '', country: ref ? ref.airport.country : '', countryId: ref ? ref.airport.countryId : 0, lat: r.lat, lon: r.lon, alt: +r.alt || 0, size: 0, tz: ref ? ref.airport.tz : null, tzName: ref ? ref.airport.tzName : '', field: true };
         a.mil = MIL_RE.test(a.name); a.code = ident;
         a.rw = RW.get(ident) || null; a.rwl = RWL.get(ident) || null;
         FL.push(a); byId.set(id, a); byIcao.set(ident, a);
@@ -4712,7 +4751,7 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
       return res;
     }
 
-    return { setTables2, get T2() { return T2; }, fieldShortName, setApproach, approachCell, approachPath, apprGroup, apprKey, trackAgree, heatNear, heatMatch, reckon, trackErr, remotePath, flowKeysOf, pgrpOf, grp6, sunElev, airData, gsAlong, minutesTo, flowAt, pathOf, pathDev, ownerKey, parseRunwayLengths, setRunwayLengths, csvLine, SQ_NOINFO, tripBin, regionOf, learnLeg, learnRow, learnCollector, addLearnedOp, odAdd: (x, y, w) => { const k = odKey(String(x).toUpperCase(), String(y).toUpperCase()), v = (OD.get(k) || 0) + w; if (v > 1e-9) OD.set(k, v); else OD.delete(k); }, odWeight: (x, y) => OD.get(odKey(String(x).toUpperCase(), String(y).toUpperCase())) || 0, odCount: () => OD.size, setAirports, setUsage, addUsage, setRunways, parseRunwaysCsv, runwayFit, setWeights, setTables, setLogit, calibrated, mergePoints, finalTo, longFinal, typeRangeKm, FEAT, groupOf, W, classify, isStepClimb, rangeKm, parseTrace, legsFromPoints, summarizeLeg, stitchLegs, chainLegs, histStats, inferOrigin, predict, privateSite, rwyImpossible, typeDesc, heliSpots, heliAirportAt, landedSum, localFlew, climbedOut, approachTo, downAndUp, landingInGap, circuits, mergeCircuits, setFields, fieldAt, placeAt, isField, nearbyFields, fieldCount: () => FL.length, airportAt, departureFromClimb, arrivalFromDescent, nearby, dist, brg, xtat, destPoint, angDiff, get airports() { return AP; }, byId: id => byId.get(id), byIcao: c => byIcao.get(String(c || '').toUpperCase()) };
+    return { setTables2, get T2() { return T2; }, fieldShortName, placeShort, placeLabels, setApproach, approachCell, approachPath, apprGroup, apprKey, trackAgree, heatNear, heatMatch, reckon, trackErr, remotePath, flowKeysOf, pgrpOf, grp6, sunElev, airData, gsAlong, minutesTo, flowAt, pathOf, pathDev, ownerKey, parseRunwayLengths, setRunwayLengths, csvLine, SQ_NOINFO, tripBin, regionOf, learnLeg, learnRow, learnCollector, addLearnedOp, odAdd: (x, y, w) => { const k = odKey(String(x).toUpperCase(), String(y).toUpperCase()), v = (OD.get(k) || 0) + w; if (v > 1e-9) OD.set(k, v); else OD.delete(k); }, odWeight: (x, y) => OD.get(odKey(String(x).toUpperCase(), String(y).toUpperCase())) || 0, odCount: () => OD.size, setAirports, setUsage, addUsage, setRunways, parseRunwaysCsv, runwayFit, setWeights, setTables, setLogit, calibrated, mergePoints, finalTo, longFinal, typeRangeKm, FEAT, groupOf, W, classify, isStepClimb, rangeKm, parseTrace, legsFromPoints, summarizeLeg, stitchLegs, chainLegs, histStats, inferOrigin, predict, privateSite, rwyImpossible, typeDesc, heliSpots, heliAirportAt, landedSum, localFlew, climbedOut, approachTo, downAndUp, landingInGap, circuits, mergeCircuits, setFields, fieldAt, placeAt, isField, nearbyFields, fieldCount: () => FL.length, airportAt, departureFromClimb, arrivalFromDescent, nearby, dist, brg, xtat, destPoint, angDiff, get airports() { return AP; }, byId: id => byId.get(id), byIcao: c => byIcao.get(String(c || '').toUpperCase()) };
   }
   /* ==/ENGINE== */
 
@@ -6859,10 +6898,12 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
     const near = ENGINE.airportAt(lat, lon, 150), tzId = near ? near.airport.id : 0;
     if (generic) return { code: 'PVT', name: 'Private site', lat: NaN, lon: NaN, alt: near ? near.airport.alt || 0 : 0, tzId, known: '' };
     const k = siteNear(lat, lon, heli ? 0.35 : 1.5, heli ? 'HWSM' : 'SWMH'), s = k && k.row;
-    if (!s) { const o = osmPlaceAt(lat, lon); if (o) return { code: 'PVT', name: o.name, lat: o.lat, lon: o.lon, alt: near ? near.airport.alt || 0 : 0, tzId, known: o.kind }; if (o === undefined) wantOsmPlace(lat, lon, opts && opts.onNew); }
+    if (!s) { const o = osmPlaceAt(lat, lon); if (o) return { code: 'PVT', name: ENGINE.placeShort(o.name), full: o.name, lat: o.lat, lon: o.lon, alt: near ? near.airport.alt || 0 : 0, tzId, known: o.kind }; if (o === undefined) wantOsmPlace(lat, lon, opts && opts.onNew); }
     // (the town: the nearest one OurAirports names within 10 km, else 25 km)
     const town = s ? null : siteNear(lat, lon, 10, null, r => !!r[5]) || siteNear(lat, lon, 25, null, r => !!r[5]);
-    return { code: s && /^[A-Z]{4}$/.test(s[4]) ? s[4] : 'PVT', name: s ? (s[2] === 'H' ? s[3] : ENGINE.fieldShortName(s[3])) : 'Private site' + (town ? ' near ' + town.row[5] : ''), lat: s ? s[0] : lat, lon: s ? s[1] : lon, alt: s ? s[6] : (near ? near.airport.alt || 0 : 0), tzId, known: s ? s[2] : '' };
+    // (cut at the first comma where it shows - Rotherham, South Yorkshire - with the whole name kept for telling places apart)
+    const raw = s ? (s[2] === 'H' ? s[3] : ENGINE.fieldShortName(s[3])) : 'Private site' + (town ? ' near ' + town.row[5] : '');
+    return { code: s && /^[A-Z]{4}$/.test(s[4]) ? s[4] : 'PVT', name: ENGINE.placeShort(raw), full: raw, lat: s ? s[0] : lat, lon: s ? s[1] : lon, alt: s ? s[6] : (near ? near.airport.alt || 0 : 0), tzId, known: s ? s[2] : '' };
   }
   // ---- landing places learned: every spot an aircraft was seen down at away from FR24's airports - a strip FR24 does not
   // list, a pad, a farm field - gets a lasting id (9,000,001 on) and its name (as privatePlace gives it), the same each
@@ -6879,15 +6920,15 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
     if (!sites.grid) { loadSites(); return 0; }                     // (named once the list of strips and towns is in)
     const heli = !!(opts && opts.heli), p = privatePlace(lat, lon, { heli, onNew: () => learnSite(lat, lon, opts) });
     const ref = ENGINE.airportAt(lat, lon, 300); if (!p || !ref) return 0;
-    const town = /^Private site near /.test(p.name) ? p.name.slice(18) : '', named = p.known && p.known !== '';
+    const town = /^Private site near /.test(p.name) ? p.name.slice(18) : '', fullTown = /^Private site near /.test(p.full || '') ? p.full.slice(18) : '', named = p.known && p.known !== '';
     let s = siteNearBook(lat, lon, 1.5);
     if (s) {
       s.last = nowS();
       // (a name worked out better since - OpenStreetMap's pad answered, the strip list came in)
-      if (genericSite(s) && (named || (town && s.name === 'Private site'))) { Object.assign(s, { name: p.name, city: town || ENGINE.fieldShortName(p.name) || p.name, code: p.code || 'PVT', named }); sitesSoon(); }
+      if (genericSite(s) && (named || (town && s.name === 'Private site'))) { Object.assign(s, { name: p.name, city: town || ENGINE.fieldShortName(p.name) || p.name, fullName: p.full || '', fullCity: fullTown, code: p.code || 'PVT', named }); sitesSoon(); }
       return s.id;
     }
-    s = { id: SITE_BASE + (++bk.n), lat: Math.round((fin(p.lat) ? p.lat : lat) * 1e5) / 1e5, lon: Math.round((fin(p.lon) ? p.lon : lon) * 1e5) / 1e5, name: p.name, city: town || ENGINE.fieldShortName(p.name) || p.name, code: p.code || 'PVT', apId: ref.airport.id, alt: Math.round(p.alt || 0), n: 1, first: nowS(), last: nowS(), named };
+    s = { id: SITE_BASE + (++bk.n), lat: Math.round((fin(p.lat) ? p.lat : lat) * 1e5) / 1e5, lon: Math.round((fin(p.lon) ? p.lon : lon) * 1e5) / 1e5, name: p.name, city: town || ENGINE.fieldShortName(p.name) || p.name, fullName: p.full || '', fullCity: fullTown, code: p.code || 'PVT', apId: ref.airport.id, alt: Math.round(p.alt || 0), n: 1, first: nowS(), last: nowS(), named };
     bk.list.push(s);
     if (bk.list.length > 1500) bk.list = bk.list.sort((a, b) => b.last - a.last).slice(0, 1500);
     log('landing place learned', s.id, s.name, s.lat, s.lon);
@@ -6897,13 +6938,21 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
   // minute, renamed as it answers - Aintree Racecourse for 'Private site near Liverpool')
   setInterval(() => { const bk = siteBk(); if (!bk || !sites.grid || document.hidden) return; const s = bk.list.find(x => genericSite(x) && !(nowS() - (x.osmTry || 0) < 86400)); if (!s) return; s.osmTry = nowS(); privatePlace(s.lat, s.lon, { onNew: () => learnSite(s.lat, s.lon) }); }, 60000);
   // (as FR24's own airport list has its airports)
+  // (a landing place's name as shown: "Private site near Rotherham", not "... near Rotherham, South Yorkshire" - those
+  // kept before the names were cut at the comma too - unless two different places would read the same)
+  let siteLab = null;
+  const siteLabel = (n, kind) => {
+    const f = String(n == null ? '' : n).trim(), bk = siteBk(); if (!bk) return ENGINE.placeShort(f);
+    if (!siteLab) siteLab = { name: ENGINE.placeLabels(bk.list.map(x => x.fullName || x.name)), city: ENGINE.placeLabels(bk.list.map(x => x.fullCity || x.city)) };
+    return siteLab[kind].get(f) || ENGINE.placeShort(f);
+  };
   function siteRow(s) {
     const ref = airports.byId.get(s.apId) || {}, icao = /^[A-Z]{4}$/.test(s.code || '') ? s.code : '';
-    return { id: s.id, iata: s.code || 'PVT', icao, name: s.name, city: s.city, country: ref.country || '', countryId: ref.countryId || 0, lat: s.lat, lon: s.lon, alt: s.alt || 0, size: 1, timezone: ref.timezone || { abbr: 'UTC', abbrName: null, isDst: false, name: 'UTC', offset: 0, offsetHours: '0:00' }, videoStream: null };
+    return { id: s.id, iata: s.code || 'PVT', icao, name: siteLabel(s.fullName || s.name, 'name'), city: siteLabel(s.fullCity || s.city, 'city'), country: ref.country || '', countryId: ref.countryId || 0, lat: s.lat, lon: s.lon, alt: s.alt || 0, size: 1, timezone: ref.timezone || { abbr: 'UTC', abbrName: null, isDst: false, name: 'UTC', offset: 0, offsetHours: '0:00' }, videoStream: null };
   }
   function siteAp(id) { const bk = siteBk(), s = bk && bk.list.find(x => x.id === id); if (!s) return null; const r = siteRow(s); return Object.assign({}, r, { tz: r.timezone.offset, code: r.iata, site: true }); }
   function pushSites() { const bk = siteBk(); if (bk && bk.list.length) postToPage('sites', { list: bk.list.map(siteRow) }); }
-  function sitesSoon() { if (siteSaveT) return; siteSaveT = setTimeout(() => { siteSaveT = 0; store.kvSet('sites2', siteBk()); pushSites(); }, 3000); }
+  function sitesSoon() { siteLab = null; if (siteSaveT) return; siteSaveT = setTimeout(() => { siteSaveT = 0; store.kvSet('sites2', siteBk()); pushSites(); }, 3000); }
   // (an unlisted airfield - an id from the route engine's field list - answers too; and a learned landing place)
   const apById = id => (id && (airports.byId.get(id) || (id >= 1e7 ? ENGINE.byId(id) : isSiteId(id) ? siteAp(id) : null))) || null;
   // what FR24's own panel and boards can be given: its airports, and the landing places it has been given (a strip of
@@ -8451,8 +8500,8 @@ const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendM
     const setO = (a, note, conf) => { if (!a) return; r.originId = a.id; r.originIata = apCode(a); r.originCity = a.city || a.name; r.originNote = note || ''; r.originConf = conf || ''; };
     const setD = (a, conf, reason) => { if (!a) return; r.destId = a.id; r.destIata = apCode(a); r.destCity = a.city || a.name; r.destConf = conf; r.destReason = reason || ''; };
     // a place away from every listed airport (helicopter pads, fields, private strips): shown as its code and name
-    const setOSite = (s, note, conf) => { r.originId = 0; r.originIata = s.code; r.originCity = s.name; r.originSite = s; r.originNote = note || ''; r.originConf = conf || ''; };
-    const setDSite = (s, conf, reason) => { r.destId = 0; r.destIata = s.code; r.destCity = s.name; r.destSite = s; r.destConf = conf; r.destReason = reason || ''; };
+    const setOSite = (s, note, conf) => { r.originId = 0; r.originIata = s.code; r.originCity = ENGINE.placeShort(s.name); r.originSite = s; r.originNote = note || ''; r.originConf = conf || ''; };
+    const setDSite = (s, conf, reason) => { r.destId = 0; r.destIata = s.code; r.destCity = ENGINE.placeShort(s.name); r.destSite = s; r.destConf = conf; r.destReason = reason || ''; };
     // a helicopter took off away from any airport: that private site is where it came from
     const t0p = trail[0], heliFromSite = heli && t0p && (t0p.gnd || heliSlow0) && !ENGINE.heliAirportAt(t0p.lat, t0p.lon) && !(origin && origin.conf === 'plan');
     if (pos.gnd) {
@@ -9451,7 +9500,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       const nLog = route && route.legCount || 0, basis = route && (route.destIata || route.originIata) && !route.landed ? `${isConfirmed(route) ? 'confirmed' : 'worked out'} from its track, ${nLog ? `its own flight log (${nLog} earlier flight${nLog === 1 ? '' : 's'}${route.base ? ', based at ' + route.base : ''})` : 'no earlier flights of its own on record'}${popTxt()} and public ADS-B` : '';
       const routeHtml = route ? routeCells(route, '', basis) : (st && st.working ? gridHtml([cellHtml('Destination' + tagHtml('Predicted', 'pred'), '<span class="tl-spin"></span> <span class="tl-muted">working out the route…</span>', '', true)]) : '');
       // (no data-source credit: the hex, then whether it was just verified and the owner's town)
-      const tail = [rec.verifiedAt && now() - rec.verifiedAt < 120000 ? 'verified' : '', hx.ownerCity ? esc(placeName(hx.ownerCity)) : ''].filter(Boolean).join(' · ');
+      const tail = [rec.verifiedAt && now() - rec.verifiedAt < 120000 ? 'verified' : '', hx.ownerCity ? esc(placeName(ENGINE.placeShort(hx.ownerCity))) : ''].filter(Boolean).join(' · ');
       const idCell = cellHtml('Identified from public ADS-B' + tagHtml(badge, 'ladd'), `${esc(hexU || '?')}${tail ? ` <span class="tl-muted">· ${tail}</span>` : ''}`, '', true);
       html = rowHtml('plane', `${gridHtml([idCell])}${routeHtml ? '<hr class="border border-white">' + routeHtml : ''}${links ? `<div class="tl-links">${links}</div>` : ''}<div class="tl-links">${toolLinks(rec)}</div>${healthHtml()}${bridgeWarnHtml()}`);
     }
@@ -10326,7 +10375,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       }
       setField('SERIAL NUMBER (MSN)', hx.msn);
       setField('AGE', ageText(hx), ageTitle(hx));
-      setField('OPERATOR', shownOwner(hx, hx.cs) || '', hx.ownerCity && ownerName(hx.owner) ? 'Registered to ' + (ownerName(hx.owner) || '') + ', ' + placeName(hx.ownerCity) : '');
+      setField('OPERATOR', shownOwner(hx, hx.cs) || '', hx.ownerCity && ownerName(hx.owner) ? 'Registered to ' + (ownerName(hx.owner) || '') + ', ' + placeName(ENGINE.placeShort(hx.ownerCity)) : '');
       // (an aircraft FR24 lists under "Private owner": its registered owner / operator there instead - a real airline
       // FR24 names stays)
       {
@@ -10784,8 +10833,23 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       o.nat = n;
     }
   }
+  // (a row that says the flight went: its status, or what FR24's own row of it says)
+  const rowActual = r => /^(departed|landed)$/.test(r.st || (r.nat && r.nat.status && r.nat.status.name) || '');
+  // (the airline FR24 lists under an id is the airline a row names - "Ryanair" and "Ryanair UK" are, "Ryanair" and
+  // "Cranwell FTU" are not; no name, a private owner or military, or no list yet: nothing to contradict it)
+  function alOk(id, name) {
+    const k = nameKey(name); if (!id || !k || /^(privateowner|military)$/.test(k)) return true;
+    const n = nameKey(fr24.airlineName(id)); return !n || n.startsWith(k) || k.startsWith(n);
+  }
+  // (one callsign to the same airport, one of the two not flown yet: within two hours by any of their times)
+  const sameCsFlight = (x, r) => {
+    const ap = (r.nat && r.nat.airportId) || r.ap || 0;
+    if (x.act && rowActual(r)) return Math.abs(x.t - r.t) < 2700;
+    if (!x.ap || !ap || x.ap !== ap) return false;
+    return x.ts.some(a => [r.est, r.sch, r.t].some(b => b > 0 && Math.abs(a - b) < 7200));
+  };
   function boardList(m, pre) {
-    const rows = Object.values(m).sort((a, b) => (BOARD_RANK[b.src] || 0) - (BOARD_RANK[a.src] || 0)), out = [], byFid = new Map(), byWho = new Map(), byRoute = new Map();
+    const rows = Object.values(m).sort((a, b) => (BOARD_RANK[b.src] || 0) - (BOARD_RANK[a.src] || 0) || (b.src === 'fr24') - (a.src === 'fr24')), out = [], byFid = new Map(), byWho = new Map(), byRoute = new Map(), byCs = new Map();
     const airlineOf = cs => { const c = /^([A-Z]{3})\d/.exec(String(cs || '').toUpperCase()); return (c && fr24.byIcao.get(c[1])) || 0; };
     for (let r of rows) {
       if (r.drop) continue;
@@ -10793,6 +10857,10 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       // (the same flight from a lesser source: what the row shown lacks - the other airport, FR24's flight id, the
       // aircraft - taken from it. G-PTRK's own FR24 row "N/A", its rebuilt track landed somewhere)
       let dup = (r.fid && byFid.get(r.fid)) || who.map(w => (byWho.get(w) || []).find(x => Math.abs(x.t - r.t) < 2700)).find(Boolean);
+      // (or the same callsign to the same airport with its time moved: a flight not flown yet is planned again - FR24's own
+      // row of CWL52 to Glasgow at 15:30 (estimated 15:40) and its schedule's at 16:15 (16:25), exactly 45 minutes apart,
+      // were two rows. Two flights already flown are two flights, so those keep the 45 minutes)
+      if (!dup && r.cs) dup = (byCs.get(String(r.cs).toUpperCase()) || []).find(x => sameCsFlight(x, r)) || null;
       // (or FR24's own row of an airline's flight that has no callsign - a number's list read before it flew: U281
       // Belfast -> Liverpool "Scheduled 14:40" beside the easyJet EZY89VK seen landing from Belfast at 14:42. The same
       // airline, from or to the same airport, within 45 minutes: the nearest one)
@@ -10803,10 +10871,11 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       if (dup) {
         const o = out[dup.i];
         if (r.src === 'log' || r.src === 'live') { takeActual(o, r); dup.took = true; }
-        for (const f of ['ap', 'fid', 'reg', 'hex', 'ty', 'dsc', 'alId']) if (!o[f] && r[f]) o[f] = r[f];
+        for (const f of ['ap', 'fid', 'reg', 'hex', 'ty', 'dsc', 'al']) if (!o[f] && r[f]) o[f] = r[f];
+        if (!o.alId && r.alId && alOk(r.alId, r.al)) o.alId = r.alId;
         if (o.nat && !o.nat.airportId && r.ap) o.nat = Object.assign({}, o.nat, { airportId: r.ap });
         // (and the operator - and its logo - FR24's own row of a club aircraft leaves out: G-RVRN, Ravenair)
-        const rid = r.alId || airlineIdByName(r.al);
+        const rid = (alOk(r.alId, r.al) && r.alId) || airlineIdByName(r.al);
         if (o.nat && !o.nat.airlineId && rid) o.nat = Object.assign({}, o.nat, { airlineId: rid, airline: !o.nat.airline || /private owner/i.test(o.nat.airline) ? fr24.airlineName(rid) || r.al || o.nat.airline : o.nat.airline });
         continue;
       }
@@ -10829,11 +10898,18 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
         if (id && r.nat) r.nat = Object.assign({}, r.nat, { airlineId: id, airline: r.nat.airline || fr24.airlineName(id) || null });
         else if (id) Object.assign(r, { alId: id, al: r.al || fr24.airlineName(id) });
       }
+      // (an airline id that is not the airline named on the row - Cranwell FTU's flight with Ryanair's logo: the name
+      // stands, and the logo is the one FR24 lists under it, or none. FR24's own board rows are as FR24 gave them)
+      if (r.src !== 'fr24') {
+        if (r.alId && !alOk(r.alId, r.al)) Object.assign(r, { alId: airlineIdByName(r.al) || 0 });
+        if (r.nat && r.nat.airlineId && !alOk(r.nat.airlineId, r.al)) r.nat = Object.assign({}, r.nat, { airlineId: airlineIdByName(r.al) || null, airline: r.al || null });
+      }
       if (r.nat && !r.nat.airportId && r.ap) r.nat = Object.assign({}, r.nat, { airportId: r.ap });
       if (!r.ty && !(r.nat && r.nat.aircraftType) && GLIDER.test(r.dsc || '')) r.ty = 'GLID';
       { const fc = fr24Cat({ type: r.ty || (r.nat && r.nat.aircraftType) || '', mil: !!(r.hex && (store.getHex(r.hex) || {}).mil) }); if (fc != null) r.fc = fc; }
       out.push(r);
-      const ent = { t: r.t, i: out.length - 1 }; if (r.fid) byFid.set(r.fid, ent); for (const w of who) (byWho.get(w) || byWho.set(w, []).get(w)).push(ent);
+      const ent = { t: r.t, i: out.length - 1, ts: [r.est, r.sch, r.t].filter(v => v > 0), act: rowActual(r), ap: (r.nat && r.nat.airportId) || r.ap || 0 }; if (r.fid) byFid.set(r.fid, ent); for (const w of who) (byWho.get(w) || byWho.set(w, []).get(w)).push(ent);
+      if (r.cs) (byCs.get(String(r.cs).toUpperCase()) || byCs.set(String(r.cs).toUpperCase(), []).get(String(r.cs).toUpperCase())).push(ent);
       if (r.src === 'fr24' || r.src === 'sched') { const al = (r.nat && r.nat.airlineId) || r.alId, ap = (r.nat && r.nat.airportId) || r.ap; if (al && ap) (byRoute.get(al + ':' + ap) || byRoute.set(al + ':' + ap, []).get(al + ':' + ap)).push({ t: r.sch || r.t, i: out.length - 1 }); }
     }
     return out;
@@ -12714,7 +12790,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true }); else start();
   }
   }
-  try { (pageWindow()).__tweeksLadd = { version: VERSION, msgCount, schedOf, trailFor, get shownId() { return shownId; }, posStats, get bridgeV() { return bridgeV; }, hexOfId, currentPos, idHex, engine: ENGINE, live, pending, telemetry, store, routeState, planState, globalList, fr24, todayCache, sweep, resolveTargeted, routeFor, composeRoute, altsOf, holdTerminal, termHold, worldScan, refreshLists, quickRouteAll, historyPump, histPumped, learnedStore, regCountry, fr24Sched, pubRouted, pubRecs, privatePlace, loadSites, siteNear, sites, onSched, pubMem: () => pubMem, publishRoute, syncPanel, normalizeReadsb, telemOf, noteCands, csOfRec, warmHist, hostStat, loadT2, wantWx, wxMap, wantNotams, closedMap, estimateEta, nNumberHex, watchList, pollWatch, accStore, accNote, statsHtml, fleetList, checkHealth, health, exportCsv, predictForHex, verifyAgainstList, strikes, revokedIds, fr24Named, noteFr24Named, loadHistory, loadToday, fetchJetphotos, loadRunways, knownLegs, areaCache, pollView, saveSnapshot, boardNoteLegs, boardNoteFlight, boardNoteSched, boardScrub, boardLoad, boardList, naRouteOf, noteNa, naFeed, matchParked, matchByTraces, boardDrain, boardMem, onNeedBoard, operatorOf, shownOwner, enrich, userConfirm, userDestOf, loadApprTable, monGet, monPost, monCheck, monLive, monUp, MON_DEFAULTS, get monBase() { return monBase; }, liveSources, telOut, noteTelOut, reportTel, pbOut, srvIds, pullSrvIds, srvAdopt, reportToMonitor, syncSrvLearn, applyLearned, srvRoute, srvRec, crowdOf, routesOut, routesSent, noteRouteOut, learnFromLeg, learnOutTake, learnOutBack, get learnOutN() { return learnOut.length; }, srvCovers, get srvLearned() { return srvLearned; }, set srvLearned(v) { srvLearned = v; }, addSrvLearned, get feedHdr() { return feedHdr; }, boardMonFill, natRowOf, fnRows, buildSnapshot, bootHold, firAt, loadFir, onAirAsk, pb, onPbFeed, onPbFollow, onPbHex, pbRouteFor, pbMatch, pbFromMonitor, onNeedRoutes, onNeedAirportData, onNeedAirportPanel, liveBoardRows, runwaysOf, parseRunwayEnds, flightsOfCallsign, bootFlightPage, unlockExports, exportFile, rowWindow, hexOfFid, onNeedSearch, osmPick, wantOsmPlace, osmPlaceAt, learnSite, siteIdAt, siteBk, operatorIdOf, airlineIdByName, fr24Cat, onHistElsewhere, get viewBox() { return viewBox; }, get selectedId() { return currentId(); }, opt, setOpt, notify, openUnblockWindow, closeUnblockWindow, ensureBarButton, findBar, checkLatest, installKind }; } catch (_) { /* ignore */ }
+  try { (pageWindow()).__tweeksLadd = { version: VERSION, msgCount, schedOf, trailFor, get shownId() { return shownId; }, posStats, get bridgeV() { return bridgeV; }, hexOfId, currentPos, idHex, engine: ENGINE, live, pending, telemetry, store, routeState, planState, globalList, fr24, todayCache, sweep, resolveTargeted, routeFor, composeRoute, altsOf, holdTerminal, termHold, worldScan, refreshLists, quickRouteAll, historyPump, histPumped, learnedStore, regCountry, fr24Sched, pubRouted, pubRecs, privatePlace, loadSites, siteNear, sites, onSched, pubMem: () => pubMem, publishRoute, syncPanel, normalizeReadsb, telemOf, noteCands, csOfRec, warmHist, hostStat, loadT2, wantWx, wxMap, wantNotams, closedMap, estimateEta, nNumberHex, watchList, pollWatch, accStore, accNote, statsHtml, fleetList, checkHealth, health, exportCsv, predictForHex, verifyAgainstList, strikes, revokedIds, fr24Named, noteFr24Named, loadHistory, loadToday, fetchJetphotos, loadRunways, knownLegs, areaCache, pollView, saveSnapshot, boardNoteLegs, boardNoteFlight, boardNoteSched, boardScrub, boardLoad, boardList, naRouteOf, noteNa, naFeed, matchParked, matchByTraces, boardDrain, boardMem, onNeedBoard, operatorOf, shownOwner, enrich, userConfirm, userDestOf, loadApprTable, monGet, monPost, monCheck, monLive, monUp, MON_DEFAULTS, get monBase() { return monBase; }, liveSources, telOut, noteTelOut, reportTel, pbOut, srvIds, pullSrvIds, srvAdopt, reportToMonitor, syncSrvLearn, applyLearned, srvRoute, srvRec, crowdOf, routesOut, routesSent, noteRouteOut, learnFromLeg, learnOutTake, learnOutBack, get learnOutN() { return learnOut.length; }, srvCovers, get srvLearned() { return srvLearned; }, set srvLearned(v) { srvLearned = v; }, addSrvLearned, get feedHdr() { return feedHdr; }, boardMonFill, natRowOf, fnRows, buildSnapshot, bootHold, firAt, loadFir, onAirAsk, pb, onPbFeed, onPbFollow, onPbHex, pbRouteFor, pbMatch, pbFromMonitor, onNeedRoutes, onNeedAirportData, onNeedAirportPanel, liveBoardRows, runwaysOf, parseRunwayEnds, flightsOfCallsign, bootFlightPage, unlockExports, exportFile, rowWindow, hexOfFid, onNeedSearch, osmPick, wantOsmPlace, osmPlaceAt, learnSite, siteIdAt, siteBk, siteRow, apById, operatorIdOf, airlineIdByName, fr24Cat, onHistElsewhere, get viewBox() { return viewBox; }, get selectedId() { return currentId(); }, opt, setOpt, notify, openUnblockWindow, closeUnblockWindow, ensureBarButton, findBar, checkLatest, installKind }; } catch (_) { /* ignore */ }
   log('loaded v' + VERSION);
 
 })();

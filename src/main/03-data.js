@@ -330,10 +330,12 @@
     const near = ENGINE.airportAt(lat, lon, 150), tzId = near ? near.airport.id : 0;
     if (generic) return { code: 'PVT', name: 'Private site', lat: NaN, lon: NaN, alt: near ? near.airport.alt || 0 : 0, tzId, known: '' };
     const k = siteNear(lat, lon, heli ? 0.35 : 1.5, heli ? 'HWSM' : 'SWMH'), s = k && k.row;
-    if (!s) { const o = osmPlaceAt(lat, lon); if (o) return { code: 'PVT', name: o.name, lat: o.lat, lon: o.lon, alt: near ? near.airport.alt || 0 : 0, tzId, known: o.kind }; if (o === undefined) wantOsmPlace(lat, lon, opts && opts.onNew); }
+    if (!s) { const o = osmPlaceAt(lat, lon); if (o) return { code: 'PVT', name: ENGINE.placeShort(o.name), full: o.name, lat: o.lat, lon: o.lon, alt: near ? near.airport.alt || 0 : 0, tzId, known: o.kind }; if (o === undefined) wantOsmPlace(lat, lon, opts && opts.onNew); }
     // (the town: the nearest one OurAirports names within 10 km, else 25 km)
     const town = s ? null : siteNear(lat, lon, 10, null, r => !!r[5]) || siteNear(lat, lon, 25, null, r => !!r[5]);
-    return { code: s && /^[A-Z]{4}$/.test(s[4]) ? s[4] : 'PVT', name: s ? (s[2] === 'H' ? s[3] : ENGINE.fieldShortName(s[3])) : 'Private site' + (town ? ' near ' + town.row[5] : ''), lat: s ? s[0] : lat, lon: s ? s[1] : lon, alt: s ? s[6] : (near ? near.airport.alt || 0 : 0), tzId, known: s ? s[2] : '' };
+    // (cut at the first comma where it shows - Rotherham, South Yorkshire - with the whole name kept for telling places apart)
+    const raw = s ? (s[2] === 'H' ? s[3] : ENGINE.fieldShortName(s[3])) : 'Private site' + (town ? ' near ' + town.row[5] : '');
+    return { code: s && /^[A-Z]{4}$/.test(s[4]) ? s[4] : 'PVT', name: ENGINE.placeShort(raw), full: raw, lat: s ? s[0] : lat, lon: s ? s[1] : lon, alt: s ? s[6] : (near ? near.airport.alt || 0 : 0), tzId, known: s ? s[2] : '' };
   }
   // ---- landing places learned: every spot an aircraft was seen down at away from FR24's airports - a strip FR24 does not
   // list, a pad, a farm field - gets a lasting id (9,000,001 on) and its name (as privatePlace gives it), the same each
@@ -350,15 +352,15 @@
     if (!sites.grid) { loadSites(); return 0; }                     // (named once the list of strips and towns is in)
     const heli = !!(opts && opts.heli), p = privatePlace(lat, lon, { heli, onNew: () => learnSite(lat, lon, opts) });
     const ref = ENGINE.airportAt(lat, lon, 300); if (!p || !ref) return 0;
-    const town = /^Private site near /.test(p.name) ? p.name.slice(18) : '', named = p.known && p.known !== '';
+    const town = /^Private site near /.test(p.name) ? p.name.slice(18) : '', fullTown = /^Private site near /.test(p.full || '') ? p.full.slice(18) : '', named = p.known && p.known !== '';
     let s = siteNearBook(lat, lon, 1.5);
     if (s) {
       s.last = nowS();
       // (a name worked out better since - OpenStreetMap's pad answered, the strip list came in)
-      if (genericSite(s) && (named || (town && s.name === 'Private site'))) { Object.assign(s, { name: p.name, city: town || ENGINE.fieldShortName(p.name) || p.name, code: p.code || 'PVT', named }); sitesSoon(); }
+      if (genericSite(s) && (named || (town && s.name === 'Private site'))) { Object.assign(s, { name: p.name, city: town || ENGINE.fieldShortName(p.name) || p.name, fullName: p.full || '', fullCity: fullTown, code: p.code || 'PVT', named }); sitesSoon(); }
       return s.id;
     }
-    s = { id: SITE_BASE + (++bk.n), lat: Math.round((fin(p.lat) ? p.lat : lat) * 1e5) / 1e5, lon: Math.round((fin(p.lon) ? p.lon : lon) * 1e5) / 1e5, name: p.name, city: town || ENGINE.fieldShortName(p.name) || p.name, code: p.code || 'PVT', apId: ref.airport.id, alt: Math.round(p.alt || 0), n: 1, first: nowS(), last: nowS(), named };
+    s = { id: SITE_BASE + (++bk.n), lat: Math.round((fin(p.lat) ? p.lat : lat) * 1e5) / 1e5, lon: Math.round((fin(p.lon) ? p.lon : lon) * 1e5) / 1e5, name: p.name, city: town || ENGINE.fieldShortName(p.name) || p.name, fullName: p.full || '', fullCity: fullTown, code: p.code || 'PVT', apId: ref.airport.id, alt: Math.round(p.alt || 0), n: 1, first: nowS(), last: nowS(), named };
     bk.list.push(s);
     if (bk.list.length > 1500) bk.list = bk.list.sort((a, b) => b.last - a.last).slice(0, 1500);
     log('landing place learned', s.id, s.name, s.lat, s.lon);
@@ -368,13 +370,21 @@
   // minute, renamed as it answers - Aintree Racecourse for 'Private site near Liverpool')
   setInterval(() => { const bk = siteBk(); if (!bk || !sites.grid || document.hidden) return; const s = bk.list.find(x => genericSite(x) && !(nowS() - (x.osmTry || 0) < 86400)); if (!s) return; s.osmTry = nowS(); privatePlace(s.lat, s.lon, { onNew: () => learnSite(s.lat, s.lon) }); }, 60000);
   // (as FR24's own airport list has its airports)
+  // (a landing place's name as shown: "Private site near Rotherham", not "... near Rotherham, South Yorkshire" - those
+  // kept before the names were cut at the comma too - unless two different places would read the same)
+  let siteLab = null;
+  const siteLabel = (n, kind) => {
+    const f = String(n == null ? '' : n).trim(), bk = siteBk(); if (!bk) return ENGINE.placeShort(f);
+    if (!siteLab) siteLab = { name: ENGINE.placeLabels(bk.list.map(x => x.fullName || x.name)), city: ENGINE.placeLabels(bk.list.map(x => x.fullCity || x.city)) };
+    return siteLab[kind].get(f) || ENGINE.placeShort(f);
+  };
   function siteRow(s) {
     const ref = airports.byId.get(s.apId) || {}, icao = /^[A-Z]{4}$/.test(s.code || '') ? s.code : '';
-    return { id: s.id, iata: s.code || 'PVT', icao, name: s.name, city: s.city, country: ref.country || '', countryId: ref.countryId || 0, lat: s.lat, lon: s.lon, alt: s.alt || 0, size: 1, timezone: ref.timezone || { abbr: 'UTC', abbrName: null, isDst: false, name: 'UTC', offset: 0, offsetHours: '0:00' }, videoStream: null };
+    return { id: s.id, iata: s.code || 'PVT', icao, name: siteLabel(s.fullName || s.name, 'name'), city: siteLabel(s.fullCity || s.city, 'city'), country: ref.country || '', countryId: ref.countryId || 0, lat: s.lat, lon: s.lon, alt: s.alt || 0, size: 1, timezone: ref.timezone || { abbr: 'UTC', abbrName: null, isDst: false, name: 'UTC', offset: 0, offsetHours: '0:00' }, videoStream: null };
   }
   function siteAp(id) { const bk = siteBk(), s = bk && bk.list.find(x => x.id === id); if (!s) return null; const r = siteRow(s); return Object.assign({}, r, { tz: r.timezone.offset, code: r.iata, site: true }); }
   function pushSites() { const bk = siteBk(); if (bk && bk.list.length) postToPage('sites', { list: bk.list.map(siteRow) }); }
-  function sitesSoon() { if (siteSaveT) return; siteSaveT = setTimeout(() => { siteSaveT = 0; store.kvSet('sites2', siteBk()); pushSites(); }, 3000); }
+  function sitesSoon() { siteLab = null; if (siteSaveT) return; siteSaveT = setTimeout(() => { siteSaveT = 0; store.kvSet('sites2', siteBk()); pushSites(); }, 3000); }
   // (an unlisted airfield - an id from the route engine's field list - answers too; and a learned landing place)
   const apById = id => (id && (airports.byId.get(id) || (id >= 1e7 ? ENGINE.byId(id) : isSiteId(id) ? siteAp(id) : null))) || null;
   // what FR24's own panel and boards can be given: its airports, and the landing places it has been given (a strip of
