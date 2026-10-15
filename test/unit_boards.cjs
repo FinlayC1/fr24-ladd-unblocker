@@ -175,7 +175,7 @@ function makeWin() {
     const b = { arr: {}, dep: {}, dirty: false };
     b.arr.a = ezy('4ca9e1', { ap: lgw.id });
     b.arr.b = ezy('4ca9e3', { ap: lgw.id, gc: 1, og: 1 });
-    b.arr.c = ezy('4ca9e4', { ap: man.id, t: off + 3 * 3600, og: 1 });
+    b.arr.c = ezy('4ca9e4', { ap: man.id, t: off + 3 * 3600, og: 1, gc: 1 });
     b.arr.d = ezy('4ca9e5', { ap: 0 }); b.dep.d = ezy('4ca9e5', { ap: 0, st: 'departed', t: off });
     b.arr.e = { k: kk('400aa9'), src: 'log', hex: '400aa9', cs: 'NJE45K', ty: 'C56X', t: off + 600, ap: 0 };
     b.arr.f = { k: kk('400aa8'), src: 'log', hex: '400aa8', cs: 'GDEMU', ty: 'C152', t: off + 600, ap: 0 };
@@ -195,13 +195,14 @@ function makeWin() {
     md.dep.b = dp('06a1f2', { cs: 'QTR52N', ty: 'B789', ap: man.id, k: 'f3c0002', src: 'live' });
     md.dep.c = dp('4d22ad', { cs: 'RYR60SF', ty: 'B738', ap: lpl2.id, k: 'f3c0003', src: 'live' });
     md.dep.d = dp('4d22ae', { cs: 'RYR1FW', ty: 'B738', ap: lpl2.id });
-    md.dep.e = dp('4d22af', { cs: 'RYR3TV', ty: 'B738', ap: E.byIcao('LEPA').id, gc: 1 });
+    md.dep.e = dp('4d22af', { cs: 'RYR3TV', ty: 'B738', ap: E.byIcao('LEPA').id, gc: 1, og: 1 });
     md.dep.h = dp('4d22b1', { cs: 'RYR3TW', ty: 'B738', ap: E.byIcao('LEPA').id });
     md.dep.f = dp('400aa9', { cs: 'NJE45K', ty: 'C56X', ap: man.id });
     md.dep.g = dp('4d22b0', { cs: 'RYR9AA', ty: 'B738', ap: 0, k: 'f3c0004', src: 'live' });
     L.boardScrub(man.id, md);
     check('Manchester\'s departures: airline jets "to Manchester" and "to Liverpool" (rebuilt or followed live): gone', !md.dep.a && !md.dep.b && !md.dep.c && !md.dep.d, Object.keys(md.dep));
-    check('... one seen landing at Palma, a business jet, one followed live with no destination yet: kept', !!md.dep.e && !!md.dep.f && !!md.dep.g, Object.keys(md.dep));
+    check('... one seen leaving Manchester and landing at Palma, a blocked business jet: kept', !!md.dep.e && !!md.dep.f, Object.keys(md.dep));
+    check('... one followed live with no destination yet (FR24\'s own row of it says as much): gone', !md.dep.g);
     check('... one "to Palma" whose landing nobody saw (a guess; FR24 shows that flight itself): gone', !md.dep.h);
     // (Luton's arrivals, 13 Oct: easyJets and Wizz jets "from Stansted" and a Ryanair "from Liverpool", seen landing at
     // Luton - their take-off never seen: first heard low near Stansted, in the hold the two airports share)
@@ -222,7 +223,45 @@ function makeWin() {
     await L.boardDrain();
     const lm = L.boardMem.get(ltn.id).arr, rk = h => 'h' + h + ':' + Math.round(off / 600);
     check('... rebuilt from a leg first heard in the air near Stansted: not on Luton\'s arrivals', !lm[rk('4ca9f6')] || lm[rk('4ca9f6')].drop, lm[rk('4ca9f6')]);
-    check('... one seen taking off at Stansted: on them, from Stansted', !!lm[rk('4ca9f7')] && lm[rk('4ca9f7')].ap === stn.id && lm[rk('4ca9f7')].og === 1, lm[rk('4ca9f7')]);
+    check('... one seen taking off at Stansted: on them, from Stansted', !!lm[rk('4ca9f7')] && lm[rk('4ca9f7')].ap === stn.id && lm[rk('4ca9f7')].oc === 'ground', lm[rk('4ca9f7')]);
+    // (Biggin Hill's departures, 13 Oct: easyJets, a China Southern 787, a Norwegian, an Iberia Express and BA
+    // Cityflyers "departed Biggin Hill -> Gatwick" - Gatwick's arrivals, first heard at 3,500 ft over Biggin Hill on the
+    // way in, landing at Gatwick. And the other way: Gatwick departures last heard climbing over it)
+    await L.boardLoad(lgw.id);
+    const bleg = (h, cs, ty, o) => L.boardNoteLegs(h, [Object.assign({ hex: h, endRules: 2, cs, tStart: off, tOff: off, tEnd: off + 900, tOn: off + 900, startedOnGround: false, ended: true, how: 'ground', from: { id: bqh.id, code: 'BQH', conf: 'near' }, to: { id: lgw.id, code: 'LGW', conf: 'ground' }, maxAlt: 3500, startAlt: 3500, startLat: bqh.lat + 0.02, startLon: bqh.lon, endLat: lgw.lat, endLon: lgw.lon }, o)], { reg: '', type: ty });
+    bleg('4ca9e8', 'EZY83ZL', 'A319'); bleg('780a11', 'CSN654', 'B789'); bleg('4ca9e9', 'IBS1861', 'A320', { from: { id: bqh.id, code: 'BQH', conf: 'low' }, startAlt: 1700 });
+    bleg('4ca9ea', 'EZY92EP', 'A319', { startedOnGround: true, from: { id: lgw.id, code: 'LGW', conf: 'ground' }, to: { id: bqh.id, code: 'BQH', conf: 'near' }, how: 'gap', startLat: lgw.lat, startLon: lgw.lon, endLat: bqh.lat, endLon: bqh.lon, endAlt: 4000 });
+    // (a NetJets jet really leaving Biggin Hill - heard at 900 ft beside it - for Nice; one "from Biggin Hill" only by a
+    // landing guessed in a hole; and a Wizz departure with no type and no destination)
+    const nce = E.byIcao('LFMN');
+    bleg('4ca9eb', 'NJE061Y', 'C68A', { from: { id: bqh.id, code: 'BQH', conf: 'low' }, startAlt: 900, startLat: bqh.lat + 0.01, to: { id: nce.id, code: 'NCE', conf: 'ground' }, endLat: nce.lat, endLon: nce.lon, maxAlt: 41000 });
+    bleg('4ca9ec', 'NJE062Y', 'C68A', { from: { id: bqh.id, code: 'BQH', conf: 'low' }, startAlt: 9000, startLat: bqh.lat + 0.6, to: { id: nce.id, code: 'NCE', conf: 'ground' }, endLat: nce.lat, endLon: nce.lon, maxAlt: 41000 });
+    bleg('4ca9ed', 'WZZ620U', '', { startedOnGround: true, from: { id: bqh.id, code: 'BQH', conf: 'ground' }, to: null, ended: false, how: 'gap' });
+    await L.boardDrain();
+    const bd = L.boardMem.get(bqh.id).dep, gone = h => !bd[rk(h)] || bd[rk(h)].drop, ba2 = L.boardMem.get(bqh.id).arr, la2 = L.boardMem.get(lgw.id);
+    check('Biggin Hill\'s departures: Gatwick\'s arrivals first heard over it (easyJet, China Southern 787, Iberia Express): gone', gone('4ca9e8') && gone('780a11') && gone('4ca9e9'), Object.keys(bd));
+    check('... their rows on Gatwick\'s arrivals "from Biggin Hill": gone too', ['4ca9e8', '780a11', '4ca9e9'].every(h => !la2.arr[rk(h)] || la2.arr[rk(h)].drop));
+    check('... a Gatwick departure last heard climbing over it: not landed at Biggin Hill, nor "to Biggin Hill" on Gatwick\'s', (!ba2[rk('4ca9ea')] || ba2[rk('4ca9ea')].drop) && (!la2.dep[rk('4ca9ea')] || la2.dep[rk('4ca9ea')].drop || la2.dep[rk('4ca9ea')].ap !== bqh.id));
+    check('... a NetJets jet heard leaving it at 900 ft for Nice: kept', !gone('4ca9eb') && bd[rk('4ca9eb')].ap === nce.id, bd[rk('4ca9eb')]);
+    check('... one "from Biggin Hill" by a landing guessed in a hole, a Wizz departure with no destination: gone', gone('4ca9ec') && gone('4ca9ed'));
+    // (Luton's departures, 13 Oct: callsign-only rows "-> N/A" beside FR24's own - NetJets, VistaJet, Wizz, Wizz Malta, a
+    // registration-only Global - and business jets "to Stansted", "to Biggin Hill" from a leg first heard over Luton)
+    const lleg = (h, cs, ty, o) => L.boardNoteLegs(h, [Object.assign({ hex: h, endRules: 2, cs, tStart: off, tOff: off, tEnd: off + 2400, tOn: off + 2400, startedOnGround: true, ended: false, how: 'gap', from: { id: ltn.id, code: 'LTN', conf: 'ground' }, to: null, maxAlt: 35000, startAlt: 0, startLat: ltn.lat, startLon: ltn.lon, endLat: 49, endLon: 1, endAlt: 35000 }, o)], { reg: '', type: ty });
+    lleg('4ca9c1', 'NJE369M', 'CL60'); lleg('4ca9c2', 'VJT449', 'CL35'); lleg('4ca9c3', 'WZZ620U', ''); lleg('4ca9c4', 'WMT6767', 'H25B'); lleg('4ca9c5', 'N142QS', 'GLEX'); lleg('4ca9c6', 'UAG37A', 'E35L');
+    lleg('4ca9c7', 'IFA6673', 'GLEX', { startedOnGround: false, from: { id: ltn.id, code: 'LTN', conf: 'near' }, startAlt: 4000, startLat: ltn.lat + 0.05, to: { id: bqh.id, code: 'BQH', conf: 'ground' }, ended: true, how: 'ground', endLat: bqh.lat, endLon: bqh.lon });
+    // (and the real ones: a NetJets Phenom seen rolling at Luton and landing at Stansted, a Global seen on the ground at
+    // Luton and heard at 1,200 ft beside Le Bourget, an easyJet seen on the ground at both ends, a light aircraft
+    // with no destination)
+    const lbg = E.byIcao('LFPB'), edi = E.byIcao('EGPH');
+    lleg('4ca9c8', 'NJU957Y', 'E55P', { to: { id: stn.id, code: 'STN', conf: 'ground' }, ended: true, how: 'ground', endLat: stn.lat, endLon: stn.lon, endAlt: 0 });
+    lleg('4ca9c9', 'N988GG', 'GLEX', { to: { id: lbg.id, code: 'LBG', conf: 'low' }, ended: true, how: 'gap-low', endLat: lbg.lat + 0.03, endLon: lbg.lon, endAlt: 1200 });
+    lleg('4ca9ca', 'EZY926P', 'A320', { to: { id: edi.id, code: 'EDI', conf: 'ground' }, ended: true, how: 'ground', endLat: edi.lat, endLon: edi.lon, endAlt: 0 });
+    lleg('4ca9cb', 'GBOIL', 'C152');
+    await L.boardDrain();
+    const ld2 = L.boardMem.get(ltn.id).dep, lg = h => !ld2[rk(h)] || ld2[rk(h)].drop;
+    check('Luton\'s departures: NetJets, VistaJet, Wizz, Wizz Malta, a registration-only Global and an Embraer "-> N/A": gone', ['4ca9c1', '4ca9c2', '4ca9c3', '4ca9c4', '4ca9c5', '4ca9c6'].every(lg), Object.keys(ld2));
+    check('... a Global "from Luton to Biggin Hill", first heard at 4,000 ft over Luton: gone', lg('4ca9c7'));
+    check('... a NetJets jet to Stansted, a Global to Le Bourget, an easyJet to Edinburgh (both ends seen), a Cessna "-> N/A": kept', !lg('4ca9c8') && !lg('4ca9c9') && !lg('4ca9ca') && !lg('4ca9cb'), Object.keys(ld2));
     // (and a business jet's climb-out out of Gatwick, kept by the monitor before - no end height - as landed at Biggin Hill;
     // the strips and towns list in, so a landing place would be named if one were made up)
     await L.boardLoad(bqh.id); await L.boardLoad(lgw.id);
@@ -236,7 +275,33 @@ function makeWin() {
     await L.boardDrain();
     const ba = L.boardMem.get(bqh.id).arr, ld = L.boardMem.get(lgw.id).dep;
     check('... its row on Biggin Hill\'s arrivals: gone', !ba[k] || ba[k].drop, ba[k]);
-    check('... on Gatwick\'s departures, no destination made up for either', !!ld[k] && !ld[k].drop && !ld[k].ap && !!ld[ky] && !ld[ky].ap, [ld[k] && ld[k].ap, ld[ky] && ld[ky].ap]);
+    check('... on Gatwick\'s departures, no destination made up for either (and with none, no row beside FR24\'s own)', [k, ky].every(x => !ld[x] || ld[x].drop || !ld[x].ap), [ld[k], ld[ky]]);
+  }
+
+  // ---- Liverpool's board, 13-14 Oct: U281 "Scheduled 14:40, A320" beside EZY89VK (the A319 G-EZBX) landed from Belfast
+  // at 14:42; G-NBCA, a PC-12 flying as GNBCA, with easyJet's logo; G-RDGE, a glider out of Chester, "departed Liverpool"
+  // as a business jet
+  { const bfs = E.byIcao('EGAA'), qga = E.byIcao('EGAD'), t0 = nowS - 40 * 3600, ezy = 9999001;
+    L.fr24.byIcao.set('EZY', ezy); if (L.fr24.airlines) L.fr24.airlines.set(ezy, { id: ezy, name: 'easyJet', icao: 'EZY', iata: 'U2' });
+    L.store.mergeHex('4ca9d1', { hex: '4ca9d1', reg: 'G-EZBX', type: 'A319' });
+    L.store.mergeHex('4ca9d2', { hex: '4ca9d2', reg: 'G-NBCA', type: 'PC12', owner: 'Narm Aviation Ltd', cs: 'EZY12AB' });
+    L.store.mergeHex('4083e2', { hex: '4083e2', reg: 'G-RDGE', type: '', desc: 'DG Flugzeugbau DG-1000S', ladd: true });
+    const arr = {
+      u281: { k: 'f3c1001', src: 'sched', fid: '3c1001', num: 'U281', cs: '', alId: ezy, ap: bfs.id, t: t0, sch: t0, est: t0, st: 'scheduled', col: 'gray',
+        nat: { id: 77001, flight: { id: '3c1001', number: 'U281', callsign: null }, status: { name: 'scheduled', color: 'gray', isAmbiguous: false, live: false }, scheduledTime: t0, estimatedTime: t0, airportId: bfs.id, airlineId: ezy, airline: 'easyJet', aircraftType: 'A320' } },
+      vk: { k: 'h4ca9d1:1', src: 'log', hex: '4ca9d1', reg: 'G-EZBX', cs: 'EZY89VK', ty: 'A319', ap: bfs.id, t: t0 + 120, sch: t0 + 120, est: t0 + 120, st: 'landed', col: 'green', gc: 1, oc: 'ground', dc: 'ground' },
+      nb: { k: 'h4ca9d2:1', src: 'log', hex: '4ca9d2', reg: 'G-NBCA', cs: 'GNBCA', ty: 'PC12', ap: qga.id, t: t0 - 6 * 3600, st: 'landed', gc: 1, oc: 'low', dc: 'ground' } };
+    const list = L.boardList(arr, new Map([['U2', ezy]]));
+    const u = list.find(r => r.num === 'U281'), n = list.find(r => r.cs === 'GNBCA');
+    check('U281 and EZY89VK: one row, FR24\'s own', list.filter(r => r.num === 'U281' || r.cs === 'EZY89VK').length === 1 && !!u, list.map(r => r.num || r.cs));
+    check('... landed at 14:42, flown by an A319 (not "Scheduled", not the A320 planned), callsign EZY89VK', u && u.nat.status.name === 'landed' && u.nat.estimatedTime === t0 + 120 && u.nat.aircraftType === 'A319' && u.nat.flight.callsign === 'EZY89VK' && u.reg === 'G-EZBX', u && u.nat);
+    check('G-NBCA as GNBCA: not easyJet\'s logo (its record\'s last callsign was an easyJet\'s)', n && n.alId !== ezy, n && [n.alId, n.al]);
+    const dep = { g1: { k: 'h4083e2:1', src: 'log', hex: '4083e2', reg: 'G-RDGE', cs: 'GRDGE', ty: '', dsc: 'DG Flugzeugbau DG-1000S', ap: 0, t: t0, st: 'departed', oc: 'near', dc: '' },
+      g2: { k: 'h4083e2:2', src: 'log', hex: '4083e2', reg: 'G-RDGE', cs: 'GRDGE', ty: '', dsc: 'DG Flugzeugbau DG-1000S', ap: 0, t: t0 + 7200, st: 'departed', oc: 'low', dc: '' } };
+    L.boardScrub(lpl.id, { arr: {}, dep });
+    check('G-RDGE "departed Liverpool", first heard away from it: gone; one heard low beside it: kept', !dep.g1 && !!dep.g2, Object.keys(dep));
+    const g = L.boardList(dep, new Map())[0];
+    check('... a glider: type GLID, FR24\'s glider category (7), not "Business jet"', g && g.ty === 'GLID' && g.fc === 7, g && [g.ty, g.fc]);
   }
 
   // ---- the engine's rule

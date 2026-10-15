@@ -566,7 +566,7 @@
   function fr24Cat(m) {
     const ty = String(m && m.type || '').toUpperCase(); if (!ty && !(m && m.cat)) return undefined;
     const td = ENGINE.typeDesc(ty), cls = ENGINE.classify(m);
-    if (td && td[0] === 'G') return 7;
+    if ((td && td[0] === 'G') || ty === 'GLID') return 7;
     if (/^BALL|^SHIP$/.test(ty)) return 6;
     if (cls === 'heli') return 5;
     if (m.mil || cls === 'fighter' || cls === 'milheavy') return 2;

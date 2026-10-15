@@ -2,6 +2,15 @@
 
 All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PATCH`. The userscript and the monitor are released together.
 
+## [22.25.2] - 2026-10-15
+
+### Fixed
+- **Made-up flights on the airport boards: both ends are checked now, for every jet FR24 shows itself.**
+  - Biggin Hill's departures were full of easyJets, a China Southern 787, a Norwegian, an Iberia Express and BA CityFlyers "departed Biggin Hill -> Gatwick". These were Gatwick's arrivals, heard for the first time at a few thousand feet over Biggin Hill on the way in. A board that is opened has the monitor listen around that airport, so jets passing low over it are first or last heard there. 22.25.1 checked only the far end of a flight, and these did land at Gatwick, so they got through.
+  - Luton's departures had rows showing a callsign only, going to "N/A", next to FR24's own: NetJets, VistaJet, Wizz, Wizz Malta, and jets flying under their registration. Business jets "to Stansted" and "to Biggin Hill" came from legs first heard over Luton.
+  - Now a row the script makes of an aircraft that is not blocked (a flight FR24 shows itself) is kept only when both its ends were seen. An airliner's take-off and landing must both be seen on the ground. A business jet's or turboprop's ends may also be seen low, under 3,000 ft within 15 km of the field, but not as a landing guessed inside a hole in coverage. A row with an end unknown ("N/A") goes too, followed live or not, because FR24's own row says the same.
+  - Blocked and military aircraft, light aircraft, and a registration-only aircraft of unknown type are unchanged. A registration's real return to the field it left, seen at both ends, stays. Rows already kept are removed when a board is opened.
+
 ## [22.25.1] - 2026-10-15
 
 ### Fixed
