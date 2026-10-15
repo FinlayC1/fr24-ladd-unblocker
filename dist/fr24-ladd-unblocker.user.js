@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Flightradar24 LADD / N-A Unblocker (feed-level)
 // @namespace    tweeks.io
-// @version      22.28.7
+// @version      22.28.8
 // @description  Identifies every LADD / N/A / blocked military aircraft on Flightradar24 from public ADS-B, and injects callsign, registration, operator, age, country, MSN, squawk, vertical speed, GPS altitude, airspeeds, wind, photos, a reasoned origin/destination with a wind-corrected ETA (also for ordinary flights FR24 shows as N/A - military, private, GA, helicopters, with private landing sites; learned from 63 days of every aircraft worldwide, with live weather and closures), airport-board entries and a rebuilt 7-month flight log straight into FR24's own data - so it all renders like normal FR24 traffic.
 // @author       Finlay Clarke
 // @updateURL    https://raw.githubusercontent.com/FinlayC1/fr24-ladd-unblocker/main/dist/fr24-ladd-unblocker.user.js
@@ -90,7 +90,7 @@
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "22.28.7";
+    var BRIDGE_V = "22.28.8";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed
@@ -5034,7 +5034,7 @@
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '22.28.7';
+  const VERSION = '22.28.8';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
@@ -12269,7 +12269,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // (the version whose "what's new" was put away, and the one whose dot on the button the window was opened for)
   const UB_SEEN_KEY = 'tweeks.fr24.ladd.seenver', UB_DOT_KEY = 'tweeks.fr24.ladd.dotver';
   // (the newest CHANGELOG section's headlines, written in by build.mjs: { v, items })
-  const UB_WHATS_NEW = {"v":"22.28.7","items":["The LADD Unblock window's colours are FR24's again."]};
+  const UB_WHATS_NEW = {"v":"22.28.8","items":["The LADD Unblock window no longer turns into FR24's Widgets list by itself."]};
   // (an aircraft with an open padlock: FR24's outline style - 24 grid, 1.5 stroke in the text colour)
   const UB_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
   const UB_X = '<svg viewBox="0 0 14 14" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5l11 11M12.5 1.5l-11 11"/></svg>';
@@ -12803,12 +12803,23 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     shownNow();
     if (!hjTimer) hjTimer = setInterval(() => lendKeep(true), 250);
   }
+  // (FR24 drawing its window afresh while it still shows Widgets open - its data refreshed, its window rebuilt: the new window,
+  // as it comes in, is given this title and content in turn, and the old one goes as FR24 sends it)
+  function relend() {
+    const it = HJ.item;
+    if (HJ.st !== 'on' || HJ.reopen || !it || !it.isConnected || !HJ.rest || sigOf(lookOf(it)) === HJ.rest) return false;
+    const w = widgetsWindows().find(x => x.host !== HJ.host);
+    if (!w) return false;
+    lend(w);
+    return true;
+  }
+  const addedTitle = recs => { for (const r of recs) for (const n of r.addedNodes) if (n.nodeType === 1 && !n.closest('.tl-ub,.tl-ub-c,.tl-ub-btn,.tl-ub-face') && /widgets/i.test(n.textContent || '')) return true; return false; };
   // (while open: this content kept in it, its title kept; FR24 having put the window away, or using it for something else
   // - its title changed - it is given back. Looked at fully four times a second, and cheaply at each change to the page)
   function lendKeep(full) {
     if (HJ.st !== 'on') { if (hjTimer) { clearInterval(hjTimer); hjTimer = 0; } return; }
     const host = HJ.host;
-    if (!host || !host.isConnected || (full && !shownEl(host))) return lendDone();
+    if (!host || !host.isConnected || (full && !shownEl(host))) { if (relend()) return; return lendDone(); }
     if (HJ.tnode && HJ.tnode.data.trim() !== 'LADD Unblock') { if (HJ.tnode.isConnected && HJ.tnode.data.trim().toLowerCase() === 'widgets') HJ.tnode.data = HJ.tnode.data.replace(/\S.*\S|\S/, 'LADD Unblock'); else return lendDone(); }
     if (!host.hasAttribute('data-tl-ub-host')) host.setAttribute('data-tl-ub-host', '');
     if (HJ.keep && HJ.keep.parentElement === host && !HJ.keep.hasAttribute('data-tl-ub-keep')) HJ.keep.setAttribute('data-tl-ub-keep', '');
@@ -13037,7 +13048,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
         new MutationObserver(recs => {
           ubDirty = true; bmDirty = true;
           try {
-            if (HJ.st === 'opening') lendScan(); else if (HJ.st === 'on') lendKeep(false);
+            if (HJ.st === 'opening') lendScan(); else if (HJ.st === 'on') { if (!(addedTitle(recs) && relend())) lendKeep(false); }
             if (lentOut.size) checkLent();
             bookmarksMut(recs);
             if (ubFloat) for (const r of recs) for (const n of r.addedNodes) if (n.nodeType === 1 && (n.matches('[data-testid^="aircraft-panel"],[data-testid="airport-panel"]') || n.querySelector('[data-testid^="aircraft-panel"],[data-testid="airport-panel"]'))) { closeStandIn(); break; }

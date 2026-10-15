@@ -2,6 +2,11 @@
 
 All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PATCH`. The userscript and the monitor are released together.
 
+## [22.28.8] - 2026-10-15
+
+### Fixed
+- **The LADD Unblock window no longer turns into FR24's Widgets list by itself.** When FR24 redrew its window while LADD Unblock was open (its data refreshing), the new window came up as plain Widgets and LADD Unblock vanished without being closed. The redrawn window is now given the title and content as it comes in, so the window stays, with FR24's own movement for the swap. Pressing another button, a flight, Widgets or the close button still puts it away.
+
 ## [22.28.7] - 2026-10-15
 
 ### Fixed

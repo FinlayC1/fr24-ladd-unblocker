@@ -545,12 +545,23 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     shownNow();
     if (!hjTimer) hjTimer = setInterval(() => lendKeep(true), 250);
   }
+  // (FR24 drawing its window afresh while it still shows Widgets open - its data refreshed, its window rebuilt: the new window,
+  // as it comes in, is given this title and content in turn, and the old one goes as FR24 sends it)
+  function relend() {
+    const it = HJ.item;
+    if (HJ.st !== 'on' || HJ.reopen || !it || !it.isConnected || !HJ.rest || sigOf(lookOf(it)) === HJ.rest) return false;
+    const w = widgetsWindows().find(x => x.host !== HJ.host);
+    if (!w) return false;
+    lend(w);
+    return true;
+  }
+  const addedTitle = recs => { for (const r of recs) for (const n of r.addedNodes) if (n.nodeType === 1 && !n.closest('.tl-ub,.tl-ub-c,.tl-ub-btn,.tl-ub-face') && /widgets/i.test(n.textContent || '')) return true; return false; };
   // (while open: this content kept in it, its title kept; FR24 having put the window away, or using it for something else
   // - its title changed - it is given back. Looked at fully four times a second, and cheaply at each change to the page)
   function lendKeep(full) {
     if (HJ.st !== 'on') { if (hjTimer) { clearInterval(hjTimer); hjTimer = 0; } return; }
     const host = HJ.host;
-    if (!host || !host.isConnected || (full && !shownEl(host))) return lendDone();
+    if (!host || !host.isConnected || (full && !shownEl(host))) { if (relend()) return; return lendDone(); }
     if (HJ.tnode && HJ.tnode.data.trim() !== 'LADD Unblock') { if (HJ.tnode.isConnected && HJ.tnode.data.trim().toLowerCase() === 'widgets') HJ.tnode.data = HJ.tnode.data.replace(/\S.*\S|\S/, 'LADD Unblock'); else return lendDone(); }
     if (!host.hasAttribute('data-tl-ub-host')) host.setAttribute('data-tl-ub-host', '');
     if (HJ.keep && HJ.keep.parentElement === host && !HJ.keep.hasAttribute('data-tl-ub-keep')) HJ.keep.setAttribute('data-tl-ub-keep', '');
@@ -779,7 +790,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
         new MutationObserver(recs => {
           ubDirty = true; bmDirty = true;
           try {
-            if (HJ.st === 'opening') lendScan(); else if (HJ.st === 'on') lendKeep(false);
+            if (HJ.st === 'opening') lendScan(); else if (HJ.st === 'on') { if (!(addedTitle(recs) && relend())) lendKeep(false); }
             if (lentOut.size) checkLent();
             bookmarksMut(recs);
             if (ubFloat) for (const r of recs) for (const n of r.addedNodes) if (n.nodeType === 1 && (n.matches('[data-testid^="aircraft-panel"],[data-testid="airport-panel"]') || n.querySelector('[data-testid^="aircraft-panel"],[data-testid="airport-panel"]'))) { closeStandIn(); break; }
