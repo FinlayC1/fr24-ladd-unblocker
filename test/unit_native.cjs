@@ -125,6 +125,12 @@ async function run(browser, mode) {
   f = await rec(() => page.click('#openFlight'));
   const L5 = last(f);
   check('a flight opened: this goes back, nothing on the bar drawn open', L5.titles.length === 0 && L5.ours === 0 && L5.on.length === 0 && (await st()).flight, L5);
+  // ---- FR24 drawing its window afresh while this is open (its data refreshed): still this, never FR24's list
+  await page.click(ours); await sleep(700);
+  f = await rec(() => page.evaluate(() => { __S.rk++; }), 1200);
+  const R = last(f);
+  check('FR24 redraws its window while this is open: still this window, FR24\'s Widgets list never drawn', R.titles.join() === 'LADD Unblock' && R.ours === 1 && R.on.join() === 'LADD Unblock' && f.every(x => !x.titles.includes('Widgets')), { R, seq: f.map(x => x.titles.join('+') + '/' + x.ours).filter((v, i, a) => v !== a[i - 1]) });
+  await page.click('#openFlight'); await sleep(500);
   // ---- its own button closes it; FR24's close button too
   await page.click(ours); await sleep(700);
   check('pressed again (a flight open): it comes up', (await page.evaluate(() => !!document.querySelector('[data-tl-ub-host] .tl-ub-c'))) && (await st()).open === 'Widgets');

@@ -45,7 +45,7 @@ html,body{margin:0;height:100%;font-family:Arial,Helvetica,sans-serif;font-size:
 const Q = new URLSearchParams(location.search), MODE = Q.get('mode') || 'keyed', IND = Q.get('ind') === '1', LI = Q.get('li') === '1', ODD = Q.get('odd') === '1', ASYNC = Q.get('async') === '1';
 const { createApp, reactive, defineAsyncComponent } = Vue;
 const saved = (() => { try { return JSON.parse(localStorage.getItem('mock.widgets') || 'null'); } catch (e) { return null; } })();
-const S = reactive({ open: null, flight: false, enabled: true, airport: false, events: ['Runway 09/27 works'],
+const S = reactive({ rk: 0, open: null, flight: false, enabled: true, airport: false, events: ['Runway 09/27 works'],
   widgets: saved || [
     { k: 'mt', title: 'Most tracked flights', desc: 'See the top 10 flights other users are following right now.', on: true },
     { k: 'ad', title: 'Airport disruptions', desc: 'See the top 10 airports with the most cancellations.', on: true },
@@ -62,7 +62,7 @@ const WidgetsLazy = defineAsyncComponent(() => new Promise(r => setTimeout(() =>
 const Other = { props: ['name'], template: `<div style="padding:8px"><p v-for="i in 12" :key="i">{{ name }} option {{ i }}</p></div>` };
 const WinLazy = defineAsyncComponent(() => new Promise(r => setTimeout(() => r({ components: { Win, WidgetsList }, emits: ['close'], template: `<Win title="Widgets" @close="$emit('close')"><WidgetsList/></Win>` }), 400)));
 const tpl = {
-  keyed: BARS.slice(0, 4).map(b => `<Transition name="win"><Win v-if="S.open==='${b}'" title="${ODD && b === 'Widgets' ? 'Map widgets' : b}" @close="S.open=null">${b === 'Widgets' ? '<WidgetsList/>' : `<Other name="${b}"/>`}</Win></Transition>`).join(''),
+  keyed: BARS.slice(0, 4).map(b => `<Transition name="win"><Win v-if="S.open==='${b}'" :key="S.rk" title="${ODD && b === 'Widgets' ? 'Map widgets' : b}" @close="S.open=null">${b === 'Widgets' ? '<WidgetsList/>' : `<Other name="${b}"/>`}</Win></Transition>`).join(''),
   async: BARS.slice(0, 4).map(b => b === 'Widgets' ? `<Transition name="win"><WinLazy v-if="S.open==='Widgets'" @close="S.open=null"/></Transition>` : `<Transition name="win"><Win v-if="S.open==='${b}'" title="${b}" @close="S.open=null"><Other name="${b}"/></Win></Transition>`).join(''),
   shared: `<Transition name="win"><Win v-if="S.open && S.open!=='Playback'" :title="S.open" @close="S.open=null"><WidgetsList v-if="S.open==='Widgets'"/><Other v-else :name="S.open"/></Win></Transition>`,
   show: BARS.slice(0, 4).map(b => `<Transition name="win"><Win v-show="S.open==='${b}'" title="${b}" @close="S.open=null">${b === 'Widgets' ? '<WidgetsList/>' : `<Other name="${b}"/>`}</Win></Transition>`).join('')
