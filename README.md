@@ -20,7 +20,7 @@ A browser extension for Flightradar24. It names the flights FR24 hides or shows 
 
 <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/releases/latest/download/fr24-ladd-unblocker-extension.zip"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/button-extension-dark.svg"><source media="(prefers-color-scheme: light)" srcset="docs/assets/button-extension-light.svg"><img src="docs/assets/button-extension-dark.svg" alt="Download the extension for Chrome, Edge and Brave (.zip)" width="300"></picture></a>&nbsp;&nbsp;<a href="https://github.com/FinlayC1/fr24-ladd-unblocker/raw/main/dist/fr24-ladd-unblocker.user.js"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/button-userscript-dark.svg"><source media="(prefers-color-scheme: light)" srcset="docs/assets/button-userscript-light.svg"><img src="docs/assets/button-userscript-dark.svg" alt="Install the userscript (Tampermonkey or Violentmonkey)" width="300"></picture></a>
 
-<sub>[Install](#install) · [Features](#features) · [How it works](#how-it-works) · [FAQ](#faq) · [Changelog](CHANGELOG.md) · [Website](https://finlayc1.github.io/fr24-ladd-unblocker/)</sub>
+<sub>[Install](#install) · [Features](#features) · [How it works](#how-it-works) · [FAQ](#faq) · [Changelog](CHANGELOG.md)</sub>
 
 </div>
 
