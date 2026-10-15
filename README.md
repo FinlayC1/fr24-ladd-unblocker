@@ -34,7 +34,6 @@ A browser extension for Flightradar24. It names the flights FR24 hides or shows 
 
 Also:
 
-- a yellow **LADD**, **PIA** or **MIL** tag on every aircraft it applies to, in the panel, in search and on boards;
 - owners and operators from public registers (FAA, UK G-INFO, Isle of Man, Switzerland), names only, never addresses;
 - the airport panel's padlocked parts filled in: movements per day, runway usage, every runway and the radio frequencies;
 - photos from JetPhotos and Planespotters, credited;
