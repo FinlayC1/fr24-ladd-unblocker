@@ -444,9 +444,30 @@
     return true;
   }
   function learnedStore() { if (!learnLoaded) learnLoad(); return learned; }
-  // (a flight of a blocked aircraft within the days the monitor's learning covers is in it already: not counted twice)
-  let srvLearned = null;   // { ver, from, asOf } of the monitor's learning added to the tables on this page
-  const srvCovers = x => { if (!srvLearned || typeof x[0] !== 'string') return false; const [hex, t] = x[0].split('|'), ts = +t || +x[8] || 0; return /^[0-9a-f]{6}$/.test(hex) && !!(store.getHex(hex) || {}).ladd && ts >= Date.parse(srvLearned.from + 'T00:00:00Z') / 1000 && ts < Date.parse(srvLearned.asOf + 'T00:00:00Z') / 1000 + 86400; };
+  // (22.25) Every flight learned here goes to the monitor too (02 reportToMonitor): learned there with every other
+  // browser's and its own, every browser's engine has it with its next /learned. A flight the monitor took is marked
+  // with the number it gave that report (x[12]), kept with it: a learning of the monitor's that has it says so
+  // (builtSeq), and it is not counted twice here (srvCovers)
+  const learnOut = [];
+  function learnOutTake(n) { return learnOut.splice(0, n); }
+  function learnOutBack(rows) { if (rows && rows.length) learnOut.unshift(...rows); if (learnOut.length > 2000) learnOut.splice(2000); }
+  // (not: the places in the list of those the monitor did not take - refused, or past its hour's share: learned here only)
+  function learnSentMark(rows, not, seq) {
+    if (!rows || !rows.length || !(seq > 0)) return;
+    const skip = new Set(Array.isArray(not) ? not : []);
+    rows.forEach((x, i) => { if (!skip.has(i)) x[12] = seq; });
+    // (the chunks they are in written again - the newest two: a flight is sent within a minute or two of being learned)
+    if (learnLoaded) for (const i of [learnMeta.last - 1, learnMeta.last]) { const c = learnChunks.get(i); if (c && rows.some(x => c.includes(x))) store.setBlob('learn3:' + i, c); }
+  }
+  // (a flight of a blocked aircraft within the days the monitor's learning covers is in it already - and one sent from
+  // here that it has: not counted twice)
+  let srvLearned = null;   // { ver, from, asOf, builtSeq } of the monitor's learning added to the tables on this page
+  const srvCovers = x => {
+    if (!srvLearned || typeof x[0] !== 'string') return false;
+    const [hex, t] = x[0].split('|'), ts = +t || +x[8] || 0;
+    if (!(ts >= Date.parse(srvLearned.from + 'T00:00:00Z') / 1000 && ts < Date.parse(srvLearned.asOf + 'T00:00:00Z') / 1000 + 86400)) return false;
+    return (/^[0-9a-f]{6}$/.test(hex) && !!(store.getHex(hex) || {}).ladd) || (x[12] > 0 && x[12] <= (srvLearned.builtSeq || 0));
+  };
   function replayLearned(x) { if (!srvCovers(x)) ENGINE.learnRow(x); }
   // (read, then replayed in idle slices: 100,000 flights at once would hold the page for seconds)
   async function applyLearned() {
@@ -457,7 +478,7 @@
     try { const l = (await learnLoad()).slice(); await sliced(l, replayLearned, { ms: 8 }); if (l.length) log('learned from use', l.length, 'flights'); } catch (e) { log('learned replay', e); }
   }
   async function addSrvLearned(j) {
-    srvLearned = { ver: j.ver, from: j.from, asOf: j.asOf };
+    srvLearned = { ver: j.ver, from: j.from, asOf: j.asOf, builtSeq: j.builtSeq || 0 };
     let n = 0; await sliced(j.ops, o => { if (ENGINE.addLearnedOp(o)) n++; }, { ms: 8 });
     log('learned on the monitor', j.flights, 'flights of', j.days, 'days (' + j.from + ' to ' + j.asOf + '),', n, 'increments');
   }
@@ -498,7 +519,10 @@
     }
     const ok = Array.isArray(lx) && lx.length === 3, flow = ok ? String(lx[2] || '') : ENGINE.flowKeysOf((raw && raw.pts) || [], ENGINE.byId(s.to.id)).slice(0, 16).join('|');
     const x = [key, s.from.id, s.to.id, Math.round(s.tEnd), ok ? String(lx[0] || '') : [...sq].join(','), ok ? String(lx[1] || '') : [...fm].join(','), cls, mil ? 1 : 0, Math.round(s.tStart), s.cs || '', (acOfHex(hex).type || ''), flow];
-    if (learnAppend(x) && learnedApplied) replayLearned(x);
+    if (!learnAppend(x)) return;
+    if (learnedApplied) replayLearned(x);
+    // (rebuilt by the monitor's own learning already - from its lx: not sent back)
+    if (!ok) { learnOut.push(x); if (learnOut.length > 2000) learnOut.shift(); }
   }
 
   // The operator an aircraft flies for: FR24's own for it (by name, or from its id or ICAO code - its airline list is

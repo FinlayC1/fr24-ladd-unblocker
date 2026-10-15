@@ -2,6 +2,25 @@
 
 All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PATCH`. The userscript and the monitor are released together.
 
+## [22.25.0] - 2026-10-15
+
+The monitor keeps working on a flight until it can name it, and what one browser works out reaches every other. Update the monitor with this release: an older monitor ignores what browsers share, and nothing breaks.
+
+### Added
+- **The monitor keeps working on a flight until it can name it.** A playback flight it had no name for, and a callsign-less flight in its own FR24 scans that it could not name live, now go on a waiting list and are tried again and again: at once when a browser asks about a new moment of it, a minute later, then less and less often, up to ten minutes apart while the flight is recent and an hour apart after that (six hours when no aircraft the monitor follows has been anywhere near it). Each moment a browser asks about adds to the flight's path. The path is laid against every blocked aircraft's track as that track grows (live ADS-B, the day rebuilds a day later, FR24's own trails). A flight is named when one aircraft of its type fits it everywhere it can be placed, at its height, and no other comes close. Two flights where one aircraft could be: neither, for now. Kept three days.
+- **Dead reckoning across the holes in a track.** An aircraft out of hearing over the ocean for two hours is carried along the great circle between where it was last heard and where it was heard again. Past its last point over open water it is carried on at its own speed and track for up to three hours (a quarter of an hour over land, where airways turn). A playback flight in such a hole is now named, as "monitor (its track, carried across a gap)".
+- **A playback left open asks the monitor again** every 45 seconds about the flights still unnamed (for a quarter of an hour after its last frame), so a name the monitor works out meanwhile appears without scrubbing.
+- **Routes worked out in one browser show in every other.** When a flight the monitor names is opened, the route the browser works out with the aircraft's whole log (or with its take-off seen, or a destination confirmed) goes to the monitor with the browser's next report. Every other browser gets it with the names: on the map at once, and in the panel when the flight is opened there before that browser has the aircraft's log, marked "worked out by another browser". A destination confirmed in one browser is "confirmed in another browser" in all of them and stands over guesses. A browser's own route stays where it is about as good (within ten points). A browser never sends back a route it got from another, nor a landing (every browser sees where the aircraft is). Each end of a route is kept on its own, so a browser that sends only an origin leaves another browser's destination in place. A shared origin lasts the whole flight; a shared destination lasts until, an hour on, the flight has come no nearer to it (a confirmed one stays).
+- **Every browser's engine learns from every browser's flights.** The completed flights a browser rebuilds from public ADS-B (including aircraft the monitor does not follow) go to the monitor, are learned there with its own, and reach every browser's engine with the next /learned. Each flight counts once: the browser that sent it leaves its own copy out once the monitor's learning has it. A flight the monitor did not take (refused, or past a browser's hourly share) goes on being learned in that browser.
+
+### Monitor
+- New `waiting.cjs` (the waiting list) and dead reckoning in `tracks.cjs` (`estimate`, `atAll`, `around`). /pbmatch tries the moment's unnamed flights against the tracks at once, within a time budget shared by all browsers, and leaves the rest to the background (every 15 s). Names worked out later are kept with how they were found and given to later playback asks.
+- /report takes `routes` and `learn` from browsers, up to 600 an hour each from anyone's browser (`routesPerHour`, `learnPerHour`). Each is checked: a destination behind the flight is refused, and a learned flight must read as a real one. The reply says what was taken. /fr24ids rows have three more columns: whose route it is (0 the monitor's, 1 a browser's, 2 confirmed in a browser), the destination's word, and whether the origin is a browser's.
+- /status and the dashboard show the flights waiting, the ones named later, and what browsers shared.
+
+### Fixed
+- The monitor's rough destination showed its chance as under 1% on the page: it was sent as a fraction where the page expects a percentage.
+
 ## [22.24.1] - 2026-10-15
 
 ### Fixed

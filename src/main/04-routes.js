@@ -481,6 +481,19 @@
       const ua = apById(uc.destId);
       if (ua) { setD(ua, 'confirmed', 'confirmed by you' + (uc.prev && uc.prev !== apCode(ua) ? ` (it was predicting ${uc.prev})` : '')); r.destP = 100; r.destSite = null; r.alternatives = []; r.userConfirmed = true; }
     }
+    // (22.25) The route another browser worked out for this flight - its own engine with the aircraft's whole log - or a
+    // destination confirmed there: shown where this browser has nothing as good yet (the panel opened before its own log
+    // of the aircraft is in). Never over FR24's own plan, a landing or final seen here, or the user's own word
+    const sr = !r.userConfirmed && !planDest && r.destConf !== 'confirmed' ? srvIds.rows.get(id) : null, cr = sr && String(sr[1] || '').toLowerCase() === hex ? crowdOf(sr) : null;
+    if (cr) {
+      const ca = cr.d ? apById(cr.d) : null;
+      if (ca && (cr.by === 2 || (!r.destId && !r.destSite) || (r.destP || 0) + 10 < cr.p)) {
+        setD(ca, cr.by === 2 ? 'confirmed' : CONF_OF(cr.p / 100), cr.by === 2 ? 'confirmed in another browser' : 'worked out by another browser');
+        r.destP = cr.by === 2 ? 100 : Math.min(99, cr.p); r.destSite = null; r.alternatives = (r.alternatives || []).filter(a => a.iata !== apCode(ca)); r.crowdD = true;
+      }
+      const co = cr.o ? apById(cr.o) : null;
+      if (co && !r.originId && !r.originSite) { setO(co, 'worked out by another browser', cr.oc || 'low'); r.crowdO = true; if (!r.departedAt && cr.atd) { r.departedAt = cr.atd; r.atd = r.atd || cr.atd; } }
+    }
     const destAp = apById(r.destId) || (r.destSite && fin(r.destSite.lat) ? r.destSite : null);
     r.eta = (plan && plan.eta && plan.eta > nowS() - 600 ? plan.eta : 0) || estimateEta(pos, destAp, cls);
     r.sta = (plan && plan.sta) || 0;
@@ -529,6 +542,7 @@
     if (!live.has(id) && pubRecs.has(id) && !pubRouted(id)) return;   // an ordinary flight FR24 has (by now) a route for
     postToPage('route', { id, route: (route.originId || route.destId || route.groundAirportId || route.destIata || route.originIata) ? routeForPage(route) : null });
     shareRoute(id, route);
+    noteRouteOut(id, route);
     const rec = live.get(id) || pubRecs.get(id);
     // (an ordinary flight opened in the panel, its destination reasoned: on its airports' boards like FR24's own N/A
     // flights - N77HG, confirmed into the Isle of Man, was on neither its arrivals nor Retford's departures)

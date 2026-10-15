@@ -54,6 +54,7 @@ const { createAirportInfo } = require('./airport.cjs'), APT = createAirportInfo(
 const { createNames } = require('./names.cjs');
 const { createTel } = require('./tel.cjs');
 const { createTracks } = require('./tracks.cjs');
+const { createWaiting } = require('./waiting.cjs');
 // (the newest report of every aircraft heard - for the figures FR24 padlocks, any aircraft: tel.cjs)
 const tel = createTel({ max: CFG.telMax });
 // (every blocked aircraft's track, 90 days: playback named from it - tracks.cjs)
@@ -304,6 +305,67 @@ function learnSince(from, nowS) {
   const today = dayOf(nowS), floor = dayOf(nowS - 14 * 86400), want = days.filter(d => d > (from || '') && d >= floor && d < today).slice(0, 14);
   let rows = []; for (const d of want) { try { rows = rows.concat(JSON.parse(fs.readFileSync(path.join(LEARN_DIR, d + '.json'), 'utf8'))); } catch (e) { /* a file being written */ } }
   return { days: want, rows };
+}
+// ---- (22.25) what the browsers learned: the flights each one rebuilt from an aircraft's track with its own engine
+// (adsb.lol's traces, ADS-B Exchange with the user's key, the heatmaps - aircraft the monitor does not follow too), in
+// the same row as the monitor's own (learnRow). Kept apart (STORE/learn-crowd/YYYY-MM-DD.json) and learned with them
+// (learnedBuild): every browser's engine has them with its next /learned. A row is taken when it reads as a real flight
+// (two airports, eight minutes and more, no faster than a jet, within the days learned), not when the monitor has that
+// aircraft's flight of the time itself (its own is the better one); from anyone else's browser CFG.learnPerHour an hour
+const LEARN_CROWD_DIR = path.join(STORE, 'learn-crowd');
+const crowdLearn = new Map();   // day -> Map(key -> row): taken, to be written (work)
+const LC = { got: 0, taken: 0, refused: 0, dup: 0 };
+// (each report's flights taken get a number that only grows - kept with them, [12]; /learned says the last one it has:
+// a browser leaves its own copy of a flight out of its tables exactly when the monitor's learning has it - no clocks)
+let learnSeq = Date.now();   // (from the clock at start: above every number kept from before)
+function learnCheck(r, nowS) {
+  if (!Array.isArray(r) || r.length < 12) return null;
+  const m = /^([0-9a-f]{6})\|(\d{9,10})$/.exec(String(r[0] || '')); if (!m) return null;
+  const from = E.byId(+r[1]), to = E.byId(+r[2]), t0 = +r[8], t1 = +r[3];
+  if (!from || !to || from.id === to.id || !(t0 > 0) || Math.abs(t0 - +m[2]) > 60 || !(t1 - t0 >= 480 && t1 - t0 <= 20 * 3600)) return null;
+  if (t0 < nowS - CFG.learnDays * 86400 || t1 > nowS + 600) return null;
+  if (E.dist(from.lat, from.lon, to.lat, to.lon) / ((t1 - t0) / 3600) > 1100) return null;
+  const str = (v, re, n) => { v = String(v == null ? '' : v); return v.length <= n && re.test(v) ? v : null; };
+  const sq = str(r[4], /^(\d\d(,\d\d)*)?$/, 60), fm = str(r[5], /^(\d{1,2}(,\d{1,2})*)?$/, 80), cls = str(r[6], /^[a-z]{2,12}$/, 12), cs = str(r[9], /^[A-Z0-9]{0,8}$/, 8), ty = str(r[10], /^[A-Z0-9]{0,5}$/, 5), fl = str(r[11], /^[0-9,|]*$/, 400);
+  if ([sq, fm, cls, cs, ty, fl].some(v => v == null)) return null;
+  return [m[1] + '|' + m[2], from.id, to.id, Math.round(t1), sq, fm, cls, r[7] ? 1 : 0, Math.round(t0), cs, ty, fl];
+}
+// (-> how many were taken, the place in the list of each one not - refused, or past the hour's share: the browser goes
+// on learning those itself, the monitor's learning never covering them - and the report's number)
+function learnFromCrowd(rows, who, nowMs) {
+  const nowS = nowMs / 1000, ok = who ? allowance('learn', who, +CFG.learnPerHour || 600) : null, not = [], seq = learnSeq = Math.max(learnSeq + 1, Math.floor(nowMs)); let n = 0;
+  for (let i = 0; i < rows.length; i++) {
+    if (i >= 1000) { not.push(i); continue; }
+    LC.got++;
+    const r = learnCheck(rows[i], nowS); if (!r) { LC.refused++; not.push(i); continue; }
+    const m = legs.get(r[0].slice(0, 6));
+    if (m && [...m.values()].some(l => (l.tOff || l.tStart) < r[3] + 600 && (l.tOn || l.tEnd || l.tStart) > r[8] - 600)) { LC.dup++; continue; }
+    if (ok && !ok()) { LC.refused++; not.push(i); continue; }
+    const d = dayOf(r[8]); let x = crowdLearn.get(d); if (!x) crowdLearn.set(d, x = new Map());
+    if (!x.has(r[0])) x.set(r[0], r.concat([seq])); n++; LC.taken++;
+  }
+  return { n, not, seq };
+}
+// (a flight already kept - another browser sent it first - stays as it was, with its number)
+function crowdLearnSave() {
+  for (const [d, x] of crowdLearn) {
+    const f = path.join(LEARN_CROWD_DIR, d + '.json'); let all = [];
+    try { all = JSON.parse(fs.readFileSync(f, 'utf8')); } catch (e) { all = []; }
+    all = all.filter(r => Array.isArray(r)); const have = new Set(all.map(r => r[0]));
+    const out = all.concat([...x.values()].filter(r => !have.has(r[0])));
+    fs.mkdirSync(LEARN_CROWD_DIR, { recursive: true }); fs.writeFileSync(f + '.tmp', JSON.stringify(out)); fs.renameSync(f + '.tmp', f);
+  }
+  crowdLearn.clear();
+}
+// (a day's rows from the browsers, less the flights the monitor's own rows of that day have - and each flight once;
+// upTo: those taken by then only - one taken while a build is on its way waits for the next)
+function crowdRows(d, own, upTo) {
+  let rows = []; try { rows = JSON.parse(fs.readFileSync(path.join(LEARN_CROWD_DIR, d + '.json'), 'utf8')); } catch (e) { return []; }
+  const by = new Map(), add = r => { const h = String(r[0]).slice(0, 6); (by.get(h) || by.set(h, []).get(h)).push([r[8], r[3]]); };
+  for (const r of own) if (Array.isArray(r)) add(r);
+  const out = [];
+  for (const r of rows) { if (!Array.isArray(r) || r[12] > upTo) continue; if ((by.get(String(r[0]).slice(0, 6)) || []).some(([a, b]) => a < r[3] + 600 && b > r[8] - 600)) continue; out.push(r); add(r); }
+  return out;
 }
 // The days still to rebuild - one blocked aircraft's day each - after the day ends; persisted, retried a while when adsb.lol
 // has not published the day's file yet
@@ -626,6 +688,56 @@ const ident = createIdent({ E, cfg: CFG.ident, live, ac, blocked, legs, ownerOf:
 const owners = createOwners({ createRegistry, cfg: CFG.owners, fetch: (u, o) => global.fetch(u, o), log: (...a) => log('owners', ...a), onChange: hex => ident.touch(hex) });
 async function ownersLoop() { for (;;) { await sleep(owners.C.every); try { await owners.pumpOne(); } catch (e) { log('owners', String(e && e.stack || e)); } } }
 const dest = createDest({ E, cfg: CFG.dest, ac, legs });
+// (22.25) The flights not named yet - FR24's playback ones a browser asked about, the monitor's own live ones - tried
+// again and again against the tracks until one aircraft fits (waiting.cjs); the days whose tracks grew (a day rebuilt,
+// FR24's trail of a flight) bring theirs forward
+const waitDays = new Set(), waitClaims = new Map();   // hex -> [{ id, t0, t1, at }] named from the waiting list
+tracks.onChange = (hex, ds) => { const today = dayOf(Date.now() / 1000); for (const d of ds) if (d < today) waitDays.add(d); };
+const typeAt = (hex, t) => { const l = legAt(hex, t), b = blocked.get(hex), x = ac.get(hex); return (l && l.type) || (b && b.type) || (x && x.meta && x.meta.type) || ''; };
+const waiting = createWaiting({ tracks, cfg: CFG.waiting, typeOf: typeAt,
+  // (carried on from a track's end over open ocean or empty desert only - the engine's rule for the live reckoning)
+  est: { remote: (lat, lon, trk, kt, secs) => E.airports.length > 1000 && E.remotePath({ lat, lon, gs: kt, trk }, secs, trk, kt) },
+  named: (id, t) => ident.ids.has(id) || !!names.peek(id, t),
+  // (one aircraft, one flight: not one FR24 draws as another flight at the time, nor one already given to another here)
+  taken: (hex, id, t0, t1) => {
+    const o = ident.byHex.get(hex), F = o != null && o !== id ? ident.flights.get(o) : null;
+    if (F && F.seen / 1000 >= t0 - 600 && (F.first || F.seen) / 1000 <= t1 + 600) return true;
+    return (waitClaims.get(hex) || []).some(c => c.id !== id && c.t0 <= t1 + 600 && c.t1 >= t0 - 600);
+  } });
+// A flight from the waiting list named: still drawn by FR24 and unnamed, named live (every browser has it with the next
+// /fr24ids); otherwise kept with the names for playback, with the day of its flight
+function waitNamed(w, m, nowMs) {
+  const hex = m.hex, l = legAt(hex, m.t), b = blocked.get(hex), x = ac.get(hex), meta = (x && x.meta) || {};
+  const info = { reg: (l && l.reg) || (b && b.reg) || meta.reg || '', type: (l && l.type) || (b && b.type) || meta.type || '', cs: (l && l.cs) || '', ladd: !!b, mil: !!meta.mil, pia: !!meta.pia };
+  const F = ident.flights.get(w.id);
+  if (F && !ident.ids.has(w.id) && nowMs - F.seen < 10 * 60000) ident.assign(F, hex, info, 'path', nowMs);
+  else names.add(w.id, { hex, reg: info.reg, type: info.type, cs: info.cs, flags: flagsOfInfo(info), how: m.how }, m.t);
+  const c = waitClaims.get(hex) || []; c.push({ id: w.id, t0: w.pts[0][0], t1: w.pts[w.pts.length - 1][0], at: nowMs }); waitClaims.set(hex, c.filter(x2 => nowMs - x2.at < 4 * 86400e3).slice(-20));
+  if (waitClaims.size > 50000) waitClaims.delete(waitClaims.keys().next().value);
+  return true;
+}
+// (the monitor's own callsign-less flights it has had five minutes and more without a name: their positions so far)
+function waitLive(nowMs) {
+  let n = 0;
+  for (const F of ident.flights.values()) {
+    if (ident.ids.has(F.id) || F.src === 4 || nowMs - F.seen > 10 * 60000 || nowMs - (F.first || nowMs) < 5 * 60000 || !F.pts || F.pts.length < 2) continue;
+    const w = waiting.W.get(F.id), lastT = w && w.pts.length ? w.pts[w.pts.length - 1][0] : 0;
+    for (const p of F.pts) if (p.t > lastT + 20) { waiting.note(F.id, [p.t, p.lat, p.lon, p.gnd ? 0 : p.alt, p.gnd], { type: F.type, src: 'live' }, nowMs); n++; }
+  }
+  return n;
+}
+const WAIT = { rounds: 0, named: 0, lastMs: 0 };
+function waitRound(nowMs, maxMs) {
+  const t0 = Date.now();
+  waitLive(nowMs);
+  if (waitDays.size) { waiting.kick(waitDays, nowMs); waitDays.clear(); }
+  const n = waiting.round(nowMs, maxMs, (w, m) => waitNamed(w, m, nowMs));
+  WAIT.rounds++; WAIT.named += n; WAIT.lastMs = Date.now() - t0;
+  return n;
+}
+async function waitLoop() { for (;;) { await sleep(15000); try { waitRound(Date.now(), +CFG.waitMs || 400); } catch (e) { log('waiting', String(e && e.stack || e)); } } }
+function saveWaiting() { fs.mkdirSync(STORE, { recursive: true }); const f = path.join(STORE, 'waiting.json'); fs.writeFileSync(f + '.tmp', JSON.stringify(waiting.dump())); fs.renameSync(f + '.tmp', f); }
+function loadWaiting(nowMs) { try { return waiting.restore(JSON.parse(fs.readFileSync(path.join(STORE, 'waiting.json'), 'utf8')), nowMs); } catch (e) { return 0; } }
 const F24 = { scans: 0, last: null, rounds: 0, busy: false, logged: 0 };
 // One round: the flights still unnamed within public coverage looked up around them (adsb.fi, one area per 220 nm), then
 // matched again; the names kept tidy; the rough destinations of the oldest
@@ -757,7 +869,15 @@ function report(d, nowMs, ctx) {
   // (what the browser's own polls of the networks found: every other browser's at once - tel.cjs checks it)
   const tl = d && Array.isArray(d.tel) ? tel.addCrowd(d.tel, nowMs / 1000) : 0;
   const pbn = d && Array.isArray(d.pbIds) ? pbNames(d.pbIds, who, nowMs) : 0;
-  return { ok: true, hdr, flights: n, named, owners: own, tel: tl, pbNamed: pbn };
+  // (22.25) the routes it worked out for flights named here - [id, hex, origin id, its word, destination id, its chance,
+  // its word, ETA, departed] - every other browser has them with the names; and the flights it learned from
+  let rt = 0;
+  if (d && Array.isArray(d.routes)) {
+    const ok = crowd ? allowance('route', who, +CFG.routesPerHour || 600) : null;
+    for (const r of d.routes.slice(0, 500)) if (Array.isArray(r) && (!ok || ok()) && ident.crowdRoute(+r[0], r[1], { o: +r[2], oc: r[3], d: +r[4], p: +r[5], dc: r[6], eta: +r[7], atd: +r[8] }, who, nowMs)) rt++;
+  }
+  const lr = d && Array.isArray(d.learn) ? learnFromCrowd(d.learn, who, nowMs) : null;
+  return { ok: true, hdr, flights: n, named, owners: own, tel: tl, pbNamed: pbn, routes: rt, learned: lr ? lr.n : 0, learnNot: lr && lr.not.length ? lr.not : undefined, learnSeq: lr ? lr.seq : undefined };
 }
 // Names a browser found in FR24's playback (its unnamed flights matched against adsb.lol's heatmap of that half hour),
 // kept for good with the day of the flight - any later playback of it named at once, for everyone. Taken from one browser
@@ -839,7 +959,9 @@ function work(final) {
   wakeQuiet(nowS);
   for (const hex of ac.keys()) buildLegs(hex, nowS);
   prune(nowS); save(); closeDays(nowS);
-  lastRun = Math.round(nowS); saveState(); saveIdent(); owners.save(STORE); names.prune(nowS); tel.prune(nowS);
+  lastRun = Math.round(nowS); saveState(); saveIdent(); saveWaiting(); crowdLearnSave(); owners.save(STORE); names.prune(nowS); tel.prune(nowS);
+  // (each address's hourly counts: gone with their hour)
+  for (const [k, a] of adds) if (a.t !== Math.floor(nowS / 3600)) adds.delete(k);
   // (the tracks: written every ten minutes - a day's file is a few MB - and on stop; the old days removed once a day)
   if (final || nowS - tracksSaved >= 600) { tracksSaved = nowS; tracks.save(); }
   if (tracksPruned !== dayOf(nowS)) { tracksPruned = dayOf(nowS); tracks.prune(nowS); }
@@ -872,7 +994,7 @@ function allowance(kind, ip, cap) {
 // else from the blocked aircraft's tracks: the one kept aircraft where FR24 draws the flight at that moment, at its height,
 // of its type, with no other near it, and no other flight of the moment claiming it. With the flight as the monitor logged
 // it (take-off and landing), so the browser needs neither adsb.lol's heatmap nor the aircraft's day trace.
-const PB = { asked: 0, flights: 0, live: 0, track: 0 };
+const PB = { asked: 0, flights: 0, live: 0, track: 0, reckon: 0, later: 0, waiting: 0 };
 const typeFits = (a, b) => { a = String(a || '').toUpperCase(); b = String(b || '').toUpperCase(); return !a || !b || a === b || a.slice(0, 3) === b.slice(0, 3); };
 function legAt(hex, t) {
   const m = legs.get(hex); if (!m) return null;
@@ -891,8 +1013,8 @@ function pbMatch(t, list) {
     const reg = (l && l.reg) || (b && b.reg) || meta.reg || '', type = (l && l.type) || (b && b.type) || meta.type || '', cs = (l && l.cs) || '';
     return [id, hex, reg, type, cs, b ? 1 : meta.mil ? 2 : meta.pia ? 4 : 0, how, legOut(l)];
   };
-  // (named live: as it was then)
-  for (const r of names.get(fl.map(f => f[0]), t)) { const l = legAt(r[1], t); out.push([r[0], r[1], r[2], r[3], r[4], r[5], 'live', legOut(l)]); done.add(Number(r[0])); PB.live++; }
+  // (named live: as it was then - or worked out since, from its path against the tracks)
+  for (const r of names.get(fl.map(f => f[0]), t)) { const l = legAt(r[1], t); out.push([r[0], r[1], r[2], r[3], r[4], r[5], r[7] || 'live', legOut(l)]); done.add(Number(r[0])); if (r[7]) PB.later++; else PB.live++; }
   const rest = fl.filter(f => !done.has(Number(f[0])));
   if (!rest.length) return out;
   // (where every kept aircraft was at that moment, by whole degree)
@@ -917,9 +1039,29 @@ function pbMatch(t, list) {
   }
   // (one aircraft, one flight)
   const n = new Map(); for (const h of pick.values()) n.set(h, (n.get(h) || 0) + 1);
-  for (const [id, hex] of pick) if (n.get(hex) === 1 && !out.some(r => r[1] === hex)) { out.push(row(id, hex, 'track')); PB.track++; }
+  for (const [id, hex] of pick) if (n.get(hex) === 1 && !out.some(r => r[1] === hex)) { out.push(row(id, hex, 'track')); done.add(Number(id)); PB.track++; }
+  // (22.25) The rest: kept waiting - each moment asked about adds where FR24 drew it then - and tried now, its path so
+  // far against the tracks carried across their holes (dead reckoning); then again and again in the background
+  // (waitLoop) until one aircraft fits. A name found then is in the names: the browser's next ask has it.
+  // (all of the moment's noted first: two of them where one aircraft could be - neither, waiting.cjs rival)
+  const nowMs = Date.now(), t0 = Date.now(), cache = new Map(), ws = [];
+  for (const f of rest) {
+    if (done.has(Number(f[0]))) continue;
+    const w = waiting.note(f[0], [t, f[1], f[2], f[3], f[5]], { type: f[4], src: 'pb' }, nowMs); if (w) { ws.push(w); PB.waiting++; }
+  }
+  // (every browser's asks together: a fifth of the monitor's time at most - what is not tried now is in the background's next round)
+  if (nowMs - pbSpend.at > 5000) { pbSpend.at = nowMs; pbSpend.ms = 0; }
+  const budget = Math.min(+CFG.pbReckonMs || 400, 1000 - pbSpend.ms);
+  for (const w of ws) {
+    if (Date.now() - t0 > budget) break;
+    const m = waiting.tryOne(w, nowMs, cache);
+    if (m && !out.some(r => r[1] === m.hex) && waitNamed(w, m, nowMs)) { waiting.forget(w.id); out.push(row(w.id, m.hex, m.how)); PB[m.how === 'track' ? 'track' : 'reckon']++; }
+    else { w.tries++; w.next = nowMs + 60000; }
+  }
+  pbSpend.ms += Date.now() - t0;
   return out;
 }
+const pbSpend = { at: 0, ms: 0 };
 
 // ---- (22.23) what the engine learns from the last 90 days of every blocked aircraft's flights (the /learn rows), learned
 // here into one list of increments to its tables, a few times a day - and handed to the browsers whole (GET /learned):
@@ -927,25 +1069,29 @@ function pbMatch(t, list) {
 const LEARNED_FILE = path.join(STORE, 'learned.json');
 let learnedOut = null, learnedBusy = false;   // { ver, asOf, from, days, flights, ops: n, json }
 function learnedLoad() {
-  try { const j = fs.readFileSync(LEARNED_FILE, 'utf8'), o = JSON.parse(j); if (o && o.ver && Array.isArray(o.ops)) learnedOut = { ver: o.ver, asOf: o.asOf, from: o.from, days: o.days, flights: o.flights, ops: o.ops.length, builtAt: o.builtAt || 0, json: j }; }
+  try { const j = fs.readFileSync(LEARNED_FILE, 'utf8'), o = JSON.parse(j); if (o && o.ver && Array.isArray(o.ops)) learnedOut = { ver: o.ver, asOf: o.asOf, from: o.from, days: o.days, flights: o.flights, crowd: o.crowd || 0, ops: o.ops.length, builtAt: o.builtAt || 0, builtSeq: o.builtSeq || 0, json: j }; }
   catch (e) { /* none yet */ }
 }
 async function learnedBuild(nowS) {
   if (learnedBusy) return null; learnedBusy = true;
   try {
     const today = dayOf(nowS), floor = dayOf(nowS - CFG.learnDays * 86400);
-    const days = fs.existsSync(LEARN_DIR) ? fs.readdirSync(LEARN_DIR).map(f => (/^(\d{4}-\d\d-\d\d)\.json$/.exec(f) || [])[1]).filter(d => d && d >= floor && d < today).sort() : [];
+    // (the browsers' flights taken so far written first: every one numbered up to now is in this build)
+    crowdLearnSave(); const upTo = learnSeq;
+    const dayList = dir => fs.existsSync(dir) ? fs.readdirSync(dir).map(f => (/^(\d{4}-\d\d-\d\d)\.json$/.exec(f) || [])[1]).filter(d => d && d >= floor && d < today) : [];
+    const days = [...new Set(dayList(LEARN_DIR).concat(dayList(LEARN_CROWD_DIR)))].sort();
     if (!days.length) return null;
-    const col = E.learnCollector(), t0 = Date.now();
-    // (a day at a time, in slices: the monitor answers the browsers meanwhile)
+    const col = E.learnCollector(), t0 = Date.now(); let crowd = 0;
+    // (a day at a time, in slices: the monitor answers the browsers meanwhile; the browsers' flights of the day with it)
     for (const d of days) {
-      let rows = []; try { rows = JSON.parse(fs.readFileSync(path.join(LEARN_DIR, d + '.json'), 'utf8')); } catch (e) { continue; }
+      let rows = []; try { rows = JSON.parse(fs.readFileSync(path.join(LEARN_DIR, d + '.json'), 'utf8')); } catch (e) { rows = []; }
+      const more = crowdRows(d, rows, upTo); crowd += more.length; rows = rows.concat(more);
       for (let i = 0; i < rows.length; i += 2000) { col.add(rows.slice(i, i + 2000)); await new Promise(r => setImmediate(r)); }
     }
-    const ops = col.ops(), o = { v: 1, ver: days[days.length - 1] + '.' + Math.round(nowS), asOf: days[days.length - 1], from: days[0], days: days.length, flights: col.flights, builtAt: Math.round(nowS), ops };
+    const ops = col.ops(), o = { v: 1, ver: days[days.length - 1] + '.' + Math.round(nowS), asOf: days[days.length - 1], from: days[0], days: days.length, flights: col.flights, crowd, builtAt: Math.round(nowS), builtSeq: upTo, ops };
     const json = JSON.stringify(o);
     fs.mkdirSync(STORE, { recursive: true }); fs.writeFileSync(LEARNED_FILE + '.tmp', json); fs.renameSync(LEARNED_FILE + '.tmp', LEARNED_FILE);
-    learnedOut = { ver: o.ver, asOf: o.asOf, from: o.from, days: o.days, flights: o.flights, ops: ops.length, builtAt: o.builtAt, json };
+    learnedOut = { ver: o.ver, asOf: o.asOf, from: o.from, days: o.days, flights: o.flights, crowd, ops: ops.length, builtAt: o.builtAt, builtSeq: upTo, json };
     log('learned', o.flights, 'flights of', o.days, 'days into', ops.length, 'increments,', Math.round(json.length / 1e5) / 10, 'MB in', Date.now() - t0, 'ms');
     return learnedOut;
   } finally { learnedBusy = false; }
@@ -1059,7 +1205,9 @@ function monStatus() {
     live: live.size, listAge: { ladd: age('ladd'), mil: age('mil'), fi: age('fi'), pia: age('pia'), hex: age('hex'), area: age('area'), fiArea: age('fiArea'), adsbx: age('adsbx'), osky: age('osky') }, listPolls: stats.listPolls, adsbx: { key: !!CFG.adsbxKey, today: adsbxUse.n, cap: CFG.adsbxDaily }, apiLastMin: gate.sent.filter(t => now - t < 60000).length,
     hist: Object.assign({ queue: histQ.length, closed }, histStats),
     tracks: Object.assign({ days: tracks.days }, tracks.stats), playback: PB,
-    learned: learnedOut ? { ver: learnedOut.ver, from: learnedOut.from, asOf: learnedOut.asOf, days: learnedOut.days, flights: learnedOut.flights, ops: learnedOut.ops, mb: Math.round(learnedOut.json.length / 1e5) / 10 } : null, backfillWaits: backWaits.n,
+    waiting: { flights: waiting.size, playback: waiting.count('pb'), live: waiting.count('live'), named: waiting.stats.named, tries: waiting.stats.tries, expired: waiting.stats.expired, rounds: WAIT.rounds, lastMs: WAIT.lastMs },
+    learned: learnedOut ? { ver: learnedOut.ver, from: learnedOut.from, asOf: learnedOut.asOf, days: learnedOut.days, flights: learnedOut.flights, fromBrowsers: learnedOut.crowd || 0, ops: learnedOut.ops, mb: Math.round(learnedOut.json.length / 1e5) / 10 } : null, backfillWaits: backWaits.n,
+    shared: { routes: ident.stats.routes || 0, routesRefused: ident.stats.routeRefused || 0, routesShown: [...ident.ids.values()].filter(R => R.crowd).length, destsDropped: ident.stats.routeAged || 0, learnRows: LC },
     fr24: { scanning: !!CFG.fr24Scan, headersFrom: fr24.st.hdr ? 'browser' : 'default', ok: fr24.st.ok, fails: fr24.st.fails, lastErr: fr24.st.lastErr, lastOkAgo: fr24.st.lastOkAt ? Math.round((now - fr24.st.lastOkAt) / 1000) : null, paused: fr24.st.pauseUntil > now ? Math.round((fr24.st.pauseUntil - now) / 1000) : 0, scans: F24.scans, last: F24.last,
       flights: ident.flights.size, named: ident.ids.size, unnamed: [...ident.flights.values()].filter(F => !ident.ids.has(F.id) && now - F.seen < 600000).length, matched: ident.stats.matched, revoked: ident.stats.revoked, lookups: ident.stats.lookups, trails: ident.stats.trails, trailQueue: ident.trailQ.length, dest: dest.stats, logged: F24.logged,
       archive: { names: names.size, added: names.stats.added, withdrawn: names.stats.dropped, servedToPlayback: names.stats.served }, crowd: { public: PUBLIC, refused: ident.stats.crowdRefused || 0, waiting: ident.stats.crowdPending || 0 } },
@@ -1157,6 +1305,7 @@ if (require.main === module) {
   const st = loadState();
   loadStore(nowS);
   const named = loadIdent(Date.now()); if (named) log('kept names of', named, 'FR24 flights');
+  const waits = loadWaiting(Date.now()); if (waits) log(waits, 'flights not named yet, still being worked on');
   const ownersKnown = owners.load(STORE); if (ownersKnown) log('kept owners of', ownersKnown, 'aircraft');
   learnedLoad();
   const namesKept = names.load(nowS); if (namesKept) log('names of', namesKept, 'FR24 flights of the last two weeks, for playback');
@@ -1177,11 +1326,11 @@ if (require.main === module) {
   process.on('unhandledRejection', e => log('error', e && e.stack || e));
   loop();
   for (let i = 0; i < CFG.backWorkers; i++) backfillLoop();
-  fr24Loop(); identLoop(); trailLoop();
+  fr24Loop(); identLoop(); trailLoop(); waitLoop();
   // (every blocked aircraft's owner not known yet: looked up, fifteen a minute at most, those flying now first)
   for (const [hex, b] of blocked) owners.want(hex, b.reg);
   ownersLoop();
   setInterval(() => { wx.pump().catch(e => log('wx', String(e))); }, 2000);
 }
-module.exports = { tracks, pbMatch, learnedBuild, learnedDue, learnedLoad, learnedRef: () => learnedOut, liveBusy, backWaits, E, CFG, loadEngine, ingest, buildLegs, fr24Legs, fr24Leg, F24ref: () => F24, owners, ownersLoop, APT, legRunways, names, nearAnswer, telAnswer, tel, wx, pbNames, PUBLIC, RATE, limited, wakeQuiet, parkedAt, boardLegs, flightsOfCs, lastHeard, legs, ac, backfillOne, backQ, blocked, markBlocked, seed, gapFill, addArea, userAreas,
+module.exports = { learnCheck, learnFromCrowd, crowdLearnSave, crowdRows, LC, tracks, waiting, waitRound, waitLive, waitNamed, waitClaims, WAIT, saveWaiting, loadWaiting, pbMatch, learnedBuild, learnedDue, learnedLoad, learnedRef: () => learnedOut, liveBusy, backWaits, E, CFG, loadEngine, ingest, buildLegs, fr24Legs, fr24Leg, F24ref: () => F24, owners, ownersLoop, APT, legRunways, names, nearAnswer, telAnswer, tel, wx, pbNames, PUBLIC, RATE, limited, wakeQuiet, parkedAt, boardLegs, flightsOfCs, lastHeard, legs, ac, backfillOne, backQ, blocked, markBlocked, seed, gapFill, addArea, userAreas,
   serve, fr24, ident, dest, F24, report, identRound, fr24Round, saveIdent, loadIdent, histUnknown, learnSince, learnWrite, diskLegs, KEEP_LADD, save, loadStore, dirtyDays, pollOpenSky, adsbxUse, live, liveList, answer, step, P, piaState, apiGet, gate, stats, lastOk, noteWatch, watch, watchedAll, flew, closeDays, histQ, histPend, histOne, histDay, histOf, histRead, nextHist, saveState, loadState, lastW, get closed() { return closed; }, set closed(v) { closed = v; }, pause };
