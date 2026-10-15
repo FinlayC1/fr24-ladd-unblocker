@@ -126,7 +126,7 @@ Its store and state should move to the VM.
   panel filled (movements per day, runway usage, runway details + frequencies; Latest events and the coverage plea
   hidden), LADD/PIA/MIL flags sticky and learned from every source (the OK-VOS "ADS-B" tag).
 - Repository: banner/icon (docs/assets), download-style README, LICENSE (personal use), NOTICE, PRIVACY, docs/legal.md,
-  GitHub workflows (tests on push; release on tag v<version>), issue templates. `dist/` (userscript, extension, zip) is
+  GitHub workflows (tests on push; release of each new version once the tests pass on main), issue templates. `dist/` (userscript, extension, zip) is
   committed - the zip is reproducible.
 - NOT verified here: FR24's live DOM for the airport panel (the jsdom test uses a panel shaped like the user's
   screenshot; the promo test ids other than `airport-panel__promo-runway_details` are guessed, with a fallback by title),
