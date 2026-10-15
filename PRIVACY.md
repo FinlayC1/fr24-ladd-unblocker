@@ -1,6 +1,6 @@
 # Privacy
 
-**The short version:** the FR24 LADD Unblocker has no analytics, no tracking, no advertising and no accounts, and sells nothing. What it learns about aircraft is kept in your own browser and on the shared monitor, the project's server, which every copy connects to by default. You can turn that off, or use your own monitor instead. What the shared monitor receives from your browser, and how long it is kept, is set out below.
+**The short version:** the FR24 LADD Unblocker has no analytics, no tracking, no advertising and no accounts, and sells nothing. What it learns about aircraft is kept in your own browser and on the shared monitor, the project's server, which every client connects to by default. You can turn that off in settings, or use your own monitor instead. What the shared monitor receives from your browser, and how long it is kept, is set out below.
 
 This policy covers the browser extension, the userscript and the monitor.
 
