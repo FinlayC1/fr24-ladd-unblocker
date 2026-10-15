@@ -1,4 +1,4 @@
-// FR24 LADD Unblocker 22.25.2 - the page-world part (see src/page.js)
+// FR24 LADD Unblocker 22.26.1 - the page-world part (see src/page.js)
 (function () {
   'use strict';
   // ------------------------------------------------------------------------------------------------------------
@@ -7,7 +7,7 @@
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "22.25.2";
+    var BRIDGE_V = "22.26.1";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
 
     var resolved = new Map();     // fr24 flight id -> identity record (incl. photos)

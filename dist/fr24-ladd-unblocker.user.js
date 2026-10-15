@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Flightradar24 LADD / N-A Unblocker (feed-level)
 // @namespace    tweeks.io
-// @version      22.25.2
+// @version      22.26.1
 // @description  Identifies every LADD / N/A / blocked military aircraft on Flightradar24 from public ADS-B, and injects callsign, registration, operator, age, country, MSN, squawk, vertical speed, GPS altitude, airspeeds, wind, photos, a reasoned origin/destination with a wind-corrected ETA (also for ordinary flights FR24 shows as N/A - military, private, GA, helicopters, with private landing sites; learned from 63 days of every aircraft worldwide, with live weather and closures), airport-board entries and a rebuilt 7-month flight log straight into FR24's own data - so it all renders like normal FR24 traffic.
 // @author       Finlay Clarke
 // @match        https://www.flightradar24.com/*
@@ -88,7 +88,7 @@
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "22.25.2";
+    var BRIDGE_V = "22.26.1";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
 
     var resolved = new Map();     // fr24 flight id -> identity record (incl. photos)
@@ -4835,7 +4835,7 @@
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '22.25.2';
+  const VERSION = '22.26.1';
   const NM_KM = 1.852;
   const AREA_RADIUS_NM = 220;           // aggregator "point" radius for viewport sweeps (APIs cap at 250)
   const TARGET_RADIUS_NM = 40;          // radius for the immediate lookup of the selected aircraft
@@ -8168,6 +8168,24 @@
   }
   // (what to say of a helicopter's take-off from a site: its name when it has one - London Heliport, Southmead Hospital)
   const siteTakeoffNote = sp => sp.known === 'platform' ? 'took off from an offshore platform' : sp.name && !/^Private site/.test(sp.name) ? 'took off from ' + sp.name : 'took off from a private site';
+  // FR24's trail points as the engine reads them. FR24 leaves out a height it does not have, so the point reads 0 ft: on
+  // the ground when slow, on the runway when at a field just after being low over it - but at speed away from every
+  // airfield, or just after being heard far above the field it is over, it has no height at all. KSK16 (a Challenger 605,
+  // 15 Oct) climbed out of Ankara and was lost by FR24 south-west of it; a point of that kind after the climb, at "0 ft",
+  // was taken for a landing in a hole in coverage, the take-off was cut off with it, and the panel said "departure
+  // unknown, first seen at FL368" (test/unit_ksk16.cjs).
+  function fr24Pts(pts, heli, gndKt) {
+    let real = null;
+    return pts.map(p => {
+      const q = { t: p.t, lat: p.lat, lon: p.lon, alt: p.alt, gs: p.gs, trk: p.trk, gnd: p.alt <= 0 && p.gs < (gndKt || (heli ? 3 : 50)) };
+      if (p.alt > 0) real = p;
+      else if (!q.gnd && !heli && fin(p.lat) && fin(p.lon)) {
+        const fa = ENGINE.placeAt(p.lat, p.lon, 8, 3);
+        if (!fa || (real && p.t - real.t < 180 && real.alt - (fa.airport.alt || 0) > 3000)) q.alt = null;
+      }
+      return q;
+    });
+  }
   // The flight's track so far: adsb.lol's trace of the current leg (it usually starts on the runway), then FR24's
   // own trail, then whatever the feed has shown us.
   function trailFor(id, hex, pos) {
@@ -8189,10 +8207,10 @@
     }
     const lastT = out.length ? out[out.length - 1].t : 0;
     const firstT = out.length ? out[0].t : Infinity;
-    const hv = isHeliId(id), fr = tr && tr.pts ? tr.pts.map(p => ({ t: p.t, lat: p.lat, lon: p.lon, alt: p.alt, gs: p.gs, trk: p.trk, gnd: p.alt <= 0 && p.gs < (hv ? 3 : 50) })) : [];
+    const hv = isHeliId(id), fr = tr && tr.pts ? fr24Pts(tr.pts, hv) : [];
     if (fr.length && fr[0].t < firstT - 120) out = fr.filter(p => p.t < firstT).concat(out);
     // (FR24's very first point of this flight - where it began - always leads)
-    if (tr && tr.first && fin(tr.first.lat) && (!out.length || tr.first.t < out[0].t - 60)) out.unshift({ t: tr.first.t, lat: tr.first.lat, lon: tr.first.lon, alt: tr.first.alt, gs: tr.first.gs, trk: tr.first.trk, gnd: tr.first.alt <= 0 && tr.first.gs < 50 });
+    if (tr && tr.first && fin(tr.first.lat) && (!out.length || tr.first.t < out[0].t - 60)) out.unshift(fr24Pts([tr.first], hv, 50)[0]);
     out = out.concat(fr.filter(p => p.t > lastT + 10));
     // FR24's own points where adsb.lol has a hole (out of its coverage): a landing and take-off there is then seen
     if (fr.length && out.length > 1) {
@@ -8367,7 +8385,15 @@
       const g = ENGINE.landingInGap(trail.gapFrom, trail[0], { cls: ENGINE.classify(ac), type: ac.type });
       if (g) { o0 = { airport: g.airport, conf: 'low', note: `took off from ${apCode(g.airport)}, out of ADS-B coverage`, departedAt: Math.round(trail[0].t - g.db / 500 * 3600 - 120) }; }
     }
-    const origin = rememberOrigin(rec0, o0, trail[0], !!trail.cut);
+    // (a take-off it cannot have made: from there at that time it could not be where it is now, at any speed it has
+    // flown. G-IOOS, a helicopter at 137 kt over Swansea Bay at 08:33Z, was "took off from MAN, 08:09Z" - 230 km in 24
+    // minutes - while FR24 had been showing it on its way from the Welsh border since before 08:00. Not kept, not shown.)
+    const vMax = Math.max(100, fin(pos.gs) ? pos.gs : 0, ...trail.map(p => fin(p.gs) && p.gs < 700 ? p.gs : 0)) * 1.852 * 1.5;
+    const couldHave = o => !o || !o.airport || !(o.departedAt > 0) || pos.t <= o.departedAt || ENGINE.dist(o.airport.lat, o.airport.lon, pos.lat, pos.lon) <= 30 + vMax * (pos.t - o.departedAt) / 3600;
+    if (rec0 && rec0.origin && rec0.origin.id && !couldHave({ airport: apById(rec0.origin.id), departedAt: rec0.origin.departedAt })) rec0.origin = null;
+    const f0 = trail[0] || pos, unseen = { airport: null, conf: '', note: fin(f0.alt) ? `first seen at ${f0.alt >= 18000 ? 'FL' + Math.round(f0.alt / 100) : Math.round(f0.alt) + ' ft'}` : 'first seen airborne', departedAt: 0 };
+    let origin = rememberOrigin(rec0, couldHave(o0) ? o0 : unseen, trail[0], !!trail.cut);
+    if (!couldHave(origin)) origin = unseen;
     const maxAltSeen = Math.max(st.maxAlt || 0, ...trail.map(p => p.alt || 0));
     const r = { computedAt: now(), quick: !!(opts && opts.quick), onGround: !!pos.gnd, landed: false, originId: 0, destId: 0, destConf: '', destReason: '', originNote: '', originConf: '', alternatives: [], phase: '', std: 0, sta: 0, atd: 0, ata: 0, eta: 0, etd: 0, departedAt: 0, groundAirportId: 0, progress: null, legCount: hs.n, base: hs.base ? apCode(apById(hs.base)) : '' };
     const setO = (a, note, conf) => { if (!a) return; r.originId = a.id; r.originIata = apCode(a); r.originCity = a.city || a.name; r.originNote = note || ''; r.originConf = conf || ''; };
