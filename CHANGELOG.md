@@ -2,6 +2,11 @@
 
 All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PATCH`. The userscript and the monitor are released together.
 
+## [22.28.2] - 2026-10-15
+
+### Fixed
+- **A LADD aircraft's slideshow no longer opens on a short picture with "© name - JetPhotos" burnt into its bottom.** JVW739 (OE-GAB) showed it on first click. When FR24 has its own pictures of a blocked airframe, it sends them in the panel's first answer, and they were passed on as FR24 sent them, in JetPhotos' credit-bar size. They are now given to the slideshow the same way the script's own pictures are: the clean large picture, drawn like every other slide. As a second guard, any JetPhotos picture in its credit-bar size that reaches the page by any other route is switched to the clean size as it is drawn.
+
 ## [22.28.1] - 2026-10-15
 
 ### Fixed
