@@ -19,9 +19,11 @@
       lat, lon, alt: fin(alt) ? alt : NaN, gnd, gs: Number(ac.gs), trk: Number(ac.track), ageS: (Number(ac.seen_pos) || 0), receivedAt, dbFlags, ladd: !!(dbFlags & 8), pia: !!(dbFlags & 4), mil: !!(dbFlags & 1), src,
       cat: clean(ac.category).toUpperCase(), sq, squawk: sq ? parseInt(sq, 8) : 0, emergency: clean(ac.emergency),
       // everything the panel's own fields can show, straight from the transponder
-      vs: fin(numOr(ac.baro_rate)) ? numOr(ac.baro_rate) : numOr(ac.geom_rate), agps: numOr(ac.alt_geom), ias: numOr(ac.ias), tas: numOr(ac.tas), mach: numOr(ac.mach), oat: numOr(ac.oat), wd: numOr(ac.wd), ws: numOr(ac.ws), mcp: numOr(ac.nav_altitude_mcp), fms: numOr(ac.nav_altitude_fms), navHdg: numOr(ac.nav_heading), qnh: numOr(ac.nav_qnh), ...(gnd ? GROUND_AIRDATA : {}) };
+      vs: fin(numOr(ac.baro_rate)) ? numOr(ac.baro_rate) : numOr(ac.geom_rate), agps: numOr(ac.alt_geom), ias: numOr(ac.ias), tas: numOr(ac.tas), mach: numOr(ac.mach), oat: numOr(ac.oat), wd: numOr(ac.wd), ws: numOr(ac.ws), mcp: numOr(ac.nav_altitude_mcp), fms: numOr(ac.nav_altitude_fms), navHdg: numOr(ac.nav_heading), qnh: numOr(ac.nav_qnh),
+      // (wx: the airspeeds, Mach, wind and temperature are the monitor's estimate from a weather model, not the aircraft's)
+      wx: !gnd && ac.wx === 1, ...(gnd ? GROUND_AIRDATA : {}) };
   }
-  const telemOf = c => c ? { gnd: !!c.gnd, vr: c.vs, sq: c.squawk || 0, sqs: c.sq || '', agps: c.agps, ias: c.ias, tas: c.tas, mach: c.mach, oat: c.oat, wd: c.wd, ws: c.ws, mcp: c.mcp, fms: c.fms, cat: c.cat, emergency: c.emergency, ...firFields(c), at: c.receivedAt - (c.ageS || 0) * 1000 } : null;
+  const telemOf = c => c ? { gnd: !!c.gnd, vr: c.vs, sq: c.squawk || 0, sqs: c.sq || '', agps: c.agps, ias: c.ias, tas: c.tas, mach: c.mach, oat: c.oat, wd: c.wd, ws: c.ws, wx: !!c.wx, mcp: c.mcp, fms: c.fms, cat: c.cat, emergency: c.emergency, ...firFields(c), at: c.receivedAt - (c.ageS || 0) * 1000 } : null;
   const firFields = c => { const f = firInfo(c.lat, c.lon, c.gnd ? 0 : c.alt); return f ? { air: f.name, airId: f.code } : { air: '', airId: '' }; };
   const readsbList = j => Array.isArray(j && j.ac) ? j.ac : Array.isArray(j && j.aircraft) ? j.aircraft : [];
   // (altFn: an older address of the same query, asked when the first is not found - adsb.fi moved its area query to v3)
@@ -75,7 +77,7 @@
       if (!c || !c.hex) continue; const p = areaCache.get(c.hex);
       // (a report without the airspeeds, Mach, wind and temperature - the networks send them only now and then, and over
       // the US not at all: the monitor's figures, its own or worked out from the weather model, kept two minutes)
-      if (p && !c.gnd && !fin(c.tas) && !fin(c.ias) && fin(p.tas) && seenAt(c) >= seenAt(p) && seenAt(c) - seenAt(p) < 120000) for (const k of ['ias', 'tas', 'mach', 'oat', 'wd', 'ws']) if (!fin(c[k]) && fin(p[k])) c[k] = p[k];
+      if (p && !c.gnd && !fin(c.tas) && !fin(c.ias) && fin(p.tas) && seenAt(c) >= seenAt(p) && seenAt(c) - seenAt(p) < 120000) { for (const k of ['ias', 'tas', 'mach', 'oat', 'wd', 'ws']) if (!fin(c[k]) && fin(p[k])) c[k] = p[k]; c.wx = !!p.wx; c.airKept = true; }
       if (!p || seenAt(c) >= seenAt(p)) areaCache.set(c.hex, c); noteLastSeen(c);
     }
     if (areaCache.size > 12000) { const cut = now() - 10 * 60000; for (const [k, v] of areaCache) if (v.receivedAt < cut) areaCache.delete(k); }
@@ -559,7 +561,10 @@
   function noteTelOut(list) {
     for (const c of list || []) {
       if (!c || c.nonIcao || c.src === 'monitor' || !fin(c.lat) || !fin(c.lon) || now() - seenAt(c) > 60000) continue;
-      telOut.set(c.hex, [c.hex, rnd4(c.lat), rnd4(c.lon), c.gnd ? 'g' : fin(c.alt) ? Math.round(c.alt) : null, nn(c.gs), nn(c.trk), c.gnd ? 0 : nn(c.vs), c.sq || '', nn(c.agps), nn(c.ias), nn(c.tas), nn(c.mach), nn(c.oat), nn(c.wd), nn(c.ws), Math.round(seenAt(c) / 1000), c.reg || '', c.type || '', c.cs || '', c.dbFlags | 0]);
+      // (airspeeds, Mach, wind and temperature only as the aircraft sent them: never the monitor's own figures kept from an
+      // earlier report, nor its estimates - sent back, they would come back as a browser's and lose their mark)
+      const own = !c.wx && !c.airKept;
+      telOut.set(c.hex, [c.hex, rnd4(c.lat), rnd4(c.lon), c.gnd ? 'g' : fin(c.alt) ? Math.round(c.alt) : null, nn(c.gs), nn(c.trk), c.gnd ? 0 : nn(c.vs), c.sq || '', nn(c.agps), ...(own ? [nn(c.ias), nn(c.tas), nn(c.mach), nn(c.oat), nn(c.wd), nn(c.ws)] : [null, null, null, null, null, null]), Math.round(seenAt(c) / 1000), c.reg || '', c.type || '', c.cs || '', c.dbFlags | 0]);
     }
     if (telOut.size > 3000) for (const k of [...telOut.keys()].slice(0, telOut.size - 3000)) telOut.delete(k);
   }
@@ -663,6 +668,7 @@
   const strikes = new Map();          // fr24 id -> { n, first } consecutive failed verifications
   const msgCount = {};   // page reports received, by kind (the strip of an ordinary flight shows them)
   let shownId = null;   // the flight id the open panel is showing (worked out from the aircraft on screen)
+  let bridgeStats = null;   // (the page part's counters, as it last sent them - read by the health check)
   let selectedId = null, bridgeReady = false, feedReady = false, sweepTimer = 0, sweepRunning = false, viewCenter = null;
 
   function pageWindow() { try { return typeof unsafeWindow !== 'undefined' && unsafeWindow ? unsafeWindow : window; } catch (_) { return window; } }

@@ -36,6 +36,9 @@
     "https://*.sslip.io/*",
     "https://raw.githubusercontent.com/*"
   ],
+  "optional_host_permissions": [
+    "https://*/*"
+  ],
   "content_scripts": [
     {
       "matches": [

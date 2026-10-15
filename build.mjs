@@ -94,6 +94,11 @@ console.log('built', dest, (out.length / 1024).toFixed(0) + ' KB', out.split('\n
 //   dist/fr24-ladd-unblocker-extension.zip   the same, packed
 const header = rd('src/header.js'), meta = k => (header.match(new RegExp('@' + k + '\\s+(.+)')) || [])[1] || '';
 const version = meta('version').trim();
+// (the version typed by hand elsewhere - package.json, the README's badge, the website's byline - must be this one)
+for (const [f, re] of [['package.json', /"version": "([^"]+)"/], ['README.md', /badge\/version-([0-9.]+)-/], ['site/index.html', /Version ([0-9.]+) ·/]]) {
+  const got = (rd(f).match(re) || [])[1];
+  if (got !== version) { console.error(`build: ${f} says version ${got}, src/header.js says ${version} - bring them in line`); process.exit(1); }
+}
 const hosts = [...header.matchAll(/@connect\s+(\S+)/g)].map(m => m[1]).filter(h => /\./.test(h));
 const hostPerm = h => h === 'sslip.io' ? ['https://*.sslip.io/*'] : ['https://' + h + '/*'];
 const manifest = {
@@ -105,6 +110,8 @@ const manifest = {
   icons: { 16: 'icons/16.png', 48: 'icons/48.png', 128: 'icons/128.png' },
   background: { service_worker: 'background.js' },
   host_permissions: [...new Set(hosts.flatMap(hostPerm))],
+  // (a monitor of the user's own, at any https address: asked for when it is set, on grant.html)
+  optional_host_permissions: ['https://*/*'],
   content_scripts: [
     { matches: ['https://www.flightradar24.com/*', 'https://flightradar24.com/*'], js: ['page.js'], run_at: 'document_start', world: 'MAIN', all_frames: false },
     { matches: ['https://www.flightradar24.com/*', 'https://flightradar24.com/*'], js: ['content.js'], run_at: 'document_start', all_frames: false }
@@ -149,6 +156,8 @@ const extFiles = [
   ['page.js', Buffer.from(pagePart)],
   ['content.js', Buffer.from(rd('extension/shim.js') + '\n' + out)],
   ['background.js', Buffer.from(rd('extension/background.js'))],
+  ['grant.html', Buffer.from(rd('extension/grant.html'))],
+  ['grant.js', Buffer.from(rd('extension/grant.js'))],
   ...[16, 48, 128].map(n => { const f = path.join(root, 'extension', 'icons', n + '.png'); return ['icons/' + n + '.png', fs.existsSync(f) ? fs.readFileSync(f) : pngIcon(n)]; })
 ];
 const extDir = path.join(root, 'dist', 'extension');

@@ -88,11 +88,11 @@ The population tables and model weights in `src/*.json` are produced from adsb.l
 
 ## Release checklist
 
-1. Bump `@version` in `src/header.js`, `VERSION` in `src/main/01-core.js` and `version` in `package.json` (and `package-lock.json`) together.
+1. Bump `@version` in `src/header.js`, `VERSION` in `src/main/01-core.js`, `version` in `package.json` (and `package-lock.json`), the README's version badge and the website's byline (`site/index.html`) together. The build stops if any of them disagree.
 2. `npm run lint` (0 errors) and `npm test`. Run `npm run test:all` and `test/perf.cjs` where the network allows.
 3. Run the monitor's tests on Node 18 (the server's version).
 4. Add an entry to `CHANGELOG.md`.
 5. Commit the rebuilt `dist/` (userscript, extension folder and zip) with the change. Now and then, refresh the runway data (`node monitor/mkdata.cjs`) and commit it after the tests pass.
 6. Server: `bash ~/fr24-ladd/monitor/deploy.sh`.
 7. Browser: reload the extension from the new zip, or install the new userscript build in Tampermonkey (a header change needs a reinstall). Keep the previous version as a backup.
-8. Optionally tag the release (`git tag v<version> && git push origin v<version>`). The release workflow builds it and attaches the zip and userscript to a GitHub release.
+8. Nothing to tag: once every test passes on `main` with a version that has no release yet, the release workflow publishes `v<version>` itself, with the zip, the userscript and the changelog entry as its notes. A change merged without a version bump is not released.

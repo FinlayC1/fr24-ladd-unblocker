@@ -28,6 +28,15 @@ Playback names blocked flights the moment they are shown, and the monitor keeps 
 
 ### Changed
 - **The live LADD list stays fresh while days are rebuilt.** The rebuild workers wait while adsb.lol is paused or the LADD list is more than three polls old (`backfillWaits` in `/status`).
+- **Estimated airspeeds are marked.** Figures the monitor works out from the weather model show as "≈ 460 kts" in the panel, with a tooltip saying where they came from. An aircraft's own figures show as before.
+- **A monitor of your own, in the extension.** Any https address now works: setting one in *Sources* opens a page where the browser asks you to allow it, once.
+- A public monitor takes at most 4 new places to poll (`/area`) and 300 new aircraft to follow (`/seed`) an hour from any one address other than the owner's (`areaPerHour`, `seedPerHour`).
+
+### Fixed
+- **Releases publish themselves.** Once every test passes on `main` with a version not yet released, `v<version>` is published with the extension and the userscript attached, so the README's *Download the extension* button always gets the newest tested build.
+- The extension's health warnings (FR24 refusing the unlocked fields, a changed data format, an unrecognised live feed) never appeared: the script could not read the page part's counters from the extension's own world.
+- The browser sent the monitor's own airspeed figures, estimates included, back to it as its own poll, where they were kept without their mark.
+- Tests: `unit_public`'s rate check failed when it ran across a minute's turn. `unit_extension` now runs in CI.
 
 ## [22.22.1] - 2026-10-14
 
