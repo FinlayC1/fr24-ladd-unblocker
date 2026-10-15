@@ -13,6 +13,8 @@ let fails = 0;
 const check = (name, ok, info) => { if (!ok) fails++; console.log((ok ? 'PASS  ' : 'FAIL  ') + name + (info !== undefined ? '  ' + JSON.stringify(info) : '')); };
 const root = path.join(__dirname, '..'), src = path.join(root, 'dist', 'extension');
 if (!fs.existsSync(path.join(src, 'manifest.json'))) { console.log('FAIL  dist/extension missing - npm run build'); process.exit(1); }
+// (FR24's bottom bar, roughly: the LADD Unblock button joins it)
+const BAR = '<nav class="bar">' + ['Settings', 'Weather', 'Filters', 'Widgets', 'Playback'].map(l => `<button class="bar-btn"><svg class="ic" width="24" height="24" viewBox="0 0 24 24"><path d="M2 2h20"/></svg><span>${l}</span></button>`).join('') + '</nav>';
 (async () => {
   // (a local server: a text answer that echoes the request, a binary file, a slow answer)
   const seen = [];
@@ -38,7 +40,7 @@ if (!fs.existsSync(path.join(src, 'manifest.json'))) { console.log('FAIL  dist/e
   fs.writeFileSync(path.join(ext, 'manifest.json'), JSON.stringify(man));
   const ctx = await chromium.launchPersistentContext(fs.mkdtempSync(path.join(os.tmpdir(), 'tlprof-')), { executablePath: exe, headless: true, args: ['--disable-extensions-except=' + ext, '--load-extension=' + ext] });
   try {
-    await ctx.route('https://www.flightradar24.com/**', route => { const u = route.request().url(); if (/\/(mobile|api|common|v1|data)\//.test(u)) return route.fulfill({ status: 404, body: '' }); return route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><html><head><title>FR24</title></head><body><div id="app"></div></body></html>' }); });
+    await ctx.route('https://www.flightradar24.com/**', route => { const u = route.request().url(); if (/\/(mobile|api|common|v1|data)\//.test(u)) return route.fulfill({ status: 404, body: '' }); return route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><html><head><title>FR24</title></head><body><div id="app"></div>' + BAR + '</body></html>' }); });
     let sw = ctx.serviceWorkers()[0]; if (!sw) sw = await ctx.waitForEvent('serviceworker', { timeout: 15000 }).catch(() => null);
     check('the service worker runs', !!sw && /background\.js$/.test(sw.url()), sw && sw.url());
     const page = await ctx.newPage(), errors = [];
@@ -87,8 +89,43 @@ if (!fs.existsSync(path.join(src, 'manifest.json'))) { console.log('FAIL  dist/e
     const bad = await ev('TL_HOST_ACCESS("http://monitor.example.org")');
     check('... nothing asked for an address that is not https', bad === false && ctx.pages().filter(x => /grant\.html/.test(x.url())).length === 1);
     check('manifest: any https address only as an optional host (asked for, never granted at install)', JSON.stringify(built.optional_host_permissions) === '["https://*/*"]' && !built.host_permissions.includes('https://*/*'));
+    // (the LADD Unblock button on FR24's bar, its window, and "Reload extension" - after the folder's files were replaced
+    // with a new version, as an update by hand does: the new one is what runs afterwards)
+    const ubBtn = await page.waitForSelector('nav.bar .tl-ub-btn', { timeout: 5000 }).catch(() => null);
+    check('LADD Unblock: its button on FR24\'s bar', !!ubBtn && await page.evaluate(() => document.querySelector('nav.bar').lastElementChild.textContent) === 'LADD Unblock');
+    if (ubBtn) await ubBtn.click();
+    const updTxt = await page.waitForSelector('.tl-ub #tl-ub-upd', { timeout: 3000 }).then(e => e.textContent()).catch(() => '');
+    check('... its window: this version, an unpacked extension, with Reload extension', updTxt.includes('v' + man.version) && /Browser extension \(unpacked\)/.test(updTxt) && !!await page.$('.tl-ub [data-ub-act="reloadExt"]'), updTxt.replace(/\s+/g, ' '));
     check('no errors from the extension on the page', errors.length === 0, errors.slice(0, 5));
   } finally { await ctx.close(); srv.close(); }
+  // "Reload extension" in the window, as an update by hand uses it: the folder's files replaced with a new version, then the
+  // button - the extension restarts from its folder and FR24 reloads with the new one. (Loaded the way "Load unpacked" loads
+  // it: an extension given on the command line is dropped by a reload instead.)
+  {
+    const ext2 = fs.mkdtempSync(path.join(os.tmpdir(), 'tlext-'));
+    fs.cpSync(src, ext2, { recursive: true });
+    const ctx2 = await chromium.launchPersistentContext(fs.mkdtempSync(path.join(os.tmpdir(), 'tlprof-')), { executablePath: exe, headless: true, args: ['--enable-unsafe-extension-debugging'], ignoreDefaultArgs: ['--disable-extensions'] });
+    try {
+      await ctx2.route('https://www.flightradar24.com/**', route => /\/(mobile|api|common|v1|data)\//.test(route.request().url()) ? route.fulfill({ status: 404, body: '' }) : route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><html><head><title>FR24</title></head><body><div id="app"></div>' + BAR + '</body></html>' }));
+      const loaded = await (await ctx2.browser().newBrowserCDPSession()).send('Extensions.loadUnpacked', { path: ext2 }).catch(e => ({ err: String(e) }));
+      const page = await ctx2.newPage(), errors = [];
+      page.on('pageerror', e => errors.push(String(e)));
+      await page.goto('https://www.flightradar24.com/53.40,-2.60/9');
+      const verShown = async () => { const b = await page.waitForSelector('nav.bar .tl-ub-btn', { timeout: 8000 }).catch(() => null); if (!b) return ''; if (!await page.$('.tl-ub')) await b.click(); return page.waitForSelector('.tl-ub #tl-ub-upd', { timeout: 3000 }).then(e => e.textContent()).catch(() => ''); };
+      const before = await verShown();
+      check('Reload extension (loaded unpacked): offered in the window of this version', !!loaded.id && before.includes('v' + built.version) && !!await page.$('.tl-ub [data-ub-act="reloadExt"]'), loaded.err || before.replace(/\s+/g, ' '));
+      const NEWV = '99.0.0';
+      fs.writeFileSync(path.join(ext2, 'content.js'), fs.readFileSync(path.join(ext2, 'content.js'), 'utf8').replace(`const VERSION = '${built.version}';`, `const VERSION = '${NEWV}';`));
+      fs.writeFileSync(path.join(ext2, 'page.js'), fs.readFileSync(path.join(ext2, 'page.js'), 'utf8').replace(`var BRIDGE_V = "${built.version}";`, `var BRIDGE_V = "${NEWV}";`));
+      fs.writeFileSync(path.join(ext2, 'manifest.json'), JSON.stringify(Object.assign({}, built, { version: NEWV }), null, 2));
+      const nav = page.waitForEvent('framenavigated', { timeout: 10000 }).catch(() => null);
+      if (await page.$('.tl-ub [data-ub-act="reloadExt"]')) await page.click('.tl-ub [data-ub-act="reloadExt"]');
+      await nav; await page.waitForTimeout(1500);
+      const after = await verShown();
+      check('... after the files are replaced: the extension restarts, FR24 reloads, the new version runs in both worlds', after.includes('v' + NEWV) && await page.evaluate(() => window.__tweeksLaddBridge && window.__tweeksLaddBridge.v) === NEWV, after.replace(/\s+/g, ' '));
+      check('... no errors on the page', errors.length === 0, errors.slice(0, 5));
+    } finally { await ctx2.close(); }
+  }
   console.log(fails ? `\n${fails} failed` : '\nall passed');
   process.exit(fails ? 1 : 0);
 })().catch(e => { console.log('FAIL  crashed ' + (e && e.stack || e)); process.exit(1); });
