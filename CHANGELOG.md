@@ -2,6 +2,19 @@
 
 All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PATCH`. The userscript and the monitor are released together.
 
+## [22.26.1] - 2026-10-15
+
+### Fixed
+- **Made-up flights on the airport boards: both ends are checked now, for every jet FR24 shows itself.**
+  - Biggin Hill's departures were full of easyJets, a China Southern 787, a Norwegian, an Iberia Express and BA CityFlyers "departed Biggin Hill -> Gatwick". These were Gatwick's arrivals, heard for the first time at a few thousand feet over Biggin Hill on the way in. A board that is opened has the monitor listen around that airport, so jets passing low over it are first or last heard there. 22.25.1 checked only the far end of a flight, and these did land at Gatwick, so they got through.
+  - Luton's departures had rows showing a callsign only, going to "N/A", next to FR24's own: NetJets, VistaJet, Wizz, Wizz Malta, and jets flying under their registration. Business jets "to Stansted" and "to Biggin Hill" came from legs first heard over Luton.
+  - Now a row the script makes of an aircraft that is not blocked (a flight FR24 shows itself) is kept only when both its ends were seen. An airliner's take-off and landing must both be seen on the ground. A business jet's or turboprop's ends may also be seen low, under 3,000 ft within 15 km of the field, but not as a landing guessed inside a hole in coverage. A row with an end unknown ("N/A") goes too, followed live or not, because FR24's own row says the same. A registration's real return to the field it left, seen at both ends, stays.
+  - A light aircraft or glider, blocked or not, is on an airport's board only when it was seen there, on the ground or low beside the field. G-RDGE, a glider out of Chester, was "departed Liverpool": it was first heard soaring 25 km away.
+  - Rows already kept are removed when a board is opened, or when the monitor or an aircraft's log sends them again.
+- **FR24's own row of a flight and the script's row of it, side by side.** On Liverpool's arrivals, U281 from Belfast showed "Scheduled 14:40, A320", with EZY89VK (the A319 G-EZBX) landed from Belfast at 14:42 beside it. FR24's flight-number list was read before the flight flew, so its row had no callsign to match. The two are now one row when the airline, the other airport and the time (within 45 minutes) agree. That row is FR24's own, with what was seen added: landed at 14:42, the A319 that flew it, its callsign.
+- **The wrong airline logo on a row.** G-NBCA, a PC-12 flying as GNBCA, showed easyJet's logo on Liverpool's arrivals. A row's operator came from the last callsign the aircraft's record had, not from the flight's own callsign. It now comes from the flight's own callsign, and an airline's from its callsign as before.
+- **A glider shown as a "Business jet"** with no type when its type code was not known. A glider is now shown as FR24 shows one, as type GLID in the glider category, going by its model (DG-1000S, ASK 21, Discus and so on).
+
 ## [22.26.0] - 2026-10-15
 
 ### Added

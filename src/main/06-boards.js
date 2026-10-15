@@ -54,22 +54,42 @@
     if (n) b.dirty = true;
     return n;
   }
-  // A row of our own ('log': rebuilt from a flight log; 'live': a flight followed as it flew) of an airliner flying an
-  // airline's number - a flight FR24 shows and schedules itself, with its real route - kept only with an other end that
-  // was seen: the landing there on the ground (gc) for a departure, the take-off there on the ground (og) for an arrival
-  // (or, followed live, FR24's own origin). An end only guessed - from where the jet was first or last heard - is no
-  // flight: easyJets out of Gatwick "landed at Biggin Hill", Ryanairs out of Manchester "to Liverpool", and Luton's
-  // arrivals full of easyJets and Wizz jets "from Stansted" (first heard low near Stansted, in the hold both airports
-  // share, on the way in to Luton) and Ryanairs "from Liverpool". No other end at all: one "N/A" end says nothing FR24's
-  // own row does not, and stands beside it as a second flight ('log' rows). Back at the field it left: never.
+  // A row of our own ('log': rebuilt from a flight log; 'live': a flight followed as it flew) of an aircraft that is not
+  // blocked - a flight FR24 shows itself, with what it knows of its route - is kept only when both its ends were seen:
+  // where it took off and where it came down. An end only guessed - where the aircraft was first or last heard - is no
+  // flight: the monitor polls the air around a board that is opened, and jets passing over the field low are heard
+  // there first or last. Gatwick's arrivals over Biggin Hill were "departed Biggin Hill -> Gatwick"; Luton's arrivals
+  // had easyJets and Wizz jets "from Stansted" (the hold the two share) and Ryanairs "from Liverpool"; Manchester's
+  // departures Ryanairs "to Liverpool". And one end unknown ("N/A") says nothing FR24's own row does not: Luton's
+  // departures had NetJets, VistaJets, Wizz and registration-only jets "-> N/A", callsign only, beside FR24's own rows.
+  // Followed live, a departure is noted only once its take-off was seen, and an arrival's origin is FR24's own; a
+  // departure needs its landing seen on the ground (gc). Blocked and military aircraft (what FR24 does not show), light
+  // aircraft (often seen only low beside their strip) and an aircraft of unknown type flying under its registration are
+  // left as they are.
+  // (gliders by their model where the type is not known: FR24's code for them is GLID - G-RDGE, a DG-1000S, was a
+  // "Business jet" on Liverpool's board)
+  const GLIDER = /\b(glider|segelflug|DG[- ]?\d{3,4}|AS[KWGH][- ]?\d|Discus|Duo Discus|Janus|Nimbus|Ventus|Arcus|Twin Astir|Astir|LS[- ]?\d|Schleicher|Schempp|Grob G ?10[23]|Pilatus B4|Puchacz|Jantar|SZD)/i;
   const airlineCs = cs => /^[A-Z]{3}\d/.test(String(cs || '').toUpperCase());
   function fakeRow(r, apId, kind) {
-    if (!r || !(r.src === 'log' || r.src === 'live') || r.drop || !airlineCs(r.cs)) return false;
+    if (!r || !(r.src === 'log' || r.src === 'live') || r.drop) return false;
     const hx = (r.hex && store.getHex(r.hex)) || {};
-    if (hx.ladd || hx.fr24Blocked || hx.pia || hx.mil || ENGINE.classify({ hex: r.hex || '', type: r.ty || hx.type || '', reg: r.reg || '', cs: r.cs }) !== 'airliner') return false;
-    if (!r.ap) return r.src === 'log';
-    if (r.ap === apId) return true;
-    return kind === 'arrivals' ? !(r.og || r.src === 'live') : !r.gc;
+    if (!r.hex) return false;
+    const cls = ENGINE.classify({ hex: r.hex, type: r.ty || hx.type || '', reg: r.reg || '', cs: r.cs || '' });
+    const light = /^(piston|heli|fighter|glider)$/.test(cls) || (cls === 'unknown' && !airlineCs(r.cs)) || GLIDER.test(r.dsc || '');
+    // (a light aircraft - blocked or not - is on this airport's board only when it was seen there: on the ground, or low
+    // beside it. G-RDGE, a glider out of Chester, was "departed Liverpool": first heard soaring 25 km away. Rows kept
+    // before this was noted are left; they are judged again as the monitor and the logs send them)
+    if (light && r.src === 'log' && (r.oc != null || r.dc != null)) { const here = kind === 'arrivals' ? r.dc : r.oc; if (here !== 'ground' && here !== 'low') return true; }
+    if (light || hx.ladd || hx.fr24Blocked || hx.pia || hx.mil) return false;
+    // (back where it left: an airline's number never - a registration's, a test or training flight, when seen at both ends)
+    if (!r.ap || (r.ap === apId && airlineCs(r.cs))) return true;
+    if (r.src === 'live') return kind === 'arrivals' ? false : !r.gc;
+    // (how each end was seen - oc where it left, dc where it came down: 'ground', or 'low' - heard below 3,000 ft within
+    // 15 km of the field. An airliner's ends must be seen on the ground; a business jet's or turboprop's low beside the
+    // field will do, as their fields are often out of hearing on the ground. Rows kept before these were noted: not seen)
+    const ok = c => c === 'ground' || (c === 'low' && cls !== 'airliner' && cls !== 'unknown');
+    const oc = r.oc || (r.og ? 'ground' : ''), dc = r.dc || (r.gc ? 'ground' : '');
+    return !(ok(oc) && ok(dc));
   }
   // one flight's row: what a better source says wins, what it lacks is kept from the other
   function boardMerge(b, kind, row, apId) {
@@ -131,16 +151,41 @@
     const out = new Map(); for (const [p, c] of n) out.set(p, [...c].sort((a, b) => b[1] - a[1])[0][0]);
     return out;
   }
+  // (what a flight seen flying adds to FR24's own row of it: the aircraft that flew it - its type over the one planned,
+  // "A320" for the A319 G-EZBX that flew U281 - and, for a row still "Scheduled" or "Estimated", that it went: when)
+  function takeActual(o, r) {
+    for (const f of ['reg', 'hex', 'dsc', 'cs']) if (!o[f] && r[f]) o[f] = r[f];
+    const ty = /^[A-Z][A-Z0-9]{2,3}$/.test(r.ty || '') && (r.src === 'log' || r.src === 'live') ? r.ty : '';
+    if (ty) o.ty = ty;
+    const went = /^(landed|departed)$/.test(r.st || '') && /^(scheduled|estimated|delayed|)$/.test(o.st || '') ? r.st : '';
+    if (went) Object.assign(o, { st: went, est: r.t, t: r.t, col: delayCol(r.t, o.sch || r.t) });
+    if (o.nat) {
+      const n = Object.assign({}, o.nat);
+      if (ty) n.aircraftType = ty;
+      if (r.cs && n.flight && !n.flight.callsign) n.flight = Object.assign({}, n.flight, { callsign: r.cs });
+      if (went && /^(scheduled|estimated|delayed)$/.test((n.status && n.status.name) || 'scheduled')) Object.assign(n, { estimatedTime: r.t, status: Object.assign({}, n.status, { name: went, color: delayCol(r.t, n.scheduledTime || r.t) }) });
+      o.nat = n;
+    }
+  }
   function boardList(m, pre) {
-    const rows = Object.values(m).sort((a, b) => (BOARD_RANK[b.src] || 0) - (BOARD_RANK[a.src] || 0)), out = [], byFid = new Map(), byWho = new Map();
+    const rows = Object.values(m).sort((a, b) => (BOARD_RANK[b.src] || 0) - (BOARD_RANK[a.src] || 0)), out = [], byFid = new Map(), byWho = new Map(), byRoute = new Map();
+    const airlineOf = cs => { const c = /^([A-Z]{3})\d/.exec(String(cs || '').toUpperCase()); return (c && fr24.byIcao.get(c[1])) || 0; };
     for (let r of rows) {
       if (r.drop) continue;
       const who = [r.cs, r.reg && r.reg.replace(/-/g, ''), r.hex, r.num && 'N:' + r.num].filter(Boolean).map(s => String(s).toUpperCase());
       // (the same flight from a lesser source: what the row shown lacks - the other airport, FR24's flight id, the
       // aircraft - taken from it. G-PTRK's own FR24 row "N/A", its rebuilt track landed somewhere)
-      const dup = (r.fid && byFid.get(r.fid)) || who.map(w => (byWho.get(w) || []).find(x => Math.abs(x.t - r.t) < 2700)).find(Boolean);
+      let dup = (r.fid && byFid.get(r.fid)) || who.map(w => (byWho.get(w) || []).find(x => Math.abs(x.t - r.t) < 2700)).find(Boolean);
+      // (or FR24's own row of an airline's flight that has no callsign - a number's list read before it flew: U281
+      // Belfast -> Liverpool "Scheduled 14:40" beside the easyJet EZY89VK seen landing from Belfast at 14:42. The same
+      // airline, from or to the same airport, within 45 minutes: the nearest one)
+      if (!dup && (r.src === 'log' || r.src === 'live') && r.ap) {
+        const al = airlineOf(r.cs), c = al ? byRoute.get(al + ':' + r.ap) : null;
+        if (c) dup = c.filter(x => !x.took && Math.abs(x.t - r.t) < 2700).sort((x, y) => Math.abs(x.t - r.t) - Math.abs(y.t - r.t))[0] || null;
+      }
       if (dup) {
         const o = out[dup.i];
+        if (r.src === 'log' || r.src === 'live') { takeActual(o, r); dup.took = true; }
         for (const f of ['ap', 'fid', 'reg', 'hex', 'ty', 'dsc', 'alId']) if (!o[f] && r[f]) o[f] = r[f];
         if (o.nat && !o.nat.airportId && r.ap) o.nat = Object.assign({}, o.nat, { airportId: r.ap });
         // (and the operator - and its logo - FR24's own row of a club aircraft leaves out: G-RVRN, Ravenair)
@@ -149,23 +194,30 @@
         continue;
       }
       r = Object.assign({}, r);
+      // (a row of a rebuilt flight - or of an aircraft's FR24 list - says what is known of the aircraft now: FR24's own
+      // model and operator names, once read. Its operator for this flight: by this flight's callsign, never the one the
+      // aircraft's record last had - G-NBCA, a PC-12 flying as GNBCA, came out with easyJet's logo)
+      if (r.hex && (r.src === 'log' || r.src === 'live' || (r.src === 'sched' && !r.nat))) {
+        const w = boardWho(r.hex, { reg: r.reg, type: r.ty, cs: r.cs || String(r.reg || '').replace(/-/g, '') });
+        Object.assign(r, { dsc: w.dsc || r.dsc, ty: r.ty || w.ty, al: /^private owner$/i.test(w.al) ? r.al || w.al : w.al, alId: w.alId || 0 });
+      }
       // (a flight's airline is its callsign's - EZY... easyJet - whatever the aircraft's record says: FR24's way. Rows
       // rebuilt from an aircraft's log took the aircraft's, and easyJet flights came out with Jet2's logo)
-      const ca = r.src !== 'fr24' && /^([A-Z]{3})\d/.exec(String(r.cs || '').toUpperCase()), caId = ca && fr24.byIcao.get(ca[1]);
+      const caId = r.src !== 'fr24' ? airlineOf(r.cs) : 0;
       if (caId) Object.assign(r, { alId: caId, al: fr24.airlineName(caId) || r.al });
-      // (a row of a rebuilt flight says what is known of the aircraft now: FR24's own model and operator names, once read)
-      if (r.hex && (r.src === 'log' || r.src === 'live')) { const w = boardWho(r.hex, { reg: r.reg, type: r.ty }); Object.assign(r, { dsc: w.dsc || r.dsc, al: /^private owner$/i.test(w.al) ? r.al || w.al : w.al, alId: w.alId || r.alId }); }
       // (no airline id - FR24 gives none days ahead, or its airline list was not in yet when the row was read: no logo.
-      // From the airline's ICAO code, else the number's prefix as the board's own rows have it)
+      // From the airline's ICAO code, else the number's prefix as the board's own rows have it - for a flight number only)
       if (!(r.nat ? r.nat.airlineId : r.alId)) {
-        const id = (r.alIcao && fr24.byIcao.get(r.alIcao)) || (pre && pre.get(numPre(r.num))) || (!r.nat && airlineIdByName(r.al)) || 0;
+        const id = (r.alIcao && fr24.byIcao.get(r.alIcao)) || (pre && r.num && r.num !== String(r.reg || '').replace(/-/g, '') && pre.get(numPre(r.num))) || (!r.nat && airlineIdByName(r.al)) || 0;
         if (id && r.nat) r.nat = Object.assign({}, r.nat, { airlineId: id, airline: r.nat.airline || fr24.airlineName(id) || null });
         else if (id) Object.assign(r, { alId: id, al: r.al || fr24.airlineName(id) });
       }
       if (r.nat && !r.nat.airportId && r.ap) r.nat = Object.assign({}, r.nat, { airportId: r.ap });
+      if (!r.ty && !(r.nat && r.nat.aircraftType) && GLIDER.test(r.dsc || '')) r.ty = 'GLID';
       { const fc = fr24Cat({ type: r.ty || (r.nat && r.nat.aircraftType) || '', mil: !!(r.hex && (store.getHex(r.hex) || {}).mil) }); if (fc != null) r.fc = fc; }
       out.push(r);
       const ent = { t: r.t, i: out.length - 1 }; if (r.fid) byFid.set(r.fid, ent); for (const w of who) (byWho.get(w) || byWho.set(w, []).get(w)).push(ent);
+      if (r.src === 'fr24' || r.src === 'sched') { const al = (r.nat && r.nat.airlineId) || r.alId, ap = (r.nat && r.nat.airportId) || r.ap; if (al && ap) (byRoute.get(al + ':' + ap) || byRoute.set(al + ':' + ap, []).get(al + ':' + ap)).push({ t: r.sch || r.t, i: out.length - 1 }); }
     }
     return out;
   }
@@ -249,6 +301,15 @@
     if (boardOk(from) && dep > 0 && route.originConf !== 'history') boardPut(from, 'departures', Object.assign({ k: 'f' + fid, src: 'live', drop: false, fid, cs, t: dep, sch: route.std || dep, est: dep, st: 'departed', col: 'green', ap: boardOk(to) && (route.landed || ['filed', 'confirmed', 'landed'].includes(route.destConf)) ? to : site, gc: route.landed ? 1 : 0 }, who));
     if (boardOk(to) && route.landed && route.ata > 0) boardPut(to, 'arrivals', Object.assign({ k: 'f' + fid, src: 'live', drop: false, fid, cs, t: route.ata, sch: route.sta || route.ata, est: route.ata, st: 'landed', col: 'green', ap: boardOk(from) ? from : 0, gc: 1 }, who));
   }
+  // How a leg's end was seen, for fakeRow: 'ground' (on the ground there), 'low' (heard there below 3,000 ft, within
+  // 15 km - not a landing guessed inside a hole in coverage, which is also 'low'), else how it was guessed
+  function endSeen(e, gnd, la, lo, alt) {
+    if (gnd || (e && e.conf === 'ground')) return 'ground';
+    if (!e) return '';
+    if (e.conf !== 'low') return e.conf || '';
+    const a = apById(e.id);
+    return a && fin(la) && fin(alt) && alt < 3000 && ENGINE.dist(la, lo, a.lat, a.lon) <= 15 ? 'low' : 'gap';
+  }
   // An aircraft's rebuilt log: its flights of the last three days, at both ends
   function boardNoteLegs(hex, legs, rec) {
     if (!hex || !legs || !legs.length) return;
@@ -286,10 +347,10 @@
       const nearOk = (e, la, lo2) => !e || e.conf !== 'near' || (a => !!a && fin(la) && ENGINE.dist(la, lo2, a.lat, a.lon) <= 30)(apById(e.id));
       const fromOk = local || l.startedOnGround || (!!l.from && l.from.conf !== 'history' && nearOk(l.from, l.startLat, l.startLon));
       const toOk = (landed || !!toSite) && nearOk(l.to, l.endLat, l.endLon);
-      if (boardOk(from) && fromOk) boardPut(from, 'departures', Object.assign({ k, src: 'log', drop: false, cs: l.cs || '', t: off, sch: off, est: off, st: 'departed', col: 'green', ap: toOk ? (boardOk(to) ? to : toSite) : 0, gc: toOk && landed && l.to.conf === 'ground' ? 1 : 0, og: l.startedOnGround || (l.from && l.from.conf === 'ground') ? 1 : 0 }, who));
+      if (boardOk(from) && fromOk) boardPut(from, 'departures', Object.assign({ k, src: 'log', drop: false, cs: l.cs || '', t: off, sch: off, est: off, st: 'departed', col: 'green', ap: toOk ? (boardOk(to) ? to : toSite) : 0, gc: toOk && landed && l.to.conf === 'ground' ? 1 : 0, oc: endSeen(local ? { id: to, conf: 'low' } : l.from, l.startedOnGround, l.startLat, l.startLon, l.startAlt), dc: endSeen(l.to, false, l.endLat, l.endLon, l.endAlt) }, who));
       // (a row an older build kept from such a guess goes: HZ-AR27's on Liverpool's board)
       else if (boardOk(from) && l.from && l.from.conf === 'near') boardPut(from, 'departures', { k, src: 'log', t: off, drop: true });
-      if (boardOk(to) && toOk && on) boardPut(to, 'arrivals', Object.assign({ k, src: 'log', drop: false, cs: l.cs || '', t: on, sch: on, est: on, st: 'landed', col: 'green', ap: fromOk ? (boardOk(from) ? from : fromSite) : 0, gc: l.to.conf === 'ground' ? 1 : 0, og: l.startedOnGround || (l.from && l.from.conf === 'ground') ? 1 : 0 }, who));
+      if (boardOk(to) && toOk && on) boardPut(to, 'arrivals', Object.assign({ k, src: 'log', drop: false, cs: l.cs || '', t: on, sch: on, est: on, st: 'landed', col: 'green', ap: fromOk ? (boardOk(from) ? from : fromSite) : 0, gc: l.to.conf === 'ground' ? 1 : 0, oc: endSeen(local ? { id: to, conf: 'low' } : l.from, l.startedOnGround, l.startLat, l.startLon, l.startAlt), dc: endSeen(l.to, false, l.endLat, l.endLon, l.endAlt) }, who));
       else if (boardOk(to) && landed && on && l.to.conf === 'near') boardPut(to, 'arrivals', { k, src: 'log', t: on, drop: true });
     }
   }
