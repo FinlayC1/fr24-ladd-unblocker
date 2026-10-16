@@ -9,6 +9,8 @@ const NM = path.resolve(process.argv[2] || path.join(__dirname, '../node_modules
 const { JSDOM, VirtualConsole } = require(path.join(NM, 'jsdom'));
 process.env.MON_STORE = fs.mkdtempSync(path.join(os.tmpdir(), 'mondash-'));
 process.env.MON_TOKEN = 'dash-secret';
+// (not under systemd, whatever runs the test: GitHub's runners are started by it and pass INVOCATION_ID on)
+delete process.env.INVOCATION_ID;
 const M = require('../monitor/monitor.cjs');
 let fails = 0;
 const check = (name, ok, info) => { if (!ok) fails++; console.log((ok ? 'PASS  ' : 'FAIL  ') + name + (info !== undefined ? '  ' + JSON.stringify(info) : '')); };
