@@ -305,12 +305,28 @@ function createIdent(env) {
   // browser's address (only whether it is the owner's is kept). Returns whether it was taken.
   const away = (F, a) => !!F && !F.gnd && fin(F.trk) && F.spd > 100 && fin(F.lat) && E.dist(F.lat, F.lon, a.lat, a.lon) > 150 && E.angDiff(F.trk, E.brg(F.lat, F.lon, a.lat, a.lon)) > 100;
   const kmTo = (F, a) => F && fin(F.lat) && fin(F.lon) ? Math.round(E.dist(F.lat, F.lon, a.lat, a.lon)) : -1;
+  // (a destination the flight says is wrong now, where FR24 has it - as the browsers check one they are handed: its ETA a
+  // quarter of an hour gone with the aircraft still airborne 60 km and more from it, or - a jet or turboprop, flying
+  // steadily on - far off its track or behind it and no nearer (the engine's rule, E.offTrack, on its positions of the
+  // last minutes). Not on a position more than 5 minutes old)
+  const contradicted = (R, F, a, eta, nowMs, sure, atd0) => {
+    if (!F || F.gnd || !a || !fin(F.lat) || !fin(F.lon) || !(F.ts > 0) || nowMs - (F.seen || 0) > 300000) return false;
+    const km = E.dist(F.lat, F.lon, a.lat, a.lon);
+    // (the ETA: a quarter of an hour gone, or a sixth of the flight's time where that is longer; never a confirmed one's)
+    if (eta > 0 && !sure && F.ts > eta + Math.max(900, atd0 > 0 && eta > atd0 ? (eta - atd0) / 6 : 0) && km > 60) return true;
+    const mil = !!(R && R.flags & 2), cls = E.classify({ type: (R && R.type) || F.type || '', mil });
+    if (!fin(F.trk) || /^(heli|piston|fighter|milheavy)$/.test(cls) || (mil && !/^(bizjet|heavybiz)$/.test(cls))) return false;
+    const c = R && R.crowd, oid = (c && c.o) || (R && R.origin && R.origin.id) || 0, atd = (c && c.o && c.atd) || (R && R.origin && R.origin.t) || 0;
+    const pos = { t: F.ts, lat: F.lat, lon: F.lon, alt: fin(F.alt) ? F.alt : null, trk: F.trk, gs: F.spd, gnd: false };
+    // (more than half: one position alone - a flight just seen, or the monitor just restarted - never rules it out)
+    return E.offTrack(pos, (F.pts || []).filter(p => p.t < F.ts), a, { origin: oid ? E.byId(oid) : null, elapsedMin: atd > 0 ? (F.ts - atd) / 60 : null }) > 0.5;
+  };
   const SHOWN = ['o', 'oc', 'atd', 'd', 'p', 'dc', 'eta'];
   function crowdRoute(id, hex, r, by, nowMs) {
     const R = ids.get(id), F = flights.get(id); if (!R || R.hex !== String(hex || '').toLowerCase() || !r) return false;
     const o = r.o > 0 && E.byId(r.o) ? r.o : 0, da = r.d > 0 ? E.byId(r.d) : null, d = da ? r.d : 0;
     if (!o && !d) return false;
-    if (da && away(F, da)) { stats.routeRefused = (stats.routeRefused || 0) + 1; return false; }
+    if (da && (away(F, da) || contradicted(R, F, da, r.eta > 1e9 ? r.eta : 0, nowMs, String(r.dc || '') === 'confirmed', r.atd > 1e9 ? r.atd : (R.crowd && R.crowd.atd) || 0))) { stats.routeRefused = (stats.routeRefused || 0) + 1; return false; }
     const conf = s => /^[a-z]{3,12}$/.test(String(s || '')) ? String(s) : '', nowS = Math.round(nowMs / 1000), mine = by ? 0 : 1, cur = R.crowd || null;
     const c = Object.assign({ o: 0, oc: '', atd: 0, ot: 0, oOwn: 0, d: 0, p: 0, dc: '', eta: 0, dt: 0, dOwn: 0, km: -1, kmAt: 0 }, cur);
     const held = (own, t) => own && !mine && nowS - t < 1200;   // (the owner's, lately)
@@ -333,9 +349,17 @@ function createIdent(env) {
     for (const [id, k] of claims) if (nowMs - k.at > 30 * 60000 || ids.has(id)) claims.delete(id);
     // (a browser's destination worked out, not confirmed, that the flight has come no nearer to in an hour - another way
     // after all, or round and round somewhere: dropped, the monitor's own handed out again; a browser's origin stays)
+    // (and one the flight says is wrong now - at once, a confirmed one too when it is far off the track: every browser that has it is told with the next
+    // pull, and its own route stands)
     const nowS = Math.round(nowMs / 1000);
     for (const [id, R] of ids) {
-      const c = R.crowd; if (!c || !c.d || c.dc === 'confirmed' || nowS - (c.kmAt || 0) < 3600) continue;
+      const c = R.crowd; if (!c || !c.d) continue;
+      const a0 = E.byId(c.d);
+      if (a0 && contradicted(R, flights.get(id), a0, c.eta, nowMs, c.dc === 'confirmed', c.atd || 0)) {
+        Object.assign(c, { d: 0, p: 0, dc: '', eta: 0, dt: 0, dOwn: 0, km: -1, kmAt: 0 }); if (!c.o) R.crowd = null;
+        R.chg = nowMs; stats.routeContra = (stats.routeContra || 0) + 1; continue;
+      }
+      if (c.dc === 'confirmed' || nowS - (c.kmAt || 0) < 3600) continue;
       const a = E.byId(c.d), km = a ? kmTo(flights.get(id), a) : -1;
       if (a && (km < 0 || c.km < 0 || km < 30 || km < c.km - 50)) { c.km = km; c.kmAt = nowS; continue; }
       Object.assign(c, { d: 0, p: 0, dc: '', eta: 0, dt: 0, dOwn: 0, km: -1, kmAt: 0 }); if (!c.o) R.crowd = null;

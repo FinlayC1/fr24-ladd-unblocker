@@ -32,20 +32,40 @@ html,body{margin:0;height:100%;font-family:Arial,Helvetica,sans-serif;font-size:
 .col-enter-from,.col-leave-to{opacity:0}
 #openFlight{position:absolute;right:20px;top:20px}
 #openAirport{position:absolute;right:20px;top:50px}
+/* ?panel=photo: an aircraft's panel with its picture as FR24 draws it - the slideshow (JetphotosCarousel: the pages, each
+   slide's picture and copyright, the dots), or with no picture its fallback (a sideview in a wide, short frame) */
+.acp{position:absolute;left:0;top:0;width:300px;bottom:0;display:flex;flex-direction:column;background:#ededed;border-radius:8px;overflow:hidden}
+.acp-head{flex:none;padding:8px;background:#222;color:#fff;font-weight:700}
+.acp main{flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
+.acp-scroll{flex:1 1 auto;min-height:0;overflow-y:auto}
+.acp-img{position:relative}
+.acp-pages{margin:0;padding:0;list-style:none}
+.acp-page{position:relative}
+.acp-page img{display:block;width:100%;object-fit:contain}
+.acp-cr{position:absolute;left:0;bottom:0;padding:2px 8px;color:#fff;font-size:11px}
+.acp-dots{position:absolute;left:0;right:0;bottom:6px;display:flex;justify-content:center;gap:6px}
+.acp-dots button{width:7px;height:7px;padding:0;border:0;border-radius:50%;background:rgba(255,255,255,.5)}
+.acp-dots button.on{background:#fff}
+.acp-fb{height:110px;display:flex;align-items:center;justify-content:center;overflow:hidden;background:#fff}
+.acp-fb img{height:110px;width:270px}
+.acp-route{display:flex;justify-content:space-between;padding:10px 8px}
 .ap{position:absolute;left:0;top:0;width:336px;bottom:0;background:#fff;color:#393939;border-radius:8px;overflow:auto}
 .aph{background:#222;color:#f8c023;padding:8px}
 .apscroll{padding:8px}
 .wxc{border:1px solid #ddd;border-radius:6px;padding:6px;margin-bottom:8px}
 .dd{border:1px solid #ddd;border-radius:6px;padding:4px;margin-bottom:8px;background:#f6f6f6}
+.pbx{position:fixed;right:10px;top:90px;width:300px;max-height:640px;overflow:auto;background:#fff;color:#222;z-index:5;font-size:12px}
+.pbx a,.pbx button{display:inline-block;margin:2px 4px;padding:2px 4px}
+.pbw{position:fixed;left:360px;bottom:80px;width:300px;height:80px;background:#393939;color:#fff}
 .dd>button,.dd section>button{display:flex;align-items:center;justify-content:space-between;width:100%;border:0;background:none;font-weight:700;text-transform:uppercase;padding:6px}
 </style>
 <script src="/__vue.js"></script>
 </head><body><div id="app"></div>
 <script>
-const Q = new URLSearchParams(location.search), MODE = Q.get('mode') || 'keyed', IND = Q.get('ind') === '1', LI = Q.get('li') === '1', ODD = Q.get('odd') === '1', ASYNC = Q.get('async') === '1';
+const Q = new URLSearchParams(location.search), MODE = Q.get('mode') || 'keyed', IND = Q.get('ind') === '1', LI = Q.get('li') === '1', ODD = Q.get('odd') === '1', ASYNC = Q.get('async') === '1', PB = Q.get('pb') === '1', PANEL = Q.get('panel') === 'photo';
 const { createApp, reactive, defineAsyncComponent } = Vue;
 const saved = (() => { try { return JSON.parse(localStorage.getItem('mock.widgets') || 'null'); } catch (e) { return null; } })();
-const S = reactive({ rk: 0, open: null, flight: false, enabled: true, airport: false, events: ['Runway 09/27 works'],
+const S = reactive({ rk: 0, open: null, flight: false, enabled: true, airport: false, events: ['Runway 09/27 works'], pbw: false, went: [], rows: [], search: [], cs: 'VSB82',
   widgets: saved || [
     { k: 'mt', title: 'Most tracked flights', desc: 'See the top 10 flights other users are following right now.', on: true },
     { k: 'ad', title: 'Airport disruptions', desc: 'See the top 10 airports with the most cancellations.', on: true },
@@ -61,23 +81,39 @@ const WidgetsList = { setup() { return { S, toggle(w) { w.on = !w.on; save(); } 
 const WidgetsLazy = defineAsyncComponent(() => new Promise(r => setTimeout(() => r(WidgetsList), 400)));
 const Other = { props: ['name'], template: `<div style="padding:8px"><p v-for="i in 70" :key="i">{{ name }} option {{ i }}</p></div>` };
 const WinLazy = defineAsyncComponent(() => new Promise(r => setTimeout(() => r({ components: { Win, WidgetsList }, emits: ['close'], template: `<Win title="Widgets" @close="$emit('close')"><WidgetsList/></Win>` }), 400)));
+// (the panel's picture: FR24's aircraft store's imagesList - set by the test as FR24's stream would - and its slideshow)
+const P = reactive({ images: [], n: 0, fb: 'https://www.flightradar24.com/static/images/sideviews/GLF5.png', hex: 'N/A', cs: 'N/A' });
+window.__P = P;
+const AcPhoto = { setup() { return { P }; }, template: `<div class="acp" data-testid="aircraft-panel"><div class="acp-head"><span data-testid="aircraft-panel__header__callsign">{{ P.cs }}</span></div>
+  <main><div class="acp-scroll">
+    <div data-testid="aircraft-panel__image" class="acp-img">
+      <div v-if="P.images.length" class="acp-car">
+        <ul data-testid="carousel__pages" class="acp-pages"><li v-for="(im, i) in P.images" v-show="i === P.n" :key="i" class="acp-page"><a :href="im.url" target="_blank"><img :data-testid="'aircraft-panel__image__image__' + i" :src="im.src" alt=""></a><span class="acp-cr" data-testid="aircraft-panel__image__copyright">© {{ im.copyright }}</span></li></ul>
+        <div v-if="P.images.length > 1" class="acp-dots"><button v-for="(im, i) in P.images" :key="i" type="button" :class="{ on: i === P.n }" :data-testid="'carousel__dot__' + i" @click="P.n = i"></button></div>
+      </div>
+      <div v-else class="acp-fb"><img data-testid="aircraft-panel__image__fallback__image" :src="P.fb" alt=""></div>
+    </div>
+    <div class="acp-route"><p data-testid="aircraft-panel__airport-departure-iata">DUS</p><p data-testid="aircraft-panel__airport-arrival-iata">N/A</p></div>
+    <p>ICAO <span data-testid="aircraft-panel__hex">{{ P.hex }}</span></p>
+  </div></main></div>` };
 const tpl = {
   keyed: BARS.slice(0, 4).map(b => `<Transition name="win"><Win v-if="S.open==='${b}'" :key="S.rk" title="${ODD && b === 'Widgets' ? 'Map widgets' : b}" @close="S.open=null">${b === 'Widgets' ? '<WidgetsList/>' : `<Other name="${b}"/>`}</Win></Transition>`).join(''),
   async: BARS.slice(0, 4).map(b => b === 'Widgets' ? `<Transition name="win"><WinLazy v-if="S.open==='Widgets'" @close="S.open=null"/></Transition>` : `<Transition name="win"><Win v-if="S.open==='${b}'" title="${b}" @close="S.open=null"><Other name="${b}"/></Win></Transition>`).join(''),
   shared: `<Transition name="win"><Win v-if="S.open && S.open!=='Playback'" :title="S.open" @close="S.open=null"><WidgetsList v-if="S.open==='Widgets'"/><Other v-else :name="S.open"/></Win></Transition>`,
   show: BARS.slice(0, 4).map(b => `<Transition name="win"><Win v-show="S.open==='${b}'" title="${b}" @close="S.open=null">${b === 'Widgets' ? '<WidgetsList/>' : `<Other name="${b}"/>`}</Win></Transition>`).join('')
 }[MODE];
-createApp({
-  components: { Win, WidgetsList, Other, WinLazy },
+const app = createApp({
+  components: { Win, WidgetsList, Other, WinLazy, AcPhoto },
   setup() {
-    return { S, BARS, IND, LI,
-      toggle(b) { if (b === 'Playback') return; S.flight = false; S.open = S.open === b ? null : b; },
+    return { S, BARS, IND, LI, PB, PANEL,
+      toggle(b) { if (b === 'Playback') { S.pbw = !S.pbw; return; } S.flight = false; S.open = S.open === b ? null : b; },
       openFlight() { S.open = null; S.flight = true; } };
   },
   template: `<div class="map">
     <div class="left">
       ${tpl}
       <Transition name="col"><div v-if="!S.open && !S.flight && S.enabled" class="col"><template v-for="w in S.widgets" :key="w.k"><div v-if="w.on" class="card" :data-card="w.k"><h3>{{ w.title }}</h3><p>...</p></div></template></div></Transition>
+      <AcPhoto v-if="PANEL"/>
       <Transition name="win"><div v-if="S.flight" class="ac" data-testid="aircraft-panel">Flight UAL941 <button @click="S.flight=false">x</button></div></Transition>
       <div v-if="S.airport" data-testid="airport-panel" class="ap"><div class="aph"><h2>Liverpool John Lennon Airport</h2><p>LPL / EGGP</p></div>
         <div class="apscroll"><div class="wxc"><p>Overcast · 13 °C</p><button>More weather &amp; METAR</button></div>
@@ -91,8 +127,20 @@ createApp({
     <nav v-if="!LI" class="bar"><button v-for="b in BARS" :key="b" type="button" :class="['bar-btn', S.open===b ? 'is-on' : '']" :data-testid="'map-bar__' + b.toLowerCase()" @click="toggle(b)">
       <svg width="24" height="24" viewBox="0 0 24 24" :fill="IND && S.open===b ? 'currentColor' : 'none'" stroke="currentColor"><circle cx="12" cy="12" r="8"/></svg><span class="bar-label">{{ b }}</span><div v-if="IND && S.open===b" class="ind"></div></button></nav>
     <nav v-else class="bar"><div v-for="b in BARS" :key="b" class="item" :data-testid="'map-bar__' + b.toLowerCase()"><button type="button" :class="['bar-btn', S.open===b ? 'is-on' : '']" style="height:100%" @click="toggle(b)"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="8"/></svg><span class="bar-label">{{ b }}</span></button></div></nav>
+    <div v-if="S.pbw" class="pbw" data-testid="playback-widget">Playback</div>
+    <div v-if="PB" class="pbx">
+      <div data-testid="aircraft-panel" class="pbp"><div data-testid="aircraft-panel__header__callsign">{{ S.cs }}</div>
+        <div class="fa"><button type="button" data-testid="flight-actions__action-route">Route</button><button type="button" id="pPanel" data-testid="flight-actions__action-playback" @click="S.went.push('log:panel')"><svg width="12" height="12"></svg><span>Playback</span></button></div>
+        <a data-testid="aircraft-panel__recent-flights__more-flights-button" href="/data/aircraft/m-arnz" @click.prevent="S.went.push('more')">More M-ARNZ flights</a></div>
+      <div data-testid="airport-panel"><ul><li v-for="r in S.rows" :key="r.id" :id="'airport_schedule_' + r.id"><div :data-testid="'airport-panel__schedules__flight__' + r.id">{{ r.cs }}</div>
+        <div class="fc"><a :href="'/data/aircraft/' + r.reg.toLowerCase()" @click.prevent="S.went.push('ac:' + r.id)">Aircraft info</a><a href="#" @click.prevent="S.went.push('bm:' + r.id)">Bookmark aircraft</a><a :id="'pRow' + r.id" :href="'/data/flights/' + r.cs.toLowerCase()" @click.prevent="S.went.push('log:' + r.id)"><svg width="12" height="12"></svg>Playback</a></div></li></ul></div>
+      <div data-testid="search__results"><div v-for="(x, i) in S.search" :key="x.k" data-testid="search__result-row"><a :data-search-result="x.k">{{ x.l }}</a><button type="button" :id="'pSr' + i" @click="S.went.push('log:' + x.k)"><span>Playback</span></button></div></div>
+    </div>
     <button id="openFlight" @click="openFlight">flight</button>
     <button id="openAirport" @click="S.airport = !S.airport; S.open = null">airport</button>
   </div>`
-}).mount('#app');
+});
+window.__PB = reactive({ active: /^\/\d{4}-\d\d-\d\d\//.test(location.pathname), timestamp: 0, selectedFlightId: null, calls: [], selectFlight(id) { this.calls.push(id); this.selectedFlightId = id; } });
+app.config.globalProperties.$pinia = { _s: new Map([['airports', { airports: [], airportsById: new Map([[3901, { id: 3901, iata: 'LGA', lat: 40.7772, lon: -73.8726 }], [3500, { id: 3500, iata: 'FLL', lat: 26.0726, lon: -80.1527 }]]) }], ['playback', window.__PB], ['aircraft', { selected: null }]]) };
+app.mount('#app');
 </script></body></html>

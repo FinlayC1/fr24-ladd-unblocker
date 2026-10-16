@@ -214,6 +214,16 @@
         continue;
       }
       r = Object.assign({}, r);
+      // (a row of FR24's schedule with no airline of its own: an airline an older build gave it from the first airline's
+      // flight on the airport's schedule - Jet2's logo on N358V's row - goes, and the type with it. A flight with no
+      // number has no airline - a private or business flight, as FR24 draws it: no logo; a number keeps it only where the
+      // board's own rows of that number's prefix have it)
+      if (r.src === 'sched' && r.nat && !r.alId) {
+        const pid = r.num ? (pre && pre.get(numPre(r.num))) || 0 : 0;
+        if (r.nat.airlineId && (!r.num || !numPre(r.num) || (pid && pid !== r.nat.airlineId))) { r.nat = Object.assign({}, r.nat, { airlineId: null, airline: r.al || null }); r.alIcao = ''; }
+        const ty = clean(r.ty).toUpperCase();
+        if (!r.num && (r.nat.aircraftType || '') !== ty) r.nat = Object.assign({}, r.nat, { aircraftType: ty || null });
+      }
       // (a row of a rebuilt flight - or of an aircraft's FR24 list - says what is known of the aircraft now: FR24's own
       // model and operator names, once read. Its operator for this flight: by this flight's callsign, never the one the
       // aircraft's record last had - G-NBCA, a PC-12 flying as GNBCA, came out with easyJet's logo)
@@ -413,10 +423,13 @@
       airlineId: (icao && fr24.byIcao.get(icao)) || null, airline: (icao && fr24.byIcao.get(icao) && fr24.airlineName(fr24.byIcao.get(icao))) || (x.airline && (x.airline.short || x.airline.name)) || (ref && ref.al) || null, aircraftType: ty || null, runway: null };
   }
   function fnRows(data, info, apId, kind) {
-    // (the number's airline and its ICAO type from its flights flown - or from the board's own rows of it)
-    const flown = (data || []).find(y => y && y.identification && y.identification.id && y.airline && y.airline.code && y.airline.code.icao);
-    const fty = (data || []).map(y => y && y.identification && y.identification.id && clean(y.aircraft && y.aircraft.model && y.aircraft.model.code).toUpperCase()).find(c => c && /^[A-Z]/.test(c) && c.length === 4);
-    const ref = { icao: flown ? clean(flown.airline.code.icao).toUpperCase() : (info && info.alId && fr24.airlines && (fr24.airlines.get(info.alId) || {}).icao) || '', al: (flown && (flown.airline.short || flown.airline.name)) || (info && info.al) || '', ty: fty || (info && /^[A-Z]/.test(info.ty || '') && info.ty.length === 4 ? info.ty : '') };
+    // (the number's airline and its ICAO type from its flights flown - or from the board's own rows of it. A flight
+    // number's own list only: an airport's schedule (apId given) is every airline's flights and the private ones, each
+    // with its own airline or none - read with the first airline's as theirs, every flight on East Midlands' schedule
+    // with no airline had Jet2's logo: N358V, a Gulfstream in from Dusseldorf)
+    const flown = apId ? null : (data || []).find(y => y && y.identification && y.identification.id && y.airline && y.airline.code && y.airline.code.icao);
+    const fty = apId ? '' : (data || []).map(y => y && y.identification && y.identification.id && clean(y.aircraft && y.aircraft.model && y.aircraft.model.code).toUpperCase()).find(c => c && /^[A-Z]/.test(c) && c.length === 4);
+    const ref = apId ? null : { icao: flown ? clean(flown.airline.code.icao).toUpperCase() : (info && info.alId && fr24.airlines && (fr24.airlines.get(info.alId) || {}).icao) || '', al: (flown && (flown.airline.short || flown.airline.name)) || (info && info.al) || '', ty: fty || (info && /^[A-Z]/.test(info.ty || '') && info.ty.length === 4 ? info.ty : '') };
     for (const x of data || []) {
       if (!x) continue;
       const idn = x.identification || {}, tm = x.time || {}, sc = tm.scheduled || {}, re = tm.real || {}, es = tm.estimated || {};
@@ -425,8 +438,8 @@
       const fid = idn.id ? String(idn.id) : '', num = clean(idn.number && idn.number.default).toUpperCase(), cs = clean(idn.callsign).toUpperCase();
       const k = fid ? 'f' + fid : 'n' + num + ':' + (sc.departure || sc.arrival || 0);
       const stx = clean(((x.status || {}).generic || {}).status && x.status.generic.status.text).toLowerCase(), cx = /cancel/.test(stx), dv = /divert/.test(stx);
-      const icao = clean(x.airline && x.airline.code && x.airline.code.icao).toUpperCase(), alId = (icao && fr24.byIcao.get(icao)) || (info && info.alId) || 0;
-      const base = { src: 'sched', fid, id: Number(idn.row) || 0, cs, num, al: clean(x.airline && x.airline.name) || (info && info.al) || '', alId, alIcao: icao || ref.icao || '', ty: clean(x.aircraft && x.aircraft.model && x.aircraft.model.code) || (info && info.ty) || '', reg: clean(x.aircraft && x.aircraft.registration), hex: clean(x.aircraft && x.aircraft.hex).toLowerCase() };
+      const icao = clean(x.airline && x.airline.code && x.airline.code.icao).toUpperCase(), alId = (icao && fr24.byIcao.get(icao)) || (info && info.alId) || (ref && ref.icao && fr24.byIcao.get(ref.icao)) || 0;
+      const base = { src: 'sched', fid, id: Number(idn.row) || 0, cs, num, al: clean(x.airline && x.airline.name) || (info && info.al) || '', alId, alIcao: icao || (ref && ref.icao) || '', ty: clean(x.aircraft && x.aircraft.model && x.aircraft.model.code) || (info && info.ty) || '', reg: clean(x.aircraft && x.aircraft.registration), hex: clean(x.aircraft && x.aircraft.hex).toLowerCase() };
       const dep = re.departure || es.departure || sc.departure, arr = re.arrival || es.arrival || sc.arrival;
       if (o && dep) boardPut(o, 'departures', Object.assign({ nat: natRowOf(x, 'departures', ref), k, t: dep, sch: sc.departure || dep, est: dep, st: cx ? 'canceled' : re.departure ? 'departed' : 'scheduled', col: cx ? 'red' : re.departure ? 'green' : 'gray', ap: d }, base));
       if (d && arr) boardPut(d, 'arrivals', Object.assign({ nat: natRowOf(x, 'arrivals', ref), k, t: arr, sch: sc.arrival || arr, est: arr, st: cx ? 'canceled' : dv ? 'diverted' : re.arrival ? 'landed' : es.arrival ? 'estimated' : 'scheduled', col: cx || dv ? 'red' : re.arrival || es.arrival ? 'green' : 'gray', ap: o }, base));

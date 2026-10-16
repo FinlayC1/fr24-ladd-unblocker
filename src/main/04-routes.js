@@ -512,7 +512,13 @@
     // of the aircraft is in). Never over FR24's own plan, a landing or final seen here, or the user's own word
     const sr = !r.userConfirmed && !planDest && r.destConf !== 'confirmed' ? srvIds.rows.get(id) : null, cr = sr && String(sr[1] || '').toLowerCase() === hex ? crowdOf(sr) : null;
     if (cr) {
-      const ca = cr.d ? apById(cr.d) : null;
+      // (checked against where the aircraft is now, every time: worked out minutes or an hour ago, perhaps on a stale
+      // track, it is not shown once the flight says otherwise - far off its track or behind it, flying steadily on and no
+      // nearer to it (the engine's own rule), or its ETA a quarter of an hour gone with the aircraft still airborne 60 km
+      // and more from it. TC-AKB, descending on 137 past Chambery for Turin, was "Le Bourget 74%, ETA 22:09Z" at 22:16Z -
+      // another browser's, kept over this one's own Linate / Malpensa / Turin)
+      const ca0 = cr.d ? apById(cr.d) : null;
+      const ca = ca0 && !crowdContradicted(ca0, Object.assign({}, cr, { sure: cr.by === 2 }), pos, trail, origin && origin.airport, elapsedMin, ac.mil && !/^(bizjet|heavybiz)$/.test(cls) ? 'milheavy' : cls) ? ca0 : null;
       if (ca && (cr.by === 2 || (!r.destId && !r.destSite) || (r.destP || 0) + 10 < cr.p)) {
         setD(ca, cr.by === 2 ? 'confirmed' : CONF_OF(cr.p / 100), cr.by === 2 ? 'confirmed in another browser' : 'worked out by another browser');
         r.destP = cr.by === 2 ? 100 : Math.min(99, cr.p); r.destSite = null; r.alternatives = (r.alternatives || []).filter(a => a.iata !== apCode(ca)); r.crowdD = true;
@@ -531,9 +537,11 @@
     return r;
   }
   // (an airfield FR24 does not list goes to the page by its code and name only: FR24's own panel knows only its airports)
-  const routeForPage = r => { const da = r.destId ? apById(r.destId) : null; return { originId: fr24Ap(r.originId), destId: fr24Ap(r.destId), originIata: r.originIata, destIata: r.destIata, originCity: r.originCity, destCity: r.destCity, progress: r.progress, std: r.std, sta: r.sta, atd: r.atd, ata: r.ata, eta: r.eta, etd: r.etd, groundAirportId: fr24Ap(r.groundAirportId), landed: r.landed, destConf: r.destConf, destP: r.destP || 0, destReason: r.destReason || '', confirmed: !!(r.confirmed || r.landed || r.destConf === 'confirmed'), quick: !!r.quick,
+  const routeForPage = r => { const da = r.destId ? apById(r.destId) : null, oa = (r.originId && apById(r.originId)) || (r.originSite && fin(r.originSite.lat) ? r.originSite : null); return { originId: fr24Ap(r.originId), destId: fr24Ap(r.destId), originIata: r.originIata, destIata: r.destIata, originCity: r.originCity, destCity: r.destCity, progress: r.progress, std: r.std, sta: r.sta, atd: r.atd, ata: r.ata, eta: r.eta, etd: r.etd, groundAirportId: fr24Ap(r.groundAirportId), landed: r.landed, destConf: r.destConf, destP: r.destP || 0, destReason: r.destReason || '', confirmed: !!(r.confirmed || r.landed || r.destConf === 'confirmed'), quick: !!r.quick,
     // (where the destination is: a flight that goes quiet low beside it has landed, for the boards)
-    destLat: da ? da.lat : null, destLon: da ? da.lon : null, destAlt: da ? da.alt || 0 : null }; };
+    destLat: da ? da.lat : null, destLon: da ? da.lon : null, destAlt: da ? da.alt || 0 : null,
+    // (and where it took off - an airport, or a site of its own: its Playback opens FR24's playback there)
+    originLat: oa ? oa.lat : null, originLon: oa ? oa.lon : null }; };
   const boardNoted = new Map();   // flight id -> what was last kept of it for the boards
   // ---- the map's routes, shared with this browser's other FR24 tabs: an aircraft's log page shows the flight in
   // progress as the map has it, the moment it is known - not worked out again from scratch (M-ARNZ's log said "Barrow
@@ -882,6 +890,9 @@
       (live.has(id) ? refreshPlan(id) : Promise.resolve()).then(() => publishRoute(id, composeRoute(id, rec.hex))).catch(() => publishRoute(id, composeRoute(id, rec.hex)));
       if (!document.hidden) loadToday(rec.hex, 120000, { priority: true }).then(() => publishRoute(id, composeRoute(id, rec.hex))).catch(() => {});
     }
+    // (still loading its log - minutes, for 200 flights: the route worked out again all the same from where it is now, with
+    // what is in so far - not left as it was when the panel opened while the aircraft flies on)
+    else if (rec && rec.hex && routeState.get(id) && routeState.get(id).working) { const st = routeState.get(id); if (now() - Math.max(st.loadingAt || 0, (st.route && st.route.computedAt) || 0) > 30000) { st.loadingAt = now(); publishRoute(id, composeRoute(id, rec.hex)); } }
   }, 15000);
   // The panel's airports, times and progress bar are fed by the FollowFlight stream's first frame, so routes for what
   // is on screen are prepared ahead of the click.
@@ -968,7 +979,9 @@
       owner: null, airline: { name: shownOwner(rec, rec.cs) || (rec.mil ? 'Military' : 'Private owner'), code: { iata: null, icao: rec.operatorIcao || null }, short: rec.operatorName || rec.owner || 'Private owner' },
       airport: { origin: airportObj(from), destination: airportObj(to), real: null },
       time: { scheduled: { departure: null, arrival: null }, real: { departure: l.tStart, arrival: landed ? l.tEnd : null }, estimated: { departure: null, arrival: liveNow ? (l.eta || null) : null }, other: { eta: liveNow ? l.eta : l.tEnd, updated: l.tEnd, duration: landed ? l.tEnd - l.tStart : null } },
-      __tlTrace: !liveNow && rec.hex ? replayUrl(rec.hex, l) : ''    // the page's "Playback" opens this instead of FR24's
+      // (the page's "Playback" opens FR24's own map playback of the leg instead of FR24's flight, which it never recorded:
+      // at its take-off, over the field it left - or where it was first heard)
+      __tlPb: l.tStart > 0 ? { t: l.tStart, lat: from && fin(from.lat) ? from.lat : fin(l.startLat) ? l.startLat : null, lon: from && fin(from.lon) ? from.lon : fin(l.startLon) ? l.startLon : null, z: from ? 10 : 9 } : null
     };
   }
   const histReqs = new Map();

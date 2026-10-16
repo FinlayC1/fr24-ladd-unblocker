@@ -192,6 +192,61 @@ const lastReport = ip => { for (let i = reports.length - 1; i >= 0; i--) if (rep
     const p2 = await until(() => posted(B, 'route').find(m => m.id === ID && (!m.route || m.route.destReason !== 'worked out by another browser')), 1000);
     check('... the flight no nearer it an hour on: dropped at the monitor, and B\'s map told at once', !M.ident.ids.get(ID).crowd && (LB.srvIds.rows.get(ID) || [])[24] === 0 && !!p2 && (!p2.route || p2.route.destReason !== 'worked out by another browser'), p2 && p2.route); }
 
+  // ---- (22.30) another browser's destination the flight has since left behind: checked again here, every time ---------
+  // TC-AKB (GLF4, Farnborough 20:08Z, 15 Oct) descending through 24,300 ft on 137 past Chambery for Turin at 22:16Z was
+  // "Le Bourget 74%, ETA 22:09Z - worked out by another browser": kept frozen over this browser's own Linate / Malpensa /
+  // Turin, 450 km past Paris
+  { const ID2 = 0x7b000002, HEX2 = '4b8562', FAB = ap('EGLF'), LBG = ap('LFPB'), TRN = ap('LIMF');
+    const t0 = nowS - 128 * 60, wp = [[0, FAB.lat, FAB.lon, 0], [3, 51.20, -0.60, 6000], [25, 49.30, 2.00, 41000], [70, 47.30, 4.00, 41000], [100, 46.40, 5.15, 41000], [113, 46.05, 5.55, 30000], [128, 45.55, 6.18, 24325]];
+    const trail2 = []; for (let s = 0; s <= 128 * 60; s += 20) { const m = s / 60; let i = 0; while (i < wp.length - 2 && wp[i + 1][0] < m) i++; const a = wp[i], b = wp[i + 1], f = (m - a[0]) / (b[0] - a[0]); trail2.push({ t: t0 + s, lat: a[1] + (b[1] - a[1]) * f, lon: a[2] + (b[2] - a[2]) * f, alt: Math.round(a[3] + (b[3] - a[3]) * f), gnd: s === 0 }); }
+    for (let i = 1; i < trail2.length; i++) { const p = trail2[i], q = trail2[i - 1]; p.trk = E.brg(q.lat, q.lon, p.lat, p.lon); p.gs = E.dist(q.lat, q.lon, p.lat, p.lon) / 1.852 / 20 * 3600; }
+    const pos2 = Object.assign({}, trail2[trail2.length - 1], { vr: -864 });
+    M.markBlocked(HEX2, { reg: 'TC-AKB', type: 'GLF4' }, nowS);
+    // (FR24's positions of it at the monitor: the last ten minutes, a minute apart)
+    for (const p of trail2.filter(q => q.t >= nowS - 600 && (q.t - t0) % 60 === 0)) M.ident.observe([{ id: ID2, lat: p.lat, lon: p.lon, alt: p.alt, trk: Math.round(p.trk), spd: Math.round(p.gs), ts: p.t, gnd: false, src: 0, type: 'GLF4', reg: '', cs: '', icon: 0 }], Date.now(), 'scan');
+    M.ident.assign(M.ident.flights.get(ID2), HEX2, { reg: 'TC-AKB', type: 'GLF4', ladd: true }, 'list', Date.now());
+    const R2 = M.ident.ids.get(ID2);
+    check('the monitor refuses another browser\'s Le Bourget for it now (450 km behind it, flying on away)', !M.ident.crowdRoute(ID2, HEX2, { o: FAB.id, oc: 'ground', d: LBG.id, p: 74, dc: 'likely', eta: nowS - 420, atd: t0 }, '', Date.now()) && !(R2.crowd && R2.crowd.d), R2.crowd);
+    check('... takes Turin, ahead of it', M.ident.crowdRoute(ID2, HEX2, { o: FAB.id, oc: 'ground', d: TRN.id, p: 60, dc: 'likely', eta: nowS + 1200, atd: t0 }, '', Date.now()) && R2.crowd.d === TRN.id);
+    // (Le Bourget taken when it still fitted - over Picardy - and handed out since: dropped the moment the flight says otherwise)
+    Object.assign(R2.crowd, { d: LBG.id, p: 74, dc: 'likely', eta: nowS - 420, dt: nowS - 5400, km: 300, kmAt: nowS - 60 });
+    M.ident.prune(Date.now());
+    check('... and drops a Le Bourget it had kept from earlier at once - not an hour later (the origin stays)', !!R2.crowd && !R2.crowd.d && R2.crowd.o === FAB.id, R2.crowd);
+    Object.assign(R2.crowd, { d: TRN.id, p: 60, dc: 'likely', eta: nowS + 1200, dt: nowS - 60, km: 120, kmAt: nowS - 60 }); M.ident.prune(Date.now());
+    check('... Turin, ahead of it, kept', R2.crowd && R2.crowd.d === TRN.id, R2.crowd);
+    // (its ETA long gone - a stale one sent with it, or a hold - 60 km and more out: a guess dropped, a confirmed one kept)
+    Object.assign(R2.crowd, { d: TRN.id, p: 100, dc: 'confirmed', eta: nowS - 3000, dt: nowS - 60, km: 120, kmAt: nowS - 60 }); M.ident.prune(Date.now());
+    check('... Turin confirmed, its ETA 50 minutes gone, still ahead of it: kept', R2.crowd && R2.crowd.d === TRN.id, R2.crowd);
+    Object.assign(R2.crowd, { d: TRN.id, p: 60, dc: 'likely', eta: nowS - 3000, dt: nowS - 60, km: 120, kmAt: nowS - 60 }); M.ident.prune(Date.now());
+    check('... Turin worked out, its ETA 50 minutes gone, the aircraft still far from it: dropped', R2.crowd && !R2.crowd.d, R2.crowd);
+    Object.assign(R2.crowd, { d: TRN.id, p: 60, dc: 'likely', eta: nowS + 1200, dt: nowS - 60, km: 120, kmAt: nowS - 60 });
+    R2.crowd = null;
+    for (const L of [LB]) { await until(() => !L.srvIds.busy, 5000); L.srvIds.since = 0; await L.pullSrvIds(); }
+    feed(B, [{ id: ID2, lat: pos2.lat, lon: pos2.lon, alt: pos2.alt, spd: Math.round(pos2.gs), trk: Math.round(pos2.trk), ts: nowS, gnd: false, src: 5, type: 'GLF4', reg: '' }]);
+    await until(() => LB.live.has(ID2), 3000);
+    await until(() => !(LB.routeState.get(ID2) || {}).working, 5000); await sleep(200);
+    // (B's row for it as it was: another browser's Le Bourget at 74%, its ETA seven minutes gone)
+    const row0 = LB.srvIds.rows.get(ID2) || [], rowL = row0.slice(); rowL[8] = FAB.id; rowL[9] = 'ground'; rowL[10] = LBG.id; rowL[11] = 74; rowL[12] = nowS - 5400; rowL[13] = pos2.lat; rowL[14] = pos2.lon; rowL[15] = pos2.alt; rowL[16] = 0; rowL[17] = nowS; rowL[18] = nowS - 420; rowL[19] = t0; rowL[24] = 1; rowL[25] = 'likely'; rowL[26] = 1;
+    LB.srvIds.rows.set(ID2, rowL);
+    const rL = LB.composeRoute(ID2, HEX2, { pos: pos2, trail: trail2 }) || {};
+    const offOf = r => { const a = r.destId ? LB.apById(r.destId) : null; return a ? Math.round(E.angDiff(pos2.trk, E.brg(pos2.lat, pos2.lon, a.lat, a.lon))) : null; };
+    check('B: another browser\'s Le Bourget, 450 km behind the aircraft descending on 137 - not shown; B\'s own, ahead of it', rL.destIata !== 'LBG' && !rL.crowdD && rL.destReason !== 'worked out by another browser' && !!rL.destId && offOf(rL) < 75, { dest: rL.destIata, p: rL.destP, why: rL.destReason, off: offOf(rL), alts: rL.alternatives });
+    check('... no ETA already gone', !rL.eta || rL.eta > nowS, rL.eta);
+    check('... the origin it came with still shown (Farnborough)', rL.originId === FAB.id, rL.originIata);
+    // (Turin, confirmed in another browser - over any guess of B's own, whatever its odds - and ahead of it: shown)
+    const rowT = rowL.slice(); rowT[10] = TRN.id; rowT[11] = 100; rowT[18] = nowS + 1200; rowT[24] = 2; rowT[25] = 'confirmed'; LB.srvIds.rows.set(ID2, rowT);
+    const rT = LB.composeRoute(ID2, HEX2, { pos: pos2, trail: trail2 }) || {};
+    check('... Turin confirmed in another browser, ahead of it: still shown as before', rT.destIata === 'TRN' && rT.destReason === 'confirmed in another browser', { dest: rT.destIata, why: rT.destReason });
+    // (Le Bourget confirmed in another browser - a destination it has since flown away from: not that either)
+    const rowC = rowL.slice(); rowC[11] = 100; rowC[24] = 2; rowC[25] = 'confirmed'; LB.srvIds.rows.set(ID2, rowC);
+    const rC2 = LB.composeRoute(ID2, HEX2, { pos: pos2, trail: trail2 }) || {};
+    check('... Le Bourget confirmed in another browser, 450 km behind it: not shown', rC2.destIata !== 'LBG' && !rC2.crowdD, { dest: rC2.destIata, why: rC2.destReason });
+    // (before the flight is opened - the name and the route the monitor handed out: no destination whose ETA is long gone)
+    // (no track in the row: its ETA a quarter of an hour gone and more, the aircraft still airborne and far away)
+    const rowS = rowL.slice(); rowS[18] = nowS - 1500;
+    check('the route handed out with the name: a destination 25 minutes past its ETA, the aircraft 450 km from it, left out (7 minutes: kept)', !LB.srvRoute(rowS).destId && LB.srvRoute(rowS).originId === FAB.id && LB.srvRoute(rowL).destId === LBG.id && LB.srvRoute(rowT).destId === TRN.id, { stale: LB.srvRoute(rowS).destIata, late7: LB.srvRoute(rowL).destIata, ahead: LB.srvRoute(rowT).destIata });
+    LB.srvIds.rows.set(ID2, row0); }
+
   // ---- the flights a browser learns from, learned by every browser ---------------------------------------------------
   const base = (L, a, b) => L.engine.odWeight(a, b);
   const b0 = [base(LB, 'EGNL', 'LFLB'), base(LB, 'EGPC', 'LEMH')], a0 = [base(LA, 'EGNL', 'LFLB'), base(LA, 'EGPC', 'LEMH')];

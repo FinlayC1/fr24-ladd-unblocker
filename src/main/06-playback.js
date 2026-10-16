@@ -312,6 +312,61 @@
       if (id === pb.sel || d.sel) syncPanelSoon();
     }
   }
+  // ---- "Playback" of a blocked flight: where and when FR24's own map playback opens it (the page asks) ---------------
+  // The page knows the flights of this session and the rows it was given. For the rest - a search result of an aircraft
+  // not flying now or of a callsign it flew under, a board row with only one of its ends, a leg with no place - the
+  // aircraft's flight is found here: the one it is flying, else the leg of its log nearest the moment the page has (the
+  // row's time), else its latest. Its take-off, and the field it left - or where it was first heard; and the places of
+  // the airports the page names. (The page's pbPlan makes the playback's moment and place of them.)
+  async function onPbWhere(d) {
+    let out = {};
+    try { out = await pbWhere(d || {}); } catch (e) { log('playback where', e); }
+    postToPage('pbWhereRes', Object.assign({ rid: d && d.rid }, out));
+  }
+  async function pbWhere(d) {
+    const ll = {}, llOf = a => a && fin(a.lat) && fin(a.lon) ? [a.lat, a.lon] : null, isHx = h => /^[0-9a-f]{6}$/.test(h || '');
+    for (const a of [d.depAp, d.atAp]) { const p = Number(a) ? llOf(apById(Number(a))) : null; if (p) ll[a] = p; }
+    const id = Number(d.id) || 0, hint = Number(d.dep) || Number(d.at) || 0, reg = clean(d.reg).toUpperCase(), cs = csKey(d.cs);
+    let hex = clean(d.hex).toLowerCase();
+    if (!isHx(hex) && id && live.get(id)) hex = clean(live.get(id).hex).toLowerCase();
+    if (!isHx(hex) && reg) hex = clean((store.byReg(reg) || {}).hex).toLowerCase() || (/^N\d/.test(reg) ? clean(nNumberHex(reg)).toLowerCase() : '');
+    if (!isHx(hex) && cs) {
+      let best = -1;
+      for (const [, rec] of live) if (rec && isHx(rec.hex) && csKey(csOfRec(rec)) === cs) { hex = rec.hex; best = nowS(); }
+      if (best < 0) for (const [h, v] of store.allHex()) for (const x of (v && v.recent) || []) if (csKey(x[6]) === cs && (x[0] || 0) > best && (!hint || Math.abs(x[0] - hint) < 86400)) { best = x[0] || 0; hex = h; }
+    }
+    if (!isHx(hex)) return { ll };
+    // its flights: the one it is flying (FR24's id for it, its route as worked out here) and the legs of its log
+    const cands = [];
+    for (const [fid, rec] of live) {
+      if (!rec || rec.hex !== hex) continue;
+      const r = (routeState.get(fid) || {}).route || {}, dep = r.departedAt || r.atd || 0, oa = (r.originId && apById(r.originId)) || (r.originSite && fin(r.originSite.lat) ? r.originSite : null);
+      const ph = posHistory.get(fid) || [], p0 = dep ? ph.find(p => p.at / 1000 >= dep - 60 && fin(p.lat)) : null, cur = currentPos(fid);
+      cands.push({ fid, t: dep, ll: llOf(oa) || (p0 ? [p0.lat, p0.lon] : null), z: oa ? 10 : 9, now: cur && fin(cur.lat) && fin(cur.lon) ? [cur.lat, cur.lon] : null, live: true });
+    }
+    const legs = compactToLegs((store.getHex(hex) || {}).recent || []);
+    const full = legs.some(l => !(l.from && apById(l.from.id))) ? await store.getHist(hex).catch(() => null) : null;
+    for (const l of legs) {
+      if (!(l.tStart > 0)) continue;
+      const a = l.from ? apById(l.from.id) : null; let p = llOf(a);
+      if (!p && full && Array.isArray(full.legs)) { const f = full.legs.find(x => x && Math.abs(x.tStart - l.tStart) < 120 && fin(x.startLat) && fin(x.startLon)); if (f) p = [f.startLat, f.startLon]; }
+      cands.push({ t: l.tStart, t1: l.tEnd, ll: p, z: a ? 10 : 9, from: l.from ? l.from.id : 0, to: l.to ? l.to.id : 0 });
+    }
+    // (the page's moment: the flight nearest it, six hours at most - one touching the row's airport by half an hour
+    // sooner; no moment: the flight it is flying, else its latest)
+    let pick = null;
+    if (hint) {
+      let best = 6 * 3600;
+      for (const c of cands) {
+        if (!(c.t > 0)) continue;
+        const ref = d.kind === 'arrivals' && !Number(d.dep) && c.t1 ? c.t1 : c.t, ap = Number(d.apId) || 0;
+        const dt = Math.abs(ref - hint) - (ap && (c.from === ap || c.to === ap) ? 1800 : 0);
+        if (dt < best) { best = dt; pick = c; }
+      }
+    } else pick = cands.find(c => c.live) || cands.filter(c => c.t > 0).sort((a, b) => b.t - a.t)[0] || null;
+    if (!pick) return { ll, hex };
+    return { ll, hex, fid: pick.fid || 0, dep: pick.t || 0, depLL: pick.ll || null, z: pick.z, posLL: pick.now || null };
+  }
   // (the flight open in the panel, whichever way its aircraft became known - the page's message, a name found here, or
   // the address on the panel itself: its route, its track and its register facts, once)
   function pbEnsure(id, hex) {
