@@ -32,6 +32,23 @@ html,body{margin:0;height:100%;font-family:Arial,Helvetica,sans-serif;font-size:
 .col-enter-from,.col-leave-to{opacity:0}
 #openFlight{position:absolute;right:20px;top:20px}
 #openAirport{position:absolute;right:20px;top:50px}
+/* ?panel=photo: an aircraft's panel with its picture as FR24 draws it - the slideshow (JetphotosCarousel: the pages, each
+   slide's picture and copyright, the dots), or with no picture its fallback (a sideview in a wide, short frame) */
+.acp{position:absolute;left:0;top:0;width:300px;bottom:0;display:flex;flex-direction:column;background:#ededed;border-radius:8px;overflow:hidden}
+.acp-head{flex:none;padding:8px;background:#222;color:#fff;font-weight:700}
+.acp main{flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
+.acp-scroll{flex:1 1 auto;min-height:0;overflow-y:auto}
+.acp-img{position:relative}
+.acp-pages{margin:0;padding:0;list-style:none}
+.acp-page{position:relative}
+.acp-page img{display:block;width:100%;object-fit:contain}
+.acp-cr{position:absolute;left:0;bottom:0;padding:2px 8px;color:#fff;font-size:11px}
+.acp-dots{position:absolute;left:0;right:0;bottom:6px;display:flex;justify-content:center;gap:6px}
+.acp-dots button{width:7px;height:7px;padding:0;border:0;border-radius:50%;background:rgba(255,255,255,.5)}
+.acp-dots button.on{background:#fff}
+.acp-fb{height:110px;display:flex;align-items:center;justify-content:center;overflow:hidden;background:#fff}
+.acp-fb img{height:110px;width:270px}
+.acp-route{display:flex;justify-content:space-between;padding:10px 8px}
 .ap{position:absolute;left:0;top:0;width:336px;bottom:0;background:#fff;color:#393939;border-radius:8px;overflow:auto}
 .aph{background:#222;color:#f8c023;padding:8px}
 .apscroll{padding:8px}
@@ -45,7 +62,7 @@ html,body{margin:0;height:100%;font-family:Arial,Helvetica,sans-serif;font-size:
 <script src="/__vue.js"></script>
 </head><body><div id="app"></div>
 <script>
-const Q = new URLSearchParams(location.search), MODE = Q.get('mode') || 'keyed', IND = Q.get('ind') === '1', LI = Q.get('li') === '1', ODD = Q.get('odd') === '1', ASYNC = Q.get('async') === '1', PB = Q.get('pb') === '1';
+const Q = new URLSearchParams(location.search), MODE = Q.get('mode') || 'keyed', IND = Q.get('ind') === '1', LI = Q.get('li') === '1', ODD = Q.get('odd') === '1', ASYNC = Q.get('async') === '1', PB = Q.get('pb') === '1', PANEL = Q.get('panel') === 'photo';
 const { createApp, reactive, defineAsyncComponent } = Vue;
 const saved = (() => { try { return JSON.parse(localStorage.getItem('mock.widgets') || 'null'); } catch (e) { return null; } })();
 const S = reactive({ rk: 0, open: null, flight: false, enabled: true, airport: false, events: ['Runway 09/27 works'], pbw: false, went: [], rows: [], search: [], cs: 'VSB82',
@@ -64,6 +81,21 @@ const WidgetsList = { setup() { return { S, toggle(w) { w.on = !w.on; save(); } 
 const WidgetsLazy = defineAsyncComponent(() => new Promise(r => setTimeout(() => r(WidgetsList), 400)));
 const Other = { props: ['name'], template: `<div style="padding:8px"><p v-for="i in 70" :key="i">{{ name }} option {{ i }}</p></div>` };
 const WinLazy = defineAsyncComponent(() => new Promise(r => setTimeout(() => r({ components: { Win, WidgetsList }, emits: ['close'], template: `<Win title="Widgets" @close="$emit('close')"><WidgetsList/></Win>` }), 400)));
+// (the panel's picture: FR24's aircraft store's imagesList - set by the test as FR24's stream would - and its slideshow)
+const P = reactive({ images: [], n: 0, fb: 'https://www.flightradar24.com/static/images/sideviews/GLF5.png', hex: 'N/A', cs: 'N/A' });
+window.__P = P;
+const AcPhoto = { setup() { return { P }; }, template: `<div class="acp" data-testid="aircraft-panel"><div class="acp-head"><span data-testid="aircraft-panel__header__callsign">{{ P.cs }}</span></div>
+  <main><div class="acp-scroll">
+    <div data-testid="aircraft-panel__image" class="acp-img">
+      <div v-if="P.images.length" class="acp-car">
+        <ul data-testid="carousel__pages" class="acp-pages"><li v-for="(im, i) in P.images" v-show="i === P.n" :key="i" class="acp-page"><a :href="im.url" target="_blank"><img :data-testid="'aircraft-panel__image__image__' + i" :src="im.src" alt=""></a><span class="acp-cr" data-testid="aircraft-panel__image__copyright">© {{ im.copyright }}</span></li></ul>
+        <div v-if="P.images.length > 1" class="acp-dots"><button v-for="(im, i) in P.images" :key="i" type="button" :class="{ on: i === P.n }" :data-testid="'carousel__dot__' + i" @click="P.n = i"></button></div>
+      </div>
+      <div v-else class="acp-fb"><img data-testid="aircraft-panel__image__fallback__image" :src="P.fb" alt=""></div>
+    </div>
+    <div class="acp-route"><p data-testid="aircraft-panel__airport-departure-iata">DUS</p><p data-testid="aircraft-panel__airport-arrival-iata">N/A</p></div>
+    <p>ICAO <span data-testid="aircraft-panel__hex">{{ P.hex }}</span></p>
+  </div></main></div>` };
 const tpl = {
   keyed: BARS.slice(0, 4).map(b => `<Transition name="win"><Win v-if="S.open==='${b}'" :key="S.rk" title="${ODD && b === 'Widgets' ? 'Map widgets' : b}" @close="S.open=null">${b === 'Widgets' ? '<WidgetsList/>' : `<Other name="${b}"/>`}</Win></Transition>`).join(''),
   async: BARS.slice(0, 4).map(b => b === 'Widgets' ? `<Transition name="win"><WinLazy v-if="S.open==='Widgets'" @close="S.open=null"/></Transition>` : `<Transition name="win"><Win v-if="S.open==='${b}'" title="${b}" @close="S.open=null"><Other name="${b}"/></Win></Transition>`).join(''),
@@ -71,9 +103,9 @@ const tpl = {
   show: BARS.slice(0, 4).map(b => `<Transition name="win"><Win v-show="S.open==='${b}'" title="${b}" @close="S.open=null">${b === 'Widgets' ? '<WidgetsList/>' : `<Other name="${b}"/>`}</Win></Transition>`).join('')
 }[MODE];
 const app = createApp({
-  components: { Win, WidgetsList, Other, WinLazy },
+  components: { Win, WidgetsList, Other, WinLazy, AcPhoto },
   setup() {
-    return { S, BARS, IND, LI, PB,
+    return { S, BARS, IND, LI, PB, PANEL,
       toggle(b) { if (b === 'Playback') { S.pbw = !S.pbw; return; } S.flight = false; S.open = S.open === b ? null : b; },
       openFlight() { S.open = null; S.flight = true; } };
   },
@@ -81,6 +113,7 @@ const app = createApp({
     <div class="left">
       ${tpl}
       <Transition name="col"><div v-if="!S.open && !S.flight && S.enabled" class="col"><template v-for="w in S.widgets" :key="w.k"><div v-if="w.on" class="card" :data-card="w.k"><h3>{{ w.title }}</h3><p>...</p></div></template></div></Transition>
+      <AcPhoto v-if="PANEL"/>
       <Transition name="win"><div v-if="S.flight" class="ac" data-testid="aircraft-panel">Flight UAL941 <button @click="S.flight=false">x</button></div></Transition>
       <div v-if="S.airport" data-testid="airport-panel" class="ap"><div class="aph"><h2>Liverpool John Lennon Airport</h2><p>LPL / EGGP</p></div>
         <div class="apscroll"><div class="wxc"><p>Overcast · 13 °C</p><button>More weather &amp; METAR</button></div>

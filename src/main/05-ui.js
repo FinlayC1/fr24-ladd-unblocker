@@ -56,7 +56,16 @@ aside.tl-pred svg{color:#1b1b1b!important;fill:currentColor}
 aside.tl-pred .tl-pred-text{line-height:1.4}
 aside.tl-pred .tl-pred-text b{font-weight:700}
 /* FR24 letterboxes every picture that is not a JetPhotos one (object-contain, bars at the sides): each photo fills its 16:9 frame, cropped */
-[data-testid="carousel__pages"] img[data-testid*="__image__"]:not([src*="sideview"]):not([data-testid$="promo"]):not([data-testid*="fallback"]),img[data-testid*="fallback"][data-tl-val],img[data-testid^="aircraft-panel__image__image__"]:not([src*="sideview"]):not([data-testid$="promo"]),img[data-testid^="aircraft-or-airport-carousel__image__"]:not([src*="sideview"]):not([data-testid$="promo"]){width:100%!important;aspect-ratio:16/9!important;height:auto!important;object-fit:cover!important;object-position:center!important}
+[data-testid="carousel__pages"] img[data-testid*="__image__"]:not([src*="sideview"]):not([data-testid$="promo"]):not([data-testid*="fallback"]),img[data-testid^="aircraft-panel__image__image__"]:not([src*="sideview"]):not([data-testid$="promo"]),img[data-testid^="aircraft-or-airport-carousel__image__"]:not([src*="sideview"]):not([data-testid$="promo"]){width:100%!important;aspect-ratio:16/9!important;height:auto!important;object-fit:cover!important;object-position:center!important}
+/* a picture drawn while FR24's own panel still shows its fallback: FR24's photo frame (the panel's width, 16:9, cropped), its credit, its dots; FR24's fallback hidden meanwhile */
+.tl-photo{position:relative;display:block;width:100%;aspect-ratio:16/9;overflow:hidden;background:#1b1b1b}
+.tl-photo+:not(.tl-strip){display:none!important}
+.tl-photo .tl-photo-img,.tl-photo .tl-photo-img img{display:block;width:100%;height:100%}
+.tl-photo .tl-photo-img img{object-fit:cover;object-position:center}
+.tl-photo .tl-photo-cr{position:absolute;left:0;bottom:0;max-width:70%;padding:2px 8px;color:#fff;font:11px/1.4 Roboto,Arial,sans-serif;text-decoration:none;text-shadow:0 0 3px rgba(0,0,0,.8);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tl-photo .tl-photo-dots{position:absolute;left:0;right:0;bottom:6px;display:flex;justify-content:center;gap:6px;pointer-events:none}
+.tl-photo .tl-photo-dots button{width:7px;height:7px;padding:0;border:0;border-radius:50%;background:rgba(255,255,255,.5);cursor:pointer;pointer-events:auto}
+.tl-photo .tl-photo-dots button.on{background:#fff}
 .tl-warn{color:#b35c00;font-size:12px;font-weight:600}
 .tl-pop{position:fixed;z-index:2147483000;max-height:60vh;overflow:auto;background:#fff;color:#393939;border:1px solid #dcdcdc;border-radius:8px;box-shadow:0 8px 28px rgba(0,0,0,.25);font:12px/1.5 "Open Sans",Roboto,Arial,sans-serif;padding:8px 10px}
 .tl-pop-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
@@ -102,7 +111,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   }
   function restore(panel) {
     // our marks first, so what is left is FR24's own text
-    panel.querySelectorAll('.tl-strip,.tl-cap,.tl-inf,.tl-ladd,.tl-airline,.tl-filled').forEach(e => e.remove());
+    panel.querySelectorAll('.tl-strip,.tl-cap,.tl-photo,.tl-inf,.tl-ladd,.tl-airline,.tl-filled').forEach(e => e.remove());
     panel.querySelectorAll('[data-tl-orig]').forEach(el => {
       if (el.tagName === 'IMG') { if (el.getAttribute('src') === el.dataset.tlVal) el.setAttribute('src', el.dataset.tlOrig); }
       else if (clean(textOf(el)) === el.dataset.tlVal) writeOwn(el, el.dataset.tlOrig);
@@ -144,7 +153,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     }
     const body = [...main.children].find(scrolls) || main.querySelector('main > div');
     if (!body) return null;
-    const photo = [...body.children].find(c => !c.classList.contains('tl-strip') && c.querySelector('img'));
+    const photo = [...body.children].find(c => !c.classList.contains('tl-strip') && !c.classList.contains('tl-photo') && c.querySelector('img'));
     return { scroll: body, after: photo || null };
   }
   function strip(panel) {
@@ -243,28 +252,51 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     return null;
   }
   const linksHtml = rec => { const hx = withStored(rec), a = aircraftLinks(hx); return `${a ? `<div class="tl-links">${a}</div>` : ''}<div class="tl-links">${toolLinks(rec)}</div>`; };
-  function photoTarget(panel, rec) {
-    const fb = q(panel, SEL.fallbackImg); if (fb) return fb;
-    const box = q(panel, SEL.image); if (!box) return null;
-    const ours = new Set((rec.photos || []).flatMap(p => [p.large, p.medium, p.thumb]).filter(Boolean));
-    return [...box.querySelectorAll('img')].find(i => { const s = i.dataset.tlOrig || i.getAttribute('src') || ''; return /\/sideviews\/|jp-promo|airport-data/i.test(s) || i.dataset.tlVal || ours.has(i.getAttribute('src')); }) || null;
+  // An aircraft's pictures are FR24's own slideshow's: the page puts them into FR24's panel stream (page.js, the aircraft
+  // block), so they are drawn exactly as FR24 draws its own - its size and crop, its credit, its dots. Only while FR24
+  // still draws no picture of the aircraft (its fallback: the "blocked" drawing, a sideview) are they drawn here, and
+  // only once the page has had a moment to hand them over: a frame of FR24's own photo size (the panel's width, 16:9)
+  // in place of FR24's fallback, which is hidden meanwhile (a stylesheet rule on the element after ours - nothing of
+  // FR24's own is changed), the credit at its bottom left as FR24's, dots for more than one. It goes the moment FR24
+  // draws a picture itself. (The picture used to be written into FR24's fallback picture: a sideview's frame, wide and
+  // short - 270 x 110 - with a second credit of ours at its bottom right, beside FR24's own, and FR24 kept drawing into
+  // those same elements: JNY5's and T7OKS's first slide, short, with two credits)
+  const PHOTO_WAIT = 1500;
+  const notPhoto = /sideview|blocked|jp-promo|airport-data|placeholder/i;
+  const fr24Photo = panel => [...panel.querySelectorAll('img[data-testid*="__image__"]:not([data-testid*="fallback"]):not([data-testid$="promo"])')].some(i => !i.closest('.tl-photo') && !notPhoto.test(i.getAttribute('src') || ''));
+  // (where FR24 draws its picture: the panel's image box - else the block its fallback picture sits in)
+  function photoSlot(panel) {
+    const box = q(panel, SEL.image), fb = q(panel, SEL.fallbackImg);
+    if (box && (!fb || box.contains(fb))) return box;
+    return fb && fb.parentElement !== panel ? fb.parentElement : null;
+  }
+  function dropPhoto(panel) { panel.querySelectorAll('.tl-photo').forEach(e => e.remove()); }
+  function photoHtml(list, n) {
+    const ph = list[n], url = noBar(ph.large || ph.medium || ph.thumb), link = ph.link || url;
+    const dots = list.length > 1 ? `<div class="tl-photo-dots">${list.map((_, i) => `<button type="button" data-n="${i}"${i === n ? ' class="on"' : ''} aria-label="Photo ${i + 1}"></button>`).join('')}</div>` : '';
+    return `<a class="tl-photo-img" href="${esc(link)}" target="_blank" rel="noopener noreferrer"><img src="${esc(url)}" alt="" referrerpolicy="no-referrer"></a><a class="tl-photo-cr" href="${esc(link)}" target="_blank" rel="noopener noreferrer">© ${esc(ph.credit || ph.source || 'Photo')}</a>${dots}`;
   }
   function applyPhoto(panel, rec) {
-    const ph = goodPhotos(rec.photos)[0]; if (!ph) return;
-    const url = noBar(ph.large || ph.medium);
-    const box = q(panel, SEL.image);
-    if (box && [...box.querySelectorAll('img')].some(i => !i.dataset.tlVal && i.getAttribute('src') === url)) return;   // FR24 renders it natively
-    const img = photoTarget(panel, rec); if (!img) return;
-    if (img.getAttribute('src') !== url) {
-      if (!('tlOrig' in img.dataset)) img.dataset.tlOrig = img.getAttribute('src') || '';
-      img.referrerPolicy = 'no-referrer'; img.setAttribute('src', url); img.dataset.tlVal = url;
-      img.onerror = () => { if (img.dataset.tlVal === url) { img.setAttribute('src', img.dataset.tlOrig); delete img.dataset.tlVal; delete img.dataset.tlOrig; } };
+    const list = goodPhotos(rec.photos).filter(p => p.large || p.medium || p.thumb).slice(0, 3);
+    // (FR24 draws a picture itself - ours, handed over, or its own: nothing of ours beside it)
+    if (!list.length || fr24Photo(panel)) { panel.__tlPhWait = null; return dropPhoto(panel); }
+    const key = (rec.hex || '') + '|' + list.map(p => noBar(p.large || p.medium || p.thumb)).join('|');
+    let el = panel.querySelector('.tl-photo');
+    if (!el || el.dataset.key !== key) {
+      // (the page hands the pictures to FR24 within a moment of their coming: FR24's own slideshow then, not this)
+      const w = panel.__tlPhWait;
+      if (!el && (!w || w.key !== rec.hex)) { panel.__tlPhWait = { key: rec.hex, at: now() }; setTimeout(syncPanelSoon, PHOTO_WAIT + 50); return; }
+      if (!el && now() - w.at < PHOTO_WAIT) return;
+      if (!el) {
+        el = document.createElement('div'); el.className = 'tl-photo';
+        el.addEventListener('click', e => { const b = e.target.closest('button[data-n]'); if (!b) return; e.preventDefault(); e.stopPropagation(); el.innerHTML = photoHtml(el.__tlList, Number(b.dataset.n)); });
+      }
+      el.__tlList = list; el.dataset.key = key; el.innerHTML = photoHtml(list, 0);
     }
-    const li = img.parentElement; if (!li) return;
-    let cap = li.querySelector('.tl-cap');
-    if (!cap) { cap = document.createElement('div'); cap.className = 'tl-cap'; li.style.position = 'relative'; li.appendChild(cap); }
-    const html = `<a href="${esc(ph.link || url)}" target="_blank" rel="noopener noreferrer">${ph.credit ? '© ' + esc(ph.credit) + ' · ' : ''}${esc(ph.source || 'Photo')} ↗</a>`;
-    if (cap.innerHTML !== html) cap.innerHTML = html;
+    // (right before FR24's frame - the stylesheet hides the element after ours - wherever FR24 has put it now)
+    const slot = photoSlot(panel); if (!slot || !slot.parentElement) return dropPhoto(panel);
+    if (el.nextElementSibling !== slot) slot.parentElement.insertBefore(el, slot);
+    panel.querySelectorAll('.tl-photo').forEach(e => { if (e !== el) e.remove(); });
   }
   // FR24's time-zone line under an airport: "CEST (UTC +02:00)"
   function tzLabel(ap) {

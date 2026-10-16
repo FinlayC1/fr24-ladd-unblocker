@@ -161,8 +161,8 @@ check('ordinary aircraft: FR24 data kept (registration, callsign, photos)', str(
   const own = n => cat([H.fStr(1, 'https://www.jetphotos.com/photo/' + n), H.fStr(2, 'Tomas Scheffer'), H.fStr(3, 'https://cdn.jetphotos.com/200cb/6/' + n + '_tb.jpg'), H.fStr(4, 'https://cdn.jetphotos.com/400cb/6/' + n + '.jpg'), H.fStr(5, 'https://cdn.jetphotos.com/640cb/6/' + n + '.jpg')]);
   const aiOwn = cat([aiStub, H.fLen(11, own('500001_1')), H.fLen(11, own('500002_2')), H.fLen(11, own('500003_3'))]);
   const outI = H.patchFlightMsg(cat([H.fLen(1, aiOwn), H.fLen(5, efi5)]), { id: fid5 }, H.FOLLOW), aiI = one(outI, 1);
-  const slides = aiI ? fields(aiI.val, 11).map(f => ({ link: str(f.val, 1), credit: str(f.val, 2), img: str(f.val, 3), other: !!(one(f.val, 4) || one(f.val, 5)) })) : [];
-  check('FR24\'s own pictures of a blocked airframe: every slide the clean large picture (640, no "cb"), nothing in a credit-bar size', slides.length === 3 && slides.every((x, i) => x.img === 'https://cdn.jetphotos.com/640/6/50000' + (i + 1) + '_' + (i + 1) + '.jpg' && !x.other && x.credit === 'Tomas Scheffer' && /jetphotos\.com\/photo\//.test(x.link)), slides);
+  const slides = aiI ? fields(aiI.val, 11).map(f => ({ link: str(f.val, 1), credit: str(f.val, 2), img: str(f.val, 3), other: str(f.val, 4) !== str(f.val, 3) || str(f.val, 5) !== str(f.val, 3) })) : [];
+  check('FR24\'s own pictures of a blocked airframe: every slide the clean large picture (640, no "cb") in all its sizes, nothing in a credit-bar size', slides.length === 3 && slides.every((x, i) => x.img === 'https://cdn.jetphotos.com/640/6/50000' + (i + 1) + '_' + (i + 1) + '.jpg' && !x.other && x.credit === 'Tomas Scheffer' && /jetphotos\.com\/photo\//.test(x.link)), slides);
   B.resolved.delete(fid5);
 }
 // ("Playback" of a blocked flight - board cards, the panel, search results, rebuilt log rows: test/unit_pbbuttons.cjs)
@@ -308,6 +308,28 @@ check('ordinary aircraft: FR24 data kept (registration, callsign, photos)', str(
     check('a credit-bar picture drawn on the page: shown in the clean size, when added and when its src changes', added === 'https://cdn.jetphotos.com/640/6/500001_1.jpg' && img.getAttribute('src') === 'https://cdn.jetphotos.com/400/6/500002_2.jpg' && !/cb\//.test(img.getAttribute('srcset')), { added, src: img.getAttribute('src'), srcset: img.getAttribute('srcset') });
     const plain = w.document.createElement('img'); plain.setAttribute('src', 'https://t.plnspttrs.net/1/999_abc_280.jpg'); w.document.body.appendChild(plain); await sleep(20);
     check('... other pictures left as they are', plain.getAttribute('src') === 'https://t.plnspttrs.net/1/999_abc_280.jpg');
+  }
+  // A blocked aircraft opened before the userscript named it (FR24's block: no Mode S address), named while the stream
+  // could not be written to, its pictures in after: they go into FR24's slideshow, each slide in all of FR24's sizes -
+  // a picture whose address has "cb" in it as its thumbnail only (FR24 cuts "cb" out of the other two)
+  {
+    const fidB = 0x41f0ccc1, efiB = cat(H.parse(efiReal).filter(f => f.fn !== 1 && f.fn !== 10).map(f => f.raw).concat([H.fVar(1, fidB)]));
+    const stB = { id: fidB, out: '', xhr: { readyState: 3, dispatchEvent: () => true } };
+    H.setFollowSt(stB);
+    H.patchFlightMsg(cat([H.fLen(1, aiStub), H.fLen(5, efiB)]), stB, H.FOLLOW);    // FR24's first frame, not named yet
+    stB.xhr.readyState = 4;
+    w.dispatchEvent(new w.MessageEvent('message', { data: { __tweeksLadd: 'resolve', entries: [{ id: fidB, cs: 'JNY5', reg: 'N5JY', hex: 'a793b2', type: 'GLF5', photos: [] }] }, source: w }));
+    await sleep(120);
+    stB.xhr.readyState = 3; const k0 = stB.out.length;
+    w.dispatchEvent(new w.MessageEvent('message', { data: { __tweeksLadd: 'photosDone', hex: 'a793b2', photos: [
+      { link: 'https://www.jetphotos.com/photo/71', credit: 'Pablo Romero', large: 'https://cdn.jetphotos.com/640/6/710001_1.jpg', source: 'JetPhotos' },
+      { link: 'https://www.planespotters.net/photo/72', credit: 'yh0403_WSSS', large: 'https://t.plnspttrs.net/72/1234567_9fcb21aa0e_280.jpg', source: 'Planespotters' }] }, source: w }));
+    await sleep(120);
+    const frB = frames(stB.out.slice(k0)), aiB = frB.length && one(frB[frB.length - 1], 1);
+    const sl = aiB ? fields(aiB.val, 11).map(f => [str(f.val, 3), str(f.val, 4), str(f.val, 5), str(f.val, 2)]) : [];
+    check('a blocked aircraft named after its panel opened: its pictures pushed into FR24\'s slideshow when they come', sl.length === 2 && sl[0][0] === 'https://cdn.jetphotos.com/640/6/710001_1.jpg' && sl[0][3] === 'Pablo Romero', sl);
+    check('... each slide the picture in FR24\'s three sizes (thumbnail, medium, large), one with "cb" in its address as its thumbnail only', sl.length === 2 && sl[0][1] === sl[0][0] && sl[0][2] === sl[0][0] && sl[1][0] === 'https://t.plnspttrs.net/72/1234567_9fcb21aa0e_280.jpg' && !sl[1][1] && !sl[1][2], sl);
+    H.setFollowSt(null);
   }
   console.log(fails ? `\n${fails} FAILED` : '\nall passed');
   process.exit(fails ? 1 : 0);

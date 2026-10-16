@@ -550,10 +550,16 @@
     var noBar = function (u) { return typeof u === 'string' ? u.replace(/(\/\/cdn\.jetphotos\.com\/\d+)cb\//i, '$1/') : u; };
     function goodPhotos(l) { return (l || []).filter(function (p) { return p && !adJson(p); }).map(function (p) { return p.large === noBar(p.large) && p.medium === noBar(p.medium) && p.thumb === noBar(p.thumb) ? p : Object.assign({}, p, { large: noBar(p.large), medium: noBar(p.medium), thumb: noBar(p.thumb) }); }); }
     function ourPhotosFor(hexU) { var c = photoCache.get(hexU); var l = goodPhotos(c && c.photos); if (!l.length) l = goodPhotos((psCache.get(hexU) || {}).photos); return l; }
+    // One slide of FR24's slideshow, in the shape of FR24's own JetPhotos pictures: url (1, the link), copyright (2), and
+    // the picture as its thumbnail (3), medium (4) and large (5) - the one clean large picture in all three, so whichever
+    // size FR24 draws a slide (or its dots) from, it is that one, as for any aircraft FR24 has pictures of. (Ours were
+    // given as a thumbnail alone - a shape FR24's own pictures never have. FR24's medium / large path runs
+    // .replace("cb", "") - right for JetPhotos' credit-bar sizes, and it would corrupt any other address with "cb" in it:
+    // one such is given as its thumbnail only, as before.)
+    function slide(link, credit, img) { return fLen(11, concat([fStr(1, link || img), fStr(2, credit || ''), fStr(3, img)].concat(img.indexOf('cb') < 0 ? [fStr(4, img), fStr(5, img)] : []))); }
     function photoParts(photos) {
-      // url (1), copyright (2), thumbnail (3): FR24 then uses the thumbnail verbatim as the image and url as the link
       var out = [];
-      for (var j = 0; j < photos.length && out.length < 3; j++) { var ph = photos[j], img = ph.large || ph.medium || ph.thumb; if (img) out.push(fLen(11, concat([fStr(1, ph.link || img), fStr(2, ph.credit || ''), fStr(3, img)]))); }
+      for (var j = 0; j < photos.length && out.length < 3; j++) { var ph = photos[j], img = ph.large || ph.medium || ph.thumb; if (img) out.push(slide(ph.link, ph.credit, img)); }
       return out;
     }
     function patchFollow(body, st) { return patchFlightMsg(body, st, FOLLOW); }
@@ -733,7 +739,9 @@
           if (adAI) {
             var ourP = ourPhotosFor(hexP), extraP = ourP.filter(function (p) { return !seenK[shotKeyP(p)]; }).slice(0, Math.max(0, 3 - realP));
             kP = kP.concat(photoParts(extraP));
-            if (F.follow && realP < 3) aiKeep[fid] = { val: f.val, sig: photoSig(ourP), pubHex: hexP };
+            // (a blocked aircraft's block has no Mode S address: its pictures are its record's, once the userscript names
+            // it - looked for under "000000" they were never sent, and only the userscript's stand-in showed them)
+            if (F.follow && realP < 3) aiKeep[fid] = numOf(aiP, 1) > 0 ? { val: f.val, sig: photoSig(ourP), pubHex: hexP } : { val: f.val, sig: '' };
           }
           parts.push(fLen(F.ai, concat(kP))); changed = true; continue;
         }
@@ -748,12 +756,12 @@
             if (x.fn === 11) {
               var im = parse(x.val); if (adImg(im)) continue;
               if (!(has(im, 3) || has(im, 4) || has(im, 5))) { sideviews.push(x.raw); continue; }
-              // FR24's own picture of a blocked airframe: given the way ours are (link, credit, the clean large picture as
-              // the image), so FR24 draws it like every other slide - its 640cb large size has JetPhotos' credit bar burnt
-              // into the bottom, and drawn as FR24 sent it the first slide came up short with that bar in it
+              // FR24's own picture of a blocked airframe: given the way ours are (link, credit, the clean large picture in
+              // every size), so FR24 draws it like every other slide - its 640cb large size has JetPhotos' credit bar burnt
+              // into the bottom
               hasRealPhoto = true;
               var bigO = noBar(strOf(im, 5) || strOf(im, 4) || strOf(im, 3));
-              k2.push(fLen(11, concat([fStr(1, strOf(im, 1) || bigO), fStr(2, strOf(im, 2)), fStr(3, bigO)]))); touched = true;
+              k2.push(slide(strOf(im, 1), strOf(im, 2), bigO)); touched = true;
               continue;
             }
             k2.push(x.raw);
@@ -770,16 +778,7 @@
           var realR = ai.filter(function (x) { return x.fn === 11 && realImg(parse(x.val)); }), keysR = {}; realR.forEach(function (x) { keysR[imgKeyA(parse(x.val))] = true; });
           if (F.follow && fid) aiKeep[fid] = { val: f.val, sig: photoSig(photos), real: realR.length >= 3 };
           if (hasRealPhoto && realR.length < 3) { var extraR = photos.filter(function (p) { return !keysR[shotKeyP(p)]; }).slice(0, 3 - realR.length); if (extraR.length) { k2 = k2.concat(photoParts(extraR)); touched = true; } }
-          if (photos.length && !hasRealPhoto) {
-            // url (1), copyright (2), thumbnail (3): FR24 then uses the thumbnail verbatim as the image and url as the
-            // link (its medium/large path runs .replace("cb","") - a JetPhotos CDN quirk that would corrupt other URLs).
-            for (j = 0; j < photos.length && j < 3; j++) {
-              var ph = photos[j], img = ph.large || ph.medium || ph.thumb;
-              if (!img) continue;
-              k2.push(fLen(11, concat([fStr(1, ph.link || img), fStr(2, ph.credit || ''), fStr(3, img)])));
-            }
-            touched = true;
-          }
+          if (photos.length && !hasRealPhoto) { k2 = k2.concat(photoParts(photos)); touched = true; }
           for (j = 0; j < sideviews.length; j++) k2.push(sideviews[j]);
           // FR24 sometimes has its own pictures of a blocked airframe: kept by the userscript for the log page and boards
           if (hasRealPhoto && rec.hex && !fr24ImgSent[fid]) {
@@ -9691,7 +9690,16 @@ aside.tl-pred svg{color:#1b1b1b!important;fill:currentColor}
 aside.tl-pred .tl-pred-text{line-height:1.4}
 aside.tl-pred .tl-pred-text b{font-weight:700}
 /* FR24 letterboxes every picture that is not a JetPhotos one (object-contain, bars at the sides): each photo fills its 16:9 frame, cropped */
-[data-testid="carousel__pages"] img[data-testid*="__image__"]:not([src*="sideview"]):not([data-testid$="promo"]):not([data-testid*="fallback"]),img[data-testid*="fallback"][data-tl-val],img[data-testid^="aircraft-panel__image__image__"]:not([src*="sideview"]):not([data-testid$="promo"]),img[data-testid^="aircraft-or-airport-carousel__image__"]:not([src*="sideview"]):not([data-testid$="promo"]){width:100%!important;aspect-ratio:16/9!important;height:auto!important;object-fit:cover!important;object-position:center!important}
+[data-testid="carousel__pages"] img[data-testid*="__image__"]:not([src*="sideview"]):not([data-testid$="promo"]):not([data-testid*="fallback"]),img[data-testid^="aircraft-panel__image__image__"]:not([src*="sideview"]):not([data-testid$="promo"]),img[data-testid^="aircraft-or-airport-carousel__image__"]:not([src*="sideview"]):not([data-testid$="promo"]){width:100%!important;aspect-ratio:16/9!important;height:auto!important;object-fit:cover!important;object-position:center!important}
+/* a picture drawn while FR24's own panel still shows its fallback: FR24's photo frame (the panel's width, 16:9, cropped), its credit, its dots; FR24's fallback hidden meanwhile */
+.tl-photo{position:relative;display:block;width:100%;aspect-ratio:16/9;overflow:hidden;background:#1b1b1b}
+.tl-photo+:not(.tl-strip){display:none!important}
+.tl-photo .tl-photo-img,.tl-photo .tl-photo-img img{display:block;width:100%;height:100%}
+.tl-photo .tl-photo-img img{object-fit:cover;object-position:center}
+.tl-photo .tl-photo-cr{position:absolute;left:0;bottom:0;max-width:70%;padding:2px 8px;color:#fff;font:11px/1.4 Roboto,Arial,sans-serif;text-decoration:none;text-shadow:0 0 3px rgba(0,0,0,.8);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tl-photo .tl-photo-dots{position:absolute;left:0;right:0;bottom:6px;display:flex;justify-content:center;gap:6px;pointer-events:none}
+.tl-photo .tl-photo-dots button{width:7px;height:7px;padding:0;border:0;border-radius:50%;background:rgba(255,255,255,.5);cursor:pointer;pointer-events:auto}
+.tl-photo .tl-photo-dots button.on{background:#fff}
 .tl-warn{color:#b35c00;font-size:12px;font-weight:600}
 .tl-pop{position:fixed;z-index:2147483000;max-height:60vh;overflow:auto;background:#fff;color:#393939;border:1px solid #dcdcdc;border-radius:8px;box-shadow:0 8px 28px rgba(0,0,0,.25);font:12px/1.5 "Open Sans",Roboto,Arial,sans-serif;padding:8px 10px}
 .tl-pop-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
@@ -9737,7 +9745,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   }
   function restore(panel) {
     // our marks first, so what is left is FR24's own text
-    panel.querySelectorAll('.tl-strip,.tl-cap,.tl-inf,.tl-ladd,.tl-airline,.tl-filled').forEach(e => e.remove());
+    panel.querySelectorAll('.tl-strip,.tl-cap,.tl-photo,.tl-inf,.tl-ladd,.tl-airline,.tl-filled').forEach(e => e.remove());
     panel.querySelectorAll('[data-tl-orig]').forEach(el => {
       if (el.tagName === 'IMG') { if (el.getAttribute('src') === el.dataset.tlVal) el.setAttribute('src', el.dataset.tlOrig); }
       else if (clean(textOf(el)) === el.dataset.tlVal) writeOwn(el, el.dataset.tlOrig);
@@ -9779,7 +9787,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     }
     const body = [...main.children].find(scrolls) || main.querySelector('main > div');
     if (!body) return null;
-    const photo = [...body.children].find(c => !c.classList.contains('tl-strip') && c.querySelector('img'));
+    const photo = [...body.children].find(c => !c.classList.contains('tl-strip') && !c.classList.contains('tl-photo') && c.querySelector('img'));
     return { scroll: body, after: photo || null };
   }
   function strip(panel) {
@@ -9878,28 +9886,51 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     return null;
   }
   const linksHtml = rec => { const hx = withStored(rec), a = aircraftLinks(hx); return `${a ? `<div class="tl-links">${a}</div>` : ''}<div class="tl-links">${toolLinks(rec)}</div>`; };
-  function photoTarget(panel, rec) {
-    const fb = q(panel, SEL.fallbackImg); if (fb) return fb;
-    const box = q(panel, SEL.image); if (!box) return null;
-    const ours = new Set((rec.photos || []).flatMap(p => [p.large, p.medium, p.thumb]).filter(Boolean));
-    return [...box.querySelectorAll('img')].find(i => { const s = i.dataset.tlOrig || i.getAttribute('src') || ''; return /\/sideviews\/|jp-promo|airport-data/i.test(s) || i.dataset.tlVal || ours.has(i.getAttribute('src')); }) || null;
+  // An aircraft's pictures are FR24's own slideshow's: the page puts them into FR24's panel stream (page.js, the aircraft
+  // block), so they are drawn exactly as FR24 draws its own - its size and crop, its credit, its dots. Only while FR24
+  // still draws no picture of the aircraft (its fallback: the "blocked" drawing, a sideview) are they drawn here, and
+  // only once the page has had a moment to hand them over: a frame of FR24's own photo size (the panel's width, 16:9)
+  // in place of FR24's fallback, which is hidden meanwhile (a stylesheet rule on the element after ours - nothing of
+  // FR24's own is changed), the credit at its bottom left as FR24's, dots for more than one. It goes the moment FR24
+  // draws a picture itself. (The picture used to be written into FR24's fallback picture: a sideview's frame, wide and
+  // short - 270 x 110 - with a second credit of ours at its bottom right, beside FR24's own, and FR24 kept drawing into
+  // those same elements: JNY5's and T7OKS's first slide, short, with two credits)
+  const PHOTO_WAIT = 1500;
+  const notPhoto = /sideview|blocked|jp-promo|airport-data|placeholder/i;
+  const fr24Photo = panel => [...panel.querySelectorAll('img[data-testid*="__image__"]:not([data-testid*="fallback"]):not([data-testid$="promo"])')].some(i => !i.closest('.tl-photo') && !notPhoto.test(i.getAttribute('src') || ''));
+  // (where FR24 draws its picture: the panel's image box - else the block its fallback picture sits in)
+  function photoSlot(panel) {
+    const box = q(panel, SEL.image), fb = q(panel, SEL.fallbackImg);
+    if (box && (!fb || box.contains(fb))) return box;
+    return fb && fb.parentElement !== panel ? fb.parentElement : null;
+  }
+  function dropPhoto(panel) { panel.querySelectorAll('.tl-photo').forEach(e => e.remove()); }
+  function photoHtml(list, n) {
+    const ph = list[n], url = noBar(ph.large || ph.medium || ph.thumb), link = ph.link || url;
+    const dots = list.length > 1 ? `<div class="tl-photo-dots">${list.map((_, i) => `<button type="button" data-n="${i}"${i === n ? ' class="on"' : ''} aria-label="Photo ${i + 1}"></button>`).join('')}</div>` : '';
+    return `<a class="tl-photo-img" href="${esc(link)}" target="_blank" rel="noopener noreferrer"><img src="${esc(url)}" alt="" referrerpolicy="no-referrer"></a><a class="tl-photo-cr" href="${esc(link)}" target="_blank" rel="noopener noreferrer">© ${esc(ph.credit || ph.source || 'Photo')}</a>${dots}`;
   }
   function applyPhoto(panel, rec) {
-    const ph = goodPhotos(rec.photos)[0]; if (!ph) return;
-    const url = noBar(ph.large || ph.medium);
-    const box = q(panel, SEL.image);
-    if (box && [...box.querySelectorAll('img')].some(i => !i.dataset.tlVal && i.getAttribute('src') === url)) return;   // FR24 renders it natively
-    const img = photoTarget(panel, rec); if (!img) return;
-    if (img.getAttribute('src') !== url) {
-      if (!('tlOrig' in img.dataset)) img.dataset.tlOrig = img.getAttribute('src') || '';
-      img.referrerPolicy = 'no-referrer'; img.setAttribute('src', url); img.dataset.tlVal = url;
-      img.onerror = () => { if (img.dataset.tlVal === url) { img.setAttribute('src', img.dataset.tlOrig); delete img.dataset.tlVal; delete img.dataset.tlOrig; } };
+    const list = goodPhotos(rec.photos).filter(p => p.large || p.medium || p.thumb).slice(0, 3);
+    // (FR24 draws a picture itself - ours, handed over, or its own: nothing of ours beside it)
+    if (!list.length || fr24Photo(panel)) { panel.__tlPhWait = null; return dropPhoto(panel); }
+    const key = (rec.hex || '') + '|' + list.map(p => noBar(p.large || p.medium || p.thumb)).join('|');
+    let el = panel.querySelector('.tl-photo');
+    if (!el || el.dataset.key !== key) {
+      // (the page hands the pictures to FR24 within a moment of their coming: FR24's own slideshow then, not this)
+      const w = panel.__tlPhWait;
+      if (!el && (!w || w.key !== rec.hex)) { panel.__tlPhWait = { key: rec.hex, at: now() }; setTimeout(syncPanelSoon, PHOTO_WAIT + 50); return; }
+      if (!el && now() - w.at < PHOTO_WAIT) return;
+      if (!el) {
+        el = document.createElement('div'); el.className = 'tl-photo';
+        el.addEventListener('click', e => { const b = e.target.closest('button[data-n]'); if (!b) return; e.preventDefault(); e.stopPropagation(); el.innerHTML = photoHtml(el.__tlList, Number(b.dataset.n)); });
+      }
+      el.__tlList = list; el.dataset.key = key; el.innerHTML = photoHtml(list, 0);
     }
-    const li = img.parentElement; if (!li) return;
-    let cap = li.querySelector('.tl-cap');
-    if (!cap) { cap = document.createElement('div'); cap.className = 'tl-cap'; li.style.position = 'relative'; li.appendChild(cap); }
-    const html = `<a href="${esc(ph.link || url)}" target="_blank" rel="noopener noreferrer">${ph.credit ? '© ' + esc(ph.credit) + ' · ' : ''}${esc(ph.source || 'Photo')} ↗</a>`;
-    if (cap.innerHTML !== html) cap.innerHTML = html;
+    // (right before FR24's frame - the stylesheet hides the element after ours - wherever FR24 has put it now)
+    const slot = photoSlot(panel); if (!slot || !slot.parentElement) return dropPhoto(panel);
+    if (el.nextElementSibling !== slot) slot.parentElement.insertBefore(el, slot);
+    panel.querySelectorAll('.tl-photo').forEach(e => { if (e !== el) e.remove(); });
   }
   // FR24's time-zone line under an airport: "CEST (UTC +02:00)"
   function tzLabel(ap) {
@@ -11238,6 +11269,16 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
         continue;
       }
       r = Object.assign({}, r);
+      // (a row of FR24's schedule with no airline of its own: an airline an older build gave it from the first airline's
+      // flight on the airport's schedule - Jet2's logo on N358V's row - goes, and the type with it. A flight with no
+      // number has no airline - a private or business flight, as FR24 draws it: no logo; a number keeps it only where the
+      // board's own rows of that number's prefix have it)
+      if (r.src === 'sched' && r.nat && !r.alId) {
+        const pid = r.num ? (pre && pre.get(numPre(r.num))) || 0 : 0;
+        if (r.nat.airlineId && (!r.num || (pid && pid !== r.nat.airlineId))) { r.nat = Object.assign({}, r.nat, { airlineId: null, airline: r.al || null }); r.alIcao = ''; }
+        const ty = clean(r.ty).toUpperCase();
+        if (!r.num && (r.nat.aircraftType || '') !== ty) r.nat = Object.assign({}, r.nat, { aircraftType: ty || null });
+      }
       // (a row of a rebuilt flight - or of an aircraft's FR24 list - says what is known of the aircraft now: FR24's own
       // model and operator names, once read. Its operator for this flight: by this flight's callsign, never the one the
       // aircraft's record last had - G-NBCA, a PC-12 flying as GNBCA, came out with easyJet's logo)
@@ -11437,10 +11478,13 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       airlineId: (icao && fr24.byIcao.get(icao)) || null, airline: (icao && fr24.byIcao.get(icao) && fr24.airlineName(fr24.byIcao.get(icao))) || (x.airline && (x.airline.short || x.airline.name)) || (ref && ref.al) || null, aircraftType: ty || null, runway: null };
   }
   function fnRows(data, info, apId, kind) {
-    // (the number's airline and its ICAO type from its flights flown - or from the board's own rows of it)
-    const flown = (data || []).find(y => y && y.identification && y.identification.id && y.airline && y.airline.code && y.airline.code.icao);
-    const fty = (data || []).map(y => y && y.identification && y.identification.id && clean(y.aircraft && y.aircraft.model && y.aircraft.model.code).toUpperCase()).find(c => c && /^[A-Z]/.test(c) && c.length === 4);
-    const ref = { icao: flown ? clean(flown.airline.code.icao).toUpperCase() : (info && info.alId && fr24.airlines && (fr24.airlines.get(info.alId) || {}).icao) || '', al: (flown && (flown.airline.short || flown.airline.name)) || (info && info.al) || '', ty: fty || (info && /^[A-Z]/.test(info.ty || '') && info.ty.length === 4 ? info.ty : '') };
+    // (the number's airline and its ICAO type from its flights flown - or from the board's own rows of it. A flight
+    // number's own list only: an airport's schedule (apId given) is every airline's flights and the private ones, each
+    // with its own airline or none - read with the first airline's as theirs, every flight on East Midlands' schedule
+    // with no airline had Jet2's logo: N358V, a Gulfstream in from Dusseldorf)
+    const flown = apId ? null : (data || []).find(y => y && y.identification && y.identification.id && y.airline && y.airline.code && y.airline.code.icao);
+    const fty = apId ? '' : (data || []).map(y => y && y.identification && y.identification.id && clean(y.aircraft && y.aircraft.model && y.aircraft.model.code).toUpperCase()).find(c => c && /^[A-Z]/.test(c) && c.length === 4);
+    const ref = apId ? null : { icao: flown ? clean(flown.airline.code.icao).toUpperCase() : (info && info.alId && fr24.airlines && (fr24.airlines.get(info.alId) || {}).icao) || '', al: (flown && (flown.airline.short || flown.airline.name)) || (info && info.al) || '', ty: fty || (info && /^[A-Z]/.test(info.ty || '') && info.ty.length === 4 ? info.ty : '') };
     for (const x of data || []) {
       if (!x) continue;
       const idn = x.identification || {}, tm = x.time || {}, sc = tm.scheduled || {}, re = tm.real || {}, es = tm.estimated || {};
@@ -11449,8 +11493,8 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       const fid = idn.id ? String(idn.id) : '', num = clean(idn.number && idn.number.default).toUpperCase(), cs = clean(idn.callsign).toUpperCase();
       const k = fid ? 'f' + fid : 'n' + num + ':' + (sc.departure || sc.arrival || 0);
       const stx = clean(((x.status || {}).generic || {}).status && x.status.generic.status.text).toLowerCase(), cx = /cancel/.test(stx), dv = /divert/.test(stx);
-      const icao = clean(x.airline && x.airline.code && x.airline.code.icao).toUpperCase(), alId = (icao && fr24.byIcao.get(icao)) || (info && info.alId) || 0;
-      const base = { src: 'sched', fid, id: Number(idn.row) || 0, cs, num, al: clean(x.airline && x.airline.name) || (info && info.al) || '', alId, alIcao: icao || ref.icao || '', ty: clean(x.aircraft && x.aircraft.model && x.aircraft.model.code) || (info && info.ty) || '', reg: clean(x.aircraft && x.aircraft.registration), hex: clean(x.aircraft && x.aircraft.hex).toLowerCase() };
+      const icao = clean(x.airline && x.airline.code && x.airline.code.icao).toUpperCase(), alId = (icao && fr24.byIcao.get(icao)) || (info && info.alId) || (ref && ref.icao && fr24.byIcao.get(ref.icao)) || 0;
+      const base = { src: 'sched', fid, id: Number(idn.row) || 0, cs, num, al: clean(x.airline && x.airline.name) || (info && info.al) || '', alId, alIcao: icao || (ref && ref.icao) || '', ty: clean(x.aircraft && x.aircraft.model && x.aircraft.model.code) || (info && info.ty) || '', reg: clean(x.aircraft && x.aircraft.registration), hex: clean(x.aircraft && x.aircraft.hex).toLowerCase() };
       const dep = re.departure || es.departure || sc.departure, arr = re.arrival || es.arrival || sc.arrival;
       if (o && dep) boardPut(o, 'departures', Object.assign({ nat: natRowOf(x, 'departures', ref), k, t: dep, sch: sc.departure || dep, est: dep, st: cx ? 'canceled' : re.departure ? 'departed' : 'scheduled', col: cx ? 'red' : re.departure ? 'green' : 'gray', ap: d }, base));
       if (d && arr) boardPut(d, 'arrivals', Object.assign({ nat: natRowOf(x, 'arrivals', ref), k, t: arr, sch: sc.arrival || arr, est: arr, st: cx ? 'canceled' : dv ? 'diverted' : re.arrival ? 'landed' : es.arrival ? 'estimated' : 'scheduled', col: cx || dv ? 'red' : re.arrival || es.arrival ? 'green' : 'gray', ap: o }, base));
