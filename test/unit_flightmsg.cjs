@@ -165,55 +165,7 @@ check('ordinary aircraft: FR24 data kept (registration, callsign, photos)', str(
   check('FR24\'s own pictures of a blocked airframe: every slide the clean large picture (640, no "cb"), nothing in a credit-bar size', slides.length === 3 && slides.every((x, i) => x.img === 'https://cdn.jetphotos.com/640/6/50000' + (i + 1) + '_' + (i + 1) + '.jpg' && !x.other && x.credit === 'Tomas Scheffer' && /jetphotos\.com\/photo\//.test(x.link)), slides);
   B.resolved.delete(fid5);
 }
-// 2d) "Playback" of a blocked flight (panel menu, airport-board card): its ADS-B track on adsb.lol, not FR24's empty one
-{
-  const opened = []; w.open = u => { opened.push(u); return null; };
-  const pid = 1103986077;
-  B.resolved.set(pid, { cs: 'VSB82', reg: 'M-ARNZ', hex: '424c60', hexNum: 0x424c60, type: 'PC24', photos: [] });
-  B.routes.set(pid, { atd: Math.floor(Date.now() / 1000) - 1800 });
-  H.patchFlightMsg(cat([H.fLen(5, cat(H.parse(efiReal).filter(f => f.fn !== 1).map(f => f.raw).concat([H.fVar(1, pid)])))]), { id: pid }, H.FOLLOW);
-  w.document.body.insertAdjacentHTML('beforeend', `<div id="pbtest"><button data-testid="aircraft__playback"><span>Playback</span></button><ul><li id="airport_schedule_${9000000000 + pid}"><a href="/data/aircraft/m-arnz#x">Playback</a></li><li id="airport_schedule_5869989311"><span data-testid="airport-flight-details__registration">M-ARNZ</span><a href="/x">Playback</a></li><li id="airport_schedule_5869989312"><span data-testid="airport-flight-details__registration">EI-HAY</span><a id="pbother" href="/y">Playback</a></li></ul></div>`);
-  const clk = el => el.dispatchEvent(new w.MouseEvent('click', { bubbles: true, cancelable: true }));
-  clk(w.document.querySelector('#pbtest [data-testid="aircraft__playback"] span'));
-  const lis = w.document.querySelectorAll('#pbtest li a'); clk(lis[0]); clk(lis[1]); clk(lis[2]);
-  check('Playback of a blocked flight (panel menu, board cards) opens its ADS-B track on airplanes.live; other flights keep FR24\'s', opened.length === 3 && opened.every(u => /^https:\/\/globe\.airplanes\.live\/\?icao=424c60&showTrace=\d{4}-\d\d-\d\d&startTime=\d\d:\d\d&endTime=\d\d:\d\d$/.test(u)), opened);
-  w.document.getElementById('pbtest').remove(); B.resolved.delete(pid); B.routes.delete(pid);
-}
-// 2d2) "Playback" on a kept board row (N600EB's departure from LaGuardia two days before, 15 Oct: it opened the
-//      aircraft's FR24 page) - that day's track, from take-off to landing; FR24's own kept row of an ordinary flight keeps
-//      FR24's playback, a blocked aircraft's does not; a search result of a blocked flight, live or by its aircraft
-{
-  const opened = []; w.open = u => { opened.push(u); return null; };
-  const t0 = Math.floor(Date.now() / 1000) - 2 * 86400, apId = 3901, pid = 0x41cd0a3d;
-  const hm = t => new Date(t * 1000).toISOString().slice(11, 16), day = t => new Date(t * 1000).toISOString().slice(0, 10);
-  H.acceptBoardArch({ apId, arr: [], dep: [
-    { k: 'n600eb-13', t: t0, t2: t0 + 3600, hex: 'a80b2e', reg: 'N600EB', cs: 'N600EB', src: 'log', blk: 1, ap: 3500 },
-    { k: 'fr898-13', t: t0 + 600, hex: '4ca7b5', reg: 'EI-DAC', cs: 'RYR898', num: 'FR898', src: 'fr24', id: 5869000001, ap: 3501 },
-    { k: 'eja123-13', t: t0 + 1200, hex: 'a1b2c3', reg: 'N123QS', cs: 'EJA123', src: 'fr24', id: 5869000002, blk: 1, ap: 3502 }] });
-  const j = { data: [] }; H.addArch(j, apId, 'departures');
-  const ids = j.data.map(e => e.id);
-  const card = (id, reg) => `<li id="airport_schedule_${id}"><div class="x"><a href="/data/aircraft/${reg.toLowerCase()}">Aircraft info - ${reg}</a><a href="#b">Bookmark aircraft - ${reg}</a><button type="button"><svg></svg><span>Playback</span></button></div></li>`;
-  B.resolved.set(pid, { cs: 'VSB82', reg: 'M-ARNZ', hex: '424c60', hexNum: 0x424c60, type: 'PC24', photos: [] });
-  w.document.body.insertAdjacentHTML('beforeend', `<div id="pbtest2"><ul>${card(ids[0], 'N600EB')}${card(ids[1], 'EI-DAC')}${card(ids[2], 'N123QS')}</ul>
-    <div data-testid="search__results"><div data-testid="search__result-row" id="sr1"><a data-search-result="live:41cd0a3d">VSB82</a><button type="button">Playback</button></div>
-    <div data-testid="search__result-row" id="sr2"><a data-search-result="aircraft:m-arnz">M-ARNZ</a><button type="button">Playback</button></div>
-    <div data-testid="search__result-row" id="sr3"><a data-search-result="aircraft:g-ezbx">G-EZBX</a><button type="button">Playback</button></div></div></div>`);
-  const pb = s => w.document.querySelector(s + ' button span') || w.document.querySelector(s + ' button');
-  const clk = el => { const ev = new w.MouseEvent('click', { bubbles: true, cancelable: true }); el.dispatchEvent(ev); return ev.defaultPrevented; };
-  const own = clk(pb(`#airport_schedule_${ids[0]}`));
-  check('a kept row of a blocked aircraft (this script\'s own, two days back): its own day\'s track on airplanes.live, take-off to landing', ids.length === 3 && ids[0] >= 20000000000 && own && opened[0] === `https://globe.airplanes.live/?icao=a80b2e&showTrace=${day(t0)}&startTime=${hm(t0 - 300)}&endTime=${hm(t0 + 3900)}`, { ids, opened });
-  const ord = clk(pb(`#airport_schedule_${ids[1]}`));
-  check('... FR24\'s own kept row of an ordinary flight: FR24\'s playback, untouched', !ord && opened.length === 1, opened);
-  clk(pb(`#airport_schedule_${ids[2]}`));
-  check('... FR24\'s own kept row of a blocked aircraft: its track (three hours from take-off, its landing unknown)', opened.length === 2 && opened[1] === `https://globe.airplanes.live/?icao=a1b2c3&showTrace=${day(t0 + 1200)}&startTime=${hm(t0 + 900)}&endTime=${hm(t0 + 1200 + 3 * 3600 + 300)}`, opened[1]);
-  clk(pb('#sr1')); clk(pb('#sr2'));
-  check('a search result of a blocked flight - live, or by its aircraft: its ADS-B track', opened.length === 4 && /icao=424c60&/.test(opened[2]) && /icao=424c60&/.test(opened[3]), opened.slice(2));
-  const plain = clk(pb('#sr3'));
-  check('... of an ordinary aircraft: FR24\'s own', !plain && opened.length === 4);
-  pb(`#airport_schedule_${ids[0]}`).dispatchEvent(new w.MouseEvent('auxclick', { bubbles: true, cancelable: true, button: 1 }));
-  check('a middle click on Playback (a new tab) goes to the track too', opened.length === 5 && /icao=a80b2e&/.test(opened[4]));
-  w.document.getElementById('pbtest2').remove(); B.resolved.delete(pid);
-}
+// ("Playback" of a blocked flight - board cards, the panel, search results, rebuilt log rows: test/unit_pbbuttons.cjs)
 // 3) the LiveFeed record of the selected ordinary flight carries the padlock flags the panel actually uses (captured
 //    from UAL444: extra 13 = EMS availability, 16 squawk, 17 vertical speed): with public telemetry they are dropped
 {
