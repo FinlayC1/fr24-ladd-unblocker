@@ -22,7 +22,7 @@ jobs:
       - name: Offline tests
         run: |
           git config --global user.email "tests@example.invalid" && git config --global user.name "tests"
-          node test/run-suite.cjs --no-build --only unit_engine,unit_cases,unit_final,unit_legs,unit_monitor,unit_monitor2,unit_fr24,unit_store,unit_registry,unit_merge,unit_deploy,unit_installs,unit_dash,unit_names,unit_origin,unit_flightmsg,unit_monlive,unit_panel,unit_window,unit_hello,unit_vectoring,unit_boards,unit_padlocks,unit_public,unit_wx,unit_tracks,unit_waiting,unit_shared,unit_playback,unit_recent,unit_photos,unit_ksk16,unit_gioos
+          node test/run-suite.cjs --no-build --only unit_engine,unit_cases,unit_final,unit_legs,unit_monitor,unit_monitor2,unit_fr24,unit_store,unit_registry,unit_merge,unit_deploy,unit_installs,unit_dash,unit_names,unit_origin,unit_flightmsg,unit_monlive,unit_panel,unit_window,unit_hello,unit_vectoring,unit_boards,unit_padlocks,unit_public,unit_wx,unit_tracks,unit_waiting,unit_shared,unit_playback,unit_recent,unit_photos,unit_ksk16,unit_gioos,unit_logos
   monitor-node18:
     runs-on: ubuntu-latest
     steps:
@@ -70,4 +70,10 @@ jobs:
           export PLAYWRIGHT_PATH="$RUNNER_TEMP/pw/node_modules/playwright" VUE_PATH="$RUNNER_TEMP/pw/node_modules/vue/dist/vue.global.js"
           export CHROMIUM="$(node -e "console.log(require(process.env.PLAYWRIGHT_PATH).chromium.executablePath())")"
           node test/unit_native.cjs > out.txt 2>&1 || { cat out.txt; exit 1; }
+          cat out.txt; grep -q '^(skipped' out.txt && exit 1; grep -q '^FAIL' out.txt && exit 1; true
+      - name: A LADD aircraft's picture in FR24's panel (Vue page, Chromium)
+        run: |
+          export PLAYWRIGHT_PATH="$RUNNER_TEMP/pw/node_modules/playwright" VUE_PATH="$RUNNER_TEMP/pw/node_modules/vue/dist/vue.global.js"
+          export CHROMIUM="$(node -e "console.log(require(process.env.PLAYWRIGHT_PATH).chromium.executablePath())")"
+          node test/unit_panelphoto.cjs > out.txt 2>&1 || { cat out.txt; exit 1; }
           cat out.txt; grep -q '^(skipped' out.txt && exit 1; grep -q '^FAIL' out.txt && exit 1; true

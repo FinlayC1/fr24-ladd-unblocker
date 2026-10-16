@@ -464,10 +464,16 @@
     var noBar = function (u) { return typeof u === 'string' ? u.replace(/(\/\/cdn\.jetphotos\.com\/\d+)cb\//i, '$1/') : u; };
     function goodPhotos(l) { return (l || []).filter(function (p) { return p && !adJson(p); }).map(function (p) { return p.large === noBar(p.large) && p.medium === noBar(p.medium) && p.thumb === noBar(p.thumb) ? p : Object.assign({}, p, { large: noBar(p.large), medium: noBar(p.medium), thumb: noBar(p.thumb) }); }); }
     function ourPhotosFor(hexU) { var c = photoCache.get(hexU); var l = goodPhotos(c && c.photos); if (!l.length) l = goodPhotos((psCache.get(hexU) || {}).photos); return l; }
+    // One slide of FR24's slideshow, in the shape of FR24's own JetPhotos pictures: url (1, the link), copyright (2), and
+    // the picture as its thumbnail (3), medium (4) and large (5) - the one clean large picture in all three, so whichever
+    // size FR24 draws a slide (or its dots) from, it is that one, as for any aircraft FR24 has pictures of. (Ours were
+    // given as a thumbnail alone - a shape FR24's own pictures never have. FR24's medium / large path runs
+    // .replace("cb", "") - right for JetPhotos' credit-bar sizes, and it would corrupt any other address with "cb" in it:
+    // one such is given as its thumbnail only, as before.)
+    function slide(link, credit, img) { return fLen(11, concat([fStr(1, link || img), fStr(2, credit || ''), fStr(3, img)].concat(img.indexOf('cb') < 0 ? [fStr(4, img), fStr(5, img)] : []))); }
     function photoParts(photos) {
-      // url (1), copyright (2), thumbnail (3): FR24 then uses the thumbnail verbatim as the image and url as the link
       var out = [];
-      for (var j = 0; j < photos.length && out.length < 3; j++) { var ph = photos[j], img = ph.large || ph.medium || ph.thumb; if (img) out.push(fLen(11, concat([fStr(1, ph.link || img), fStr(2, ph.credit || ''), fStr(3, img)]))); }
+      for (var j = 0; j < photos.length && out.length < 3; j++) { var ph = photos[j], img = ph.large || ph.medium || ph.thumb; if (img) out.push(slide(ph.link, ph.credit, img)); }
       return out;
     }
     function patchFollow(body, st) { return patchFlightMsg(body, st, FOLLOW); }
@@ -647,7 +653,9 @@
           if (adAI) {
             var ourP = ourPhotosFor(hexP), extraP = ourP.filter(function (p) { return !seenK[shotKeyP(p)]; }).slice(0, Math.max(0, 3 - realP));
             kP = kP.concat(photoParts(extraP));
-            if (F.follow && realP < 3) aiKeep[fid] = { val: f.val, sig: photoSig(ourP), pubHex: hexP };
+            // (a blocked aircraft's block has no Mode S address: its pictures are its record's, once the userscript names
+            // it - looked for under "000000" they were never sent, and only the userscript's stand-in showed them)
+            if (F.follow && realP < 3) aiKeep[fid] = numOf(aiP, 1) > 0 ? { val: f.val, sig: photoSig(ourP), pubHex: hexP } : { val: f.val, sig: '' };
           }
           parts.push(fLen(F.ai, concat(kP))); changed = true; continue;
         }
@@ -662,12 +670,12 @@
             if (x.fn === 11) {
               var im = parse(x.val); if (adImg(im)) continue;
               if (!(has(im, 3) || has(im, 4) || has(im, 5))) { sideviews.push(x.raw); continue; }
-              // FR24's own picture of a blocked airframe: given the way ours are (link, credit, the clean large picture as
-              // the image), so FR24 draws it like every other slide - its 640cb large size has JetPhotos' credit bar burnt
-              // into the bottom, and drawn as FR24 sent it the first slide came up short with that bar in it
+              // FR24's own picture of a blocked airframe: given the way ours are (link, credit, the clean large picture in
+              // every size), so FR24 draws it like every other slide - its 640cb large size has JetPhotos' credit bar burnt
+              // into the bottom
               hasRealPhoto = true;
               var bigO = noBar(strOf(im, 5) || strOf(im, 4) || strOf(im, 3));
-              k2.push(fLen(11, concat([fStr(1, strOf(im, 1) || bigO), fStr(2, strOf(im, 2)), fStr(3, bigO)]))); touched = true;
+              k2.push(slide(strOf(im, 1), strOf(im, 2), bigO)); touched = true;
               continue;
             }
             k2.push(x.raw);
@@ -684,16 +692,7 @@
           var realR = ai.filter(function (x) { return x.fn === 11 && realImg(parse(x.val)); }), keysR = {}; realR.forEach(function (x) { keysR[imgKeyA(parse(x.val))] = true; });
           if (F.follow && fid) aiKeep[fid] = { val: f.val, sig: photoSig(photos), real: realR.length >= 3 };
           if (hasRealPhoto && realR.length < 3) { var extraR = photos.filter(function (p) { return !keysR[shotKeyP(p)]; }).slice(0, 3 - realR.length); if (extraR.length) { k2 = k2.concat(photoParts(extraR)); touched = true; } }
-          if (photos.length && !hasRealPhoto) {
-            // url (1), copyright (2), thumbnail (3): FR24 then uses the thumbnail verbatim as the image and url as the
-            // link (its medium/large path runs .replace("cb","") - a JetPhotos CDN quirk that would corrupt other URLs).
-            for (j = 0; j < photos.length && j < 3; j++) {
-              var ph = photos[j], img = ph.large || ph.medium || ph.thumb;
-              if (!img) continue;
-              k2.push(fLen(11, concat([fStr(1, ph.link || img), fStr(2, ph.credit || ''), fStr(3, img)])));
-            }
-            touched = true;
-          }
+          if (photos.length && !hasRealPhoto) { k2 = k2.concat(photoParts(photos)); touched = true; }
           for (j = 0; j < sideviews.length; j++) k2.push(sideviews[j]);
           // FR24 sometimes has its own pictures of a blocked airframe: kept by the userscript for the log page and boards
           if (hasRealPhoto && rec.hex && !fr24ImgSent[fid]) {
