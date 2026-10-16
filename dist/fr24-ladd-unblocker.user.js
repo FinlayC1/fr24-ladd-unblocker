@@ -3704,6 +3704,7 @@
     const regionOf = a => a.lon < -25 ? 'AM' : a.lon < 60 ? 'EU' : 'AS';
     // squawk codes that say nothing about the flight (VFR, conspicuity, oceanic, emergencies)
     const SQ_NOINFO = /^(1200|7000|2000|1000|7500|7600|7700|0000|2200|4000|0021|0022)$/;
+    const SQ_EMERG = /^(7700|7600|7500)$/;
     const tripBin = km => km < 150 ? 0 : km < 300 ? 1 : km < 600 ? 2 : km < 1000 ? 3 : km < 1800 ? 4 : km < 3000 ? 5 : km < 5000 ? 6 : 7;
     function histStats(legs, now) {
       const st = { n: 0, visits: new Map(), rVisits: new Map(), trans: new Map(), rTrans: new Map(), nights: new Map(), lastVisit: new Map(), dowTrans: new Map(), hourTrans: new Map(), base: 0, baseScore: 0, last: null, novelRate: 0.5, legs: [], tripsLn: [], awayDays: 0,
@@ -4191,7 +4192,7 @@
     }
 
     // ---- destination ------------------------------------------------------------------------------------------------------
-    const W = { prior: 1.33, hist: 5.32, novel: 0.5, ret: 1.33, trip: 0.5, kappa: 0.5, xt: 1, hdg: 1.2, vert: 0.5, cruise: 0.4, country: 1.33, mil: 0.25, prog: 0.15, loc: 1, temp: 1.4, u0: 1, uexp: 1, sexp: 0.4, milb: 1, half: 21, trans: 3, night: 1.5, base: 3, away: 0.5, retleg: 5, pers: 6, gaj: 0.1, trip0: 1, lcr: 0.8, low: 1, vlo: 2, vclm: 0, vstep: 1, tripc: 1, vratio: 0, etail: 1, phys: 2, heliTight: 1, gndCeil: 2, rwyHard: 8, dBlend: 1, earlyDep: 4, awayRet: 2.5, detour: 1, fields: 1, fcand: 150, effCounts: 1, hEff: 60 };   // tuned on held-out airframes (test/tune.cjs)
+    const W = { prior: 1.33, hist: 5.32, novel: 0.5, ret: 1.33, trip: 0.5, kappa: 0.5, xt: 1, hdg: 1.2, vert: 0.5, cruise: 0.4, country: 1.33, mil: 0.25, prog: 0.15, loc: 1, temp: 1.4, u0: 1, uexp: 1, sexp: 0.4, milb: 1, half: 21, trans: 3, night: 1.5, base: 3, away: 0.5, retleg: 5, pers: 6, gaj: 0.1, trip0: 1, lcr: 0.8, low: 1, vlo: 2, vclm: 0, vstep: 1, tripc: 1, vratio: 0, etail: 1, phys: 2, heliTight: 1, gndCeil: 2, rwyHard: 8, dBlend: 1, earlyDep: 4, awayRet: 2.5, detour: 1, fields: 1, fcand: 150, effCounts: 1, hEff: 60, offTrk: 6 };   // tuned on held-out airframes (test/tune.cjs)
     function setWeights(w) { Object.assign(W, w || {}); }
     // ---- how much each piece of evidence counts, by situation -------------------------------------------------------------
     // Every candidate airport gets a vector of evidence values (below); its score is their weighted sum. What a piece of
@@ -4340,6 +4341,53 @@
       if (fin(l.pathKm) && l.pathKm > 0 && l.pathKm < (light ? 4 : 20)) return false;
       return true;
     }
+    // ---- can it be going there, the way it is flying now? ------------------------------------------------------------------
+    // An airport far off to one side of the track or behind it, with the aircraft flying steadily on and getting no nearer
+    // to it, is not where it is going - whatever its log says. Over every real moment of the jets in the test fixtures, 150
+    // km and more from where they landed and clear of the climb-out, the field they landed at was more than 90 degrees off
+    // the track 0.1% of the time (8 moments in 9,700: one turn back); within 80 km, a fifth of the time - downwind and base
+    // legs, vectors, holds - and 6% climbing out (test/unit_heading.cjs). Yet the learned weights - fitted over every
+    // distance, where the habits of a business jet are worth a lot - gave Angelholm 35% for SE-RLZ at FL410 over the
+    // Baltic on 157 for Poland, 250 km behind its right wing, on its log alone.
+    // trackState: whether the rule can say anything now (null: no) - not on the ground or slow, not while it turns (a turn
+    // back, a hold, an orbit: the track 45+ degrees different within 6 minutes), not within 60 km or 15 minutes of where it
+    // took off, not on an emergency code; with the point 1.5-5 minutes back, for whether it is getting nearer.
+    // o: { origin (airport), elapsedMin }
+    function trackState(pos, trail, o) {
+      o = o || {};
+      if (!pos || pos.gnd || !fin(pos.trk) || !fin(pos.lat) || !fin(pos.lon) || (fin(pos.gs) && pos.gs < 90) || SQ_EMERG.test(String(pos.sq || ''))) return null;
+      const O = o.origin; if (O && fin(O.lat) && dist(O.lat, O.lon, pos.lat, pos.lon) < 60) return null;
+      if (o.elapsedMin != null && o.elapsedMin < 15) return null;
+      let back = null, mid = null, far = null;
+      const tr = trail || [];
+      for (let i = tr.length - 1; i >= 0; i--) {
+        const q = tr[i], ago = pos.t - q.t; if (!(ago > 0) || !fin(q.lat) || !fin(q.lon)) continue; if (ago > 400) break;
+        if (q.gnd) return null;
+        if (ago <= 360 && fin(q.trk) && !(fin(q.gs) && q.gs < 60) && angDiff(q.trk, pos.trk) > 45) return null;
+        if (ago >= 90 && ago <= 300 && !back) back = q;
+        if (ago >= 120 && ago <= 200 && !mid) mid = q;
+        if (ago >= 240) far = q;
+      }
+      // (where the points carry no track: the path itself, two chords of the last 4-7 minutes)
+      if (mid && far && dist(far.lat, far.lon, mid.lat, mid.lon) > 3 && dist(mid.lat, mid.lon, pos.lat, pos.lon) > 3 && angDiff(brg(far.lat, far.lon, mid.lat, mid.lon), brg(mid.lat, mid.lon, pos.lat, pos.lon)) > 45) return null;
+      // (still climbing below 20,000 ft: departure routes go every way - 4-5% of those moments had the field it landed at
+      // 90+ degrees off, none higher up)
+      const climbing = fin(pos.vr) ? pos.vr > 300 : !!back && fin(back.alt) && fin(pos.alt) && (pos.alt - back.alt) / (pos.t - back.t) * 60 > 300;
+      if (climbing && !(pos.alt >= 20000)) return null;
+      return { back, moved: back ? dist(back.lat, back.lon, pos.lat, pos.lon) : 0 };
+    }
+    // how far the way it is flying rules an airport out: 0 (fits) ... 1 - from 80 to 120 degrees off the track, from 80 to
+    // 150 km out (closer in, approach patterns turn every way); nothing when it has been getting nearer to it all the same;
+    // half as much on the track of a single moment, with nothing of the minutes before
+    function offTrackOf(st, pos, a) {
+      if (!st || !a) return 0;
+      const d = dist(pos.lat, pos.lon, a.lat, a.lon); if (d < 80) return 0;
+      const off = angDiff(pos.trk, brg(pos.lat, pos.lon, a.lat, a.lon)); if (off < 80) return 0;
+      const seen = !!st.back && st.moved > 1;
+      if (seen && dist(st.back.lat, st.back.lon, a.lat, a.lon) - d > 0.3 * st.moved) return 0;
+      return Math.min(1, (off - 80) / 40) * Math.min(1, (d - 80) / 70) * (seen ? 1 : 0.5);
+    }
+    const offTrack = (pos, trail, a, o) => offTrackOf(trackState(pos, trail, o), pos, a);
     // its own landing / take-off spots away from any listed airport (within 400 m counts as the same spot)
     function heliSpots(legs, t0) {
       const spots = []; let nLand = 0, nOff = 0;
@@ -4448,7 +4496,7 @@
       const desc = describe(trail, pos);
       const dOP = O ? dist(O.lat, O.lon, pos.lat, pos.lon) : NaN;
       const flownKm = O ? Math.max(dOP, desc.path * 0.9) : desc.path;
-      const emergency = /^(7700|7600|7500)$/.test(String(pos.sq || ''));
+      const emergency = SQ_EMERG.test(String(pos.sq || ''));
       const onGround = !!pos.gnd;
       // How often this airframe comes back to where it started: its class, updated with its own record.
       let retP = TB && TB.ret && TB.ret[cls] ? TB.ret[cls][1] : (RET_DEFAULT[cls] != null ? RET_DEFAULT[cls] : 0.02);
@@ -4541,6 +4589,8 @@
       const useKind = (ac.mil && !milBizCls(cls)) || cls === 'fighter' || cls === 'milheavy' ? 'useMil' : cls === 'piston' || cls === 'heli' ? 'useGA' : 'use';
       const hubClass = cls !== 'airliner' && cls !== 'milheavy';
       const elapsedMin = origin && origin.departedAt && !onGround ? Math.max(0, (now - origin.departedAt) / 60) : null;
+      // (jets and turboprops - not helicopters, light aircraft or military ones, which patrol, train and orbit)
+      const trkSt = W.offTrk && !onGround && (grp === 'jet' || grp === 'tprop') && kindOf(cls, !!ac.mil) !== 2 ? trackState(pos, trail, { origin: O, elapsedMin }) : null;
       const regCountry = ac.country || '';
       const lastLn = hs.recentLn && hs.recentLn.length ? hs.recentLn.slice(-2).reduce((x, y) => x + y, 0) / Math.min(2, hs.recentLn.length) : null;
       // what the transponder says now: its code block, and the altitude set in the flight management system
@@ -4652,6 +4702,9 @@
             if (ratio > 1.15) { fixed -= W.detour * (Math.min(7, (ratio - 1.15) / 0.03) + (ratio > 2 ? Math.min(8, (ratio - 2) * 4) : 0)); if (ratio > 1.3) why.push('a long detour from its route'); }
           }
         }
+        // Far off to one side or behind, flying steadily on, no nearer to it: not going there (trackState above) - the
+        // geometry the log and the habits are weighed against, not something they can outvote
+        if (trkSt) { const k = offTrackOf(trkSt, pos, a); if (k > 0) { fixed -= W.offTrk * k; if (k >= 0.5) why.push('behind it, off its track'); } }
         // where its fleet-mates (same owner) have been lately
         if (inp.fleet && !isO) { const v = inp.fleet.get(a.id) || 0; if (v) F('fleet', Math.log(1 + v)); }
         // --- the population (22.10): this pair in this direction for this kind of aircraft, when it is flown, what
@@ -4859,7 +4912,7 @@
       return res;
     }
 
-    return { setTables2, get T2() { return T2; }, fieldShortName, placeShort, placeLabels, setApproach, approachCell, approachPath, apprGroup, apprKey, trackAgree, heatNear, heatMatch, reckon, trackErr, remotePath, flowKeysOf, pgrpOf, grp6, sunElev, airData, gsAlong, minutesTo, flowAt, pathOf, pathDev, ownerKey, parseRunwayLengths, setRunwayLengths, csvLine, SQ_NOINFO, tripBin, regionOf, learnLeg, learnRow, learnCollector, addLearnedOp, odAdd: (x, y, w) => { const k = odKey(String(x).toUpperCase(), String(y).toUpperCase()), v = (OD.get(k) || 0) + w; if (v > 1e-9) OD.set(k, v); else OD.delete(k); }, odWeight: (x, y) => OD.get(odKey(String(x).toUpperCase(), String(y).toUpperCase())) || 0, odCount: () => OD.size, setAirports, setUsage, addUsage, setRunways, parseRunwaysCsv, runwayFit, setWeights, setTables, setLogit, calibrated, mergePoints, finalTo, longFinal, typeRangeKm, FEAT, groupOf, W, classify, isStepClimb, rangeKm, parseTrace, legsFromPoints, summarizeLeg, stitchLegs, chainLegs, histStats, inferOrigin, predict, privateSite, rwyImpossible, typeDesc, heliSpots, heliAirportAt, landedSum, localFlew, climbedOut, approachTo, downAndUp, landingInGap, circuits, mergeCircuits, setFields, fieldAt, placeAt, isField, nearbyFields, fieldCount: () => FL.length, airportAt, departureFromClimb, arrivalFromDescent, nearby, dist, brg, xtat, destPoint, angDiff, get airports() { return AP; }, byId: id => byId.get(id), byIcao: c => byIcao.get(String(c || '').toUpperCase()) };
+    return { setTables2, get T2() { return T2; }, trackState, offTrack, fieldShortName, placeShort, placeLabels, setApproach, approachCell, approachPath, apprGroup, apprKey, trackAgree, heatNear, heatMatch, reckon, trackErr, remotePath, flowKeysOf, pgrpOf, grp6, sunElev, airData, gsAlong, minutesTo, flowAt, pathOf, pathDev, ownerKey, parseRunwayLengths, setRunwayLengths, csvLine, SQ_NOINFO, tripBin, regionOf, learnLeg, learnRow, learnCollector, addLearnedOp, odAdd: (x, y, w) => { const k = odKey(String(x).toUpperCase(), String(y).toUpperCase()), v = (OD.get(k) || 0) + w; if (v > 1e-9) OD.set(k, v); else OD.delete(k); }, odWeight: (x, y) => OD.get(odKey(String(x).toUpperCase(), String(y).toUpperCase())) || 0, odCount: () => OD.size, setAirports, setUsage, addUsage, setRunways, parseRunwaysCsv, runwayFit, setWeights, setTables, setLogit, calibrated, mergePoints, finalTo, longFinal, typeRangeKm, FEAT, groupOf, W, classify, isStepClimb, rangeKm, parseTrace, legsFromPoints, summarizeLeg, stitchLegs, chainLegs, histStats, inferOrigin, predict, privateSite, rwyImpossible, typeDesc, heliSpots, heliAirportAt, landedSum, localFlew, climbedOut, approachTo, downAndUp, landingInGap, circuits, mergeCircuits, setFields, fieldAt, placeAt, isField, nearbyFields, fieldCount: () => FL.length, airportAt, departureFromClimb, arrivalFromDescent, nearby, dist, brg, xtat, destPoint, angDiff, get airports() { return AP; }, byId: id => byId.get(id), byIcao: c => byIcao.get(String(c || '').toUpperCase()) };
   }
   /* ==/ENGINE== */
 
@@ -6048,8 +6101,21 @@
     const d = !!r[25], o = !!r[26];
     return { by: r[24], o: o ? r[8] || 0 : 0, oc: o ? String(r[9] || '') : '', d: d ? r[10] || 0 : 0, p: d ? r[11] || 0 : 0, dc: d ? String(r[25]) : '', eta: d ? r[18] || 0 : 0, atd: o ? r[19] || 0 : 0, at: r[12] || 0 };
   };
+  // A destination worked out elsewhere - another browser, the monitor - that the flight now says is wrong: its ETA a
+  // quarter of an hour gone with the aircraft still airborne 60 km and more from it, or (a jet or turboprop, with its
+  // track) far off its track or behind it, flying steadily on and no nearer (the engine's own rule, ENGINE.offTrack)
+  function crowdContradicted(a, c, pos, trail, originAp, elapsedMin, cls) {
+    if (!a || !pos || pos.gnd || !fin(pos.lat) || !fin(pos.lon)) return false;
+    const d = dist(pos.lat, pos.lon, a.lat, a.lon);
+    if (c && c.eta > 0 && pos.t > c.eta + 900 && d > 60) return true;
+    if (/^(heli|piston|fighter|milheavy)$/.test(cls || '')) return false;
+    return ENGINE.offTrack(pos, trail || [], a, { origin: originAp || null, elapsedMin }) >= 0.5;
+  }
   function srvRoute(r) {
-    const o = r[8] ? apById(r[8]) : null, d = r[10] ? apById(r[10]) : null; if (!o && !d) return null;
+    const o = r[8] ? apById(r[8]) : null, d0 = r[10] ? apById(r[10]) : null;
+    // (no track in the row: only the ETA against where FR24 last had it)
+    const d = d0 && !crowdContradicted(d0, { eta: r[18] || 0 }, fin(r[13]) && fin(r[14]) && r[17] > 0 ? { t: r[17], lat: r[13], lon: r[14], gnd: !!r[16] } : null) ? d0 : null;
+    if (!o && !d) return null;
     const c = crowdOf(r), cd = !!c && !!c.d, sure = cd && c.by === 2;
     return { originId: o ? o.id : 0, originIata: apCode(o), originCity: o ? o.city || o.name || '' : '', originNote: o && c && c.o ? 'worked out by another browser' : '', destId: d ? d.id : 0, destIata: apCode(d), destCity: d ? d.city || d.name || '' : '',
       destConf: d ? (sure ? 'confirmed' : cd && /^(likely|probable|possible|filed)$/.test(c.dc) ? c.dc : 'predicted') : '', destP: d ? (sure ? 100 : Math.min(99, Math.round(r[11] || 0))) : 0,
@@ -8843,7 +8909,13 @@
     // of the aircraft is in). Never over FR24's own plan, a landing or final seen here, or the user's own word
     const sr = !r.userConfirmed && !planDest && r.destConf !== 'confirmed' ? srvIds.rows.get(id) : null, cr = sr && String(sr[1] || '').toLowerCase() === hex ? crowdOf(sr) : null;
     if (cr) {
-      const ca = cr.d ? apById(cr.d) : null;
+      // (checked against where the aircraft is now, every time: worked out minutes or an hour ago, perhaps on a stale
+      // track, it is not shown once the flight says otherwise - far off its track or behind it, flying steadily on and no
+      // nearer to it (the engine's own rule), or its ETA a quarter of an hour gone with the aircraft still airborne 60 km
+      // and more from it. TC-AKB, descending on 137 past Chambery for Turin, was "Le Bourget 74%, ETA 22:09Z" at 22:16Z -
+      // another browser's, kept over this one's own Linate / Malpensa / Turin)
+      const ca0 = cr.d ? apById(cr.d) : null;
+      const ca = ca0 && !crowdContradicted(ca0, cr, pos, trail, origin && origin.airport, elapsedMin, ac.mil && !/^(bizjet|heavybiz)$/.test(cls) ? 'milheavy' : cls) ? ca0 : null;
       if (ca && (cr.by === 2 || (!r.destId && !r.destSite) || (r.destP || 0) + 10 < cr.p)) {
         setD(ca, cr.by === 2 ? 'confirmed' : CONF_OF(cr.p / 100), cr.by === 2 ? 'confirmed in another browser' : 'worked out by another browser');
         r.destP = cr.by === 2 ? 100 : Math.min(99, cr.p); r.destSite = null; r.alternatives = (r.alternatives || []).filter(a => a.iata !== apCode(ca)); r.crowdD = true;
@@ -9213,6 +9285,9 @@
       (live.has(id) ? refreshPlan(id) : Promise.resolve()).then(() => publishRoute(id, composeRoute(id, rec.hex))).catch(() => publishRoute(id, composeRoute(id, rec.hex)));
       if (!document.hidden) loadToday(rec.hex, 120000, { priority: true }).then(() => publishRoute(id, composeRoute(id, rec.hex))).catch(() => {});
     }
+    // (still loading its log - minutes, for 200 flights: the route worked out again all the same from where it is now, with
+    // what is in so far - not left as it was when the panel opened while the aircraft flies on)
+    else if (rec && rec.hex && routeState.get(id) && routeState.get(id).working) { const st = routeState.get(id); if (!st.route || now() - (st.route.computedAt || 0) > 30000) publishRoute(id, composeRoute(id, rec.hex)); }
   }, 15000);
   // The panel's airports, times and progress bar are fed by the FollowFlight stream's first frame, so routes for what
   // is on screen are prepared ahead of the click.
@@ -9578,6 +9653,9 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // what else it could be. what = 'departure airport' when FR24 has the destination and only the departure is ours.
   // the weather at the destination now (its METAR, when asked for): category and wind, as the strip shows it
   const wxTxt = id => { const a = id ? apById(id) : null, w = a && a.icao ? wxMap.get(a.icao.toUpperCase()) : null; if (!w) return ''; const wind = fin(w.ws) ? (w.ws < 3 ? 'calm' : (fin(w.wd) ? String(Math.round(w.wd / 10) * 10).padStart(3, '0') + '°' : 'variable') + ' ' + Math.round(w.ws) + (fin(w.gust) ? 'G' + Math.round(w.gust) : '') + ' kt') : ''; return [w.cat, wind].filter(Boolean).join(', ') + ' there now'; };
+  // (an ETA more than five minutes gone, the aircraft not down: not one - a route kept from before, not shown as if it
+  // were still the plan)
+  const etaTxt = route => route.eta > 0 && route.eta >= nowS() - 300 ? 'ETA ' + hhmmZ(route.eta) : '';
   // (the why - ETA, reasons, the weather there, how it was worked out - is the destination's tooltip, not more lines in
   // the panel: `tip` is added to it)
   function routeCells(route, what, tip) {
@@ -9591,9 +9669,9 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     let dLabel, dVal, dSub = '', why = [];
     if (!route.destIata) { dLabel = 'Destination' + tagHtml('Predicted', 'pred'); dVal = '<span class="tl-muted">not known yet</span>'; }
     else if (route.landed) { dLabel = 'Landed at' + tagHtml('Confirmed', 'conf'); dVal = apHtml(route.destIata, route.destCity); dSub = route.ata ? 'landed ' + esc(hhmmZ(route.ata)) : ''; }
-    else if (conf) { dLabel = 'Destination' + tagHtml('Confirmed', 'conf'); dVal = apHtml(route.destIata, route.destCity); why = [route.eta ? 'ETA ' + hhmmZ(route.eta) : '', 'confirmed: ' + (route.destReason || 'on final approach'), wxTxt(route.destId)]; }
-    else if (route.destConf === 'filed') { dLabel = 'Destination (flight plan)'; dVal = apHtml(route.destIata, route.destCity); why = [route.eta ? 'ETA ' + hhmmZ(route.eta) : '', route.destReason]; }
-    else { dLabel = 'Destination' + tagHtml('Predicted', 'pred'); dVal = apHtml(route.destIata, route.destCity) + pBadge(route.destP); why = [route.eta ? 'ETA ' + hhmmZ(route.eta) : '', route.destReason, wxTxt(route.destId)]; }
+    else if (conf) { dLabel = 'Destination' + tagHtml('Confirmed', 'conf'); dVal = apHtml(route.destIata, route.destCity); why = [etaTxt(route), 'confirmed: ' + (route.destReason || 'on final approach'), wxTxt(route.destId)]; }
+    else if (route.destConf === 'filed') { dLabel = 'Destination (flight plan)'; dVal = apHtml(route.destIata, route.destCity); why = [etaTxt(route), route.destReason]; }
+    else { dLabel = 'Destination' + tagHtml('Predicted', 'pred'); dVal = apHtml(route.destIata, route.destCity) + pBadge(route.destP); why = [etaTxt(route), route.destReason, wxTxt(route.destId)]; }
     const tipTxt = why.concat([tip]).filter(Boolean).join(' · ');
     if (tipTxt) dVal = `<span title="${esc(tipTxt)}">${dVal}</span>`;
     const dCell = cellHtml(dLabel, dVal, dSub, true);

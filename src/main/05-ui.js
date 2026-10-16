@@ -174,6 +174,9 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // what else it could be. what = 'departure airport' when FR24 has the destination and only the departure is ours.
   // the weather at the destination now (its METAR, when asked for): category and wind, as the strip shows it
   const wxTxt = id => { const a = id ? apById(id) : null, w = a && a.icao ? wxMap.get(a.icao.toUpperCase()) : null; if (!w) return ''; const wind = fin(w.ws) ? (w.ws < 3 ? 'calm' : (fin(w.wd) ? String(Math.round(w.wd / 10) * 10).padStart(3, '0') + '°' : 'variable') + ' ' + Math.round(w.ws) + (fin(w.gust) ? 'G' + Math.round(w.gust) : '') + ' kt') : ''; return [w.cat, wind].filter(Boolean).join(', ') + ' there now'; };
+  // (an ETA more than five minutes gone, the aircraft not down: not one - a route kept from before, not shown as if it
+  // were still the plan)
+  const etaTxt = route => route.eta > 0 && route.eta >= nowS() - 300 ? 'ETA ' + hhmmZ(route.eta) : '';
   // (the why - ETA, reasons, the weather there, how it was worked out - is the destination's tooltip, not more lines in
   // the panel: `tip` is added to it)
   function routeCells(route, what, tip) {
@@ -187,9 +190,9 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     let dLabel, dVal, dSub = '', why = [];
     if (!route.destIata) { dLabel = 'Destination' + tagHtml('Predicted', 'pred'); dVal = '<span class="tl-muted">not known yet</span>'; }
     else if (route.landed) { dLabel = 'Landed at' + tagHtml('Confirmed', 'conf'); dVal = apHtml(route.destIata, route.destCity); dSub = route.ata ? 'landed ' + esc(hhmmZ(route.ata)) : ''; }
-    else if (conf) { dLabel = 'Destination' + tagHtml('Confirmed', 'conf'); dVal = apHtml(route.destIata, route.destCity); why = [route.eta ? 'ETA ' + hhmmZ(route.eta) : '', 'confirmed: ' + (route.destReason || 'on final approach'), wxTxt(route.destId)]; }
-    else if (route.destConf === 'filed') { dLabel = 'Destination (flight plan)'; dVal = apHtml(route.destIata, route.destCity); why = [route.eta ? 'ETA ' + hhmmZ(route.eta) : '', route.destReason]; }
-    else { dLabel = 'Destination' + tagHtml('Predicted', 'pred'); dVal = apHtml(route.destIata, route.destCity) + pBadge(route.destP); why = [route.eta ? 'ETA ' + hhmmZ(route.eta) : '', route.destReason, wxTxt(route.destId)]; }
+    else if (conf) { dLabel = 'Destination' + tagHtml('Confirmed', 'conf'); dVal = apHtml(route.destIata, route.destCity); why = [etaTxt(route), 'confirmed: ' + (route.destReason || 'on final approach'), wxTxt(route.destId)]; }
+    else if (route.destConf === 'filed') { dLabel = 'Destination (flight plan)'; dVal = apHtml(route.destIata, route.destCity); why = [etaTxt(route), route.destReason]; }
+    else { dLabel = 'Destination' + tagHtml('Predicted', 'pred'); dVal = apHtml(route.destIata, route.destCity) + pBadge(route.destP); why = [etaTxt(route), route.destReason, wxTxt(route.destId)]; }
     const tipTxt = why.concat([tip]).filter(Boolean).join(' · ');
     if (tipTxt) dVal = `<span title="${esc(tipTxt)}">${dVal}</span>`;
     const dCell = cellHtml(dLabel, dVal, dSub, true);
