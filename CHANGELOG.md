@@ -2,6 +2,16 @@
 
 All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PATCH`. The userscript and the monitor are released together.
 
+## [22.30.1] - 2026-10-16
+
+### Fixed
+- **Playback on a blocked flight opens its track on airplanes.live again**, in a new tab - from the flight cards on airport boards, the aircraft panel (its Playback button and the one in More), search results and the rows of the panel's recent flights - not FR24's map playback, which 22.30.0 used by mistake. The track runs from five minutes before take-off to five minutes after landing (or until now). FR24's own playback is opened only by the Playback button on the bottom bar, and every flight FR24 knows keeps FR24's Playback.
+- **The LADD Unblock button is on the bottom bar from the first frame the bar is drawn**, instead of up to a second after, when it could be seen appearing. It is put there in the same turn FR24 draws the bar, before the browser paints it.
+- **The LADD Unblock button changes size with FR24's other bar buttons.** FR24 draws the bar's buttons small while its playback is open and larger when it is put away; the button was made once and stayed as it was (small beside large buttons once the playback was closed). It is now made again the same way as theirs whenever theirs change.
+
+### Tests
+- `unit_native` checks, in every layout of the mock page, that the button is on the bar in the first frame of a bar built late and drawn with FR24's buttons in no frame apart while the playback opens and closes; `unit_pbbuttons`, `unit_pbnative` and `e2e` check the airplanes.live address.
+
 ## [22.30.0] - 2026-10-16
 
 ### Fixed

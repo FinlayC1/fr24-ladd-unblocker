@@ -465,6 +465,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     if (barMo) barMo.disconnect();
     if (typeof MutationObserver !== 'function' || !ubBar) return;
     barMo = new MutationObserver(recs => {
+      try { if (recs.some(r => !(r.target.closest && r.target.closest('.tl-ub-btn,.tl-ub-face')))) ubResync(); } catch (e) { log('LADD Unblock button', e); }
       const it = HJ.item;
       if (!it || !(HJ.st === 'on' || (HJ.st === 'opening' && HJ.pressed)) || !HJ.rest || !recs.some(r => it.contains(r.target))) return;
       if (sigOf(lookOf(it)) !== HJ.rest) swapBar(true); else if (HJ.st === 'on') lendDone();
@@ -797,13 +798,47 @@ html.tl-no-strip .tl-strip{display:none!important}`;
       }, true);
       watchBar();
     }
+    placeBarButton(found);
+    return true;
+  }
+  // (this button made from the bar's buttons as they look now, and put after the last of them)
+  function placeBarButton(found) {
     const items = [...found.items.values()], last = items.reduce((a, b) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? b : a));
     if (ubBtn) ubBtn.remove();
     ubBtn = makeBarButton(found);
     last.after(ubBtn);
     if (HJ.st === 'on') { HJ.item = found.items.get('Widgets') || HJ.item; HJ.actSig = ''; HJ.act = null; swapBar(true); } else if (ubFloat) ubBtn.classList.add('tl-ub-btn-on');
     ubBadge();
-    return true;
+  }
+  // FR24 drawing its buttons another way while this one is there - smaller while its playback is open, larger when that is
+  // put away, or its buttons drawn afresh in the same bar: this button made the same way as theirs again, before the
+  // browser draws it (it was left as it was made: small beside buttons grown larger)
+  let ubSyncing = false;
+  function ubResync() {
+    if (ubSyncing || !ubBtn || !ubBtn.isConnected || !ubBar || !ubBar.isConnected) return;
+    ubSyncing = true;
+    try {
+      const found = findBar(); if (!found || found.bar !== ubBar) { ubDirty = true; return; }
+      const sigs = new Map();
+      for (const it of found.items.values()) sigs.set(classSig(it), (sigs.get(classSig(it)) || 0) + 1);
+      const common = [...sigs.entries()].sort((a, b) => b[1] - a[1])[0][0];
+      ubItems = found.items;
+      if (common !== ubCommon) placeBarButton(found);
+    } finally { ubSyncing = false; }
+  }
+  // (the bar drawn - or drawn again - as the page changes: this button put on it in the same turn, before the browser draws
+  // the bar without it. Only where an element holding the bar's words came in, and not more than every 30 ms)
+  let ubTryAt = 0;
+  function ubBarCame(recs) {
+    if (ubBtn && ubBtn.isConnected && ubBar && ubBar.contains(ubBtn)) return;
+    if (clock() - ubTryAt < 30) return;
+    let n = 0;
+    for (const r of recs) for (const a of r.addedNodes) {
+      if (a.nodeType !== 1 || (a.closest && a.closest('.tl-ub,.tl-ub-c,.tl-ub-btn,.tl-ub-face'))) continue;
+      if (++n > 80) return;
+      const t = a.textContent || '';
+      if (UB_LABELS.some(l => t.includes(l))) { ubTryAt = clock(); ubDirty = true; ensureBarButton(); return; }
+    }
   }
   function addUnblockStyle() { if (document.getElementById('tl-ub-style')) return; const s = document.createElement('style'); s.id = 'tl-ub-style'; s.textContent = UB_STYLE + BN_STYLE + '\n[data-tl-gone],[data-tl-ub-hid],[data-tl-ub-under]{display:none!important}'; (document.head || document.documentElement).appendChild(s); }
   function startUnblockWindow() {
@@ -818,6 +853,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
       try {
         new MutationObserver(recs => {
           ubDirty = true; bmDirty = true;
+          try { ubBarCame(recs); } catch (e) { log('LADD Unblock button', e); }
           try {
             if (HJ.st === 'opening') lendScan(); else if (HJ.st === 'on') { if (!(addedTitle(recs) && relend())) lendKeep(false); }
             if (lentOut.size) checkLent();

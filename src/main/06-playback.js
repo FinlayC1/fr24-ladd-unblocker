@@ -365,7 +365,7 @@
       }
     } else pick = cands.find(c => c.live) || cands.filter(c => c.t > 0).sort((a, b) => b.t - a.t)[0] || null;
     if (!pick) return { ll, hex };
-    return { ll, hex, fid: pick.fid || 0, dep: pick.t || 0, depLL: pick.ll || null, z: pick.z, posLL: pick.now || null };
+    return { ll, hex, fid: pick.fid || 0, dep: pick.t || 0, end: pick.t1 || 0, depLL: pick.ll || null, z: pick.z, posLL: pick.now || null };
   }
   // (the flight open in the panel, whichever way its aircraft became known - the page's message, a name found here, or
   // the address on the panel itself: its route, its track and its register facts, once)
