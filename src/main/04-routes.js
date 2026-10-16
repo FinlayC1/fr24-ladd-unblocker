@@ -512,7 +512,13 @@
     // of the aircraft is in). Never over FR24's own plan, a landing or final seen here, or the user's own word
     const sr = !r.userConfirmed && !planDest && r.destConf !== 'confirmed' ? srvIds.rows.get(id) : null, cr = sr && String(sr[1] || '').toLowerCase() === hex ? crowdOf(sr) : null;
     if (cr) {
-      const ca = cr.d ? apById(cr.d) : null;
+      // (checked against where the aircraft is now, every time: worked out minutes or an hour ago, perhaps on a stale
+      // track, it is not shown once the flight says otherwise - far off its track or behind it, flying steadily on and no
+      // nearer to it (the engine's own rule), or its ETA a quarter of an hour gone with the aircraft still airborne 60 km
+      // and more from it. TC-AKB, descending on 137 past Chambery for Turin, was "Le Bourget 74%, ETA 22:09Z" at 22:16Z -
+      // another browser's, kept over this one's own Linate / Malpensa / Turin)
+      const ca0 = cr.d ? apById(cr.d) : null;
+      const ca = ca0 && !crowdContradicted(ca0, cr, pos, trail, origin && origin.airport, elapsedMin, ac.mil && !/^(bizjet|heavybiz)$/.test(cls) ? 'milheavy' : cls) ? ca0 : null;
       if (ca && (cr.by === 2 || (!r.destId && !r.destSite) || (r.destP || 0) + 10 < cr.p)) {
         setD(ca, cr.by === 2 ? 'confirmed' : CONF_OF(cr.p / 100), cr.by === 2 ? 'confirmed in another browser' : 'worked out by another browser');
         r.destP = cr.by === 2 ? 100 : Math.min(99, cr.p); r.destSite = null; r.alternatives = (r.alternatives || []).filter(a => a.iata !== apCode(ca)); r.crowdD = true;
@@ -882,6 +888,9 @@
       (live.has(id) ? refreshPlan(id) : Promise.resolve()).then(() => publishRoute(id, composeRoute(id, rec.hex))).catch(() => publishRoute(id, composeRoute(id, rec.hex)));
       if (!document.hidden) loadToday(rec.hex, 120000, { priority: true }).then(() => publishRoute(id, composeRoute(id, rec.hex))).catch(() => {});
     }
+    // (still loading its log - minutes, for 200 flights: the route worked out again all the same from where it is now, with
+    // what is in so far - not left as it was when the panel opened while the aircraft flies on)
+    else if (rec && rec.hex && routeState.get(id) && routeState.get(id).working) { const st = routeState.get(id); if (!st.route || now() - (st.route.computedAt || 0) > 30000) publishRoute(id, composeRoute(id, rec.hex)); }
   }, 15000);
   // The panel's airports, times and progress bar are fed by the FollowFlight stream's first frame, so routes for what
   // is on screen are prepared ahead of the click.
