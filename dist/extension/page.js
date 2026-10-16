@@ -2117,6 +2117,7 @@
               if (!d.airlineId && rec.operatorId) d.airlineId = rec.operatorId;
               var route = routes.get(id);
               if (route && d.schedule) { if (!d.schedule.atd && route.atd) d.schedule.atd = route.atd; if (!d.schedule.ata && route.ata) d.schedule.ata = route.ata; if (!d.schedule.eta && route.eta) d.schedule.eta = route.eta; }
+              var ci = cardInfo.get(arRow); if (ci && d.schedule) { if (!ci.atd) ci.atd = Number(d.schedule.atd) || 0; if (!ci.ata) ci.ata = Number(d.schedule.ata) || 0; }
               stats.details++;
               if (Array.isArray(d.images)) d.images = d.images.filter(function (im) { return !adJson(im); });
               if (Array.isArray(d.images) && d.images.length) return jsonResponse(res, j);
@@ -2428,6 +2429,15 @@
     var fidNum = function (s) { s = String(s || ''); return /^[0-9a-f]{5,8}$/i.test(s) ? parseInt(s, 16) : 0; };
     // (the flight open in the panel: the one FR24's playback has selected, else the live one followed)
     function pbIdOf(s) { if (typeof s === 'number') return s; s = String(s == null ? '' : s); if (!s) return 0; if (/^\d+$/.test(s) && resolved.has(Number(s))) return Number(s); return /^[0-9a-f]{1,8}$/i.test(s) ? parseInt(s, 16) : 0; }
+    // (and the panel clicked in shows that flight: its header's callsign or registration, where it has one - not a blocked
+    // flight followed earlier, with this panel some other aircraft's)
+    function panelIs(el, id) {
+      var box = el.closest('[data-testid="aircraft-panel"]') || document, h = box.querySelector('[data-testid="aircraft-panel__header__callsign"]');
+      var k = function (s) { return String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, ''); }, txt = h ? k(h.textContent) : '';
+      if (!txt || txt === 'NA') return true;
+      var rec = resolved.get(id) || {}, cs = k(csOf(rec)), reg = k(rec.reg);
+      return (!!cs && txt.indexOf(cs) >= 0) || (!!reg && txt.indexOf(reg) >= 0) || (!!rec.cs && txt.indexOf(k(rec.cs)) >= 0);
+    }
     function panelFlightId() { if (pbOn()) { var st = pinStore('playback'), n = st ? pbIdOf(st.selectedFlightId) : 0; if (n) return n; } return curFollowId; }
     // What is known here of a flight followed this session: its take-off and the field it left (or where it was first
     // heard), and where it is now
@@ -2484,7 +2494,7 @@
     }
     // The Playback clicked, when it is a blocked flight's: { w: what is known of the flight } - or null, FR24's own
     function pbFind(t) {
-      if (!t.closest('[id^="airport_schedule_"], [data-testid^="airport-panel__schedules__flight__"], [data-testid^="search__result"], [data-testid^="aircraft-panel"], [data-testid^="aircraft__"], [data-testid*="recent-flights"], li')) return null;
+      if (!t.closest('[id^="airport_schedule_"], [data-testid^="airport-panel__schedules__flight__"], [data-testid="search__result-row"], [data-testid^="aircraft-panel"], [data-testid^="aircraft__"], [data-testid*="recent-flights"], li')) return null;
       var top = pbAct(t); if (!top || inBar(top)) return null;
       var w = null, li = top.closest('li');
       if (li && (li.querySelector('[data-testid^="aircraft-panel__recent-flights"]') || li.closest('[data-testid*="recent-flights"]'))) {
@@ -2493,10 +2503,10 @@
         w = { hex: String((e.aircraft && e.aircraft.hex) || '').toLowerCase(), reg: (e.aircraft && e.aircraft.registration) || '', dep: Number(p.t) || Number(e.time && e.time.real && e.time.real.departure) || 0,
           depLL: fin(p.lat) && fin(p.lon) ? [p.lat, p.lon] : op && fin(op.latitude) && fin(op.longitude) ? [op.latitude, op.longitude] : null, z: p.z || 10 };
       } else {
-        var card = top.closest('[id^="airport_schedule_"], [data-testid^="airport-panel__schedules__flight__"]'), sr = card ? null : top.closest('[data-testid="search__result-row"], [data-testid^="search__result"]');
+        var card = top.closest('[id^="airport_schedule_"], [data-testid^="airport-panel__schedules__flight__"]'), sr = card ? null : top.closest('[data-testid="search__result-row"]');
         if (card) w = boardWant(card);
-        else if (sr) w = searchWant(sr.closest('[data-testid="search__result-row"]') || sr);
-        else if (top.closest('[data-testid^="aircraft-panel"], [data-testid^="aircraft__"]')) { var pid = panelFlightId(); w = pid && resolved.has(pid) ? liveWant(pid) : null; }
+        else if (sr) w = searchWant(sr);
+        else if (top.closest('[data-testid^="aircraft-panel"], [data-testid^="aircraft__"]')) { var pid = panelFlightId(); w = pid && resolved.has(pid) && panelIs(top, pid) ? liveWant(pid) : null; }
       }
       return w ? { w: w, el: top } : null;
     }
@@ -2592,7 +2602,7 @@
         if (!done) { if (typeof st.$patch === 'function') st.$patch({ selectedFlightId: v }); else st.selectedFlightId = v; }
       } catch (e) { stats.errors++; stats.lastError = String(e); }
     }
-    if (pbPend) setInterval(pbSelTick, 500);
+    if (pbPend) var pbSelIv = setInterval(function () { pbSelTick(); if (!pbPend) clearInterval(pbSelIv); }, 500);
     window.addEventListener('message', function (ev) {
       if (ev.source !== window || !ev.data || typeof ev.data !== 'object') return;
       var d = ev.data;

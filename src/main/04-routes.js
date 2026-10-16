@@ -518,7 +518,7 @@
       // and more from it. TC-AKB, descending on 137 past Chambery for Turin, was "Le Bourget 74%, ETA 22:09Z" at 22:16Z -
       // another browser's, kept over this one's own Linate / Malpensa / Turin)
       const ca0 = cr.d ? apById(cr.d) : null;
-      const ca = ca0 && !crowdContradicted(ca0, cr, pos, trail, origin && origin.airport, elapsedMin, ac.mil && !/^(bizjet|heavybiz)$/.test(cls) ? 'milheavy' : cls) ? ca0 : null;
+      const ca = ca0 && !crowdContradicted(ca0, Object.assign({}, cr, { sure: cr.by === 2 }), pos, trail, origin && origin.airport, elapsedMin, ac.mil && !/^(bizjet|heavybiz)$/.test(cls) ? 'milheavy' : cls) ? ca0 : null;
       if (ca && (cr.by === 2 || (!r.destId && !r.destSite) || (r.destP || 0) + 10 < cr.p)) {
         setD(ca, cr.by === 2 ? 'confirmed' : CONF_OF(cr.p / 100), cr.by === 2 ? 'confirmed in another browser' : 'worked out by another browser');
         r.destP = cr.by === 2 ? 100 : Math.min(99, cr.p); r.destSite = null; r.alternatives = (r.alternatives || []).filter(a => a.iata !== apCode(ca)); r.crowdD = true;
@@ -892,7 +892,7 @@
     }
     // (still loading its log - minutes, for 200 flights: the route worked out again all the same from where it is now, with
     // what is in so far - not left as it was when the panel opened while the aircraft flies on)
-    else if (rec && rec.hex && routeState.get(id) && routeState.get(id).working) { const st = routeState.get(id); if (!st.route || now() - (st.route.computedAt || 0) > 30000) publishRoute(id, composeRoute(id, rec.hex)); }
+    else if (rec && rec.hex && routeState.get(id) && routeState.get(id).working) { const st = routeState.get(id); if (now() - Math.max(st.loadingAt || 0, (st.route && st.route.computedAt) || 0) > 30000) { st.loadingAt = now(); publishRoute(id, composeRoute(id, rec.hex)); } }
   }, 15000);
   // The panel's airports, times and progress bar are fed by the FollowFlight stream's first frame, so routes for what
   // is on screen are prepared ahead of the click.

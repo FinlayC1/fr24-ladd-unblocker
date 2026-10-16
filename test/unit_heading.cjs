@@ -124,6 +124,7 @@ const tcPos = Object.assign({}, tc[tc.length - 1], { vr: -864 }), tcAc = { hex: 
 {
   const o = { origin: FAB, elapsedMin: 128 };
   check('TC-AKB: Le Bourget, 450 km behind it, ruled out by the way it is flying', E.offTrack(tcPos, tc, LBG, o) >= 0.99, E.offTrack(tcPos, tc, LBG, o));
+  check('... on its position alone, with no minutes before it: half at most - never enough on its own to drop a destination another browser or the monitor has (> 0.5)', E.offTrack(tcPos, [], LBG, o) > 0 && E.offTrack(tcPos, [], LBG, o) <= 0.5, E.offTrack(tcPos, [], LBG, o));
   check('... Turin, Milan, Nice ahead of it: not', ['LIMF', 'LIML', 'LIMC', 'LFMN'].every(c => E.offTrack(tcPos, tc, A(c), o) === 0));
   // (a log that flies it to Le Bourget all the time)
   const L = []; let t = T2 - 60 * 86400; for (let i = 0; i < 30; i++) { L.push(leg('LTAC', 'LFPB', t, 4 * 3600), leg('LFPB', 'EGLF', t + 86400, 3600), leg('EGLF', 'LFPB', t + 2 * 86400, 3600), leg('LFPB', 'LTAC', t + 3 * 86400, 4 * 3600)); t += 2 * 86400; }
@@ -138,6 +139,10 @@ const tcPos = Object.assign({}, tc[tc.length - 1], { vr: -864 }), tcAc = { hex: 
   // behind it (N97NH-style, Farmingdale for Washington: out over the Atlantic first, then west)
   const dep = track([[0, FRG.lat, FRG.lon, 0], [2, 40.70, -73.40, 3000], [17, 40.10, -73.30, 15000]], t0);
   check('climbing out on a departure route, its destination behind it: nothing', E.trackState(dep[dep.length - 1], dep, { origin: FRG, elapsedMin: 17 }) === null && E.offTrack(dep[dep.length - 1], dep, IAD, { origin: FRG, elapsedMin: 17 }) === 0);
+  // where it took off from and when not known: level at 6,000 ft on a departure route, its destination behind it - nothing;
+  // at FL350 the rule speaks
+  const lvl = track([[0, 40.60, -73.20, 6000], [8, 40.30, -72.60, 6000]], t0), lvl35 = lvl.map(p => Object.assign({}, p, { alt: 35000, vr: 0 }));
+  check('origin unknown, level at 6,000 ft: nothing; the same at FL350: judged', E.trackState(lvl[lvl.length - 1], lvl, {}) === null && E.offTrack(lvl[lvl.length - 1], lvl, IAD, {}) === 0 && E.offTrack(lvl35[lvl35.length - 1], lvl35, IAD, {}) > 0.5, E.offTrack(lvl35[lvl35.length - 1], lvl35, IAD, {}));
   // level at FL250 on the downwind leg 40 km from the field: closer than 80 km, nothing
   const MXP = A('LIMC'), dw = track([[0, 45.90, 8.20, 12000], [6, 46.05, 8.95, 11000]], t0);
   check('downwind 40 km from the field (bearing 130+ degrees off): nothing', E.offTrack(dw[dw.length - 1], dw, MXP, {}) === 0, E.angDiff(dw[dw.length - 1].trk, E.brg(dw[dw.length - 1].lat, dw[dw.length - 1].lon, MXP.lat, MXP.lon)));

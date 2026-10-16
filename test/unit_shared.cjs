@@ -214,6 +214,12 @@ const lastReport = ip => { for (let i = reports.length - 1; i >= 0; i--) if (rep
     check('... and drops a Le Bourget it had kept from earlier at once - not an hour later (the origin stays)', !!R2.crowd && !R2.crowd.d && R2.crowd.o === FAB.id, R2.crowd);
     Object.assign(R2.crowd, { d: TRN.id, p: 60, dc: 'likely', eta: nowS + 1200, dt: nowS - 60, km: 120, kmAt: nowS - 60 }); M.ident.prune(Date.now());
     check('... Turin, ahead of it, kept', R2.crowd && R2.crowd.d === TRN.id, R2.crowd);
+    // (its ETA long gone - a stale one sent with it, or a hold - 60 km and more out: a guess dropped, a confirmed one kept)
+    Object.assign(R2.crowd, { d: TRN.id, p: 100, dc: 'confirmed', eta: nowS - 3000, dt: nowS - 60, km: 120, kmAt: nowS - 60 }); M.ident.prune(Date.now());
+    check('... Turin confirmed, its ETA 50 minutes gone, still ahead of it: kept', R2.crowd && R2.crowd.d === TRN.id, R2.crowd);
+    Object.assign(R2.crowd, { d: TRN.id, p: 60, dc: 'likely', eta: nowS - 3000, dt: nowS - 60, km: 120, kmAt: nowS - 60 }); M.ident.prune(Date.now());
+    check('... Turin worked out, its ETA 50 minutes gone, the aircraft still far from it: dropped', R2.crowd && !R2.crowd.d, R2.crowd);
+    Object.assign(R2.crowd, { d: TRN.id, p: 60, dc: 'likely', eta: nowS + 1200, dt: nowS - 60, km: 120, kmAt: nowS - 60 });
     R2.crowd = null;
     for (const L of [LB]) { await until(() => !L.srvIds.busy, 5000); L.srvIds.since = 0; await L.pullSrvIds(); }
     feed(B, [{ id: ID2, lat: pos2.lat, lon: pos2.lon, alt: pos2.alt, spd: Math.round(pos2.gs), trk: Math.round(pos2.trk), ts: nowS, gnd: false, src: 5, type: 'GLF4', reg: '' }]);

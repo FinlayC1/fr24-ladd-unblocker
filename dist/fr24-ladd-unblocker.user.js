@@ -2200,6 +2200,7 @@
               if (!d.airlineId && rec.operatorId) d.airlineId = rec.operatorId;
               var route = routes.get(id);
               if (route && d.schedule) { if (!d.schedule.atd && route.atd) d.schedule.atd = route.atd; if (!d.schedule.ata && route.ata) d.schedule.ata = route.ata; if (!d.schedule.eta && route.eta) d.schedule.eta = route.eta; }
+              var ci = cardInfo.get(arRow); if (ci && d.schedule) { if (!ci.atd) ci.atd = Number(d.schedule.atd) || 0; if (!ci.ata) ci.ata = Number(d.schedule.ata) || 0; }
               stats.details++;
               if (Array.isArray(d.images)) d.images = d.images.filter(function (im) { return !adJson(im); });
               if (Array.isArray(d.images) && d.images.length) return jsonResponse(res, j);
@@ -2511,6 +2512,15 @@
     var fidNum = function (s) { s = String(s || ''); return /^[0-9a-f]{5,8}$/i.test(s) ? parseInt(s, 16) : 0; };
     // (the flight open in the panel: the one FR24's playback has selected, else the live one followed)
     function pbIdOf(s) { if (typeof s === 'number') return s; s = String(s == null ? '' : s); if (!s) return 0; if (/^\d+$/.test(s) && resolved.has(Number(s))) return Number(s); return /^[0-9a-f]{1,8}$/i.test(s) ? parseInt(s, 16) : 0; }
+    // (and the panel clicked in shows that flight: its header's callsign or registration, where it has one - not a blocked
+    // flight followed earlier, with this panel some other aircraft's)
+    function panelIs(el, id) {
+      var box = el.closest('[data-testid="aircraft-panel"]') || document, h = box.querySelector('[data-testid="aircraft-panel__header__callsign"]');
+      var k = function (s) { return String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, ''); }, txt = h ? k(h.textContent) : '';
+      if (!txt || txt === 'NA') return true;
+      var rec = resolved.get(id) || {}, cs = k(csOf(rec)), reg = k(rec.reg);
+      return (!!cs && txt.indexOf(cs) >= 0) || (!!reg && txt.indexOf(reg) >= 0) || (!!rec.cs && txt.indexOf(k(rec.cs)) >= 0);
+    }
     function panelFlightId() { if (pbOn()) { var st = pinStore('playback'), n = st ? pbIdOf(st.selectedFlightId) : 0; if (n) return n; } return curFollowId; }
     // What is known here of a flight followed this session: its take-off and the field it left (or where it was first
     // heard), and where it is now
@@ -2567,7 +2577,7 @@
     }
     // The Playback clicked, when it is a blocked flight's: { w: what is known of the flight } - or null, FR24's own
     function pbFind(t) {
-      if (!t.closest('[id^="airport_schedule_"], [data-testid^="airport-panel__schedules__flight__"], [data-testid^="search__result"], [data-testid^="aircraft-panel"], [data-testid^="aircraft__"], [data-testid*="recent-flights"], li')) return null;
+      if (!t.closest('[id^="airport_schedule_"], [data-testid^="airport-panel__schedules__flight__"], [data-testid="search__result-row"], [data-testid^="aircraft-panel"], [data-testid^="aircraft__"], [data-testid*="recent-flights"], li')) return null;
       var top = pbAct(t); if (!top || inBar(top)) return null;
       var w = null, li = top.closest('li');
       if (li && (li.querySelector('[data-testid^="aircraft-panel__recent-flights"]') || li.closest('[data-testid*="recent-flights"]'))) {
@@ -2576,10 +2586,10 @@
         w = { hex: String((e.aircraft && e.aircraft.hex) || '').toLowerCase(), reg: (e.aircraft && e.aircraft.registration) || '', dep: Number(p.t) || Number(e.time && e.time.real && e.time.real.departure) || 0,
           depLL: fin(p.lat) && fin(p.lon) ? [p.lat, p.lon] : op && fin(op.latitude) && fin(op.longitude) ? [op.latitude, op.longitude] : null, z: p.z || 10 };
       } else {
-        var card = top.closest('[id^="airport_schedule_"], [data-testid^="airport-panel__schedules__flight__"]'), sr = card ? null : top.closest('[data-testid="search__result-row"], [data-testid^="search__result"]');
+        var card = top.closest('[id^="airport_schedule_"], [data-testid^="airport-panel__schedules__flight__"]'), sr = card ? null : top.closest('[data-testid="search__result-row"]');
         if (card) w = boardWant(card);
-        else if (sr) w = searchWant(sr.closest('[data-testid="search__result-row"]') || sr);
-        else if (top.closest('[data-testid^="aircraft-panel"], [data-testid^="aircraft__"]')) { var pid = panelFlightId(); w = pid && resolved.has(pid) ? liveWant(pid) : null; }
+        else if (sr) w = searchWant(sr);
+        else if (top.closest('[data-testid^="aircraft-panel"], [data-testid^="aircraft__"]')) { var pid = panelFlightId(); w = pid && resolved.has(pid) && panelIs(top, pid) ? liveWant(pid) : null; }
       }
       return w ? { w: w, el: top } : null;
     }
@@ -2675,7 +2685,7 @@
         if (!done) { if (typeof st.$patch === 'function') st.$patch({ selectedFlightId: v }); else st.selectedFlightId = v; }
       } catch (e) { stats.errors++; stats.lastError = String(e); }
     }
-    if (pbPend) setInterval(pbSelTick, 500);
+    if (pbPend) var pbSelIv = setInterval(function () { pbSelTick(); if (!pbPend) clearInterval(pbSelIv); }, 500);
     window.addEventListener('message', function (ev) {
       if (ev.source !== window || !ev.data || typeof ev.data !== 'object') return;
       var d = ev.data;
@@ -4509,6 +4519,8 @@
       if (!pos || pos.gnd || !fin(pos.trk) || !fin(pos.lat) || !fin(pos.lon) || (fin(pos.gs) && pos.gs < 90) || SQ_EMERG.test(String(pos.sq || ''))) return null;
       const O = o.origin; if (O && fin(O.lat) && dist(O.lat, O.lon, pos.lat, pos.lon) < 60) return null;
       if (o.elapsedMin != null && o.elapsedMin < 15) return null;
+      // (where it took off from and when unknown: not below 10,000 ft - a departure route's level stretch is not a track)
+      if (!(O && fin(O.lat)) && o.elapsedMin == null && !(fin(pos.alt) && pos.alt >= 10000)) return null;
       let back = null, mid = null, far = null;
       const tr = trail || [];
       for (let i = tr.length - 1; i >= 0; i--) {
@@ -6258,14 +6270,16 @@
   function crowdContradicted(a, c, pos, trail, originAp, elapsedMin, cls) {
     if (!a || !pos || pos.gnd || !fin(pos.lat) || !fin(pos.lon)) return false;
     const d = dist(pos.lat, pos.lon, a.lat, a.lon);
-    if (c && c.eta > 0 && pos.t > c.eta + 900 && d > 60) return true;
+    // (an ETA long gone: a quarter of an hour, or a sixth of the flight's time where that is longer - not a confirmed one)
+    if (c && c.eta > 0 && !c.sure && pos.t > c.eta + Math.max(900, c.atd > 0 && c.eta > c.atd ? (c.eta - c.atd) / 6 : 0) && d > 60) return true;
     if (/^(heli|piston|fighter|milheavy)$/.test(cls || '')) return false;
-    return ENGINE.offTrack(pos, trail || [], a, { origin: originAp || null, elapsedMin }) >= 0.5;
+    // (more than half: the track of one moment alone, with nothing of the minutes before, never rules it out)
+    return ENGINE.offTrack(pos, trail || [], a, { origin: originAp || null, elapsedMin }) > 0.5;
   }
   function srvRoute(r) {
     const o = r[8] ? apById(r[8]) : null, d0 = r[10] ? apById(r[10]) : null;
     // (no track in the row: only the ETA against where FR24 last had it)
-    const d = d0 && !crowdContradicted(d0, { eta: r[18] || 0 }, fin(r[13]) && fin(r[14]) && r[17] > 0 ? { t: r[17], lat: r[13], lon: r[14], gnd: !!r[16] } : null) ? d0 : null;
+    const d = d0 && !crowdContradicted(d0, { eta: r[18] || 0, atd: r[19] || 0, sure: !!crowdOf(r) && !!crowdOf(r).d && crowdOf(r).by === 2 }, fin(r[13]) && fin(r[14]) && r[17] > 0 ? { t: r[17], lat: r[13], lon: r[14], gnd: !!r[16] } : null) ? d0 : null;
     if (!o && !d) return null;
     const c = crowdOf(r), cd = !!c && !!c.d, sure = cd && c.by === 2;
     return { originId: o ? o.id : 0, originIata: apCode(o), originCity: o ? o.city || o.name || '' : '', originNote: o && c && c.o ? 'worked out by another browser' : '', destId: d ? d.id : 0, destIata: apCode(d), destCity: d ? d.city || d.name || '' : '',
@@ -9066,7 +9080,7 @@
       // and more from it. TC-AKB, descending on 137 past Chambery for Turin, was "Le Bourget 74%, ETA 22:09Z" at 22:16Z -
       // another browser's, kept over this one's own Linate / Malpensa / Turin)
       const ca0 = cr.d ? apById(cr.d) : null;
-      const ca = ca0 && !crowdContradicted(ca0, cr, pos, trail, origin && origin.airport, elapsedMin, ac.mil && !/^(bizjet|heavybiz)$/.test(cls) ? 'milheavy' : cls) ? ca0 : null;
+      const ca = ca0 && !crowdContradicted(ca0, Object.assign({}, cr, { sure: cr.by === 2 }), pos, trail, origin && origin.airport, elapsedMin, ac.mil && !/^(bizjet|heavybiz)$/.test(cls) ? 'milheavy' : cls) ? ca0 : null;
       if (ca && (cr.by === 2 || (!r.destId && !r.destSite) || (r.destP || 0) + 10 < cr.p)) {
         setD(ca, cr.by === 2 ? 'confirmed' : CONF_OF(cr.p / 100), cr.by === 2 ? 'confirmed in another browser' : 'worked out by another browser');
         r.destP = cr.by === 2 ? 100 : Math.min(99, cr.p); r.destSite = null; r.alternatives = (r.alternatives || []).filter(a => a.iata !== apCode(ca)); r.crowdD = true;
@@ -9440,7 +9454,7 @@
     }
     // (still loading its log - minutes, for 200 flights: the route worked out again all the same from where it is now, with
     // what is in so far - not left as it was when the panel opened while the aircraft flies on)
-    else if (rec && rec.hex && routeState.get(id) && routeState.get(id).working) { const st = routeState.get(id); if (!st.route || now() - (st.route.computedAt || 0) > 30000) publishRoute(id, composeRoute(id, rec.hex)); }
+    else if (rec && rec.hex && routeState.get(id) && routeState.get(id).working) { const st = routeState.get(id); if (now() - Math.max(st.loadingAt || 0, (st.route && st.route.computedAt) || 0) > 30000) { st.loadingAt = now(); publishRoute(id, composeRoute(id, rec.hex)); } }
   }, 15000);
   // The panel's airports, times and progress bar are fed by the FollowFlight stream's first frame, so routes for what
   // is on screen are prepared ahead of the click.
@@ -11275,7 +11289,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       // board's own rows of that number's prefix have it)
       if (r.src === 'sched' && r.nat && !r.alId) {
         const pid = r.num ? (pre && pre.get(numPre(r.num))) || 0 : 0;
-        if (r.nat.airlineId && (!r.num || (pid && pid !== r.nat.airlineId))) { r.nat = Object.assign({}, r.nat, { airlineId: null, airline: r.al || null }); r.alIcao = ''; }
+        if (r.nat.airlineId && (!r.num || !numPre(r.num) || (pid && pid !== r.nat.airlineId))) { r.nat = Object.assign({}, r.nat, { airlineId: null, airline: r.al || null }); r.alIcao = ''; }
         const ty = clean(r.ty).toUpperCase();
         if (!r.num && (r.nat.aircraftType || '') !== ty) r.nat = Object.assign({}, r.nat, { aircraftType: ty || null });
       }

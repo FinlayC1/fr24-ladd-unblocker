@@ -474,14 +474,16 @@
   function crowdContradicted(a, c, pos, trail, originAp, elapsedMin, cls) {
     if (!a || !pos || pos.gnd || !fin(pos.lat) || !fin(pos.lon)) return false;
     const d = dist(pos.lat, pos.lon, a.lat, a.lon);
-    if (c && c.eta > 0 && pos.t > c.eta + 900 && d > 60) return true;
+    // (an ETA long gone: a quarter of an hour, or a sixth of the flight's time where that is longer - not a confirmed one)
+    if (c && c.eta > 0 && !c.sure && pos.t > c.eta + Math.max(900, c.atd > 0 && c.eta > c.atd ? (c.eta - c.atd) / 6 : 0) && d > 60) return true;
     if (/^(heli|piston|fighter|milheavy)$/.test(cls || '')) return false;
-    return ENGINE.offTrack(pos, trail || [], a, { origin: originAp || null, elapsedMin }) >= 0.5;
+    // (more than half: the track of one moment alone, with nothing of the minutes before, never rules it out)
+    return ENGINE.offTrack(pos, trail || [], a, { origin: originAp || null, elapsedMin }) > 0.5;
   }
   function srvRoute(r) {
     const o = r[8] ? apById(r[8]) : null, d0 = r[10] ? apById(r[10]) : null;
     // (no track in the row: only the ETA against where FR24 last had it)
-    const d = d0 && !crowdContradicted(d0, { eta: r[18] || 0 }, fin(r[13]) && fin(r[14]) && r[17] > 0 ? { t: r[17], lat: r[13], lon: r[14], gnd: !!r[16] } : null) ? d0 : null;
+    const d = d0 && !crowdContradicted(d0, { eta: r[18] || 0, atd: r[19] || 0, sure: !!crowdOf(r) && !!crowdOf(r).d && crowdOf(r).by === 2 }, fin(r[13]) && fin(r[14]) && r[17] > 0 ? { t: r[17], lat: r[13], lon: r[14], gnd: !!r[16] } : null) ? d0 : null;
     if (!o && !d) return null;
     const c = crowdOf(r), cd = !!c && !!c.d, sure = cd && c.by === 2;
     return { originId: o ? o.id : 0, originIata: apCode(o), originCity: o ? o.city || o.name || '' : '', originNote: o && c && c.o ? 'worked out by another browser' : '', destId: d ? d.id : 0, destIata: apCode(d), destCity: d ? d.city || d.name || '' : '',

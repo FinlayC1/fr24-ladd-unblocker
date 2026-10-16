@@ -220,7 +220,7 @@
       // board's own rows of that number's prefix have it)
       if (r.src === 'sched' && r.nat && !r.alId) {
         const pid = r.num ? (pre && pre.get(numPre(r.num))) || 0 : 0;
-        if (r.nat.airlineId && (!r.num || (pid && pid !== r.nat.airlineId))) { r.nat = Object.assign({}, r.nat, { airlineId: null, airline: r.al || null }); r.alIcao = ''; }
+        if (r.nat.airlineId && (!r.num || !numPre(r.num) || (pid && pid !== r.nat.airlineId))) { r.nat = Object.assign({}, r.nat, { airlineId: null, airline: r.al || null }); r.alIcao = ''; }
         const ty = clean(r.ty).toUpperCase();
         if (!r.num && (r.nat.aircraftType || '') !== ty) r.nat = Object.assign({}, r.nat, { aircraftType: ty || null });
       }

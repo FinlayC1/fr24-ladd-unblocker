@@ -82,6 +82,11 @@ const url = (t, lat, lon, z) => `/${ymd(t)}/${hm(t)}/1x/${lat.toFixed(2)},${lon.
   check('... the flight to select there kept for that page (FR24\'s id, its aircraft)', (pbSel() || {}).u === U_PID && pbSel().id === pid && pbSel().hex === '424c60', pbSel());
   reset(); clk(doc.querySelector('[data-fr24="panel-menu"] span'));
   check('... the aircraft__playback button the same', navs[0] === U_PID, navs);
+  // (a panel showing another aircraft, with the blocked flight followed earlier still the last one followed)
+  doc.querySelector('#panel [data-testid="aircraft-panel__header__callsign"]').textContent = 'BAW123'; reset();
+  const pOther = clk(doc.querySelector('[data-fr24="panel-actions"]'));
+  check('the panel\'s Playback with the panel showing another aircraft (BAW123): FR24\'s own, not the blocked flight followed earlier', !pOther && !navs.length && fr24.join() === 'panel-actions', navs);
+  doc.querySelector('#panel [data-testid="aircraft-panel__header__callsign"]').textContent = 'VSB82';
   H.setCurFollow(0x41000001); reset();
   const pOrd = clk(doc.querySelector('[data-fr24="panel-actions"]'));
   check('the panel\'s Playback of an ordinary flight: FR24\'s own', !pOrd && !navs.length && fr24.join() === 'panel-actions');
@@ -144,6 +149,10 @@ const url = (t, lat, lon, z) => `/${ymd(t)}/${hm(t)}/1x/${lat.toFixed(2)},${lon.
   reset(); clk(sr(0)); const n0 = navs[0];
   reset(); clk(sr(1));
   check('a search result of a live blocked flight, and of its aircraft: the flight\'s take-off', n0 === U_PID && navs[0] === U_PID, [n0, navs[0]]);
+  // (a Playback in the results box but in no row: not taken for the first row)
+  doc.querySelector('[data-testid="search__results"]').insertAdjacentHTML('beforeend', btn('srbox'));
+  reset(); const boxTaken = clk(doc.querySelector('[data-fr24="srbox"] span'));
+  check('a Playback in the search results but outside any row: FR24\'s, not the first row\'s flight', !boxTaken && !navs.length && fr24.join() === 'srbox', navs);
   reset(); posted.length = 0;
   const sTaken = clk(sr(2));
   const ask = posted.find(p => p && p.__tweeksLadd === 'pbWhere');

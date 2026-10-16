@@ -1773,6 +1773,8 @@ function createRouteEngine() {
     if (!pos || pos.gnd || !fin(pos.trk) || !fin(pos.lat) || !fin(pos.lon) || (fin(pos.gs) && pos.gs < 90) || SQ_EMERG.test(String(pos.sq || ''))) return null;
     const O = o.origin; if (O && fin(O.lat) && dist(O.lat, O.lon, pos.lat, pos.lon) < 60) return null;
     if (o.elapsedMin != null && o.elapsedMin < 15) return null;
+    // (where it took off from and when unknown: not below 10,000 ft - a departure route's level stretch is not a track)
+    if (!(O && fin(O.lat)) && o.elapsedMin == null && !(fin(pos.alt) && pos.alt >= 10000)) return null;
     let back = null, mid = null, far = null;
     const tr = trail || [];
     for (let i = tr.length - 1; i >= 0; i--) {
