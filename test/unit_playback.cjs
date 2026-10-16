@@ -87,8 +87,10 @@ const fid = pbFx.id;
   const traceDone = asked.find(a => /trace_full_424c60/.test(a.url)), traceIn = traceDone && traceDone.at + TRACE_MS <= Date.now() - 50;
   check('named at once from the heatmap while the monitor has not answered: 424c60, M-ARNZ, LADD', !!named && named.hex === '424c60' && named.reg === 'M-ARNZ' && named.ladd, named && { hex: named.hex, reg: named.reg, ms: tNamed });
   check('... without waiting for its track of the day (known here already)', !!named && tNamed < TRACE_MS && !traceIn, { ms: tNamed, traceAskedAt: traceDone && traceDone.at - t0 });
-  const out = H.patchPlayback(body(b64(pbFx.feed)), pbFx.ts), recs = H.parse(H.parse(out).find(f => f.fn === 1).val).filter(f => f.fn === 1).map(f => H.parse(f.val)), me = recs.find(fs => fs.find(f => f.fn === 1).val === fid);
   const str = (fs, n) => { const f = fs && fs.find(x => x.fn === n); return f ? Buffer.from(f.val).toString('utf8') : ''; };
+  // (the name reaches FR24's world as a message - delivered after this turn: the next frame FR24 asks for is the one labelled)
+  const frame = () => { const out = H.patchPlayback(body(b64(pbFx.feed)), pbFx.ts), recs = H.parse(H.parse(out).find(f => f.fn === 1).val).filter(f => f.fn === 1).map(f => H.parse(f.val)); return recs.find(fs => fs.find(f => f.fn === 1).val === fid); };
+  const me = await until(() => { const m = frame(); return m && str(m, 11) ? m : null; }, 250) || frame();
   check('... labelled on FR24\'s playback map at once - no "N/A" flight', !!me && !!str(me, 11), me && str(me, 11));
   const withCs = await until(() => { const r = L.pb.named.get(fid); return r && r.cs ? r : null; }, TRACE_MS + 3000);
   check('... its callsign of that moment once its track is in (VSB96)', !!withCs && withCs.cs === 'VSB96', withCs && withCs.cs);

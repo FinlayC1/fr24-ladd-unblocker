@@ -3,83 +3,237 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
 <title>FR24 monitor</title>
+<!-- The owner's panel of the monitor (/dash): one page, no data in it - everything is asked for with the secret, typed once
+     and kept in this browser (localStorage) until "Sign out". Pages: #overview #users #traffic #logs #options -->
 <style>
-  :root { --bg:#0d1117; --panel:#161b22; --line:#30363d; --text:#e6edf3; --muted:#8b949e; --ok:#3fb950; --warn:#d29922; --bad:#f85149; --accent:#58a6ff; }
+  :root { --bg:#f6f8fa; --panel:#ffffff; --line:#d0d7de; --text:#1f2328; --muted:#59636e; --ok:#1a7f37; --warn:#9a6700; --bad:#cf222e; --accent:#0969da; --accent-ink:#ffffff; --soft:#eef3f9; color-scheme:light; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0d1117; --panel:#161b22; --line:#30363d; --text:#e6edf3; --muted:#8b949e; --ok:#3fb950; --warn:#d29922; --bad:#f85149; --accent:#58a6ff; --accent-ink:#04122a; --soft:#1c2430; color-scheme:dark; }
+  }
   * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
-  header { display:flex; flex-wrap:wrap; gap:12px; align-items:center; justify-content:space-between; padding:14px 16px; border-bottom:1px solid var(--line); }
-  h1 { font-size:17px; margin:0; font-weight:600; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  a { color:var(--accent); }
+  header { position:sticky; top:0; z-index:5; background:var(--panel); border-bottom:1px solid var(--line); }
+  .bar { display:flex; flex-wrap:wrap; gap:6px 14px; align-items:center; justify-content:space-between; padding:10px 16px 0; max-width:1200px; margin:0 auto; }
+  h1 { font-size:16px; margin:0; font-weight:600; }
   .sub { color:var(--muted); font-size:12px; }
-  main { padding:16px; max-width:1200px; margin:0 auto; display:grid; gap:16px; }
-  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; }
-  .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px 14px; }
-  .card h2 { margin:0 0 8px; font-size:12px; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); font-weight:600; }
+  nav { display:flex; gap:2px; overflow-x:auto; padding:6px 12px 0; max-width:1200px; margin:0 auto; scrollbar-width:none; }
+  nav a { padding:8px 10px; color:var(--muted); text-decoration:none; border-bottom:2px solid transparent; white-space:nowrap; font-weight:500; }
+  nav a.on { color:var(--text); border-bottom-color:var(--accent); }
+  main { padding:16px; max-width:1200px; margin:0 auto; }
+  section.page { display:grid; gap:16px; }
+  .kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; }
+  .kpi { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px 14px; min-width:0; }
+  .kpi .k { color:var(--muted); font-size:12px; }
+  .kpi .v { font-size:26px; font-weight:600; font-variant-numeric:tabular-nums; line-height:1.2; margin-top:2px; overflow-wrap:anywhere; }
+  .kpi .d { color:var(--muted); font-size:12px; margin-top:2px; }
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:12px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px 14px; min-width:0; }
+  .card h2, section.tbl h2 { margin:0 0 8px; font-size:12px; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); font-weight:600; }
   .row { display:flex; justify-content:space-between; gap:10px; padding:2px 0; }
-  .row span:first-child { color:var(--muted); }
+  .row span:first-child { color:var(--muted); flex:0 0 auto; }
+  .row span:last-child { text-align:right; overflow-wrap:anywhere; }
   .num { font-variant-numeric:tabular-nums; }
   .ok { color:var(--ok); } .warn { color:var(--warn); } .bad { color:var(--bad); }
-  section.tbl { background:var(--panel); border:1px solid var(--line); border-radius:8px; overflow:hidden; }
-  section.tbl h2 { margin:0; padding:10px 14px; font-size:12px; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); font-weight:600; border-bottom:1px solid var(--line); }
-  .scroll { overflow-x:auto; max-height:340px; overflow-y:auto; }
+  section.tbl { background:var(--panel); border:1px solid var(--line); border-radius:8px; overflow:hidden; min-width:0; }
+  section.tbl h2 { margin:0; padding:10px 14px; border-bottom:1px solid var(--line); }
+  .scroll { overflow-x:auto; max-height:360px; overflow-y:auto; }
   table { width:100%; border-collapse:collapse; }
   th, td { text-align:left; padding:6px 14px; border-bottom:1px solid var(--line); white-space:nowrap; font-variant-numeric:tabular-nums; }
   th { color:var(--muted); font-weight:500; font-size:12px; position:sticky; top:0; background:var(--panel); }
   tr:last-child td { border-bottom:0; }
   td.path { max-width:420px; overflow:hidden; text-overflow:ellipsis; }
+  td.empty { color:var(--muted); }
+  .share { display:inline-block; vertical-align:middle; height:6px; border-radius:3px; background:var(--accent); margin-right:6px; }
+  .grid2 { display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:12px; }
+  .grid3 { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; }
+  .chart svg { display:block; width:100%; height:auto; overflow:visible; }
+  .chart .readout { font-size:12px; color:var(--muted); min-height:1.5em; margin-top:4px; }
+  svg .gridl { stroke:var(--line); stroke-width:1; }
+  svg .axis { fill:var(--muted); font-size:11px; }
+  svg .mark { fill:var(--accent); }
+  svg .mark.hi { fill:var(--text); }
+  svg .line { fill:none; stroke:var(--accent); stroke-width:2; stroke-linejoin:round; stroke-linecap:round; }
+  svg .dot { fill:var(--accent); stroke:var(--panel); stroke-width:2; }
+  svg .hit { fill:transparent; cursor:crosshair; }
+  svg .cross { stroke:var(--muted); stroke-width:1; stroke-dasharray:3 3; }
+  .actions { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
+  button, .btn { font:inherit; padding:7px 14px; border-radius:6px; border:1px solid var(--line); background:var(--panel); color:var(--text); cursor:pointer; font-weight:500; }
+  button.primary { background:var(--accent); color:var(--accent-ink); border-color:var(--accent); }
+  button.danger { color:var(--bad); }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  button.link { background:none; border:0; color:var(--accent); cursor:pointer; font-size:12px; padding:0; font-weight:400; }
+  input, select, textarea { font:inherit; padding:8px 10px; background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:6px; max-width:100%; }
+  textarea { width:100%; min-height:84px; resize:vertical; }
+  label.f { display:block; font-weight:500; margin-bottom:4px; }
+  .field { margin-bottom:16px; }
+  .help { color:var(--muted); font-size:12px; margin-top:4px; }
+  .inline { display:flex; flex-wrap:wrap; gap:8px 14px; align-items:center; }
+  pre { margin:0; padding:10px 14px; font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; white-space:pre-wrap; overflow-wrap:anywhere; max-height:520px; overflow:auto; }
+  code { font:12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; background:var(--soft); padding:1px 4px; border-radius:4px; overflow-wrap:anywhere; }
+  .note { background:var(--soft); border:1px solid var(--line); border-radius:8px; padding:10px 14px; }
   #gate { max-width:420px; margin:12vh auto; padding:0 16px; }
-  #gate input { width:100%; padding:9px 10px; background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:6px; font-size:14px; }
-  #gate button { margin-top:10px; padding:8px 16px; background:var(--accent); color:#04122a; border:0; border-radius:6px; font-weight:600; cursor:pointer; }
+  #gate input { width:100%; margin-top:8px; }
+  #gate button { margin-top:10px; }
   #msg { margin-top:10px; color:var(--bad); min-height:1.4em; }
-  .hidden { display:none; }
-  button.link { background:none; border:0; color:var(--accent); cursor:pointer; font-size:12px; padding:0; }
+  .hidden { display:none !important; }
+  @media (max-width:560px) { .kpi .v { font-size:22px; } th, td { padding:6px 10px; } main { padding:12px 16px; } }
 </style>
 </head>
 <body>
 <div id="gate">
   <h1>FR24 monitor</h1>
-  <p class="sub">Enter the monitor's secret (MON_TOKEN). It stays in this tab only.</p>
-  <input id="tok" type="password" autocomplete="off" placeholder="secret">
-  <button id="go">Open</button>
-  <div id="msg"></div>
+  <p class="sub">Enter the monitor's secret (MON_TOKEN). It is kept in this browser on this device until you sign out.</p>
+  <form id="login"><input id="tok" type="password" autocomplete="current-password" placeholder="secret" aria-label="secret"><button class="primary" type="submit">Sign in</button></form>
+  <div id="msg" role="alert"></div>
 </div>
 
 <div id="app" class="hidden">
   <header>
-    <div><h1>FR24 monitor</h1><div class="sub" id="upd">loading...</div></div>
-    <div class="sub"><button class="link" id="out">lock</button></div>
+    <div class="bar">
+      <div><h1>FR24 monitor</h1><div class="sub" id="upd">loading...</div></div>
+      <div class="sub"><button class="link" id="out" type="button">Sign out</button></div>
+    </div>
+    <nav id="nav">
+      <a href="#overview" data-p="overview">Overview</a><a href="#users" data-p="users">Users</a><a href="#traffic" data-p="traffic">Traffic</a><a href="#logs" data-p="logs">Logs</a><a href="#options" data-p="options">Options</a>
+    </nav>
   </header>
   <main>
-    <div class="cards">
-      <div class="card"><h2>FR24 - every blocked flight</h2><div id="c-fr24"></div></div>
-      <div class="card"><h2>Polling</h2><div id="c-poll"></div></div>
-      <div class="card"><h2>Data held</h2><div id="c-data"></div></div>
-      <div class="card"><h2>Server</h2><div id="c-srv"></div></div>
-      <div class="card"><h2>Requests</h2><div id="c-req"></div></div>
-    </div>
-    <section class="tbl"><h2>Endpoints</h2><div class="scroll"><table id="t-ep"></table></div></section>
-    <section class="tbl"><h2>Clients</h2><div class="scroll"><table id="t-cl"></table></div></section>
-    <section class="tbl"><h2>Recent requests</h2><div class="scroll"><table id="t-rec"></table></div></section>
+    <section class="page" id="p-overview">
+      <div class="kpis" id="o-kpis"></div>
+      <div class="card"><h2>Controls</h2>
+        <div class="actions"><button id="b-update" type="button">Update monitor</button><button id="b-restart" class="danger" type="button">Restart</button><span class="sub" id="ctl-msg"></span></div>
+        <div class="help" id="ctl-help"></div>
+      </div>
+      <div class="cards">
+        <div class="card"><h2>FR24 - every blocked flight</h2><div id="c-fr24"></div></div>
+        <div class="card"><h2>Polling</h2><div id="c-poll"></div></div>
+        <div class="card"><h2>Data held</h2><div id="c-data"></div></div>
+        <div class="card"><h2>Server</h2><div id="c-srv"></div></div>
+        <div class="card"><h2>Requests</h2><div id="c-req"></div></div>
+      </div>
+    </section>
+
+    <section class="page hidden" id="p-users">
+      <div class="note hidden" id="u-off">Counting is off: <code>/hello</code> is still answered, nothing new is kept. Switch it on under <a href="#options">Options</a>.</div>
+      <div class="kpis" id="u-kpis"></div>
+      <div class="grid2">
+        <div class="card chart"><h2>New installs per day - 60 days</h2><div id="ch-new"></div><div class="readout" id="rd-new"></div></div>
+        <div class="card chart"><h2>Active people per day - 60 days</h2><div id="ch-act"></div><div class="readout" id="rd-act"></div></div>
+      </div>
+      <p class="sub" style="margin:0">Breakdowns: installs seen in the last 30 days. People: installs joined by a network they share (a reinstall, or one install seen from several networks, counts once).</p>
+      <div class="grid3">
+        <section class="tbl"><h2>Version</h2><div class="scroll"><table id="t-ver"></table></div></section>
+        <section class="tbl"><h2>Kind</h2><div class="scroll"><table id="t-kind"></table></div></section>
+        <section class="tbl"><h2>Browser</h2><div class="scroll"><table id="t-browser"></table></div></section>
+        <section class="tbl"><h2>System</h2><div class="scroll"><table id="t-os"></table></div></section>
+        <section class="tbl"><h2>Script manager</h2><div class="scroll"><table id="t-handler"></table></div></section>
+      </div>
+      <section class="tbl"><h2>Recently seen installs</h2><div class="scroll"><table id="t-inst"></table></div></section>
+    </section>
+
+    <section class="page hidden" id="p-traffic">
+      <div class="cards"><div class="card"><h2>Requests</h2><div id="c-req2"></div></div></div>
+      <section class="tbl"><h2>Endpoints</h2><div class="scroll"><table id="t-ep"></table></div></section>
+      <section class="tbl"><h2>Clients</h2><div class="scroll"><table id="t-cl"></table></div></section>
+      <section class="tbl"><h2>Recent requests</h2><div class="scroll"><table id="t-rec"></table></div></section>
+    </section>
+
+    <section class="page hidden" id="p-logs">
+      <div class="actions"><label class="inline"><input type="checkbox" id="log-auto" checked> Refresh every 5 s</label><button id="log-now" type="button">Refresh now</button></div>
+      <section class="tbl"><h2>Log - latest lines</h2><pre id="log-lines"></pre></section>
+      <section class="tbl"><h2 id="dep-h">Last update</h2><pre id="dep-log"></pre></section>
+    </section>
+
+    <section class="page hidden" id="p-options">
+      <form class="card" id="opt-form">
+        <h2>Options</h2>
+        <div class="field"><label class="f" for="o-notice">Notice to every copy of the script</label>
+          <textarea id="o-notice" maxlength="500" placeholder="none"></textarea>
+          <div class="help"><span id="o-count">0</span> / 500 - sent back with every <code>/hello</code>; the script shows it. Empty: none.</div></div>
+        <div class="field"><label class="f" for="o-minver">Minimum version</label>
+          <input id="o-minver" placeholder="e.g. 22.20.0" inputmode="decimal" autocomplete="off">
+          <div class="help">Copies older than this are told to update. Empty: none. Newest version now: <span id="o-latest">-</span></div></div>
+        <div class="field"><label class="inline"><input type="checkbox" id="o-counting"> <b>Count installs</b></label>
+          <div class="help">Kept per install: a random id, a salted hash of its network (never the address), its version, kind, script manager, browser and system family, first and last seen. Nothing about flights. Off: nothing new is kept.</div></div>
+        <div class="field"><label class="f" for="o-public">Who may use this monitor</label>
+          <select id="o-public"><option value="">Startup setting</option><option value="true">Public - every copy of the script</option><option value="false">Private - the secret only</option></select>
+          <div class="help" id="o-public-help"></div></div>
+        <div class="field"><label class="f" for="o-rate">Requests per minute per address</label>
+          <div class="inline"><input id="o-rate" type="number" min="0" max="10000" step="1" style="width:120px"><label class="inline"><input type="checkbox" id="o-rate-def"> Startup setting</label></div>
+          <div class="help" id="o-rate-help">0: no limit. The owner (with the secret) is never limited.</div></div>
+        <div class="actions"><button class="primary" type="submit">Save</button><span class="sub" id="o-msg"></span></div>
+      </form>
+      <div class="card"><h2>Users badge</h2>
+        <div class="help" style="margin-top:0">A shields.io badge with the number of people counted (open to anyone, updated every 10 minutes):</div>
+        <p><code id="o-badge"></code></p>
+      </div>
+    </section>
   </main>
 </div>
 
 <script>
 (function () {
-  var tok = '', timer = 0, $ = function (id) { return document.getElementById(id); };
-  try { tok = sessionStorage.getItem('monTok') || ''; } catch (e) { tok = ''; }
+  'use strict';
+  var KEY = 'monTok', PAGES = ['overview', 'users', 'traffic', 'logs', 'options'];
+  var tok = '', page = 'overview', timer = 0, last = {}, busy = {}, stats = null, inst = null;
+  var $ = function (id) { return document.getElementById(id); };
+  try { tok = localStorage.getItem(KEY) || ''; } catch (e) { tok = ''; }
+
+  // ---- little helpers (text only: nothing from the server is ever read as HTML)
   function el(tag, text, cls) { var e = document.createElement(tag); if (text != null) e.textContent = text; if (cls) e.className = cls; return e; }
+  function n(x) { return x == null ? '-' : Number(x).toLocaleString(); }
+  function pct(a, b) { return b ? Math.round(a / b * 100) + '%' : '-'; }
   function ago(ms) { var s = Math.max(0, Math.round((Date.now() - ms) / 1000)); return s < 90 ? s + ' s ago' : s < 5400 ? Math.round(s / 60) + ' min ago' : s < 172800 ? Math.round(s / 3600) + ' h ago' : Math.round(s / 86400) + ' d ago'; }
   function dur(s) { s = Math.round(s); var d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60); return (d ? d + 'd ' : '') + (h || d ? h + 'h ' : '') + m + 'm'; }
   function mb(b) { return (b / 1048576).toFixed(0) + ' MB'; }
-  function fillRows(box, rows) { box.textContent = ''; rows.forEach(function (r) { var d = el('div', null, 'row'); d.appendChild(el('span', r[0])); d.appendChild(el('span', r[1], 'num ' + (r[2] || ''))); box.appendChild(d); }); }
+  function size(b) { return b == null ? '-' : b >= 1073741824 ? (b / 1073741824).toFixed(1) + ' GB' : b >= 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.round(b / 1024) + ' KB'; }
+  function day(d) { var t = new Date(d + 'T00:00:00Z'); return t.toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' }); }
+  function cmpVer(a, b) { var x = String(a || '').split('.'), y = String(b || '').split('.'); for (var i = 0; i < 3; i++) { var d = (+x[i] || 0) - (+y[i] || 0); if (d) return d < 0 ? -1 : 1; } return 0; }
+  function fillRows(box, rows) { box.textContent = ''; rows.forEach(function (r) { var d = el('div', null, 'row'); d.appendChild(el('span', r[0])); d.appendChild(el('span', r[1] == null ? '-' : String(r[1]), 'num ' + (r[2] || ''))); box.appendChild(d); }); }
+  // (rows of cells: a value, or { t: text, c: class, node: an element })
   function fillTable(t, head, rows) {
     t.textContent = ''; var th = el('thead'), tr = el('tr'); head.forEach(function (h) { tr.appendChild(el('th', h)); }); th.appendChild(tr); t.appendChild(th);
-    var tb = el('tbody'); rows.forEach(function (r) { var x = el('tr'); r.forEach(function (c, i) { var td = el('td', c.t != null ? c.t : c, (c.c || '') + (head[i] === 'Request' ? ' path' : '')); x.appendChild(td); }); tb.appendChild(x); }); t.appendChild(tb);
-    if (!rows.length) { var e = el('tr'), td = el('td', 'nothing yet'); td.colSpan = head.length; td.style.color = 'var(--muted)'; e.appendChild(td); tb.appendChild(e); }
+    var tb = el('tbody'); rows.forEach(function (r) { var x = el('tr'); r.forEach(function (c, i) { var o = c && typeof c === 'object' ? c : { t: c }, td = el('td', o.node ? null : (o.t == null ? '-' : String(o.t)), (o.c || '') + (head[i] === 'Request' ? ' path' : '')); if (o.node) td.appendChild(o.node); x.appendChild(td); }); tb.appendChild(x); });
+    if (!rows.length) { var e = el('tr'), td = el('td', 'nothing yet', 'empty'); td.colSpan = head.length; e.appendChild(td); tb.appendChild(e); }
+    t.appendChild(tb);
   }
-  function show(s) {
-    $('upd').textContent = 'updated ' + new Date().toLocaleTimeString() + ' - up ' + dur(s.uptimeS);
-    var m = s.mon;
+  function kpis(box, list) {
+    box.textContent = '';
+    list.forEach(function (k) { var d = el('div', null, 'kpi'); d.appendChild(el('div', k[0], 'k')); d.appendChild(el('div', k[1], 'v ' + (k[3] || ''))); if (k[2]) d.appendChild(el('div', k[2], 'd')); box.appendChild(d); });
+  }
+
+  // ---- talking to the monitor: every request with the secret; 401 back to the sign-in
+  function api(path, body) {
+    var o = { headers: { 'X-Monitor-Token': tok }, cache: 'no-store' };
+    if (body !== undefined) { o.method = 'POST'; o.headers['Content-Type'] = 'application/json'; o.body = body === null ? '' : JSON.stringify(body); }
+    return fetch(path, o).then(function (r) {
+      if (r.status === 401) { lock('Wrong secret'); throw new Error('401'); }
+      if (r.status === 429) throw new Error('rate limited - slowing down');
+      if (r.status === 404) throw new Error('not offered by this monitor (' + path + ') - an older version?');
+      return r.json().then(function (j) { if (r.status >= 400) throw new Error((j && j.err) || ('HTTP ' + r.status)); return j; }, function () { throw new Error('HTTP ' + r.status); });
+    });
+  }
+  function status(t, bad) { var u = $('upd'); u.textContent = t; u.className = 'sub' + (bad ? ' bad' : ''); }
+  function failed(e) { if (String(e && e.message) !== '401') status(e && e.message === 'Failed to fetch' ? 'no answer from the monitor' : String(e && e.message || e), true); }
+
+  // ---- Overview: the headline numbers, the controls, and every figure the monitor keeps
+  function showOverview(s) {
+    var i = s.installs || {}, a = (i.active || {}).d1 || {}, v = s.versions || {}, o = i.outdated || {}, dk = s.disk;
+    kpis($('o-kpis'), [
+      ['People', n(i.people), n(i.installs) + ' installs'],
+      ['Installs', n(i.installs), i.counting === false ? 'counting is off' : 'distinct ids'],
+      ['Active today', n(a.people), n(a.installs) + ' installs in 24 h'],
+      ['Outdated', o.of ? pct(o.installs, o.of) : '-', n(o.installs) + ' of ' + n(o.of) + ' (30 days) older than ' + (o.latest || '?'), o.installs ? 'warn' : ''],
+      ['Monitor', v.monitor || '?', v.monitorBehind ? 'behind - newest is ' + v.latest : 'up to date' + (v.err ? ' (GitHub not read)' : ''), v.monitorBehind ? 'warn' : 'ok'],
+      ['Store on disk', dk ? size(dk.bytes) : '...', dk ? n(dk.files) + ' files' + (dk.free != null ? ', ' + size(dk.free) + ' free' : '') : 'measuring', dk && dk.total && dk.free / dk.total < 0.1 ? 'bad' : '']
+    ]);
+    var c = s.controls || {};
+    $('b-update').disabled = !c.update; $('b-restart').disabled = !c.restart;
+    $('ctl-help').textContent = !s.controls ? 'No secret set on this monitor: no controls.' : (c.update ? 'Update: the newest commit of the branch, checked, restarted, rolled back if it does not answer. ' : 'Update: only on a git checkout run by systemd. ') + (c.restart ? 'Restart: saves everything, systemd starts it again.' : 'Restart: only under systemd.') + (s.commit ? ' Running ' + (s.ver || '') + ' (' + s.commit + ').' : '');
+    var m = s.mon || {};
     fillRows($('c-poll'), [['adsb.lol polls', m.polls], ['by address', m.hexPolls], ['failed', m.fails, m.fails ? 'warn' : 'ok'], ['last error', m.lastErr || 'none', m.lastErr ? 'warn' : 'ok'],
       ['LADD list', m.laddAt ? ago(m.laddAt) : 'not yet', m.laddAt && Date.now() - m.laddAt < 120000 ? 'ok' : 'warn']].concat(m.listAge ? [
       ['military list', m.listAge.mil != null ? m.listAge.mil + ' s ago' : m.listAge.fi != null ? 'adsb.fi ' + m.listAge.fi + ' s ago' : 'not yet', (m.listAge.mil != null && m.listAge.mil < 180) || (m.listAge.fi != null && m.listAge.fi < 180) ? 'ok' : 'warn'],
@@ -87,14 +241,14 @@
       ['adsb.lol API, last minute', m.apiLastMin + ' requests'],
       ['backup: adsb.fi areas', m.listAge.fiArea != null ? m.listAge.fiArea + ' s ago' : 'not needed yet'],
       ['backup: OpenSky', m.listAge.osky != null ? m.listAge.osky + ' s ago' : 'not needed yet'],
-      ['backup: ADS-B Exchange', m.adsbx && m.adsbx.key ? m.adsbx.today + ' / ' + m.adsbx.cap + ' today' : 'no key set']] : []).concat([['areas', m.areas.map(function (a) { return a.join(','); }).join('  ')]]).concat(
-      Object.keys(m.paused).map(function (h) { return [h, 'paused ' + m.paused[h] + ' s', 'bad']; })));
+      ['backup: ADS-B Exchange', m.adsbx && m.adsbx.key ? m.adsbx.today + ' / ' + m.adsbx.cap + ' today' : 'no key set']] : []).concat([['areas', (m.areas || []).map(function (x) { return x.join(','); }).join('  ')]]).concat(
+      Object.keys(m.paused || {}).map(function (h) { return [h, 'paused ' + m.paused[h] + ' s', 'bad']; })));
     fillRows($('c-data'), [['aircraft in view', m.aircraft], ['blocked aircraft', m.blocked], ['with flights', m.withLegs], ['flights kept', m.legs], ['backfill queue', m.backfillQueue]].concat(m.hist ? [['live list (/live)', m.live], ['days rebuilt (/hist)', m.hist.built + ' with flights, ' + m.hist.empty + ' without'], ['days to rebuild', m.hist.queue], ['merged with airplanes.live', m.hist.merged], ['left to the browser', m.hist.inc + m.hist.fails, m.hist.inc + m.hist.fails ? 'warn' : '']] : []));
     if (m.fr24) { var f = m.fr24; fillRows($('c-fr24'), [['FR24 scans', f.scanning ? f.scans + (f.last ? ' (last ' + ago(f.last.at) + ', ' + f.last.requests + ' requests, ' + f.last.flights + ' flights)' : '') : 'off', f.lastOkAgo != null && f.lastOkAgo < 300 ? 'ok' : 'warn'],
       ['FR24 headers', f.headersFrom === 'browser' ? 'from your browser' : 'its own (browsers send theirs only to a monitor of their own)', ''], ['FR24 paused', f.paused ? f.paused + ' s' : 'no', f.paused ? 'bad' : ''], ['last FR24 error', f.lastErr || 'none', f.lastErr ? 'warn' : 'ok'],
       ['callsign-less flights', f.flights], ['named', f.named, 'ok'], ['not named yet', f.unnamed, f.unnamed ? 'warn' : ''],
-      ['named by', Object.keys(f.matched).map(function (k) { return k + ' ' + f.matched[k]; }).join(', ')], ['withdrawn', f.revoked], ['area lookups', f.lookups], ['FR24 trails', f.trails + ' (' + f.trailQueue + ' waiting)'],
-      ['destinations worked out', f.dest.done + (f.dest.failed ? ', failed ' + f.dest.failed : '') + ' (last round ' + f.dest.ms + ' ms)'], ['flights logged from FR24 only', f.logged || 0]]
+      ['named by', Object.keys(f.matched || {}).map(function (k) { return k + ' ' + f.matched[k]; }).join(', ')], ['withdrawn', f.revoked], ['area lookups', f.lookups], ['FR24 trails', f.trails + ' (' + f.trailQueue + ' waiting)'],
+      ['destinations worked out', f.dest ? f.dest.done + (f.dest.failed ? ', failed ' + f.dest.failed : '') + ' (last round ' + f.dest.ms + ' ms)' : '-'], ['flights logged from FR24 only', f.logged || 0]]
       .concat(f.archive ? [['names kept for playback', f.archive.names + ' (last two weeks in memory), ' + f.archive.added + ' added, ' + f.archive.withdrawn + ' withdrawn, ' + f.archive.servedToPlayback + ' given to playbacks', 'ok']] : [])
       .concat(m.playback ? [['playback flights named', (m.playback.live || 0) + ' as named live, ' + (m.playback.track || 0) + ' from the tracks, ' + (m.playback.reckon || 0) + ' reckoned across a gap, ' + (m.playback.later || 0) + ' worked out later', 'ok']] : [])
       .concat(m.waiting ? [['still being worked on', m.waiting.flights + ' flights (' + m.waiting.playback + ' from playbacks, ' + m.waiting.live + ' live), tried ' + m.waiting.tries + ' times, ' + (m.waiting.named.track + m.waiting.named.reckon) + ' named since (' + m.waiting.named.reckon + ' reckoned)', m.waiting.flights ? 'warn' : 'ok']] : [])
@@ -102,26 +256,153 @@
       .concat(f.crowd ? [['shared with every copy', f.crowd.public ? 'yes - public' : 'no - private (secret only)'], ['names from browsers', f.crowd.waiting + ' waiting for a second browser, ' + f.crowd.refused + ' refused (own data disagreed)']] : [])
       .concat(m.tel ? [['padlocked figures held', m.tel.aircraft + ' aircraft; ' + m.tel.fromBrowsers + ' reports from browsers, ' + m.tel.refused + ' refused', m.tel.aircraft ? 'ok' : 'warn'], ['figures served', m.tel.served + ' (' + m.tel.missed + ' asked for, not held)']] : [])
       .concat(m.owners ? [['owners known', m.owners.known + ' aircraft, ' + m.owners.withOwner + ' named, ' + m.owners.withOperator + ' with operator', 'ok'], ['owners to look up', m.owners.queue + (Object.keys(m.owners.paused || {}).length ? ' (paused: ' + Object.keys(m.owners.paused).join(', ') + ')' : ''), Object.keys(m.owners.paused || {}).length ? 'warn' : '']] : [])); }
-    var sv = s.srv;
-    fillRows($('c-srv'), [['memory (rss)', mb(sv.rss), sv.rss > 0.8 * sv.totalMem ? 'bad' : ''], ['heap', mb(sv.heap)], ['free memory', mb(sv.freeMem)], ['load (1/5/15 min)', sv.load.map(function (x) { return x.toFixed(2); }).join(' / ')], ['cpu cores', sv.cpus]]);
-    var r = s.req;
-    fillRows($('c-req'), [['total', r.total], ['last minute', r.lastMin], ['clients seen', r.clients], ['no / wrong secret (401)', r.unauthorized, r.unauthorized ? 'warn' : ''], ['rate limited (429)', r.limited, r.limited ? 'warn' : ''], ['errors (5xx)', r.errors, r.errors ? 'bad' : '']]);
-    fillTable($('t-ep'), ['Endpoint', 'Requests', 'Last minute', 'Avg ms', 'Errors'], s.endpoints.map(function (e) { return [e.path, e.n, e.lastMin, e.avgMs, { t: e.errors, c: e.errors ? 'bad' : '' }]; }));
-    fillTable($('t-cl'), ['Client', 'Requests', 'Last minute', 'First seen', 'Last seen', 'Most used', '401 / 429'], s.clients.map(function (c) { return [c.ip, c.n, c.lastMin, ago(c.first), ago(c.last), c.top, c.denied]; }));
-    fillTable($('t-rec'), ['Time', 'Client', 'Request', 'Status', 'ms'], s.recent.map(function (q) { return [new Date(q.t).toLocaleTimeString(), q.ip, q.path, { t: q.status, c: q.status >= 500 ? 'bad' : q.status >= 400 ? 'warn' : 'ok' }, q.ms]; }));
+    var sv = s.srv || {};
+    fillRows($('c-srv'), [['memory (rss)', mb(sv.rss), sv.rss > 0.8 * sv.totalMem ? 'bad' : ''], ['heap', mb(sv.heap)], ['free memory', mb(sv.freeMem)], ['load (1/5/15 min)', (sv.load || []).map(function (x) { return x.toFixed(2); }).join(' / ')], ['cpu cores', sv.cpus], ['up', dur(s.uptimeS || 0)]]
+      .concat(dk ? [['store on disk', size(dk.bytes) + ' in ' + n(dk.files) + ' files'], ['disk free', dk.free != null ? size(dk.free) + ' of ' + size(dk.total) : '-', dk.total && dk.free / dk.total < 0.1 ? 'bad' : '']] : [])
+      .concat(s.options ? [['who may use it', s.options.public ? 'public - every copy' : 'private - the secret only'], ['rate per address', s.options.rate ? s.options.rate + ' a minute' : 'no limit']] : []));
+    showRequests($('c-req'), s.req || {});
   }
-  function pull() {
-    fetch('/stats', { headers: { 'X-Monitor-Token': tok }, cache: 'no-store' }).then(function (r) {
-      if (r.status === 401) { lock('Wrong secret'); return null; }
-      if (r.status === 429) { $('upd').textContent = 'rate limited - slowing down'; return null; }
-      return r.json();
-    }).then(function (s) { if (s) { $('gate').classList.add('hidden'); $('app').classList.remove('hidden'); show(s); } }).catch(function () { $('upd').textContent = 'no answer from the monitor'; });
+  function showRequests(box, r) { fillRows(box, [['total', r.total], ['last minute', r.lastMin], ['clients seen', r.clients], ['no / wrong secret (401)', r.unauthorized, r.unauthorized ? 'warn' : ''], ['rate limited (429)', r.limited, r.limited ? 'warn' : ''], ['errors (5xx)', r.errors, r.errors ? 'bad' : '']]); }
+  function showTraffic(s) {
+    showRequests($('c-req2'), s.req || {});
+    fillTable($('t-ep'), ['Endpoint', 'Requests', 'Last minute', 'Avg ms', 'Errors'], (s.endpoints || []).map(function (e) { return [e.path, e.n, e.lastMin, e.avgMs, { t: e.errors, c: e.errors ? 'bad' : '' }]; }));
+    fillTable($('t-cl'), ['Client', 'Requests', 'Last minute', 'First seen', 'Last seen', 'Most used', '401 / 429'], (s.clients || []).map(function (c) { return [c.ip, c.n, c.lastMin, ago(c.first), ago(c.last), c.top, c.denied]; }));
+    fillTable($('t-rec'), ['Time', 'Client', 'Request', 'Status', 'ms'], (s.recent || []).map(function (q) { return [new Date(q.t).toLocaleTimeString(), q.ip, q.path, { t: q.status, c: q.status >= 500 ? 'bad' : q.status >= 400 ? 'warn' : 'ok' }, q.ms]; }));
   }
-  function start() { clearInterval(timer); pull(); timer = setInterval(pull, 5000); }
-  function lock(msg) { clearInterval(timer); try { sessionStorage.removeItem('monTok'); } catch (e) { /* none */ } tok = ''; $('app').classList.add('hidden'); $('gate').classList.remove('hidden'); $('msg').textContent = msg || ''; }
-  $('go').onclick = function () { tok = $('tok').value.trim(); if (!tok) return; try { sessionStorage.setItem('monTok', tok); } catch (e) { /* none */ } $('msg').textContent = ''; start(); };
-  $('tok').onkeydown = function (e) { if (e.key === 'Enter') $('go').onclick(); };
+
+  // ---- Users: charts in inline SVG (one series each: no legend; the title names it), a readout on hover or tap
+  var SVGNS = 'http://www.w3.org/2000/svg';
+  function sv(tag, attrs, text) { var e = document.createElementNS(SVGNS, tag); for (var k in attrs) e.setAttribute(k, attrs[k]); if (text != null) e.textContent = text; return e; }
+  function niceMax(m) { if (m <= 4) return Math.max(1, Math.ceil(m)); var p = Math.pow(10, Math.floor(Math.log10(m))), f = m / p; return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * p; }
+  // rows: [[YYYY-MM-DD, value or null]]; kind: 'bar' | 'line'; say(row): the readout's text
+  function chart(box, readout, rows, kind, say) {
+    box.textContent = '';
+    var W = Math.max(280, box.clientWidth || 600), H = 170, L = 34, R = 8, T = 8, B = 22, iw = W - L - R, ih = H - T - B, cnt = rows.length || 1;
+    var vals = rows.map(function (r) { return r[1]; }), top = niceMax(Math.max.apply(null, vals.filter(function (x) { return x != null; }).concat([0])));
+    var svg = sv('svg', { viewBox: '0 0 ' + W + ' ' + H, width: W, height: H, role: 'img', 'aria-label': ((box.parentNode && box.parentNode.querySelector('h2')) || {}).textContent || '' });
+    var y = function (v) { return T + ih - v / top * ih; }, bw = iw / cnt, x = function (i) { return L + i * bw + bw / 2; };
+    [0, top / 2, top].forEach(function (g) { svg.appendChild(sv('line', { x1: L, x2: W - R, y1: y(g), y2: y(g), class: 'gridl' })); svg.appendChild(sv('text', { x: L - 6, y: y(g) + 4, 'text-anchor': 'end', class: 'axis' }, Number.isInteger(g) ? String(g) : g.toFixed(1))); });
+    [0, Math.floor(cnt / 2), cnt - 1].forEach(function (i, k) { if (rows[i]) svg.appendChild(sv('text', { x: k === 0 ? L : k === 2 ? W - R : x(i), y: H - 6, 'text-anchor': k === 0 ? 'start' : k === 2 ? 'end' : 'middle', class: 'axis' }, day(rows[i][0]))); });
+    var marks = [];
+    if (kind === 'bar') {
+      rows.forEach(function (r, i) { var v = r[1] || 0, h = Math.max(v ? 2 : 0, ih - (y(v) - T)), w = Math.max(1, bw - 2); var m = sv('rect', { x: L + i * bw + 1, y: T + ih - h, width: w, height: h, rx: Math.min(2, w / 2), class: 'mark' }); svg.appendChild(m); marks.push(m); });
+    } else {
+      var d = '', pen = false; rows.forEach(function (r, i) { if (r[1] == null) { pen = false; return; } d += (pen ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(r[1]).toFixed(1); pen = true; });
+      if (d) svg.appendChild(sv('path', { d: d, class: 'line' }));
+      rows.forEach(function (r, i) { var lone = r[1] != null && (i === 0 || rows[i - 1][1] == null) && (i === cnt - 1 || rows[i + 1][1] == null); var m = sv('circle', { cx: x(i), cy: r[1] == null ? -99 : y(r[1]), r: lone || i === cnt - 1 ? 4 : 0, class: 'dot' }); svg.appendChild(m); marks.push(m); });
+    }
+    var cross = sv('line', { x1: 0, x2: 0, y1: T, y2: T + ih, class: 'cross', visibility: 'hidden' }); svg.appendChild(cross);
+    function pick(i) {
+      marks.forEach(function (m, j) { if (kind === 'bar') m.setAttribute('class', 'mark' + (j === i ? ' hi' : '')); else if (rows[j][1] != null) m.setAttribute('r', j === i || j === cnt - 1 ? 4 : 0); });
+      if (kind === 'line') { cross.setAttribute('x1', x(i)); cross.setAttribute('x2', x(i)); cross.setAttribute('visibility', 'visible'); }
+      readout.textContent = say(rows[i]);
+    }
+    rows.forEach(function (r, i) { var hit = sv('rect', { x: L + i * bw, y: T, width: bw, height: ih, class: 'hit' }); hit.addEventListener('mouseenter', function () { pick(i); }); hit.addEventListener('click', function () { pick(i); }); svg.appendChild(hit); });
+    svg.addEventListener('mouseleave', function () { cross.setAttribute('visibility', 'hidden'); marks.forEach(function (m, j) { if (kind === 'bar') m.setAttribute('class', 'mark'); else if (rows[j][1] != null) m.setAttribute('r', j === cnt - 1 ? 4 : 0); }); readout.textContent = say(rows[cnt - 1]); });
+    box.appendChild(svg); readout.textContent = rows.length ? say(rows[cnt - 1]) : '';
+  }
+  function breakdown(t, rows, total, latest) {
+    fillTable(t, ['', 'Installs', 'Share'], (rows || []).map(function (r) {
+      var share = el('span'), b = el('span', null, 'share'); b.style.width = Math.max(2, Math.round(r[1] / (total || 1) * 60)) + 'px'; share.appendChild(b); share.appendChild(document.createTextNode(pct(r[1], total)));
+      var older = latest && /^\d+\.\d+\.\d+$/.test(r[0]) ? cmpVer(r[0], latest) : null;
+      return [{ t: r[0] + (older === 0 ? ' (newest)' : ''), c: older < 0 ? 'warn' : older === 0 ? 'ok' : '' }, n(r[1]), { node: share }];
+    }));
+  }
+  function showUsers(s) {
+    var a = s.active || {}, o = s.outdated || {}, v = s.versions || {};
+    $('u-off').classList.toggle('hidden', s.counting !== false);
+    kpis($('u-kpis'), [['People', n(s.people), n(s.installs) + ' installs'], ['Active today', n((a.d1 || {}).people), n((a.d1 || {}).installs) + ' installs'], ['Active 7 days', n((a.d7 || {}).people), n((a.d7 || {}).installs) + ' installs'],
+      ['Active 30 days', n((a.d30 || {}).people), n((a.d30 || {}).installs) + ' installs'], ['Outdated', o.of ? pct(o.installs, o.of) : '-', n(o.installs) + ' older than ' + (o.latest || v.latest || '?'), o.installs ? 'warn' : '']]);
+    chart($('ch-new'), $('rd-new'), s.newPerDay || [], 'bar', function (r) { return day(r[0]) + ': ' + n(r[1]) + ' new install' + (r[1] === 1 ? '' : 's'); });
+    chart($('ch-act'), $('rd-act'), (s.activePerDay || []).map(function (r) { return [r[0], r[1]]; }), 'line', function (r) { var full = (s.activePerDay || []).filter(function (x) { return x[0] === r[0]; })[0] || []; return day(r[0]) + ': ' + (r[1] == null ? 'not counted' : n(r[1]) + ' people, ' + n(full[2]) + ' installs'); });
+    var by = s.by || {}, total = o.of || 0;
+    breakdown($('t-ver'), by.ver, total, o.latest || v.latest); breakdown($('t-kind'), (by.kind || []).map(function (r) { return [r[0] === 'ext' ? 'extension' : r[0] === 'us' ? 'userscript' : r[0], r[1]]; }), total);
+    breakdown($('t-browser'), by.browser, total); breakdown($('t-os'), by.os, total); breakdown($('t-handler'), (by.handler || []).map(function (r) { return [r[0] || '(none)', r[1]]; }), total);
+    var latest = o.latest || v.latest;
+    fillTable($('t-inst'), ['Install', 'Person', 'Version', 'Kind', 'Manager', 'Browser', 'System', 'First seen', 'Last seen', 'Hellos'], (s.recent || []).map(function (r) {
+      return [r.id, '#' + r.cluster + (r.size > 1 ? ' (' + r.size + ' installs)' : ''), { t: r.ver, c: latest && cmpVer(r.ver, latest) < 0 ? 'warn' : '' }, r.kind === 'ext' ? 'extension' : 'userscript', r.handler || '-', r.browser, r.os, ago(r.first), ago(r.last), r.n];
+    }));
+  }
+
+  // ---- Logs
+  function showLogs(l) {
+    var p = $('log-lines'), end = p.scrollTop + p.clientHeight >= p.scrollHeight - 8;
+    p.textContent = (l.lines || []).join('\n') || 'nothing logged yet';
+    if (end) p.scrollTop = p.scrollHeight;
+    $('dep-h').textContent = l.deploy ? 'Last update - ' + new Date(l.deploy.at).toLocaleString() : 'Last update';
+    $('dep-log').textContent = l.deploy ? l.deploy.text : 'No update run from here yet.';
+  }
+
+  // ---- Options
+  function showOptions(o) {
+    $('o-notice').value = o.notice || ''; $('o-count').textContent = String((o.notice || '').length);
+    $('o-minver').value = o.minVer || ''; $('o-counting').checked = !!o.counting;
+    var st = o.startup || {}, ov = o.overridden || {};
+    $('o-public').value = ov.public ? String(!!o.public) : '';
+    $('o-public').options[0].textContent = 'Startup setting (' + (st.public ? 'public' : 'private') + ')';
+    $('o-public-help').textContent = 'Public: every copy of the script reads it without the secret (and is held to the rate below). Private: every request needs the secret. Now: ' + (o.public ? 'public' : 'private') + '.';
+    $('o-rate-def').checked = !ov.rate; $('o-rate').value = String(o.rate); $('o-rate').disabled = !ov.rate;
+    $('o-rate-help').textContent = '0: no limit. The owner (with the secret) is never limited. Startup setting: ' + (st.rate ? st.rate + ' a minute' : 'no limit') + '.';
+  }
+  $('o-notice').oninput = function () { $('o-count').textContent = String($('o-notice').value.length); };
+  $('o-rate-def').onchange = function () { $('o-rate').disabled = $('o-rate-def').checked; };
+  $('opt-form').onsubmit = function (e) {
+    e.preventDefault();
+    var mv = $('o-minver').value.trim(), rate = $('o-rate').value.trim(), msg = $('o-msg');
+    if (mv && !/^\d{1,4}\.\d{1,4}\.\d{1,6}$/.test(mv)) { msg.textContent = 'Minimum version: x.y.z, or empty'; msg.className = 'sub bad'; return; }
+    if (!$('o-rate-def').checked && !/^\d{1,5}$/.test(rate)) { msg.textContent = 'Requests per minute: a whole number 0 - 10000'; msg.className = 'sub bad'; return; }
+    var pub = $('o-public').value;
+    var body = { notice: $('o-notice').value, minVer: mv, counting: $('o-counting').checked, public: pub === '' ? null : pub === 'true', rate: $('o-rate-def').checked ? null : +rate };
+    msg.textContent = 'saving...'; msg.className = 'sub';
+    api('/admin/options', body).then(function (o) { showOptions(o); msg.textContent = 'Saved ' + new Date().toLocaleTimeString(); msg.className = 'sub ok'; }, function (er) { if (String(er.message) !== '401') { msg.textContent = 'Not saved: ' + er.message; msg.className = 'sub bad'; } });
+  };
+
+  // ---- the controls (behind confirm())
+  function control(path, ask) {
+    if (!window.confirm(ask)) return;
+    var m = $('ctl-msg'); m.textContent = 'asking...'; m.className = 'sub';
+    api(path, null).then(function (r) { m.textContent = r.ok ? (path === '/admin/update' ? 'Update started - see Logs for how it goes.' : 'Restarting - back in a minute.') : 'Refused: ' + (r.err || '?'); m.className = 'sub ' + (r.ok ? 'ok' : 'bad'); },
+      function (e) { if (String(e.message) !== '401') { m.textContent = String(e.message); m.className = 'sub bad'; } });
+  }
+  $('b-update').onclick = function () { control('/admin/update', 'Update the monitor to the newest commit and restart it?'); };
+  $('b-restart').onclick = function () { control('/admin/restart', 'Restart the monitor now? It saves everything first; systemd starts it again.'); };
+  $('log-now').onclick = function () { load(true); };
+  $('log-auto').onchange = function () { if ($('log-auto').checked) load(true); };
+
+  // ---- pages, and what each asks for how often (ms)
+  var SRC = { overview: ['/stats', 5000], traffic: ['/stats', 5000], users: ['/admin/installs', 30000], logs: ['/admin/log?n=300', 5000], options: ['/admin/options', 0] };
+  function render(p, d) { try { if (p === 'overview') showOverview(d); else if (p === 'traffic') showTraffic(d); else if (p === 'users') showUsers(d); else if (p === 'logs') showLogs(d); else if (p === 'options') showOptions(d); } catch (e) { status('could not show this page: ' + (e && e.message || e), true); if (window.console) console.error(e); } }
+  function load(force) {
+    var p = page, src = SRC[p], url = src[0], now = Date.now();
+    if (!tok || busy[p]) return;
+    if (!force && (!src[1] || now - (last[p] || 0) < src[1] - 250 || (p === 'logs' && !$('log-auto').checked))) return;
+    busy[p] = true; last[p] = now;
+    api(url).then(function (d) {
+      busy[p] = false; showApp();
+      if (url === '/stats') stats = d; if (p === 'users') inst = d;
+      if (page === p) render(p, d);
+      status('updated ' + new Date().toLocaleTimeString() + (stats ? ' - up ' + dur(stats.uptimeS) + ' - ' + (stats.ver || '') : ''));
+    }, function (e) { busy[p] = false; last[p] = 0; failed(e); });
+  }
+  function go() {
+    var h = (location.hash || '').replace('#', ''); page = PAGES.indexOf(h) >= 0 ? h : 'overview';
+    PAGES.forEach(function (p) { $('p-' + p).classList.toggle('hidden', p !== page); });
+    Array.prototype.forEach.call($('nav').querySelectorAll('a'), function (a) { a.classList.toggle('on', a.getAttribute('data-p') === page); });
+    if (page === 'overview' && stats) render('overview', stats); if (page === 'traffic' && stats) render('traffic', stats); if (page === 'users' && inst) render('users', inst);
+    if (page === 'options') $('o-badge').textContent = 'https://img.shields.io/endpoint?url=' + encodeURIComponent(location.origin + '/badge');
+    load(true);
+  }
+  function showApp() { $('gate').classList.add('hidden'); $('app').classList.remove('hidden'); }
+  function start() { clearInterval(timer); go(); timer = setInterval(function () { load(false); }, 1000); }
+  function lock(msg) {
+    clearInterval(timer); tok = ''; stats = null; inst = null; last = {}; busy = {};
+    try { localStorage.removeItem(KEY); sessionStorage.removeItem(KEY); } catch (e) { /* none */ }
+    $('app').classList.add('hidden'); $('gate').classList.remove('hidden'); $('msg').textContent = msg || ''; $('tok').value = '';
+  }
+  $('login').onsubmit = function (e) { e.preventDefault(); tok = $('tok').value.trim(); if (!tok) return; try { localStorage.setItem(KEY, tok); } catch (er) { /* kept for this page only */ } $('msg').textContent = ''; start(); };
   $('out').onclick = function () { lock(''); };
+  window.addEventListener('hashchange', function () { if (tok) go(); });
+  window.addEventListener('resize', function () { if (page === 'users' && inst) render('users', inst); });
   if (tok) start();
 })();
 </script>

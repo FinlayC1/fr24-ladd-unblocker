@@ -3,6 +3,7 @@
 import fs from 'fs';
 import path from 'path';
 import zlib from 'zlib';
+import crypto from 'crypto';
 const root = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'));
 const rd = f => fs.readFileSync(path.join(root, f), 'utf8');
 const tablesFile = process.argv[2] || path.join(root, 'src', 'tables.json');
@@ -142,8 +143,10 @@ const firefoxManifest = {
       id: GECKO_ID,
       strict_min_version: '140.0',
       // (what leaves the browser, as addons.mozilla.org asks: what FR24's page shows, sent to the shared monitor - see
-      // PRIVACY.md; it is on unless switched off, so it is required, not optional)
-      data_collection_permissions: { required: ['websiteContent'] }
+      // PRIVACY.md; it is on unless switched off, so it is required, not optional. The count of installs - an id, the
+      // version, browser and system, src/main/06-hello.js - is "technical and interaction data", which can only be optional:
+      // the add-on asks Firefox whether it was allowed before it sends it)
+      data_collection_permissions: { required: ['websiteContent'], optional: ['technicalAndInteraction'] }
     },
     // (made for desktop Firefox; this only says from which Android version the key above is understood)
     gecko_android: { strict_min_version: '142.0' }
@@ -216,8 +219,14 @@ const extFiles = [
   ['background.js', Buffer.from(rd('extension/background.js'))],
   ['grant.html', Buffer.from(rd('extension/grant.html'))],
   ['grant.js', Buffer.from(rd('extension/grant.js'))],
+  ['update.html', Buffer.from(rd('extension/update.html'))],
+  ['update.js', Buffer.from(rd('extension/update.js'))],
   ...[16, 48, 128].map(n => { const f = path.join(root, 'extension', 'icons', n + '.png'); return ['icons/' + n + '.png', fs.existsSync(f) ? fs.readFileSync(f) : pngIcon(n)]; })
 ];
+// (files.json: every file of the version and its SHA-256 - what the update page (extension/update.js) fetches at the
+// version's tag, checks each new file against, and deletes the old version's files by; Chrome's manifest is the one listed)
+const fileList = { version, files: Object.fromEntries(extFiles.map(([name, data]) => [name, crypto.createHash('sha256').update(data).digest('hex')])) };
+extFiles.push(['files.json', Buffer.from(JSON.stringify(fileList, null, 2) + '\n')]);
 const extDir = path.join(root, 'dist', 'extension');
 fs.rmSync(extDir, { recursive: true, force: true });
 for (const [name, data] of extFiles) { fs.mkdirSync(path.dirname(path.join(extDir, name)), { recursive: true }); fs.writeFileSync(path.join(extDir, name), data); }

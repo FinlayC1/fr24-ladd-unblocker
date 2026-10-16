@@ -8,7 +8,8 @@
 
 <br><br>
 
-<a href="CHANGELOG.md"><img alt="Version 22.28.9" src="https://img.shields.io/badge/version-22.28.9-1f6feb?style=flat&labelColor=23272e"></a>
+<a href="CHANGELOG.md"><img alt="Version 22.29.0" src="https://img.shields.io/badge/version-22.29.0-1f6feb?style=flat&labelColor=23272e"></a>
+<a href="PRIVACY.md#counting-installs"><img alt="Users" src="https://img.shields.io/endpoint?url=https%3A%2F%2F143-47-224-210.sslip.io%2Fbadge&style=flat&labelColor=23272e"></a>
 <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/actions/workflows/tests.yml"><img alt="Tests" src="https://github.com/FinlayC1/fr24-ladd-unblocker/actions/workflows/tests.yml/badge.svg"></a>
 <a href="LICENSE"><img alt="Licence: personal use" src="https://img.shields.io/badge/licence-personal%20use-1f6feb?style=flat&labelColor=23272e"></a>
 
@@ -110,9 +111,10 @@ The switches are kept in your browser only.
 
 ### Updating
 
-Open the LADD Unblock window and click **Update**.
+When a new version is out, a banner at the top of Flightradar24's map says so. Click **Update** on it, or in the LADD Unblock window.
 
-- **Extension:** an unpacked extension cannot replace its own files, so **Update** downloads the new zip. Unzip it over the old folder (replace its contents), then click **Reload extension** in the same window. (Or click **↻ Reload** on the extension's card in `chrome://extensions`.)
+- **Extension (Chrome, Edge):** a tab opens that puts the new version into the extension's folder for you. It downloads the new files from this repository's release, checks each one against the checksum the release lists, replaces the old files and deletes the ones the new version no longer has. Nothing else in the folder is touched. When it says it's done, click **Refresh page**: the extension restarts and Flightradar24 loads again with the new version.<br>The first time, Chrome asks you to choose the folder you unzipped the extension into and to allow it to be edited. Chrome never lets an extension write files without that. If you're not sure which folder it is, `chrome://extensions` shows it under the extension's **Details**, next to **Source**. Later updates are one click, though Chrome may ask you to allow editing again.<br>In a browser that doesn't let extensions write files (Brave, for one), the page links the new zip instead: unzip it over the old folder, then click **Reload extension** in the LADD Unblock window.
+- **Firefox:** installed from Firefox Add-ons, Firefox updates it by itself.
 - **Userscript:** **Update** opens the new file, and your userscript manager offers to update. Tampermonkey and Violentmonkey also check for updates on their own.
 
 What's new is in the [changelog](CHANGELOG.md).

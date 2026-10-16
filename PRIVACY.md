@@ -1,6 +1,6 @@
 # Privacy
 
-**The short version:** the FR24 LADD Unblocker has no analytics, no tracking, no advertising and no accounts, and sells nothing. What it learns about aircraft is kept in your own browser and on the shared monitor, the project's server, which every client connects to by default. You can turn that off in settings, or use your own monitor instead. What the shared monitor receives from your browser, and how long it is kept, is set out below.
+**The short version:** the FR24 LADD Unblocker has no analytics, no tracking, no advertising and no accounts, and sells nothing. The only thing it says about itself is an anonymous count of installs, once a day, which you can switch off ([below](#counting-installs)). What it learns about aircraft is kept in your own browser and on the shared monitor, the project's server, which every client connects to by default. You can turn that off in settings, or use your own monitor instead. What the shared monitor receives from your browser, and how long it is kept, is set out below.
 
 This policy covers the browser extension, the userscript and the monitor.
 
@@ -24,7 +24,28 @@ To fill in what Flightradar24 leaves blank, your browser makes requests to publi
 
 When you open the LADD Unblock window, it reads this project's `package.json` from GitHub (raw.githubusercontent.com) to see whether a newer version is out, at most every half hour. Nothing is sent with it.
 
+When you click **Update** in the extension, its update page downloads the new version's files from this repository on GitHub (raw.githubusercontent.com, at the version's release tag) and writes them into the extension's folder, which you chose and allowed it to edit. Nothing is sent with it. The folder's location stays in your browser, in the extension's own storage, and is never sent anywhere.
+
 On flightradar24.com the extension works inside the page you opened. It reads Flightradar24's answers to that page in order to add to them. It does not read your Flightradar24 account details, cookies or passwords, and sends nothing from them anywhere.
+
+## Counting installs
+
+So the project knows roughly how many people use it, each install says hello to the monitor at most once every 12 hours, and once more straight after an update. The hello is a `POST /hello` to the monitor your copy uses (the shared one unless you set your own), and it carries exactly these six fields, nothing else:
+
+| Field | What it is | Example |
+|---|---|---|
+| `id` | A random number your browser makes before its first hello (128 bits, written as 32 hex digits). It is not derived from anything about you, your browser or your computer; it only lets the monitor count one install once. It is kept in Flightradar24's site storage in your browser (localStorage), so updates keep it; clearing that storage makes a new one. | `3f9c…e1a0` |
+| `ver` | The version installed | `22.28.9` |
+| `kind` | Browser extension or userscript | `ext` / `us` |
+| `handler` | For the userscript, its manager and that manager's version; for the extension, which build | `Tampermonkey 5.3`, `chrome-ext`, `firefox-ext` |
+| `browser` | The browser's name only, not its version | `chrome`, `edge`, `brave`, `opera`, `firefox`, `safari` or `other` |
+| `os` | The system's name only, not its version | `windows`, `mac`, `linux`, `android`, `ios` or `other` |
+
+The browser and system are read from `navigator.userAgentData` where the browser has it, otherwise from its user agent string. Nothing about flights, the map or your Flightradar24 account is sent. The monitor keeps no IP address with the count. Like every request, the hello passes through the web server's access log described [below](#the-shared-monitor).
+
+The monitor answers with the newest version, the oldest version still supported, and sometimes a short notice from the project's owner. These are shown on Flightradar24's map as a banner: "a new version is out", with **Update** and **Later**, or the notice, with a close button. The GitHub check above can also bring up the update banner.
+
+**To switch it off:** open **LADD Unblock** on FR24's bottom bar and turn off **Count this install (anonymous)**. Nothing is sent from then on. Nothing is sent either while LADD Unblock itself is switched off, or while the monitor is turned off under Data sources. In Firefox, the add-on also asks Firefox's permission for "technical and interaction data" and sends nothing unless you allow it, when you install it or later from the LADD Unblock window.
 
 ## The shared monitor
 
@@ -45,6 +66,7 @@ Every copy connects to the project's shared monitor by default. You can change t
   - the routes it worked out for flights the monitor names (the airports, the chance, the times), so other browsers can show them;
   - the flights it learned from: an aircraft's take-off and landing airports and times, callsign and type, as rebuilt from public ADS-B, so every browser's route engine learns from them.
 - **Every 30 seconds:** the public ADS-B reports your browser fetched from adsb.lol and adsb.fi around your map, so other browsers need not fetch them again.
+- **Once a day at most, the hello** described under [Counting installs](#counting-installs), unless you switched it off.
 
 **What it never receives:** your Flightradar24 account, cookies, password or e-mail address, anything typed into a page, or Flightradar24's device id for your browser. That id is sent only to a monitor of your own (one you gave a secret).
 

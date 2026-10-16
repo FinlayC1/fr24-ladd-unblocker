@@ -19,11 +19,12 @@ It answers the browsers over a small HTTP API. How it fits into the whole is des
 - [What it keeps](#what-it-keeps)
 - [API reference](#api-reference)
 - [Public mode](#public-mode)
+- [Installs counter](#installs-counter)
 - [Airport and runway data](#airport-and-runway-data)
 - [Server setup (Oracle Cloud)](#server-setup-oracle-cloud)
 - [Updating](#updating)
 - [Moving another monitor's data in](#moving-another-monitors-data-in)
-- [Dashboard](#dashboard)
+- [Admin panel](#admin-panel)
 - [Operations and troubleshooting](#operations-and-troubleshooting)
 
 ---
@@ -56,9 +57,9 @@ Stopping it with Ctrl+C or `systemctl stop` (SIGINT/SIGTERM) saves everything fi
 |---|---|---|
 | `MON_HOST` | `127.0.0.1` | Address to listen on. Keep it local and put a proxy in front. |
 | `MON_PORT` (or `PORT`) | `47524` | Port |
-| `MON_TOKEN` | *(none)* | The owner's secret, sent as the header `X-Monitor-Token`. It opens the dashboard's numbers (`/stats`) and the owner's full answers. It is never subject to the rate limit. On a private monitor, every request except `/dash` needs it. |
-| `MON_PUBLIC` | *(the `public` setting: on)* | `0`: a private monitor that answers only requests carrying the secret. `1`: public, readable by every copy of the script. |
-| `MON_RATE` | `300` on a public monitor, `0` (off) on a private one | Requests per minute allowed per client address (the owner's never limited) |
+| `MON_TOKEN` | *(none)* | The owner's secret, sent as the header `X-Monitor-Token`. It opens the admin panel's numbers (`/stats`, `/admin/*`) and the owner's full answers. It is never subject to the rate limit. On a private monitor, every request except `/dash` and `/badge` needs it. It is compared in constant time. |
+| `MON_PUBLIC` | *(the `public` setting: on)* | `0`: a private monitor that answers only requests carrying the secret. `1`: public, readable by every copy of the script. The admin panel's **Options** can override it while the monitor runs (see [Admin panel](#admin-panel)). |
+| `MON_RATE` | `300` on a public monitor, `0` (off) on a private one | Requests per minute allowed per client address (the owner's never limited). The admin panel's **Options** can override it. |
 | `MON_DATA` | `monitor/data` | Airports, runways, frequencies and airfields (`airports.json`, `runways.json`, `runway_len.json`, `runway_info.json`, `freqs.json`, `oa_airports.csv`) |
 | `MON_STORE` | `monitor/store` | Where flights, state and day logs are kept |
 | `MON_ADSBX_KEY` | *(none)* | Your own ADS-B Exchange RapidAPI key, used only as a last backup. Put it in an `EnvironmentFile` readable only by root, never in the unit itself. |
@@ -120,12 +121,15 @@ Everything is in `MON_STORE` (default `monitor/store/`):
 | `learned.json` | The destination engine's tables learnt from the last 90 days of learning rows (`learnDays`), rebuilt every 6 hours and after each day's logs | Replaced on each rebuild |
 | `owners.json` | Each looked-up aircraft's owner, operator, serial number, build year | For good; asked again after 60 days |
 | `state.json` | Blocked aircraft, watch records, pending day logs, areas, FR24 request headers | Running state |
+| `installs.json` | The installs counted (see [Installs counter](#installs-counter)): per random id its first and last hello, version, kind, script manager, browser and system family, number of hellos, and up to 8 network hashes. No address. Also today's active ids and each past day's active people and installs. | 400 days after an id was last seen; 200,000 ids at most. Written at most once a minute and on stop. |
+| `hello-salt` | The random 32-byte key the network hashes are made with (file mode 600). Delete it and every network hash starts afresh. | Made once |
+| `admin-options.json` | The owner's options from the admin panel: notice, minimum version, counting, and `public` / `rate` while they override the startup settings | Until changed |
 
 Day rebuilds give way to the live lists: while adsb.lol is paused or the LADD list is more than three polls old, the rebuild workers wait (up to 10 minutes at a time), so the live list stays fresh.
 
 Flights of the last 90 days are held in memory as well. Older ones are read from disk when a board for those days is asked for.
 
-**In memory only.** The newest public ADS-B report of each aircraft, its own or a browser's, is held for 2 minutes (15 for one on the ground). The places browsers look at are held for 3 days, rounded to a degree. For counting agreeing browsers, the addresses that reported a name or an owner are held for 30 minutes (live names) or 6 hours (playback names, owners). The dashboard holds the last 2,000 requests: address, time and path, without the query on a public monitor. Nothing of this is written to disk.
+**In memory only.** The newest public ADS-B report of each aircraft, its own or a browser's, is held for 2 minutes (15 for one on the ground). The places browsers look at are held for 3 days, rounded to a degree. For counting agreeing browsers, the addresses that reported a name or an owner are held for 30 minutes (live names) or 6 hours (playback names, owners). The admin panel's traffic page holds the last 2,000 requests: address, time and path, without the query on a public monitor (a `/hello` among them, never its body, so never linked to an install's id). Nothing of this is written to disk.
 
 **Flights only FR24 sees.** A blocked flight FR24 draws that no public receiver hears (FR24's own receivers, satellites, multilateration) is logged too. Once FR24 has stopped drawing it for 15 minutes, or has had it on the ground for 15 minutes, its FR24 track is read by the same engine as an ADS-B trace. The trail is fetched as the aircraft lands. Only a flight that reads as a landing at an airport is kept. An ADS-B record of the same flight replaces it when one comes.
 
@@ -133,7 +137,7 @@ Flights of the last 90 days are held in memory as well. Older ones are read from
 
 ## API reference
 
-All answers are JSON. On a public monitor every endpoint answers without the secret except `/stats` (`401`). With the secret, `/status` and `/area` add the areas being polled, and `/owners` adds private owners' names. On a private monitor every request needs `X-Monitor-Token: <secret>`, or the answer is `401`. Above the rate limit the answer is `429` with `Retry-After: 30` (never for the owner).
+All answers are JSON. On a public monitor every endpoint answers without the secret except `/stats` and `/admin/*` (`401`). `/badge` answers anyone, even on a private monitor. With the secret, `/status` and `/area` add the areas being polled, and `/owners` adds private owners' names. On a private monitor every request needs `X-Monitor-Token: <secret>`, or the answer is `401`. Above the rate limit the answer is `429` with `Retry-After: 30` (never for the owner).
 
 | Endpoint | Answer |
 |---|---|
@@ -159,8 +163,13 @@ All answers are JSON. On a public monitor every endpoint answers without the sec
 | `GET /ladd` | The LADD list as last polled (kept for older userscript versions) |
 | `GET /seed?hex=a,b[&front=1]` | Tell the monitor about blocked aircraft the userscript identified. They are tracked from then on and their last three days are rebuilt. On a public monitor, other people's browsers add at most `seedPerHour` new aircraft an hour each. |
 | `GET /area?lat=&lon=` | A place the userscript is looking at. Its traffic is polled too, for three days. On a public monitor, other people's browsers add at most `areaPerHour` new places an hour each. |
-| `GET /stats` | The dashboard's numbers: memory, load, requests per endpoint and per client, recent requests. Only with the secret. |
-| `GET /dash` | The dashboard page. It contains no data and asks for the secret in the browser. |
+| `POST /hello` | One install saying it is there (see [Installs counter](#installs-counter)). Body, at most 4 KB of JSON, exactly these fields: `{ id: 32 lowercase hex characters, ver: "x.y.z", kind: "ext" \| "us", handler: up to 24 printable characters, browser: "chrome" \| "edge" \| "brave" \| "opera" \| "firefox" \| "safari" \| "other", os: "windows" \| "mac" \| "linux" \| "android" \| "ios" \| "other" }`. Anything else is `400` (over 4 KB: `413`). Answer: `{ ok: 1, latest: newest version or "", notice: the owner's notice or "", minVer: the oldest version it should run or "" }`. Like `/report`: no secret needed on a public monitor, held to the same rate. Browsers send it at most every 12 hours and when their version changes. With counting off it is answered and nothing is kept. |
+| `GET /badge` | A [shields.io endpoint](https://shields.io/badges/endpoint-badge) badge: `{ schemaVersion: 1, label: "users", message: "<people counted>", color: "1f6feb" }`, worked out every 10 minutes, with `Access-Control-Allow-Origin: *` (this answer only). No secret, even on a private monitor. Use it as `https://img.shields.io/endpoint?url=https://<your host>/badge`. |
+| `GET /stats` | The admin panel's numbers: memory, load, requests per endpoint and per client, recent requests; `installs` (people, installs, active in the last 1 / 7 / 30 days, outdated), `versions` (`monitor`, `latest`, `monitorBehind`, GitHub's last answer), `disk` (the store's size and files, the disk's free space), `options`. Only with the secret. |
+| `GET /dash` | The admin panel. It contains no data and asks for the secret in the browser. |
+| `GET /admin/installs` | Owner only. Everything counted: `installs`, `people`, `active` (`d1`, `d7`, `d30`: people and installs), `newPerDay` (60 days of `[day, new installs]`), `activePerDay` (60 days of `[day, people, installs]`, `null` before counting began), `by` (`ver`, `kind`, `browser`, `os`, `handler`: `[value, installs]` over the last 30 days), `outdated` (`installs` running older than `latest`, `of`), `counting`, `versions`, `disk`, and `recent`: the 500 installs seen last, each `{ id: its first 8 characters, ver, kind, handler, browser, os, first, last, n: hellos, cluster: its person's number, size: that person's installs }`. Never an address or a network hash. |
+| `GET /admin/options` | Owner only. `{ notice, minVer, counting, public, rate, startup: { public, rate }, overridden: { public, rate } }`: the options as they are now, and the startup settings `public` and `rate` override. |
+| `POST /admin/options` | Owner only. JSON, at most 64 KB, any of `notice` (up to 500 characters), `minVer` (`""` or `x.y.z`), `counting` (`true` / `false`), `public` (`true` / `false`, `null`: back to the startup setting), `rate` (a whole number 0–10000, `0` no limit, `null`: back to the startup setting). Checked whole: a wrong value or an unknown option is `400` with `err`, and nothing changes. Taken at once and kept in `<store>/admin-options.json`, so it lasts across restarts. Answer: `{ ok: true, ...the options as now }`. |
 | `GET /admin/log[?n=80]` | Owner only (the secret; never on a monitor without one). The latest log lines (300 kept in memory, the secret blanked out), the last update's output (`deploy`) and which controls work here (`controls`: `update`, `restart`). |
 | `POST /admin/update` | Owner only. Runs `deploy.sh` as a unit of its own (`sudo -n systemd-run`), so restarting the service does not stop it; its output goes to `<store>/deploy-last.log`. Only on a git checkout run by systemd; one at a time. |
 | `POST /admin/restart` | Owner only. Saves everything and exits, and systemd starts it again. Only under systemd. |
@@ -181,10 +190,28 @@ A public monitor answers every copy of the script, so its owner is not the only 
 What it gives out is limited too:
 
 - private owners' names and towns are withheld (only organisations are named);
-- the areas being polled and the dashboard's numbers are for the owner only;
+- the areas being polled and the admin panel's numbers (and the installs counted) are for the owner only;
 - the flights it logs are offered under the ODbL at `/export/legs`.
 
 [PRIVACY.md](../PRIVACY.md) lists what it receives from browsers and how long it keeps it.
+
+## Installs counter
+
+The monitor counts how many people use the script, anonymously, with `POST /hello` (`monitor/installs.cjs`).
+
+**What a browser sends.** Each copy of the script or extension makes up a random id once (32 hex characters) and keeps it in that browser only. It sends that id with its version, its kind (`ext` extension or `us` userscript), the script manager running it, and the browser and operating-system family. Nothing else: nothing about flights, aircraft, the map, or what it looked at. It sends this at most every 12 hours and when its version changes.
+
+**What the monitor keeps.** Per id: when it was first and last seen, those fields as last sent, how many hellos, and up to 8 network hashes (newest first). A network hash is the first 16 hex characters of an HMAC-SHA256 of the client's address, keyed with a random 32-byte salt made once on the server (`<store>/hello-salt`, mode 600). An IPv4 address is hashed whole; an IPv6 address by its first 64 bits, the part a home or phone keeps while the rest changes daily. **The address itself is never kept or logged for installs.** An id is dropped 400 days after it was last seen, and at most 200,000 are kept. The admin panel only ever shows the first 8 characters of an id, never a hash.
+
+**No double counting.**
+
+- **Installs** are distinct ids. The same id sending again is the same install.
+- **People** are installs joined by any network they share (union-find). A reinstall (a new id from the same network) counts once, and so does one id seen from home and from work. Two ids that never shared a network are two people.
+- Also counted: people and installs active in the last 1, 7 and 30 days; new installs per day; active people per day (from the day counting began); installs by version, kind, browser, system and script manager; and how many run a version older than the newest.
+
+**The newest version.** `latest` is the `version` in the repository's `package.json` on GitHub (`main`). It is read at start and every hour, with a 15-second timeout. While GitHub cannot be read, the last version read is used, or else the monitor's own.
+
+**Switching counting off.** In the admin panel, **Options → Count installs**, or `POST /admin/options {"counting": false}`. `/hello` is still answered (with the notice and versions) but nothing new is kept. What was already counted stays until it ages out. To forget it all, stop the service and delete `<store>/installs.json` (and `hello-salt` for new network hashes). A private monitor (`MON_PUBLIC=0`) refuses `/hello` without the secret, so nothing is counted from other people's browsers.
 
 ## Airport and runway data
 
@@ -280,15 +307,20 @@ sudo systemctl start fr24-monitor
 - **Running state:** this monitor's own (last run, areas, watch records, pending day logs) is kept as it was.
 - **Safety:** a copy of the store as it was is written next to it first (`store-before-merge-<time>`). The merge refuses to run while the monitor's port answers.
 
-## Dashboard
+## Admin panel
 
-Open `https://<your host>/dash` and enter the secret. It is kept for that browser tab only. Every 5 seconds it shows:
+Open `https://<your host>/dash` and enter the secret once. It is kept in that browser on that device (`localStorage`) until you click **Sign out**, and every page uses it. A wrong secret goes back to the sign-in. The page is one self-contained file (`monitor/dash.html`) with no data, scripts or fonts from elsewhere. It follows the system's light or dark mode and works at phone width. Its pages:
 
-- **Polling:** each list's age, the backups used, adsb.lol requests in the last minute, paused hosts, areas.
-- **FR24:** world scans, the headers in use, pauses and errors, callsign-less flights, names given and how, withdrawn names, area lookups, trails, destinations worked out, flights logged from FR24 only, owners known and still to look up.
-- **Data:** aircraft in view, blocked aircraft, flights kept, live list size, day logs rebuilt / pending / left to the browser.
-- **Server:** memory, heap, free memory, load.
-- **Requests:** totals, `401`/`429`/`5xx` counts, per endpoint, per client, and the last 80 requests.
+- **Overview** (`#overview`, every 5 s). Headline cards: people, installs, active today, the share of installs running an outdated version, the monitor's version against the newest (marked when behind), and the store's size on disk. The controls: **Update monitor** (`POST /admin/update`) and **Restart** (`POST /admin/restart`), each asking first, offered only where they work. Then the cards:
+  - **Polling:** each list's age, the backups used, adsb.lol requests in the last minute, paused hosts, areas.
+  - **FR24:** world scans, the headers in use, pauses and errors, callsign-less flights, names given and how, withdrawn names, area lookups, trails, destinations worked out, flights logged from FR24 only, owners known and still to look up.
+  - **Data:** aircraft in view, blocked aircraft, flights kept, live list size, day logs rebuilt / pending / left to the browser.
+  - **Server:** memory, heap, free memory, load, uptime, the store on disk and the disk's free space, public or private, the rate.
+  - **Requests:** totals and `401`/`429`/`5xx` counts.
+- **Users** (`#users`, every 30 s). People, and people active in the last day, 7 and 30 days; a bar chart of new installs per day and a line of active people per day, 60 days each (hover or tap a day for its figures); breakdowns by version (outdated ones marked), kind, browser, system and script manager; the 500 installs seen last, each with its person's number.
+- **Traffic** (`#traffic`, every 5 s). Requests per endpoint, per client, and the last 80 requests. The panel's own requests are left out.
+- **Logs** (`#logs`). The latest 300 log lines and the output of the last update, refreshed every 5 s while the box is ticked.
+- **Options** (`#options`). The notice sent to every copy of the script, the minimum version, counting installs on or off, public or private, and the requests per minute per address. Public and rate can be left at the startup settings (`MON_PUBLIC`, `MON_RATE`, `monitor.json`) or overridden. Saved at once, kept across restarts. The page also shows the address of the users badge for a README.
 
 ## Operations and troubleshooting
 
