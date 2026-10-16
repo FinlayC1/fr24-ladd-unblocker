@@ -39,6 +39,20 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
 // were replaced with a new version); a store install is asked to look for its update now - and restarts with one found.
 chrome.runtime.onMessage.addListener((m, sender, reply) => {
   if (!m || sender.id !== chrome.runtime.id) return;
+  // (Firefox 140 and up lists the data an add-on may send, granted by the person: the optional "technicalAndInteraction" is
+  // what the count of installs sends - true / false; null in a browser that keeps no such list. 'ask': where it is not
+  // allowed, the extension's page with the button that asks Firefox - only a click may ask - is opened)
+  if (m.tlConsent === 'check' || m.tlConsent === 'ask') {
+    try {
+      chrome.permissions.getAll(p => {
+        void chrome.runtime.lastError;
+        const dc = p && p.data_collection, has = Array.isArray(dc) ? dc.includes('technicalAndInteraction') : null;
+        if (has === false && m.tlConsent === 'ask') chrome.tabs.create({ url: chrome.runtime.getURL('grant.html') + '#consent' });
+        reply(has);
+      });
+    } catch (e) { reply(null); }
+    return true;
+  }
   if (m.tlReload === true) { reply(true); setTimeout(() => chrome.runtime.reload(), 150); return; }
   if (m.tlUpdateCheck === true) {
     // (Firefox has no such call: it looks for updates on addons.mozilla.org by itself)

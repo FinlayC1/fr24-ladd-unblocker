@@ -86,7 +86,9 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     ['search', 'Search', "Identified blocked aircraft listed under Live flights in FR24's search box."],
     ['acPages', 'Aircraft & flight pages', 'Flight logs FR24 hides rebuilt from ADS-B on the /data pages, with the locked MSN and age. The next time one opens.'],
     ['alerts', 'Take-off & landing alerts', 'Notifications for the aircraft on your watchlist.'],
-    ['noAds', 'Hide ads & upgrade prompts', "FR24's adverts, the ad sidebar, the free-trial pop-up and upgrade banners. The sidebar and pop-up come back after a reload.", 'reload']
+    ['noAds', 'Hide ads & upgrade prompts', "FR24's adverts, the ad sidebar, the free-trial pop-up and upgrade banners. The sidebar and pop-up come back after a reload.", 'reload'],
+    // (the hello to the monitor, 06-hello.js: exactly what it sends is in PRIVACY.md)
+    ['count', 'Count this install (anonymous)', 'A random number, your version and browser, once a day - no IP kept, nothing about flights. Helps show how many people use it.']
   ];
   let ubBtn = null, ubBar = null, ubItems = new Map(), ubNeedReload = false, ubLatest = null, ubAsking = null, ubNote = '';
   const lsGet = k => { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } };
@@ -102,7 +104,8 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     opt[k] = !!v; saveOpts();
     if (k === 'on' || UB_FEATURES.some(f => f[0] === k && f[3] === 'reload')) ubNeedReload = true;
     if (opt.on) applyOptsLive();
-    renderUnblockWindow();
+    renderUnblockWindow(); ubBanners();
+    if (k === 'count' && opt.count) sayHello();
   }
 
   // ---- the version: what is installed, the newest one, and how this kind of install is updated ----------------------
@@ -126,7 +129,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     ubAsking = gmRequest(UB_LATEST_URL + '?t=' + Math.floor(now() / 60000), { timeout: 15000 })
       .then(j => { const v = j && typeof j.version === 'string' && /^\d+(\.\d+)*$/.test(j.version) ? j.version : ''; ubLatest = v ? { v, at: now() } : { err: 'no version in the answer', at: now() }; })
       .catch(e => { ubLatest = { err: String(e && e.message || e), at: now() }; })
-      .then(() => { ubAsking = null; renderUnblockWindow(); ubBadge(); return ubLatest; });
+      .then(() => { ubAsking = null; renderUnblockWindow(); ubBadge(); ubBanners(); return ubLatest; });
     renderUnblockWindow();
     return ubAsking;
   }
@@ -135,19 +138,20 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     const k = installKind().kind;
     if (act === 'update' && k === 'us') { window.open(UB_USERSCRIPT_URL, '_blank', 'noopener'); ubNote = 'Your userscript manager opens the new version in a tab: click Update there, then reload FR24.'; }
     else if (act === 'update' && k === 'ext') { window.open(UB_ZIP_URL, '_blank', 'noopener'); ubNote = 'Downloading the new zip. Unzip it over your extension folder (replace the files), then click Reload extension.'; }
-    else if (act === 'update' && k === 'store') { ubNote = 'Asking the browser…'; extMsg({ tlUpdateCheck: true }).then(st => { ubNote = st === 'update_available' ? 'Found it: the extension restarts with it. Reload FR24 when it has.' : st === 'throttled' ? 'The browser checked recently; it installs the update by itself shortly.' : st === 'unsupported' ? 'Your browser installs the update by itself when its add-on store has it (Firefox looks about once a day).' : 'The browser has nothing newer for it yet; it installs updates by itself.'; renderUnblockWindow(); }); }
+    else if (act === 'update' && k === 'store') { ubNote = 'Asking the browser…'; extMsg({ tlUpdateCheck: true }).then(st => { ubNote = st === 'update_available' ? 'Found it: the extension restarts with it. Reload FR24 when it has.' : st === 'throttled' ? 'The browser checked recently; it installs the update by itself shortly.' : st === 'unsupported' ? 'Your browser installs the update by itself when its add-on store has it (Firefox looks about once a day).' : 'The browser has nothing newer for it yet; it installs updates by itself.'; renderUnblockWindow(); ubBanners(); }); }
     else if (act === 'reloadExt' && k === 'ext') { ubNote = 'Reloading the extension…'; extMsg({ tlReload: true }); setTimeout(() => location.reload(), 900); }
-    renderUnblockWindow();
+    renderUnblockWindow(); ubBanners();
   }
   function updatesHtml() {
-    const ik = installKind(), L = ubLatest, newer = L && L.v && newerThan(L.v, VERSION);
-    const latest = ubAsking && !(L && L.v) ? '<span class="tl-muted">checking…</span>' : L && L.v ? (newer ? `<b>v${esc(L.v)}</b>` : `v${esc(L.v)} <span class="tl-muted">(up to date)</span>`) : L && L.err ? `<span class="tl-warn" title="${esc(L.err)}">couldn't check</span>` : '<span class="tl-muted">not checked</span>';
+    // (the newest version: GitHub's or the monitor's answer to the hello, 06-hello.js)
+    const ik = installKind(), L = ubLatest, lv = latestV(), O = ubOffer(), newer = !!O.v;
+    const latest = ubAsking && !lv ? '<span class="tl-muted">checking…</span>' : lv || newer ? (newer ? `<b>v${esc(O.v)}</b>` : `v${esc(lv)} <span class="tl-muted">(up to date)</span>`) : L && L.err ? `<span class="tl-warn" title="${esc(L.err)}">couldn't check</span>` : '<span class="tl-muted">not checked</span>';
     const btns = [];
-    if (newer) btns.push(`<button class="tl-ub-b" data-ub-act="update">Update to v${esc(L.v)}</button>`);
+    if (newer) btns.push(`<button class="tl-ub-b" data-ub-act="update">Update to v${esc(O.v)}</button>`);
     else btns.push(`<button class="tl-ub-b tl-ub-b2" data-ub-act="check"${ubAsking ? ' disabled' : ''}>Check for updates</button>`);
     if (ik.kind === 'ext') btns.push('<button class="tl-ub-b tl-ub-b2" data-ub-act="reloadExt" title="Load the extension again from its folder - after replacing its files with a new version">Reload extension</button>');
     const how = ik.kind === 'us' ? 'Update opens the new version in your userscript manager, which offers to update.' : ik.kind === 'ext' ? 'An unpacked extension cannot replace its own files: Update downloads the new zip, you unzip it over the old folder, and Reload extension loads it.' : 'Installed from a store: your browser updates it by itself.';
-    const warn = newer ? `<div class="tl-ub-alert">This version is out of date: <b>v${esc(L.v)}</b> is out, you have v${esc(VERSION)}.</div>` : '';
+    const warn = newer ? `<div class="tl-ub-alert">This version is out of date: <b>v${esc(O.v)}</b> is out, you have v${esc(VERSION)}.${O.req ? ' <b>This update is required</b>: this version is no longer supported.' : ''}</div>` : '';
     return `${warn}<div class="tl-ub-kv"><span>Installed</span><span>v${esc(VERSION)}</span></div><div class="tl-ub-kv"><span>Latest</span><span>${latest}</span></div>
       <div class="tl-ub-kv"><span>Type</span><span>${esc(ik.name)}</span></div><div class="tl-ub-btns">${btns.join('')}</div>
       <div class="tl-ub-note">${esc(ubNote || how)} <a href="${UB_CHANGES_URL}" target="_blank" rel="noopener">What's new</a></div>`;
@@ -169,12 +173,12 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   // ---- the dot on the bar's button: amber when a newer version is out, blue after an update until the window is opened --
   function ubBadge() {
     if (!ubBtn) return;
-    const L = ubLatest, k = L && L.v && newerThan(L.v, VERSION) ? 'upd' : whatsNewDue() && lsGet(UB_DOT_KEY) !== VERSION ? 'new' : '';
+    const O = ubOffer(), k = O.v ? 'upd' : whatsNewDue() && lsGet(UB_DOT_KEY) !== VERSION ? 'new' : '';
     let d = ubBtn.querySelector('.tl-ub-dot');
     if (!k) { if (d) d.remove(); ubBtn.removeAttribute('title'); ubBtn.setAttribute('title', 'LADD Unblock'); return; }
     if (!d) { d = document.createElement('span'); d.className = 'tl-ub-dot'; ubBtn.appendChild(d); }
     d.dataset.k = k;
-    ubBtn.setAttribute('title', k === 'upd' ? `LADD Unblock - v${L.v} is out (you have v${VERSION})` : `LADD Unblock - updated to v${VERSION}`);
+    ubBtn.setAttribute('title', k === 'upd' ? `LADD Unblock - v${O.v} is out (you have v${VERSION})` : `LADD Unblock - updated to v${VERSION}`);
   }
 
   // ---- the monitor: what it is doing, and the owner's controls (update, restart, its log) in place of a terminal --------
@@ -229,7 +233,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     if (!r) return '<p>Turned off: this browser works alone (Data sources > Monitor turns it on).</p>';
     const S = ubMon.st, kv = (k, v, t) => `<div class="tl-ub-kv"${t ? ` title="${esc(t)}"` : ''}><span>${esc(k)}</span><span>${v}</span></div>`;
     if (!S) return `<div class="tl-ub-note">${ubMon.err ? `<span class="tl-warn">Not answering</span> (${esc(ubMon.err)})` : '<span class="tl-muted">asking…</span>'}</div>`;
-    const L = ubLatest, behind = S.ver && L && L.v && newerThan(L.v, S.ver);
+    const L = { v: latestV() }, behind = S.ver && L.v && newerThan(L.v, S.ver);
     const la = S.listAge || {}, f = S.fr24 || {}, w = S.waiting || {}, o = S.owners || {}, t = S.tel || {}, h = S.hist || {}, x = S.wx || {};
     const paused = Object.entries(S.paused || {}).map(([k, v]) => `${esc(k)} ${agoS(v)}`).join(', ');
     const errs = [S.fails ? `polls ${nf(S.fails)}` : '', f.fails ? `FR24 ${nf(f.fails)}` : '', x.fails ? `weather ${nf(x.fails)}` : '', o.fails ? `owners ${nf(o.fails)}` : ''].filter(Boolean).join(' · ');
@@ -289,7 +293,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
       <div class="tl-ub-row tl-ub-top"><span class="tl-ub-t">Enable LADD Unblock</span>${tgHtml('on', 'Enable LADD Unblock')}</div>
       <div class="tl-ub-info">${info}<span>Names blocked (LADD) and N/A aircraft from public ADS-B, with routes, predicted destinations and flight history.${opt.on ? '' : ' Switched off: FR24 is left as it is.'}</span></div>
       <div class="tl-ub-item"><div class="tl-ub-row"><span class="tl-ub-t">Text size</span><div class="tl-ub-seg">${UB_SIZES.map(([n], i) => `<button type="button" data-ub-size="${i}" aria-pressed="${i === ubSize() ? 'true' : 'false'}" title="Text size ${n}">${n}</button>`).join('')}</div></div></div>
-      ${UB_FEATURES.map(([k, t, d]) => `<div class="tl-ub-item tl-ub-feat"><div class="tl-ub-row"><span class="tl-ub-t">${esc(t)}</span>${tgHtml(k, t)}</div><p>${esc(d)}</p></div>`).join('')}
+      ${UB_FEATURES.map(([k, t, d]) => `<div class="tl-ub-item tl-ub-feat"><div class="tl-ub-row"><span class="tl-ub-t">${esc(t)}</span>${tgHtml(k, t)}</div><p>${esc(d)}</p>${k === 'count' && opt.count && ffConsent === false ? '<div class="tl-ub-note">Firefox has not allowed this add-on to send technical data, so nothing is sent. <button type="button" class="tl-ub-b tl-ub-b2" data-ub-act="ffConsent">Allow in Firefox</button></div>' : ''}</div>`).join('')}
       <div class="tl-ub-item"><span class="tl-ub-t">Updates</span><div id="tl-ub-upd">${updatesHtml()}</div></div>
       <div class="tl-ub-item"><span class="tl-ub-t">Monitor</span><div id="tl-ub-mon">${opt.on ? monHtml() : '<p>Switched off.</p>'}</div></div>
       <div class="tl-ub-item"><span class="tl-ub-t">This browser</span><div id="tl-ub-local">${opt.on ? localHtml() : '<p>Switched off.</p>'}</div></div>
@@ -315,6 +319,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     if (act === 'close') closeUnblockWindow();
     else if (act === 'reload') location.reload();
     else if (act === 'check') { ubNote = ''; checkLatest(true); }
+    else if (act === 'ffConsent') { if (typeof TL_DATA_CONSENT === 'function') TL_DATA_CONSENT(true); }
     else if (act === 'seenNew') { lsSet(UB_SEEN_KEY, VERSION); renderUnblockWindow(); ubBadge(); }
     else if (act === 'monUpdate' || act === 'monRestart') monControl(act);
     else if (act === 'monLog') { ubMon.logOpen = !ubMon.logOpen; if (ubMon.logOpen) { ubMon.log = null; monLog().then(monPaint); } monPaint(); }
@@ -326,6 +331,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     if (whatsNewDue()) lsSet(UB_DOT_KEY, VERSION);
     ubBadge(); checkLatest(false);
     if (opt.on) monStart();
+    if (typeof TL_DATA_CONSENT === 'function') helloConsent();     // (Firefox: is the count allowed - said under its switch)
   }
   const unblockWindowOpen = () => !!(ubBody && ubBody.isConnected && (HJ.st === 'on' || ubFloat));
   function openUnblockWindow() {
@@ -778,7 +784,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     ubBadge();
     return true;
   }
-  function addUnblockStyle() { if (document.getElementById('tl-ub-style')) return; const s = document.createElement('style'); s.id = 'tl-ub-style'; s.textContent = UB_STYLE + '\n[data-tl-gone],[data-tl-ub-hid],[data-tl-ub-under]{display:none!important}'; (document.head || document.documentElement).appendChild(s); }
+  function addUnblockStyle() { if (document.getElementById('tl-ub-style')) return; const s = document.createElement('style'); s.id = 'tl-ub-style'; s.textContent = UB_STYLE + BN_STYLE + '\n[data-tl-gone],[data-tl-ub-hid],[data-tl-ub-under]{display:none!important}'; (document.head || document.documentElement).appendChild(s); }
   function startUnblockWindow() {
     const go = () => {
       addUnblockStyle(); if (opt.on) applyOptsLive();
@@ -800,15 +806,18 @@ html.tl-no-strip .tl-strip{display:none!important}`;
         }).observe(document.body || document.documentElement, { childList: true, characterData: true, subtree: true });
       } catch (e) { ubDirty = true; }
       const tick = () => {
-        ensureBarButton();
+        ensureBarButton(); ubBanners();
         if (bmDirty && now() - bmAt > 2000) { bmDirty = false; bmAt = now(); try { bookmarksSweep(document.body); } catch (e) { log('bookmarks', e); } }
         setTimeout(tick, ubMiss > 60 ? 5000 : 1000);
       };
       tick();
       // (the newest version looked up a little after FR24 opens and every 6 hours: a dot on the button when one is out)
       setTimeout(() => { checkLatest(false); setInterval(() => checkLatest(false), 6 * 3600000); }, 20000);
+      startHello();
+      // (Later, a closed notice or a newer answer in another FR24 tab: the same here)
+      window.addEventListener('storage', ev => { if ([UB_LATER_KEY, UB_NOTICE_KEY, HELLO_KEY].includes(ev.key)) ubBanners(); });
       document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && ubFloat) closeStandIn(); });
-      window.addEventListener('resize', () => { fitBody(); placeStandIn(); });
+      window.addEventListener('resize', () => { fitBody(); placeStandIn(); bnPlace(); });
     };
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', go, { once: true }); else go();
   }

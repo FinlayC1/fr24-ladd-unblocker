@@ -142,8 +142,10 @@ const firefoxManifest = {
       id: GECKO_ID,
       strict_min_version: '140.0',
       // (what leaves the browser, as addons.mozilla.org asks: what FR24's page shows, sent to the shared monitor - see
-      // PRIVACY.md; it is on unless switched off, so it is required, not optional)
-      data_collection_permissions: { required: ['websiteContent'] }
+      // PRIVACY.md; it is on unless switched off, so it is required, not optional. The count of installs - an id, the
+      // version, browser and system, src/main/06-hello.js - is "technical and interaction data", which can only be optional:
+      // the add-on asks Firefox whether it was allowed before it sends it)
+      data_collection_permissions: { required: ['websiteContent'], optional: ['technicalAndInteraction'] }
     },
     // (made for desktop Firefox; this only says from which Android version the key above is understood)
     gecko_android: { strict_min_version: '142.0' }

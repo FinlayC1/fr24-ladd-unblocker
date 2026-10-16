@@ -40,3 +40,7 @@ const GM_xmlhttpRequest = (() => {
 // (a monitor of the user's own at an address the manifest does not list: may the extension reach it? - asked of the
 // service worker, which opens the page where the user allows it when not; resolves true when it is allowed already)
 const TL_HOST_ACCESS = origin => new Promise(res => { try { chrome.runtime.sendMessage({ tlGrant: origin }, ok => { void chrome.runtime.lastError; res(!!ok); }); } catch (e) { res(false); } });
+// (Firefox: may the add-on send "technical and interaction data" - the count of installs, src/main/06-hello.js? true / false;
+// null where the browser asks no such thing (Chrome, Edge). ask: the page where the person can allow it is opened when not
+// allowed. No answer at all: false - nothing is sent)
+const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMessage({ tlConsent: ask ? 'ask' : 'check' }, r => { void chrome.runtime.lastError; res(r === true || r === false || r === null ? r : false); }); } catch (e) { res(false); } });
