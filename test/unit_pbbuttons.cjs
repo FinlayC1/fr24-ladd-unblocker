@@ -1,19 +1,18 @@
-// "Playback" of a flight FR24 blocks opens FR24's own map playback at its take-off, in the same tab - and every other
-// Playback is FR24's (the BUILT userscript in jsdom: the page-world part on its own, then the userscript's half).
+// "Playback" of a flight FR24 blocks opens its track on airplanes.live (a new tab), and every other Playback is FR24's
+// (the BUILT userscript in jsdom: the page-world part on its own, then the userscript's half).
 //   - FR24's bottom bar Playback (its playback window), with a blocked flight open in the panel: never taken
 //   - the panel's own Playback (FR24's flight-actions button, and the aircraft__playback one) of a blocked flight: its
-//     take-off, over the field it left; of an ordinary flight: FR24's
+//     track; of an ordinary flight: FR24's
 //   - airport board cards (Aircraft info / Bookmark aircraft / Playback): a flight followed here, kept rows of this
 //     script's own (N600EB's departure from LaGuardia two days before) and FR24's own of a blocked aircraft, an arrival
 //     (its other end's take-off), FR24's today's row of a blocked flight, of an aircraft named blocked in a search;
 //     FR24's own rows of ordinary flights untouched
 //   - search results: a live blocked flight, its aircraft, a blocked aircraft not flying now (the userscript finds its
 //     flight), an ordinary aircraft untouched; nothing known of when it flew: FR24's own after all
-//   - a middle / Ctrl click: the same playback in a new tab; a rebuilt log row: its leg's take-off
-//   - the flight selected in FR24's playback once it is on the map, by FR24's id or by its aircraft; never over the
-//     user's own choice
+//   - a rebuilt log row: its leg's track; a middle / Ctrl click: a new tab as well
+//   - the track's address: the day and minutes, UTC, round midnight
 //   - the userscript's answer (pbWhere): the aircraft's leg nearest the row's time, its latest, by registration or
-//     callsign, and the airports' places
+//     callsign, and where the leg ended
 // usage: node test/unit_pbbuttons.cjs <node_modules dir> [data dir]
 const fs = require('fs'), path = require('path');
 const NM = process.argv[2], DATA = process.argv[3] || path.join(__dirname, '../monitor/data');
@@ -23,7 +22,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 let fails = 0;
 const check = (name, ok, info) => { if (!ok) fails++; console.log((ok ? 'PASS  ' : 'FAIL  ') + name + (info !== undefined ? '  ' + JSON.stringify(info) : '')); };
 const ymd = t => new Date(t * 1000).toISOString().slice(0, 10), hm = t => new Date(t * 1000).toISOString().slice(11, 16);
-const url = (t, lat, lon, z) => `/${ymd(t)}/${hm(t)}/1x/${lat.toFixed(2)},${lon.toFixed(2)}/${z}`;
+// (airplanes.live's track address: five minutes before t0 to five minutes after t1, ten minutes at least; the end minute may be a minute out)
+const okT = (u, hex, t0, t1) => { try { const x = new URL(u), q = x.searchParams, from = t0 - 300, to = Math.max(t1, t0 + 600) + 300; return x.host === 'globe.airplanes.live' && q.get('icao') === hex && q.get('showTrace') === ymd(from) && q.get('startTime') === hm(from) && [0, -60, 60].some(d => q.get('endTime') === hm(to + d) || (ymd(to + d) !== ymd(from) && q.get('endTime') === '23:59')); } catch (e) { return false; } };
 
 (async () => {
   // ---- 1. the page-world part
@@ -39,15 +39,14 @@ const url = (t, lat, lon, z) => `/${ymd(t)}/${hm(t)}/1x/${lat.toFixed(2)},${lon.
   const m = SRC.match(/function pageInterceptor\(\) \{[\s\S]*?\n {2}\}\n/);
   if (!m) { console.log('FAIL  pageInterceptor not found in the build'); process.exit(1); }
   w.eval('(' + m[0] + ')()');
-  check('page-world test hook', !!(H && H.pbFind && H.pbPlan));
+  check('page-world test hook', !!(H && H.pbFind && H.pbTraceUrl));
   const B = w.__tweeksLaddBridge;
-  const navs = [], opened = []; H.setPbNav(u => navs.push(u)); w.open = u => { opened.push(u); return null; };
+  const opened = []; w.open = u => { opened.push(u); return null; };
   const nowS = Math.floor(Date.now() / 1000);
   // what FR24 does with a Playback it is left: its own handler (here: counted)
   const fr24 = []; doc.addEventListener('click', ev => { const a = ev.target.closest && ev.target.closest('[data-fr24]'); if (a) fr24.push(a.getAttribute('data-fr24')); });
   const clk = (el, o) => { const ev = new w.MouseEvent((o && o.type) || 'click', Object.assign({ bubbles: true, cancelable: true }, o || {})); el.dispatchEvent(ev); return ev.defaultPrevented; };
-  const reset = () => { navs.length = 0; opened.length = 0; fr24.length = 0; };
-  const pbSel = () => { try { return JSON.parse(w.localStorage.getItem('tl.pbSel')); } catch (e) { return null; } };
+  const reset = () => { opened.length = 0; fr24.length = 0; };
 
   // the blocked flight followed in the panel: M-ARNZ as VSB82, off Fort Lauderdale half an hour ago
   const pid = 0x41cd0a3d, T = nowS - 1800;
@@ -55,7 +54,7 @@ const url = (t, lat, lon, z) => `/${ymd(t)}/${hm(t)}/1x/${lat.toFixed(2)},${lon.
   B.routes.set(pid, { originId: 3500, originIata: 'FLL', atd: T, destId: 3901 });
   B.lastPos.set(pid, { lat: 33.1, lon: -78.2, alt: 41000, at: Date.now() });
   H.setCurFollow(pid);
-  const U_PID = url(T - 180, 26.0726, -80.1527, 10);
+  const okPid = u => okT(u, '424c60', T, nowS);
   const btn = (who, label) => `<button type="button" data-fr24="${who}"><svg></svg><span>${label || 'Playback'}</span></button>`;
   doc.body.insertAdjacentHTML('beforeend', `
     <div data-testid="aircraft-panel" id="panel"><div data-testid="aircraft-panel__header__callsign">VSB82</div>
@@ -69,37 +68,36 @@ const url = (t, lat, lon, z) => `/${ymd(t)}/${hm(t)}/1x/${lat.toFixed(2)},${lon.
   // ---- the bar's Playback: FR24's playback window, whatever flight is open
   reset();
   const barTaken = clk(doc.querySelector('[data-fr24="bar-Playback"] span'));
-  check('FR24\'s bottom bar Playback with a LADD flight open in the panel: not taken - FR24 opens its playback window', !barTaken && !navs.length && !opened.length && fr24.join() === 'bar-Playback', { navs, opened, fr24 });
+  check('FR24\'s bottom bar Playback with a LADD flight open in the panel: not taken - FR24 opens its playback window', !barTaken && !opened.length && fr24.join() === 'bar-Playback', { opened, opened, fr24 });
   check('... the bar found as the bar', H.inBar(doc.querySelector('[data-fr24="bar-Playback"]')) && !H.inBar(doc.querySelector('[data-fr24="panel-actions"]')));
   reset();
   clk(doc.querySelector('[data-fr24="bar-Playback"]'), { type: 'auxclick', button: 1 });
-  check('... nor a middle click on it', !navs.length && !opened.length);
+  check('... nor a middle click on it', !opened.length);
 
   // ---- the panel's own Playback
   reset();
   const pTaken = clk(doc.querySelector('[data-fr24="panel-actions"]'));
-  check('the panel\'s Playback (FR24\'s flight-actions) of a blocked flight: FR24\'s map playback, three minutes before its take-off, over the field it left, in this tab', pTaken && navs.length === 1 && navs[0] === U_PID && !fr24.length && !opened.length, { navs, U_PID });
-  check('... the flight to select there kept for that page (FR24\'s id, its aircraft)', (pbSel() || {}).u === U_PID && pbSel().id === pid && pbSel().hex === '424c60', pbSel());
+  check('the panel\'s Playback (FR24\'s flight-actions) of a blocked flight: its track on airplanes.live, in a new tab', pTaken && opened.length === 1 && okPid(opened[0]) && !fr24.length, opened);
   reset(); clk(doc.querySelector('[data-fr24="panel-menu"] span'));
-  check('... the aircraft__playback button the same', navs[0] === U_PID, navs);
+  check('... the aircraft__playback button the same', opened.length === 1 && okPid(opened[0]), opened);
   // (a panel showing another aircraft, with the blocked flight followed earlier still the last one followed)
   doc.querySelector('#panel [data-testid="aircraft-panel__header__callsign"]').textContent = 'BAW123'; reset();
   const pOther = clk(doc.querySelector('[data-fr24="panel-actions"]'));
-  check('the panel\'s Playback with the panel showing another aircraft (BAW123): FR24\'s own, not the blocked flight followed earlier', !pOther && !navs.length && fr24.join() === 'panel-actions', navs);
+  check('the panel\'s Playback with the panel showing another aircraft (BAW123): FR24\'s own, not the blocked flight followed earlier', !pOther && !opened.length && fr24.join() === 'panel-actions', opened);
   doc.querySelector('#panel [data-testid="aircraft-panel__header__callsign"]').textContent = 'VSB82';
   H.setCurFollow(0x41000001); reset();
   const pOrd = clk(doc.querySelector('[data-fr24="panel-actions"]'));
-  check('the panel\'s Playback of an ordinary flight: FR24\'s own', !pOrd && !navs.length && fr24.join() === 'panel-actions');
+  check('the panel\'s Playback of an ordinary flight: FR24\'s own', !pOrd && !opened.length && fr24.join() === 'panel-actions');
   H.setCurFollow(pid);
 
   // ---- a rebuilt log's rows (row i is entry i + 1: FR24 leaves out the first, the flight on screen)
   const T4 = nowS - 3 * 86400;
-  B.hist.set('M-ARNZ', { data: [{}, { aircraft: { hex: '424C60', registration: 'M-ARNZ' }, __tlPb: { t: T4, lat: 51.47, lon: -0.45, z: 10 }, __tlTrace: 'x' }, { aircraft: { registration: 'M-ARNZ' } }], at: Date.now() });
+  B.hist.set('M-ARNZ', { data: [{}, { aircraft: { hex: '424C60', registration: 'M-ARNZ' }, __tlPb: { t: T4, lat: 51.47, lon: -0.45, z: 10 }, time: { real: { departure: T4, arrival: T4 + 3600 } } }, { aircraft: { registration: 'M-ARNZ' } }], at: Date.now() });
   reset();
   clk(doc.querySelector('[data-fr24="log0"]'));
-  check('a rebuilt log row\'s Playback: FR24\'s map playback of that leg (its take-off and field)', navs[0] === url(T4 - 180, 51.47, -0.45, 10), navs);
+  check('a rebuilt log row\'s Playback: that leg\'s track on airplanes.live', opened.length === 1 && okT(opened[0], '424c60', T4, T4 + 3600) && !fr24.length, opened);
   reset(); const lOwn = clk(doc.querySelector('[data-fr24="log1"]'));
-  check('... a row of FR24\'s own: FR24\'s', !lOwn && !navs.length && fr24.join() === 'log1');
+  check('... a row of FR24\'s own: FR24\'s', !lOwn && !opened.length && fr24.join() === 'log1');
 
   // ---- airport boards (LaGuardia, 3901)
   const apId = 3901, t0 = nowS - 2 * 86400;
@@ -115,98 +113,76 @@ const url = (t, lat, lon, z) => `/${ymd(t)}/${hm(t)}/1x/${lat.toFixed(2)},${lon.
   doc.body.insertAdjacentHTML('beforeend', `<div data-testid="airport-panel"><ul>${card(9000000000 + pid, 'M-ARNZ')}${card(ids[0], 'N600EB')}${card(ids[1], 'EI-DAC')}${card(ids[2], 'N123QS')}${card(aid, 'N600EB')}${card(todayRow, '', 'Playback - VSB82')}${card(pbRow, 'N777XX')}${card(plainRow, 'G-EZBX')}</ul></div>`);
   const row = id => doc.querySelector(`[data-fr24="row-${id}"]`);
   reset(); clk(row(9000000000 + pid));
-  check('a board row of a blocked flight followed here: its take-off, over the field it left', navs[0] === U_PID, navs);
+  check('a board row of a blocked flight followed here: its track', opened.length === 1 && okPid(opened[0]), opened);
   reset(); const kTaken = clk(row(ids[0]));
-  check('a kept row of this script\'s own (N600EB off LaGuardia two days back): three minutes before its take-off, over LaGuardia', ids[0] >= 20000000000 && kTaken && navs[0] === url(t0 - 180, 40.7772, -73.8726, 10) && !fr24.length, { ids, navs });
+  check('a kept row of this script\'s own (N600EB off LaGuardia two days back): its track from take-off to landing', ids[0] >= 20000000000 && kTaken && okT(opened[0], 'a80b2e', t0, t0 + 3600) && !fr24.length, { ids, opened });
   reset(); const kOrd = clk(row(ids[1]));
-  check('... FR24\'s own kept row of an ordinary flight: FR24\'s Playback, untouched', !kOrd && !navs.length && fr24.join() === 'row-' + ids[1]);
+  check('... FR24\'s own kept row of an ordinary flight: FR24\'s Playback, untouched', !kOrd && !opened.length && fr24.join() === 'row-' + ids[1]);
   reset(); clk(row(ids[2]));
-  check('... FR24\'s own kept row of a blocked aircraft: its take-off', navs[0] === url(t0 + 1200 - 180, 40.7772, -73.8726, 10), navs);
+  check('... FR24\'s own kept row of a blocked aircraft: its track from take-off, three hours at most', okT(opened[0], 'a1b2c3', t0 + 1200, t0 + 1200 + 10800), opened);
   reset(); clk(row(aid));
-  check('a kept arrival: the take-off at its other end (Fort Lauderdale), not the landing', navs[0] === url(t0 + 5400 - 180, 26.0726, -80.1527, 10), navs);
+  check('a kept arrival: its track from the take-off at its other end to the landing', okT(opened[0], 'a80b2e', t0 + 5400, t0 + 9000), opened);
   // (FR24's own row of today, of the flight followed here: its card's flight id; the action's words with the aircraft)
   H.cardInfo.set(todayRow, { fid: pid.toString(16), apId, kind: 'arrivals' });
   reset(); clk(row(todayRow).querySelector('svg'));
-  check('FR24\'s own row of today of a blocked flight ("Playback - VSB82", clicked on its icon): the flight\'s take-off', navs[0] === U_PID, navs);
+  check('FR24\'s own row of today of a blocked flight ("Playback - VSB82", clicked on its icon): the flight\'s track', okPid(opened[0]), opened);
   // (an aircraft the userscript named blocked in a search, not flying now: the row's own departure time)
   w.dispatchEvent(new w.MessageEvent('message', { data: { __tweeksLadd: 'searchAdd', rid: 'none', rows: [{ type: 'aircraft', id: 'N777XX', detail: { hex: 'A9F0E1' } }, { type: 'schedule', id: 'EJA777', detail: {} }, { type: 'aircraft', id: 'N600EB', detail: { hex: 'A80B2E' } }] }, source: w }));
   H.boardRowsSeen.set(pbRow, { fid: '3c0000ff', t: T2, st: 'departed', ap: 3500, apId, kind: 'departures' });
   reset(); clk(row(pbRow));
-  check('FR24\'s own row of an aircraft named blocked: its departure at this airport', navs[0] === url(T2 - 180, 40.7772, -73.8726, 10) && (pbSel() || {}).hex === 'a9f0e1', { navs, sel: pbSel() });
+  check('FR24\'s own row of an aircraft named blocked: its departure at this airport, to now', okT(opened[0], 'a9f0e1', T2, nowS), opened);
   reset(); const plain = clk(row(plainRow));
-  check('FR24\'s own row of an ordinary aircraft: FR24\'s', !plain && !navs.length && fr24.join() === 'row-' + plainRow);
+  check('FR24\'s own row of an ordinary aircraft: FR24\'s', !plain && !opened.length && fr24.join() === 'row-' + plainRow);
   // middle and Ctrl clicks: a new tab
   reset(); clk(row(ids[0]), { type: 'auxclick', button: 1 });
-  check('a middle click: the same playback in a new tab', opened[0] === 'https://www.flightradar24.com' + url(t0 - 180, 40.7772, -73.8726, 10) && !navs.length, opened);
+  check('a middle click: the same track, in a new tab', opened.length === 1 && okT(opened[0], 'a80b2e', t0, t0 + 3600), opened);
   reset(); clk(row(ids[0]), { ctrlKey: true });
-  check('a Ctrl click: a new tab too', opened.length === 1 && !navs.length);
+  check('a Ctrl click: a new tab too', opened.length === 1 && okT(opened[0], 'a80b2e', t0, t0 + 3600));
   reset(); clk(row(ids[0]), { type: 'auxclick', button: 2 });
-  check('a right click: nothing', !opened.length && !navs.length);
+  check('a right click: nothing', !opened.length);
 
   // ---- search results
   doc.body.insertAdjacentHTML('beforeend', `<div data-testid="search__results">${[['live:' + pid.toString(16), 'VSB82'], ['aircraft:m-arnz', 'M-ARNZ'], ['aircraft:n600eb', 'N600EB'], ['schedule:EJA777', 'EJA777'], ['aircraft:g-ezbx', 'G-EZBX']].map(([k, l], i) => `<div data-testid="search__result-row"><a data-search-result="${k}">${l}</a>${btn('sr' + i)}</div>`).join('')}</div>`);
   const sr = i => doc.querySelector(`[data-fr24="sr${i}"] span`);
-  reset(); clk(sr(0)); const n0 = navs[0];
+  reset(); clk(sr(0)); const n0 = opened[0];
   reset(); clk(sr(1));
-  check('a search result of a live blocked flight, and of its aircraft: the flight\'s take-off', n0 === U_PID && navs[0] === U_PID, [n0, navs[0]]);
+  check('a search result of a live blocked flight, and of its aircraft: the flight\'s track', okPid(n0) && okPid(opened[0]), [n0, opened[0]]);
   // (a Playback in the results box but in no row: not taken for the first row)
   doc.querySelector('[data-testid="search__results"]').insertAdjacentHTML('beforeend', btn('srbox'));
   reset(); const boxTaken = clk(doc.querySelector('[data-fr24="srbox"] span'));
-  check('a Playback in the search results but outside any row: FR24\'s, not the first row\'s flight', !boxTaken && !navs.length && fr24.join() === 'srbox', navs);
+  check('a Playback in the search results but outside any row: FR24\'s, not the first row\'s flight', !boxTaken && !opened.length && fr24.join() === 'srbox', opened);
   reset(); posted.length = 0;
   const sTaken = clk(sr(2));
   const ask = posted.find(p => p && p.__tweeksLadd === 'pbWhere');
-  check('a blocked aircraft not flying now (N600EB): taken, and its flight asked of the userscript', sTaken && !!ask && ask.reg === 'N600EB' && ask.hex === 'a80b2e' && !navs.length, ask);
+  check('a blocked aircraft not flying now (N600EB): taken, and its flight asked of the userscript', sTaken && !!ask && ask.reg === 'N600EB' && ask.hex === 'a80b2e' && !opened.length, ask);
   const T3 = nowS - 30 * 3600;
-  w.dispatchEvent(new w.MessageEvent('message', { data: { __tweeksLadd: 'pbWhereRes', rid: ask && ask.rid, hex: 'a80b2e', dep: T3, depLL: [40.7772, -73.8726], z: 10, ll: {} }, source: w }));
+  w.dispatchEvent(new w.MessageEvent('message', { data: { __tweeksLadd: 'pbWhereRes', rid: ask && ask.rid, hex: 'a80b2e', dep: T3, end: T3 + 9000, depLL: [40.7772, -73.8726], z: 10, ll: {} }, source: w }));
   await sleep(20);
-  check('... its latest flight played back from its take-off', navs[0] === url(T3 - 180, 40.7772, -73.8726, 10) && !fr24.length, navs);
+  check('... its latest flight\'s track, from take-off to landing', opened.length === 1 && okT(opened[0], 'a80b2e', T3, T3 + 9000) && !fr24.length, opened);
   reset(); posted.length = 0;
   clk(sr(3));
   const ask2 = posted.find(p => p && p.__tweeksLadd === 'pbWhere');
   w.dispatchEvent(new w.MessageEvent('message', { data: { __tweeksLadd: 'pbWhereRes', rid: ask2 && ask2.rid }, source: w }));
   await sleep(20);
-  check('a callsign of a blocked aircraft with no flight known anywhere: FR24\'s own Playback after all', !!ask2 && ask2.cs === 'EJA777' && !navs.length && fr24.join() === 'sr3', { fr24, navs });
+  check('a callsign of a blocked aircraft with no flight known anywhere: FR24\'s own Playback after all', !!ask2 && ask2.cs === 'EJA777' && !opened.length && fr24.join() === 'sr3', { fr24, opened });
   reset(); const sOrd = clk(sr(4));
-  check('a search result of an ordinary aircraft: FR24\'s', !sOrd && !navs.length && fr24.join() === 'sr4');
+  check('a search result of an ordinary aircraft: FR24\'s', !sOrd && !opened.length && fr24.join() === 'sr4');
   reset(); posted.length = 0; clk(sr(2));
   await sleep(1100);
-  check('... the userscript silent: FR24\'s own after a moment', !navs.length && fr24.join() === 'sr2', fr24);
+  check('... the userscript silent: the aircraft\'s track today, after a moment', opened.length === 1 && opened[0] === 'https://globe.airplanes.live/?icao=a80b2e&showTrace=' + ymd(Math.floor(Date.now() / 1000)) && !fr24.length, { opened, fr24 });
 
-  // ---- when and where
-  { const n = Math.floor(Date.now() / 1000), p = H.pbPlan({ dep: n + 3600, depLL: [1, 2] });
-    check('a take-off still to come: no later than two minutes ago', p && Math.abs(p.t - (n - 120)) <= 1, p); }
-  { const n = Math.floor(Date.now() / 1000), p = H.pbPlan({ posLL: [33.1, -78.2] });
-    check('no take-off known: five minutes ago, where it is, further out', p && Math.abs(p.t - (n - 300)) <= 1 && p.z === 8 && p.lat === 33.1, p); }
-  { const p = H.pbPlan({ at: nowS - 7200, atLL: [40.7772, -73.8726], kind: 'arrivals' });
-    check('an arrival without its take-off: ten minutes before the landing, over the airport', p && p.t === nowS - 7800 && p.z === 9, p); }
-  check('nothing known: no plan', H.pbPlan({}) === null);
-  check('the address FR24\'s map playback has', H.pbUrl({ t: Date.UTC(2026, 9, 9, 12, 35) / 1000, lat: 53.4, lon: -2.6, z: 9 }) === '/2026-10-09/12:35/1x/53.40,-2.60/9');
-
-  // ---- the flight selected once it is on FR24's playback map
-  { const calls = [], st = stores.get('playback'); st.active = true; st.selectedFlightId = null; st.selectFlight = v => { calls.push(v); };
-    H.setPbPend({ u: '/x', id: pid, hex: '424c60', exp: Date.now() + 60000 });
-    H.pbSelTick();
-    check('not on the map yet: nothing selected', !calls.length);
-    H.pbPos.set(pid, { lat: 26.1, lon: -80.1, at: Date.now() });
-    H.pbSelTick();
-    check('on the map: selected as a click on it would (FR24\'s playback state, its id)', calls.length === 1 && calls[0] === pid, calls);
-    stores.get('aircraft').selected = {}; st.selectedFlightId = pid; H.pbSelTick();
-    check('... and done once its panel is open', H.pbPend() === null);
-    stores.get('aircraft').selected = null; st.selectedFlightId = null;
-    // (no answer the first time: the id as FR24's hex string the second)
-    calls.length = 0; H.setPbPend({ u: '/x', id: pid, hex: '', exp: Date.now() + 60000 }); H.pbSelTick(); H.pbPend().at -= 4000; H.pbSelTick();
-    check('... no panel after three seconds: tried once more, as the hex string', calls.length === 2 && calls[1] === pid.toString(16), calls);
-    // (by its aircraft: a flight the userscript named in the playback)
-    calls.length = 0; const fid2 = 0x3d000002; B.resolved.set(fid2, { cs: 'N600EB', reg: 'N600EB', hex: 'a80b2e' }); H.pbPos.set(fid2, { lat: 40.8, lon: -73.9, at: Date.now() });
-    H.setPbPend({ u: '/x', id: 0, hex: 'a80b2e', exp: Date.now() + 60000 }); H.pbSelTick();
-    check('by its aircraft, as named in the playback', calls[0] === fid2, calls);
-    calls.length = 0; st.selectedFlightId = 0x3e000001; H.setPbPend({ u: '/x', id: fid2, hex: 'a80b2e', exp: Date.now() + 60000 }); H.pbSelTick();
-    check('never over a flight the user opened', !calls.length && H.pbPend() === null);
-    delete st.selectFlight; st.selectedFlightId = null; const patched = []; st.$patch = o => patched.push(o);
-    H.setPbPend({ u: '/x', id: fid2, hex: '', exp: Date.now() + 60000 }); H.pbSelTick();
-    check('... a store without that action: its state given the id', patched.length === 1 && patched[0].selectedFlightId === fid2, patched);
-    st.active = false; }
+  // ---- the track's address
+  { const d0 = Date.UTC(2026, 9, 9, 12, 35) / 1000;
+    check('the address airplanes.live\'s track has: five minutes either side, UTC', H.pbTraceUrl({ hex: '424C60', dep: d0, end: d0 + 5700 }) === 'https://globe.airplanes.live/?icao=424c60&showTrace=2026-10-09&startTime=12:30&endTime=14:15', H.pbTraceUrl({ hex: '424C60', dep: d0, end: d0 + 5700 }));
+    check('a take-off with no landing known: three hours', H.pbTraceUrl({ hex: '424c60', dep: nowS - 86400 * 3 }) === H.pbTraceUrl({ hex: '424c60', dep: nowS - 86400 * 3, end: nowS - 86400 * 3 + 3 * 3600 }));
+    check('a take-off just now: until now at most', okT(H.pbTraceUrl({ hex: '424c60', dep: nowS - 600 }), '424c60', nowS - 600, nowS));
+    check('an arrival with no take-off: the three hours before it', H.pbTraceUrl({ hex: '424c60', at: d0 }) === 'https://globe.airplanes.live/?icao=424c60&showTrace=2026-10-09&startTime=09:30&endTime=12:40', H.pbTraceUrl({ hex: '424c60', at: d0 }));
+    const m0 = Date.UTC(2026, 9, 9, 23, 50) / 1000;
+    check('a flight across midnight: that day\'s track to its end', H.pbTraceUrl({ hex: '424c60', dep: m0, end: m0 + 1800 }) === 'https://globe.airplanes.live/?icao=424c60&showTrace=2026-10-09&startTime=23:45&endTime=23:59');
+    const m1 = Date.UTC(2026, 9, 10, 0, 2) / 1000;
+    check('a take-off just after midnight: the day before\'s last minutes (the start is five minutes before)', H.pbTraceUrl({ hex: '424c60', dep: m1, end: m1 + 3600 }) === 'https://globe.airplanes.live/?icao=424c60&showTrace=2026-10-09&startTime=23:57&endTime=23:59');
+    check('only the aircraft known: its track today', H.pbTraceUrl({ hex: '424c60' }) === 'https://globe.airplanes.live/?icao=424c60&showTrace=' + ymd(nowS));
+    check('no aircraft: none', H.pbTraceUrl({ dep: d0 }) === ''); }
 
   // ---- 2. the userscript's half: the flight of an aircraft the page asks about
   {
@@ -229,6 +205,7 @@ const url = (t, lat, lon, z) => `/${ymd(t)}/${hm(t)}/1x/${lat.toFixed(2)},${lon.
     L.store.mergeHex(hex, { reg: 'N600EB', type: 'GLF5', ladd: true, recent: [[d1, d1 + 9000, lga.id, fll.id, 'ground', 'ground', 'N600EB', 41000, 1], [d2, d2 + 9000, fll.id, lga.id, 'ground', 'ground', 'EJA600', 41000, 1]] });
     const near = await L.pbWhere({ reg: 'N600EB', dep: d1 + 120, depAp: lga.id, kind: 'departures', apId: lga.id });
     check('by its registration, at a row\'s time: the leg nearest it, its take-off over the field it left', near.hex === hex && near.dep === d1 && near.depLL && Math.abs(near.depLL[0] - lga.lat) < 1e-6 && near.z === 10 && near.ll[lga.id] && Math.abs(near.ll[lga.id][1] - lga.lon) < 1e-6, near);
+    check('... and where its leg ended', near.end === d1 + 9000, near.end);
     const arr = await L.pbWhere({ hex, at: d2 + 9000, atAp: lga.id, kind: 'arrivals', apId: lga.id });
     check('an arrival at its landing time: that leg\'s take-off at its other end', arr.dep === d2 && Math.abs(arr.depLL[0] - fll.lat) < 1e-6, arr);
     const last = await L.pbWhere({ reg: 'N600EB' });

@@ -18,8 +18,8 @@ const exe = process.env.CHROMIUM || ['/opt/pw-browsers/chromium-1194/chrome-linu
 const vuePath = [process.env.VUE_PATH, path.join(__dirname, '..', 'node_modules', 'vue', 'dist', 'vue.global.js')].filter(Boolean).find(x => fs.existsSync(x));
 if (!chromium) { console.log('(skipped: Playwright not found - PLAYWRIGHT_PATH=<its module dir>)'); process.exit(0); }
 if (!vuePath) { console.log('(skipped: Vue 3 not found - VUE_PATH=<vue.global.js>)'); process.exit(0); }
-const REPO = path.join(__dirname, '..'), MODES = process.argv.slice(2).length ? process.argv.slice(2) : ['keyed', 'shared', 'show', 'ind', 'async', 'li', 'odd'];
-const QS = { keyed: 'mode=keyed', shared: 'mode=shared', show: 'mode=show', ind: 'mode=keyed&ind=1', async: 'mode=async', li: 'mode=keyed&li=1', odd: 'mode=keyed&odd=1' };
+const REPO = path.join(__dirname, '..'), MODES = process.argv.slice(2).length ? process.argv.slice(2) : ['late', 'keyed', 'shared', 'show', 'ind', 'async', 'li', 'odd'];
+const QS = { late: 'mode=keyed&late=1', keyed: 'mode=keyed', shared: 'mode=shared', show: 'mode=show', ind: 'mode=keyed&ind=1', async: 'mode=async', li: 'mode=keyed&li=1', odd: 'mode=keyed&odd=1' };
 const OUT = process.env.SHOTS || ''; if (OUT) fs.mkdirSync(OUT, { recursive: true });
 const shot = (page, name) => (OUT ? page.screenshot({ path: path.join(OUT, name + '.png') }) : Promise.resolve());
 const SRC = fs.readFileSync(path.join(REPO, 'dist', 'fr24-ladd-unblocker.user.js'), 'utf8');
@@ -46,8 +46,12 @@ window.__F = null;
       const ours = [...document.querySelectorAll('.tl-ub-c')].filter(vis).length;
       const theirs = [...document.querySelectorAll('.win-body')].filter(vis).length;
       const ev = [...document.querySelectorAll('.evbox')].filter(vis).length;
-      window.__F.push({ t: Math.round(performance.now()), titles, on, bm, ours, theirs, ev });
+      // (the buttons drawn small together - FR24's playback open - or not: this one with the rest)
+      const bb = bar ? [...bar.querySelectorAll('.bar-btn')] : [], mis = new Set(bb.map(b => b.classList.contains('compact'))).size > 1;
+      window.__F.push({ t: Math.round(performance.now()), titles, on, bm, ours, theirs, ev, mis });
     }
+    // (from the start: frames drawn with the bar and without this button on it)
+    { const bar = document.querySelector('nav.bar'); if (bar && !bar.querySelector('.tl-ub-btn')) window.__NB = (window.__NB || 0) + 1; }
     requestAnimationFrame(tick);
   };
   requestAnimationFrame(tick);
@@ -74,6 +78,19 @@ async function run(browser, mode) {
   const rec = async (act, ms = 900) => { await page.evaluate(() => { window.__F = []; }); await act(); await sleep(ms); return page.evaluate(() => { const f = window.__F; window.__F = null; return f; }); };
   const last = f => f[f.length - 1];
   const ours = 'nav.bar .tl-ub-btn', bar = l => `nav.bar [data-testid="map-bar__${l.toLowerCase()}"]`;
+  // ---- the bar drawn: this button with it from the first frame (the page built late, as FR24's is)
+  { const nb = await page.evaluate(() => window.__NB || 0);
+    // (where the page is built after the script has started, as FR24's is - the "late" page; one built while the page is
+    // still being read comes before the script's start, and may be drawn once without it)
+    if (mode === 'late') check('the button is on the bar in the first frame the bar is drawn - never drawn without it', nb === 0, nb); }
+  // ---- FR24's playback open: the buttons drawn small, drawn large again once it is put away; this one the same each time
+  { const sizeOf = () => page.evaluate(() => [...document.querySelectorAll('nav.bar .bar-btn')].map(b => b.classList.contains('compact')));
+    let g = await rec(async () => { await page.click(bar('Playback')); }, 500);
+    let c = await sizeOf();
+    check('FR24\'s playback open, its buttons drawn small: this one small with them, in no frame apart', c.length >= 6 && c.every(x => x) && !g.some(x => x.mis), { c, mis: g.filter(x => x.mis).length });
+    g = await rec(async () => { await page.click(bar('Playback')); }, 500);
+    c = await sizeOf();
+    check('... put away, drawn large again: this one large with them, in no frame apart', c.length >= 6 && c.every(x => !x) && !g.some(x => x.mis), { c, mis: g.filter(x => x.mis).length }); }
   // ---- the start: the button on the bar; the Bookmarks widget on the map never drawn
   let f = await rec(async () => {}, 300);
   const btnInfo = await page.evaluate(() => { const b = document.querySelector('nav.bar .tl-ub-btn'); return { prev: b.previousElementSibling.textContent.trim(), label: b.textContent.trim(), cls: b.className }; });

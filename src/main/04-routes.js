@@ -979,8 +979,7 @@
       owner: null, airline: { name: shownOwner(rec, rec.cs) || (rec.mil ? 'Military' : 'Private owner'), code: { iata: null, icao: rec.operatorIcao || null }, short: rec.operatorName || rec.owner || 'Private owner' },
       airport: { origin: airportObj(from), destination: airportObj(to), real: null },
       time: { scheduled: { departure: null, arrival: null }, real: { departure: l.tStart, arrival: landed ? l.tEnd : null }, estimated: { departure: null, arrival: liveNow ? (l.eta || null) : null }, other: { eta: liveNow ? l.eta : l.tEnd, updated: l.tEnd, duration: landed ? l.tEnd - l.tStart : null } },
-      // (the page's "Playback" opens FR24's own map playback of the leg instead of FR24's flight, which it never recorded:
-      // at its take-off, over the field it left - or where it was first heard)
+      // (the page's "Playback" opens the leg's track on airplanes.live instead of FR24's flight, which it never recorded)
       __tlPb: l.tStart > 0 ? { t: l.tStart, lat: from && fin(from.lat) ? from.lat : fin(l.startLat) ? l.startLat : null, lon: from && fin(from.lon) ? from.lon : fin(l.startLon) ? l.startLon : null, z: from ? 10 : 9 } : null
     };
   }

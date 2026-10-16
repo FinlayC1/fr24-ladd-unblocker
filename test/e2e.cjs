@@ -667,10 +667,10 @@ async function mapMode() {
   check('LADD tag in the expanded board card', !!w.document.querySelector('ul.board [data-testid="airport-flight-details__registration"] + .tl-ladd-chip'));
   check('LADD tag on "Recent flights" rows', panel.querySelectorAll('ul.recent .tl-ladd-chip').length === 2, panel.querySelectorAll('ul.recent .tl-ladd-chip').length);
   let opened = ''; w.open = u => { opened = u; return null; };
-  // (a middle click: the playback in a new tab - the same tab's would leave this page)
+  // (a new tab: airplanes.live's track)
   panel.querySelector('ul.recent [data-testid="flight-actions__action-playback"]').dispatchEvent(new w.MouseEvent('auxclick', { bubbles: true, cancelable: true, button: 1 }));
   for (let i = 0; i < 15 && !opened; i++) await sleep(100);
-  check('Playback on a rebuilt row opens FR24\'s map playback at the leg\'s take-off', /^https:\/\/www\.flightradar24\.com\/\d{4}-\d\d-\d\d\/\d\d:\d\d\/1x\/-?\d+\.\d\d,-?\d+\.\d\d\/\d+$/.test(opened), opened);
+  check('Playback on a rebuilt row opens that leg\'s track on airplanes.live', /^https:\/\/globe\.airplanes\.live\/\?icao=[0-9a-f]{6}&showTrace=\d{4}-\d\d-\d\d&startTime=\d\d:\d\d&endTime=\d\d:\d\d$/.test(opened), opened);
   // an ordinary (not blocked) aircraft: FR24 shows it, but padlocks country / MSN / age / vertical speed / GPS altitude /
   // squawk for free accounts - the page reports its identity and the userscript fills those from public data
   {

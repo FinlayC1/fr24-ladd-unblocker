@@ -124,9 +124,9 @@ const app = createApp({
             <div class="dd"><button><span>Airport &amp; runway details</span><svg width="16" height="16" viewBox="0 0 16 16"><path d="M2 5l6 6 6-6" stroke="#393939" fill="none"/></svg></button></div>
           </div></div></div>
     </div>
-    <nav v-if="!LI" class="bar"><button v-for="b in BARS" :key="b" type="button" :class="['bar-btn', S.open===b ? 'is-on' : '']" :data-testid="'map-bar__' + b.toLowerCase()" @click="toggle(b)">
+    <nav v-if="!LI" class="bar"><button v-for="b in BARS" :key="b" type="button" :class="['bar-btn', S.open===b ? 'is-on' : '', S.pbw ? 'compact' : '']" :data-testid="'map-bar__' + b.toLowerCase()" @click="toggle(b)">
       <svg width="24" height="24" viewBox="0 0 24 24" :fill="IND && S.open===b ? 'currentColor' : 'none'" stroke="currentColor"><circle cx="12" cy="12" r="8"/></svg><span class="bar-label">{{ b }}</span><div v-if="IND && S.open===b" class="ind"></div></button></nav>
-    <nav v-else class="bar"><div v-for="b in BARS" :key="b" class="item" :data-testid="'map-bar__' + b.toLowerCase()"><button type="button" :class="['bar-btn', S.open===b ? 'is-on' : '']" style="height:100%" @click="toggle(b)"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="8"/></svg><span class="bar-label">{{ b }}</span></button></div></nav>
+    <nav v-else class="bar"><div v-for="b in BARS" :key="b" class="item" :data-testid="'map-bar__' + b.toLowerCase()"><button type="button" :class="['bar-btn', S.open===b ? 'is-on' : '', S.pbw ? 'compact' : '']" style="height:100%" @click="toggle(b)"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="8"/></svg><span class="bar-label">{{ b }}</span></button></div></nav>
     <div v-if="S.pbw" class="pbw" data-testid="playback-widget">Playback</div>
     <div v-if="PB" class="pbx">
       <div data-testid="aircraft-panel" class="pbp"><div data-testid="aircraft-panel__header__callsign">{{ S.cs }}</div>
@@ -142,5 +142,5 @@ const app = createApp({
 });
 window.__PB = reactive({ active: /^\/\d{4}-\d\d-\d\d\//.test(location.pathname), timestamp: 0, selectedFlightId: null, calls: [], selectFlight(id) { this.calls.push(id); this.selectedFlightId = id; } });
 app.config.globalProperties.$pinia = { _s: new Map([['airports', { airports: [], airportsById: new Map([[3901, { id: 3901, iata: 'LGA', lat: 40.7772, lon: -73.8726 }], [3500, { id: 3500, iata: 'FLL', lat: 26.0726, lon: -80.1527 }]]) }], ['playback', window.__PB], ['aircraft', { selected: null }]]) };
-app.mount('#app');
+if (Q.get('late') === '1') setTimeout(() => app.mount('#app'), 700); else app.mount('#app');   // (late: the page built after the script has started, as FR24's is)
 </script></body></html>
