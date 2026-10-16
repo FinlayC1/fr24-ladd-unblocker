@@ -48,7 +48,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
 // ==UserScript==
 // @name         Flightradar24 LADD / N-A Unblocker (feed-level)
 // @namespace    tweeks.io
-// @version      22.28.9
+// @version      22.29.0
 // @description  Identifies every LADD / N/A / blocked military aircraft on Flightradar24 from public ADS-B, and injects callsign, registration, operator, age, country, MSN, squawk, vertical speed, GPS altitude, airspeeds, wind, photos, a reasoned origin/destination with a wind-corrected ETA (also for ordinary flights FR24 shows as N/A - military, private, GA, helicopters, with private landing sites; learned from 63 days of every aircraft worldwide, with live weather and closures), airport-board entries and a rebuilt 7-month flight log straight into FR24's own data - so it all renders like normal FR24 traffic.
 // @author       Finlay Clarke
 // @updateURL    https://raw.githubusercontent.com/FinlayC1/fr24-ladd-unblocker/main/dist/fr24-ladd-unblocker.user.js
@@ -137,7 +137,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "22.28.9";
+    var BRIDGE_V = "22.29.0";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed
@@ -5076,7 +5076,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '22.28.9';
+  const VERSION = '22.29.0';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
@@ -11633,7 +11633,8 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       const o = ubOffer(), L = bnLater();
       const later = !o.v || (o.req ? bnReqLater : !!(L && L.until > now() && L.until < now() + 25 * 3600e3 && !newerThan(o.v, String(L.v || ''))));
       const text = bnNote && ubNote ? esc(ubNote) : `LADD Unblocker v${esc(o.v)} is out (you have v${esc(VERSION)})${o.req ? ' - <b>this update is required</b>' : ''}`;
-      bnSet('upd', later ? '' : `<span class="tl-bn-t">${text}</span><button type="button" class="tl-bn-b" data-bn-act="update">Update</button><button type="button" class="tl-bn-b tl-bn-b2" data-bn-act="later"${o.req ? ' title="Until FR24 is loaded again"' : ' title="Hide for 24 hours"'}>Later</button>`, 'LADD Unblocker update');
+      if (ubInstalled) bnSet('upd', `<span class="tl-bn-t">LADD Unblocker <b>v${esc(ubInstalled)}</b> is installed. Refresh the page to start using it.</span><button type="button" class="tl-bn-b" data-bn-act="restart">Refresh page</button>`, 'LADD Unblocker update');
+      else bnSet('upd', later ? '' : `<span class="tl-bn-t">${text}</span><button type="button" class="tl-bn-b" data-bn-act="update">Update</button><button type="button" class="tl-bn-b tl-bn-b2" data-bn-act="later"${o.req ? ' title="Until FR24 is loaded again"' : ' title="Hide for 24 hours"'}>Later</button>`, 'LADD Unblocker update');
       const nt = String(helloAns().notice || '');
       let closed = ''; try { closed = localStorage.getItem(UB_NOTICE_KEY) || ''; } catch (e) { /* blocked */ }
       bnSet('notice', nt && closed !== nt ? `<span class="tl-bn-t">${esc(nt)}</span><button type="button" class="tl-bn-x" data-bn-act="closeNotice" aria-label="Close" title="Close">${UB_X}</button>` : '', 'LADD Unblocker notice');
@@ -11647,6 +11648,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     const act = t.dataset.bnAct;
     // (Update: what the window's own Update does for this kind of install - its instructions then shown here)
     if (act === 'update') { bnNote = true; doUpdate('update'); }
+    else if (act === 'restart') { doUpdate('restart'); }
     else if (act === 'later') { const o = ubOffer(); if (o.req) bnReqLater = true; else { try { localStorage.setItem(UB_LATER_KEY, JSON.stringify({ v: o.v, until: now() + 24 * 3600e3 })); } catch (e) { bnReqLater = true; } } }
     else if (act === 'closeNotice') { const nt = String(helloAns().notice || ''); try { localStorage.setItem(UB_NOTICE_KEY, nt); } catch (e) { /* blocked: closed for this page */ } if (!bnWrap) return; const el = bnWrap.querySelector('[data-tl-bn="notice"]'); if (el) el.remove(); }
     ubBanners();
@@ -12485,7 +12487,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // (the version whose "what's new" was put away, and the one whose dot on the button the window was opened for)
   const UB_SEEN_KEY = 'tweeks.fr24.ladd.seenver', UB_DOT_KEY = 'tweeks.fr24.ladd.dotver';
   // (the newest CHANGELOG section's headlines, written in by build.mjs: { v, items })
-  const UB_WHATS_NEW = {"v":"22.28.9","items":["The bottom of the LADD Unblock window is no longer cut off once it has finished opening."]};
+  const UB_WHATS_NEW = {"v":"22.29.0","items":["Update is one click for the extension (Chrome, Edge), with nothing to download or unzip by hand.","A banner at the top of Flightradar24's map when a newer version is out","An anonymous count of installs."]};
   // (an aircraft with an open padlock: FR24's outline style - 24 grid, 1.5 stroke in the text colour)
   const UB_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
   const UB_X = '<svg viewBox="0 0 14 14" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5l11 11M12.5 1.5l-11 11"/></svg>';
@@ -12564,7 +12566,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     // (the hello to the monitor, 06-hello.js: exactly what it sends is in PRIVACY.md)
     ['count', 'Count this install (anonymous)', 'A random number, your version and browser, once a day - no IP kept, nothing about flights. Helps show how many people use it.']
   ];
-  let ubBtn = null, ubBar = null, ubItems = new Map(), ubNeedReload = false, ubLatest = null, ubAsking = null, ubNote = '';
+  let ubBtn = null, ubBar = null, ubItems = new Map(), ubNeedReload = false, ubLatest = null, ubAsking = null, ubNote = '', ubInstalled = '';
   const lsGet = k => { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } };
   const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* full or blocked */ } };
 
@@ -12611,21 +12613,42 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   function doUpdate(act) {
     const k = installKind().kind;
     if (act === 'update' && k === 'us') { window.open(UB_USERSCRIPT_URL, '_blank', 'noopener'); ubNote = 'Your userscript manager opens the new version in a tab: click Update there, then reload FR24.'; }
-    else if (act === 'update' && k === 'ext') { window.open(UB_ZIP_URL, '_blank', 'noopener'); ubNote = 'Downloading the new zip. Unzip it over your extension folder (replace the files), then click Reload extension.'; }
+    // (unpacked: the extension's own update page, in a tab next to this one - it writes the new version into the extension's
+    // folder, extension/update.js; the zip by hand only where that page cannot be opened)
+    else if (act === 'update' && k === 'ext') {
+      ubNote = 'Opening the update…';
+      extMsg({ tlSelfUpdate: true }).then(ok => {
+        if (ok) ubNote = 'Finish in the LADD Unblocker tab that opened: click Update there.';
+        else { window.open(UB_ZIP_URL, '_blank', 'noopener'); ubNote = 'Downloading the new zip. Unzip it over your extension folder (replace the files), then click Reload extension.'; }
+        renderUnblockWindow(); ubBanners();
+      });
+    }
+    // (the new version is in the folder: the extension restarts and loads this tab again - or, should it not, the page does)
+    else if (act === 'restart') { ubNote = 'Restarting with v' + ubInstalled + '…'; extMsg({ tlRestart: true }); setTimeout(() => location.reload(), 4000); }
     else if (act === 'update' && k === 'store') { ubNote = 'Asking the browser…'; extMsg({ tlUpdateCheck: true }).then(st => { ubNote = st === 'update_available' ? 'Found it: the extension restarts with it. Reload FR24 when it has.' : st === 'throttled' ? 'The browser checked recently; it installs the update by itself shortly.' : st === 'unsupported' ? 'Your browser installs the update by itself when its add-on store has it (Firefox looks about once a day).' : 'The browser has nothing newer for it yet; it installs updates by itself.'; renderUnblockWindow(); ubBanners(); }); }
     else if (act === 'reloadExt' && k === 'ext') { ubNote = 'Reloading the extension…'; extMsg({ tlReload: true }); setTimeout(() => location.reload(), 900); }
     renderUnblockWindow(); ubBanners();
+  }
+  // (the update page says when the new version is in the extension's folder: Refresh page, here and on the map's banner)
+  if (typeof TL_EXTENSION === 'boolean') {
+    try {
+      chrome.runtime.onMessage.addListener(m => {
+        if (!m || typeof m.tlUpdated !== 'string' || !/^\d+(\.\d+)*$/.test(m.tlUpdated)) return;
+        ubInstalled = m.tlUpdated; ubNote = ''; renderUnblockWindow(); ubBanners();
+      });
+    } catch (e) { /* the extension was reloaded */ }
   }
   function updatesHtml() {
     // (the newest version: GitHub's or the monitor's answer to the hello, 06-hello.js)
     const ik = installKind(), L = ubLatest, lv = latestV(), O = ubOffer(), newer = !!O.v;
     const latest = ubAsking && !lv ? '<span class="tl-muted">checking…</span>' : lv || newer ? (newer ? `<b>v${esc(O.v)}</b>` : `v${esc(lv)} <span class="tl-muted">(up to date)</span>`) : L && L.err ? `<span class="tl-warn" title="${esc(L.err)}">couldn't check</span>` : '<span class="tl-muted">not checked</span>';
     const btns = [];
-    if (newer) btns.push(`<button class="tl-ub-b" data-ub-act="update">Update to v${esc(O.v)}</button>`);
+    if (ubInstalled) btns.push('<button class="tl-ub-b" data-ub-act="restart">Refresh page</button>');
+    else if (newer) btns.push(`<button class="tl-ub-b" data-ub-act="update">Update to v${esc(O.v)}</button>`);
     else btns.push(`<button class="tl-ub-b tl-ub-b2" data-ub-act="check"${ubAsking ? ' disabled' : ''}>Check for updates</button>`);
     if (ik.kind === 'ext') btns.push('<button class="tl-ub-b tl-ub-b2" data-ub-act="reloadExt" title="Load the extension again from its folder - after replacing its files with a new version">Reload extension</button>');
-    const how = ik.kind === 'us' ? 'Update opens the new version in your userscript manager, which offers to update.' : ik.kind === 'ext' ? 'An unpacked extension cannot replace its own files: Update downloads the new zip, you unzip it over the old folder, and Reload extension loads it.' : 'Installed from a store: your browser updates it by itself.';
-    const warn = newer ? `<div class="tl-ub-alert">This version is out of date: <b>v${esc(O.v)}</b> is out, you have v${esc(VERSION)}.${O.req ? ' <b>This update is required</b>: this version is no longer supported.' : ''}</div>` : '';
+    const how = ik.kind === 'us' ? 'Update opens the new version in your userscript manager, which offers to update.' : ik.kind === 'ext' ? 'Update puts the new version into the extension\'s folder for you. The first time, Chrome asks you to choose that folder and allow it to be edited.' : 'Installed from a store: your browser updates it by itself.';
+    const warn = ubInstalled ? `<div class="tl-ub-alert">v${esc(ubInstalled)} is installed. Refresh the page to start using it.</div>` : newer ? `<div class="tl-ub-alert">This version is out of date: <b>v${esc(O.v)}</b> is out, you have v${esc(VERSION)}.${O.req ? ' <b>This update is required</b>: this version is no longer supported.' : ''}</div>` : '';
     return `${warn}<div class="tl-ub-kv"><span>Installed</span><span>v${esc(VERSION)}</span></div><div class="tl-ub-kv"><span>Latest</span><span>${latest}</span></div>
       <div class="tl-ub-kv"><span>Type</span><span>${esc(ik.name)}</span></div><div class="tl-ub-btns">${btns.join('')}</div>
       <div class="tl-ub-note">${esc(ubNote || how)} <a href="${UB_CHANGES_URL}" target="_blank" rel="noopener">What's new</a></div>`;

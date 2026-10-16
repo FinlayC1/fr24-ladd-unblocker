@@ -24,6 +24,8 @@ To fill in what Flightradar24 leaves blank, your browser makes requests to publi
 
 When you open the LADD Unblock window, it reads this project's `package.json` from GitHub (raw.githubusercontent.com) to see whether a newer version is out, at most every half hour. Nothing is sent with it.
 
+When you click **Update** in the extension, its update page downloads the new version's files from this repository on GitHub (raw.githubusercontent.com, at the version's release tag) and writes them into the extension's folder, which you chose and allowed it to edit. Nothing is sent with it. The folder's location stays in your browser, in the extension's own storage, and is never sent anywhere.
+
 On flightradar24.com the extension works inside the page you opened. It reads Flightradar24's answers to that page in order to add to them. It does not read your Flightradar24 account details, cookies or passwords, and sends nothing from them anywhere.
 
 ## Counting installs

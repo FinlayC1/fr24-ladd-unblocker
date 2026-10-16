@@ -59,6 +59,12 @@ jobs:
           export CHROMIUM="$(node -e "console.log(require(process.env.PLAYWRIGHT_PATH).chromium.executablePath())")"
           node test/unit_extension.cjs > out.txt 2>&1 || { cat out.txt; exit 1; }
           cat out.txt; grep -q '^(skipped' out.txt && exit 1; grep -q '^FAIL' out.txt && exit 1; true
+      - name: The extension updating itself (Chromium)
+        run: |
+          export PLAYWRIGHT_PATH="$RUNNER_TEMP/pw/node_modules/playwright"
+          export CHROMIUM="$(node -e "console.log(require(process.env.PLAYWRIGHT_PATH).chromium.executablePath())")"
+          node test/unit_selfupdate.cjs > out.txt 2>&1 || { cat out.txt; exit 1; }
+          cat out.txt; grep -q '^(skipped' out.txt && exit 1; grep -q '^FAIL' out.txt && exit 1; true
       - name: LADD Unblock in FR24's windows (Vue page, Chromium)
         run: |
           export PLAYWRIGHT_PATH="$RUNNER_TEMP/pw/node_modules/playwright" VUE_PATH="$RUNNER_TEMP/pw/node_modules/vue/dist/vue.global.js"

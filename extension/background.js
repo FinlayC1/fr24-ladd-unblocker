@@ -61,3 +61,48 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
     return true;
   }
 });
+
+// ---- updating an unpacked extension in place (update.html) -------------------------------------------------------------
+// Update on Flightradar24 opens the extension's update page next to the tab it was clicked in. When the new files are in
+// the folder, "Refresh page" (there or on FR24's banner) restarts the extension from its folder; the new version, when it
+// starts, loads that FR24 tab again. Had the version not changed, the files went to a folder Chrome does not load it from:
+// the update page is opened again to say so.
+function kv(mode, fn) {
+  return new Promise((res, rej) => {
+    const o = indexedDB.open('tl-update', 1);
+    o.onupgradeneeded = () => o.result.createObjectStore('kv');
+    o.onerror = () => rej(o.error);
+    o.onsuccess = () => {
+      const db = o.result, tx = db.transaction('kv', mode), r = fn(tx.objectStore('kv'));
+      tx.oncomplete = () => { db.close(); res(r && r.result); };
+      tx.onerror = tx.onabort = () => { db.close(); rej(tx.error); };
+    };
+  });
+}
+const kvGet = k => kv('readonly', s => s.get(k)), kvSet = (k, v) => kv('readwrite', s => s.put(v, k)), kvDel = k => kv('readwrite', s => s.delete(k));
+chrome.runtime.onMessage.addListener((m, sender, reply) => {
+  if (!m || sender.id !== chrome.runtime.id) return;
+  if (m.tlSelfUpdate === true) {
+    const t = sender.tab;
+    chrome.tabs.create({ url: chrome.runtime.getURL('update.html') + (t && t.id >= 0 ? '#tab=' + t.id : ''), index: t ? t.index + 1 : undefined, openerTabId: t ? t.id : undefined }, tab => { void chrome.runtime.lastError; reply(!!tab); });
+    return true;
+  }
+  if (m.tlRestart === true) {
+    const tab = m.tab > 0 ? m.tab : sender.tab && sender.tab.id >= 0 ? sender.tab.id : 0;
+    kvGet('pending').catch(() => null).then(p => kvSet('pending', Object.assign({ expect: '', at: Date.now() }, p || {}, { tab: tab || (p && p.tab) || 0, restart: true })))
+      .catch(() => {}).then(() => { reply(true); setTimeout(() => chrome.runtime.reload(), 150); });
+    return true;
+  }
+});
+// (looked at each time the extension starts: after a restart for an update, once)
+chrome.runtime.onInstalled.addListener(() => {});
+(async () => {
+  let p = null; try { p = await kvGet('pending'); } catch (e) { return; }
+  if (!p) return;
+  const v = chrome.runtime.getManifest().version, fresh = Date.now() - (p.at || 0) < 6 * 3600e3;
+  if (!p.restart || !fresh) { if (!fresh || !p.expect || v === p.expect) await kvDel('pending').catch(() => {}); return; }
+  await kvDel('pending').catch(() => {});
+  const tab = p.tab > 0 ? p.tab : 0;
+  if (!p.expect || v === p.expect) { if (tab) { chrome.tabs.update(tab, { active: true }, () => void chrome.runtime.lastError); chrome.tabs.reload(tab, () => void chrome.runtime.lastError); } }
+  else chrome.tabs.create({ url: chrome.runtime.getURL('update.html') + '#wrong' + (tab ? '&tab=' + tab : '') }, () => void chrome.runtime.lastError);
+})();

@@ -2,6 +2,20 @@
 
 All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PATCH`. The userscript and the monitor are released together.
 
+## [22.29.0] - 2026-10-16
+
+### Added
+- **Update is one click for the extension (Chrome, Edge), with nothing to download or unzip by hand.** Update opens the extension's own update page next to Flightradar24. It downloads the new version's files from this repository's release, checks each against the SHA-256 the release lists (`files.json`), writes them over the old ones and deletes the old version's files the new one no longer has, touching nothing else in the folder. It then says it's done and offers **Refresh page**, which restarts the extension and loads Flightradar24 again with the new version. The first time, Chrome asks you to choose the extension's folder and allow it to be edited; it never lets an extension write files without that. Browsers that don't allow it (Brave) get the zip as before.
+- **A banner at the top of Flightradar24's map when a newer version is out**, with Update and Later, so it's seen without opening the LADD Unblock window. It says when this update is required, and shows the monitor owner's notice when there is one.
+- **An anonymous count of installs.** Each install says hello to the monitor at most every 12 hours with a random id and the version, install type, browser and system by name, and nothing else (see [PRIVACY.md](PRIVACY.md#counting-installs)). The monitor counts one person per network, so one person's browsers are not counted twice, and keeps no IP address with the count. The switch "Count this install (anonymous)" in the LADD Unblock window turns it off. The README shows the count as a badge, from the monitor's `/badge`.
+- **The monitor's dashboard is an admin panel** with five pages:
+  - Overview: health, versions, disk space, Update monitor and Restart.
+  - Users: people and installs, active per day, versions, browsers and systems.
+  - Traffic.
+  - Logs.
+  - Options: whether the monitor is public, its rate limit, counting installs, the notice shown on every map, and the lowest version still supported.
+- Tests: `unit_selfupdate` runs the whole update in Chromium, from the banner to the new version running. `unit_installs` and `unit_dash` cover the monitor's count and admin panel.
+
 ## [22.28.9] - 2026-10-15
 
 ### Fixed

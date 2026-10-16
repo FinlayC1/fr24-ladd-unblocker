@@ -90,7 +90,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     // (the hello to the monitor, 06-hello.js: exactly what it sends is in PRIVACY.md)
     ['count', 'Count this install (anonymous)', 'A random number, your version and browser, once a day - no IP kept, nothing about flights. Helps show how many people use it.']
   ];
-  let ubBtn = null, ubBar = null, ubItems = new Map(), ubNeedReload = false, ubLatest = null, ubAsking = null, ubNote = '';
+  let ubBtn = null, ubBar = null, ubItems = new Map(), ubNeedReload = false, ubLatest = null, ubAsking = null, ubNote = '', ubInstalled = '';
   const lsGet = k => { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } };
   const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* full or blocked */ } };
 
@@ -137,21 +137,42 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   function doUpdate(act) {
     const k = installKind().kind;
     if (act === 'update' && k === 'us') { window.open(UB_USERSCRIPT_URL, '_blank', 'noopener'); ubNote = 'Your userscript manager opens the new version in a tab: click Update there, then reload FR24.'; }
-    else if (act === 'update' && k === 'ext') { window.open(UB_ZIP_URL, '_blank', 'noopener'); ubNote = 'Downloading the new zip. Unzip it over your extension folder (replace the files), then click Reload extension.'; }
+    // (unpacked: the extension's own update page, in a tab next to this one - it writes the new version into the extension's
+    // folder, extension/update.js; the zip by hand only where that page cannot be opened)
+    else if (act === 'update' && k === 'ext') {
+      ubNote = 'Opening the update…';
+      extMsg({ tlSelfUpdate: true }).then(ok => {
+        if (ok) ubNote = 'Finish in the LADD Unblocker tab that opened: click Update there.';
+        else { window.open(UB_ZIP_URL, '_blank', 'noopener'); ubNote = 'Downloading the new zip. Unzip it over your extension folder (replace the files), then click Reload extension.'; }
+        renderUnblockWindow(); ubBanners();
+      });
+    }
+    // (the new version is in the folder: the extension restarts and loads this tab again - or, should it not, the page does)
+    else if (act === 'restart') { ubNote = 'Restarting with v' + ubInstalled + '…'; extMsg({ tlRestart: true }); setTimeout(() => location.reload(), 4000); }
     else if (act === 'update' && k === 'store') { ubNote = 'Asking the browser…'; extMsg({ tlUpdateCheck: true }).then(st => { ubNote = st === 'update_available' ? 'Found it: the extension restarts with it. Reload FR24 when it has.' : st === 'throttled' ? 'The browser checked recently; it installs the update by itself shortly.' : st === 'unsupported' ? 'Your browser installs the update by itself when its add-on store has it (Firefox looks about once a day).' : 'The browser has nothing newer for it yet; it installs updates by itself.'; renderUnblockWindow(); ubBanners(); }); }
     else if (act === 'reloadExt' && k === 'ext') { ubNote = 'Reloading the extension…'; extMsg({ tlReload: true }); setTimeout(() => location.reload(), 900); }
     renderUnblockWindow(); ubBanners();
+  }
+  // (the update page says when the new version is in the extension's folder: Refresh page, here and on the map's banner)
+  if (typeof TL_EXTENSION === 'boolean') {
+    try {
+      chrome.runtime.onMessage.addListener(m => {
+        if (!m || typeof m.tlUpdated !== 'string' || !/^\d+(\.\d+)*$/.test(m.tlUpdated)) return;
+        ubInstalled = m.tlUpdated; ubNote = ''; renderUnblockWindow(); ubBanners();
+      });
+    } catch (e) { /* the extension was reloaded */ }
   }
   function updatesHtml() {
     // (the newest version: GitHub's or the monitor's answer to the hello, 06-hello.js)
     const ik = installKind(), L = ubLatest, lv = latestV(), O = ubOffer(), newer = !!O.v;
     const latest = ubAsking && !lv ? '<span class="tl-muted">checking…</span>' : lv || newer ? (newer ? `<b>v${esc(O.v)}</b>` : `v${esc(lv)} <span class="tl-muted">(up to date)</span>`) : L && L.err ? `<span class="tl-warn" title="${esc(L.err)}">couldn't check</span>` : '<span class="tl-muted">not checked</span>';
     const btns = [];
-    if (newer) btns.push(`<button class="tl-ub-b" data-ub-act="update">Update to v${esc(O.v)}</button>`);
+    if (ubInstalled) btns.push('<button class="tl-ub-b" data-ub-act="restart">Refresh page</button>');
+    else if (newer) btns.push(`<button class="tl-ub-b" data-ub-act="update">Update to v${esc(O.v)}</button>`);
     else btns.push(`<button class="tl-ub-b tl-ub-b2" data-ub-act="check"${ubAsking ? ' disabled' : ''}>Check for updates</button>`);
     if (ik.kind === 'ext') btns.push('<button class="tl-ub-b tl-ub-b2" data-ub-act="reloadExt" title="Load the extension again from its folder - after replacing its files with a new version">Reload extension</button>');
-    const how = ik.kind === 'us' ? 'Update opens the new version in your userscript manager, which offers to update.' : ik.kind === 'ext' ? 'An unpacked extension cannot replace its own files: Update downloads the new zip, you unzip it over the old folder, and Reload extension loads it.' : 'Installed from a store: your browser updates it by itself.';
-    const warn = newer ? `<div class="tl-ub-alert">This version is out of date: <b>v${esc(O.v)}</b> is out, you have v${esc(VERSION)}.${O.req ? ' <b>This update is required</b>: this version is no longer supported.' : ''}</div>` : '';
+    const how = ik.kind === 'us' ? 'Update opens the new version in your userscript manager, which offers to update.' : ik.kind === 'ext' ? 'Update puts the new version into the extension\'s folder for you. The first time, Chrome asks you to choose that folder and allow it to be edited.' : 'Installed from a store: your browser updates it by itself.';
+    const warn = ubInstalled ? `<div class="tl-ub-alert">v${esc(ubInstalled)} is installed. Refresh the page to start using it.</div>` : newer ? `<div class="tl-ub-alert">This version is out of date: <b>v${esc(O.v)}</b> is out, you have v${esc(VERSION)}.${O.req ? ' <b>This update is required</b>: this version is no longer supported.' : ''}</div>` : '';
     return `${warn}<div class="tl-ub-kv"><span>Installed</span><span>v${esc(VERSION)}</span></div><div class="tl-ub-kv"><span>Latest</span><span>${latest}</span></div>
       <div class="tl-ub-kv"><span>Type</span><span>${esc(ik.name)}</span></div><div class="tl-ub-btns">${btns.join('')}</div>
       <div class="tl-ub-note">${esc(ubNote || how)} <a href="${UB_CHANGES_URL}" target="_blank" rel="noopener">What's new</a></div>`;

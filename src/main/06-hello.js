@@ -137,7 +137,8 @@
       const o = ubOffer(), L = bnLater();
       const later = !o.v || (o.req ? bnReqLater : !!(L && L.until > now() && L.until < now() + 25 * 3600e3 && !newerThan(o.v, String(L.v || ''))));
       const text = bnNote && ubNote ? esc(ubNote) : `LADD Unblocker v${esc(o.v)} is out (you have v${esc(VERSION)})${o.req ? ' - <b>this update is required</b>' : ''}`;
-      bnSet('upd', later ? '' : `<span class="tl-bn-t">${text}</span><button type="button" class="tl-bn-b" data-bn-act="update">Update</button><button type="button" class="tl-bn-b tl-bn-b2" data-bn-act="later"${o.req ? ' title="Until FR24 is loaded again"' : ' title="Hide for 24 hours"'}>Later</button>`, 'LADD Unblocker update');
+      if (ubInstalled) bnSet('upd', `<span class="tl-bn-t">LADD Unblocker <b>v${esc(ubInstalled)}</b> is installed. Refresh the page to start using it.</span><button type="button" class="tl-bn-b" data-bn-act="restart">Refresh page</button>`, 'LADD Unblocker update');
+      else bnSet('upd', later ? '' : `<span class="tl-bn-t">${text}</span><button type="button" class="tl-bn-b" data-bn-act="update">Update</button><button type="button" class="tl-bn-b tl-bn-b2" data-bn-act="later"${o.req ? ' title="Until FR24 is loaded again"' : ' title="Hide for 24 hours"'}>Later</button>`, 'LADD Unblocker update');
       const nt = String(helloAns().notice || '');
       let closed = ''; try { closed = localStorage.getItem(UB_NOTICE_KEY) || ''; } catch (e) { /* blocked */ }
       bnSet('notice', nt && closed !== nt ? `<span class="tl-bn-t">${esc(nt)}</span><button type="button" class="tl-bn-x" data-bn-act="closeNotice" aria-label="Close" title="Close">${UB_X}</button>` : '', 'LADD Unblocker notice');
@@ -151,6 +152,7 @@
     const act = t.dataset.bnAct;
     // (Update: what the window's own Update does for this kind of install - its instructions then shown here)
     if (act === 'update') { bnNote = true; doUpdate('update'); }
+    else if (act === 'restart') { doUpdate('restart'); }
     else if (act === 'later') { const o = ubOffer(); if (o.req) bnReqLater = true; else { try { localStorage.setItem(UB_LATER_KEY, JSON.stringify({ v: o.v, until: now() + 24 * 3600e3 })); } catch (e) { bnReqLater = true; } } }
     else if (act === 'closeNotice') { const nt = String(helloAns().notice || ''); try { localStorage.setItem(UB_NOTICE_KEY, nt); } catch (e) { /* blocked: closed for this page */ } if (!bnWrap) return; const el = bnWrap.querySelector('[data-tl-bn="notice"]'); if (el) el.remove(); }
     ubBanners();
