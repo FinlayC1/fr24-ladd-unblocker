@@ -537,9 +537,11 @@
     return r;
   }
   // (an airfield FR24 does not list goes to the page by its code and name only: FR24's own panel knows only its airports)
-  const routeForPage = r => { const da = r.destId ? apById(r.destId) : null; return { originId: fr24Ap(r.originId), destId: fr24Ap(r.destId), originIata: r.originIata, destIata: r.destIata, originCity: r.originCity, destCity: r.destCity, progress: r.progress, std: r.std, sta: r.sta, atd: r.atd, ata: r.ata, eta: r.eta, etd: r.etd, groundAirportId: fr24Ap(r.groundAirportId), landed: r.landed, destConf: r.destConf, destP: r.destP || 0, destReason: r.destReason || '', confirmed: !!(r.confirmed || r.landed || r.destConf === 'confirmed'), quick: !!r.quick,
+  const routeForPage = r => { const da = r.destId ? apById(r.destId) : null, oa = (r.originId && apById(r.originId)) || (r.originSite && fin(r.originSite.lat) ? r.originSite : null); return { originId: fr24Ap(r.originId), destId: fr24Ap(r.destId), originIata: r.originIata, destIata: r.destIata, originCity: r.originCity, destCity: r.destCity, progress: r.progress, std: r.std, sta: r.sta, atd: r.atd, ata: r.ata, eta: r.eta, etd: r.etd, groundAirportId: fr24Ap(r.groundAirportId), landed: r.landed, destConf: r.destConf, destP: r.destP || 0, destReason: r.destReason || '', confirmed: !!(r.confirmed || r.landed || r.destConf === 'confirmed'), quick: !!r.quick,
     // (where the destination is: a flight that goes quiet low beside it has landed, for the boards)
-    destLat: da ? da.lat : null, destLon: da ? da.lon : null, destAlt: da ? da.alt || 0 : null }; };
+    destLat: da ? da.lat : null, destLon: da ? da.lon : null, destAlt: da ? da.alt || 0 : null,
+    // (and where it took off - an airport, or a site of its own: its Playback opens FR24's playback there)
+    originLat: oa ? oa.lat : null, originLon: oa ? oa.lon : null }; };
   const boardNoted = new Map();   // flight id -> what was last kept of it for the boards
   // ---- the map's routes, shared with this browser's other FR24 tabs: an aircraft's log page shows the flight in
   // progress as the map has it, the moment it is known - not worked out again from scratch (M-ARNZ's log said "Barrow
@@ -977,7 +979,9 @@
       owner: null, airline: { name: shownOwner(rec, rec.cs) || (rec.mil ? 'Military' : 'Private owner'), code: { iata: null, icao: rec.operatorIcao || null }, short: rec.operatorName || rec.owner || 'Private owner' },
       airport: { origin: airportObj(from), destination: airportObj(to), real: null },
       time: { scheduled: { departure: null, arrival: null }, real: { departure: l.tStart, arrival: landed ? l.tEnd : null }, estimated: { departure: null, arrival: liveNow ? (l.eta || null) : null }, other: { eta: liveNow ? l.eta : l.tEnd, updated: l.tEnd, duration: landed ? l.tEnd - l.tStart : null } },
-      __tlTrace: !liveNow && rec.hex ? replayUrl(rec.hex, l) : ''    // the page's "Playback" opens this instead of FR24's
+      // (the page's "Playback" opens FR24's own map playback of the leg instead of FR24's flight, which it never recorded:
+      // at its take-off, over the field it left - or where it was first heard)
+      __tlPb: l.tStart > 0 ? { t: l.tStart, lat: from && fin(from.lat) ? from.lat : fin(l.startLat) ? l.startLat : null, lon: from && fin(from.lon) ? from.lon : fin(l.startLon) ? l.startLon : null, z: from ? 10 : 9 } : null
     };
   }
   const histReqs = new Map();
