@@ -31,22 +31,35 @@
 //  /seed?hex=a,b[&front=1]       blocked aircraft the userscript knows: tracked from now on, their last days rebuilt
 //  /parked?ap=&type=             aircraft of a type whose last flight ended at that airport (14 days): parked there since
 //  /area?lat=&lon=               a place the userscript is looking at: its traffic polled too, for three days
+//  POST /hello                   an install saying it is there - counted anonymously (installs.cjs); the newest version,
+//                                the owner's notice and minimum version back. /badge: the people counted, for shields.io
+// And the owner (the secret): /dash - the admin panel - with /stats, /admin/installs, /admin/options, /admin/log,
+// /admin/update, /admin/restart
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
+const crypto = require('crypto');
 const DIR = __dirname, DATA = process.env.MON_DATA || path.join(DIR, 'data'), STORE = process.env.MON_STORE || path.join(DIR, 'store');
 const PORT = +(process.env.PORT || process.env.MON_PORT || 47524), HOST = process.env.MON_HOST || '127.0.0.1';
 // (on a server: MON_TOKEN is the owner's secret - header X-Monitor-Token. A public monitor (monitor.json "public", the
 // default) answers every copy of the script without it, the dashboard's numbers and the full answers only with it; each
 // address is held to MON_RATE requests a minute (300 by default when public). Not public: every request needs the secret)
 const TOKEN = process.env.MON_TOKEN || '', hits = new Map();
+// (the secret as sent, against TOKEN: in constant time, both hashed first so not even its length shows - every comparison
+// goes through here; no secret set: never)
+const TOKEN_H = crypto.createHash('sha256').update(TOKEN).digest();
+const tokenOk = t => !!TOKEN && typeof t === 'string' && crypto.timingSafeEqual(crypto.createHash('sha256').update(t).digest(), TOKEN_H);
 const limited = ip => { if (!RATE) return false; const t = Math.floor(Date.now() / 60000), h = hits.get(ip); if (!h || h.t !== t) { hits.set(ip, { t, n: 1 }); if (hits.size > 5000) hits.clear(); return false; } return ++h.n > RATE; };
 // laddEvery/milEvery/piaEvery/areaEvery/hexEvery: seconds between polls; apiPerMin: adsb.lol API requests a minute at most
 // (all of them together); liveMaxAge: seconds an aircraft stays in /live after its last position; closeDelayH: hours after
 // a day ends before its flights are rebuilt from adsb.lol's day traces (published with some delay); fullGap: the longest
 // silence (s) of the lists in a day for it to count as watched throughout
 const CFG = Object.assign({ areas: [[53.8, -2.6, 250]], laddEvery: 10, milEvery: 30, piaEvery: 120, areaEvery: 120, hexEvery: 30, coldEvery: 600, hotWindow: 2700, hexBatch: 100, backWorkers: 3, userAreas: 8, apiPerMin: 20, liveMaxAge: 300, closeDelayH: 3, fullGap: 200, apiWindowMs: 60000, openskyEvery: 900, adsbxDaily: 150, adsbxKey: process.env.MON_ADSBX_KEY || '', fr24Scan: true, fr24Every: 120, fr24Gap: 400, lookupRadius: 220, ident: {}, dest: {}, public: true, rate: 300, crowdNeed: 2, nearPerMin: 30, telMax: 30000, trackDays: 90, learnDays: 90 }, (() => { try { return JSON.parse(fs.readFileSync(path.join(DIR, 'monitor.json'), 'utf8')); } catch (e) { return {}; } })());
-const PUBLIC = process.env.MON_PUBLIC ? process.env.MON_PUBLIC !== '0' : CFG.public !== false, RATE = +(process.env.MON_RATE || 0) || (PUBLIC ? +CFG.rate || 0 : 0);
+// (PUBLIC0 / RATE_ENV: as started; PUBLIC / RATE: as now - the owner's options (/admin/options, applyOptions) may change
+// both while it runs, and every use reads them as they are at the time)
+const PUBLIC0 = process.env.MON_PUBLIC ? process.env.MON_PUBLIC !== '0' : CFG.public !== false, RATE_ENV = +(process.env.MON_RATE || 0) || 0;
+const rateFor = pub => RATE_ENV || (pub ? +CFG.rate || 0 : 0);
+let PUBLIC = PUBLIC0, RATE = rateFor(PUBLIC0);
 const { createRouteEngine } = require(fs.existsSync(path.join(DIR, 'engine.js')) ? path.join(DIR, 'engine.js') : '../src/engine.js');
 const E = createRouteEngine();
 const FR = require('./fr24.cjs'), { createIdent } = require('./ident.cjs'), { createDest } = require('./dest.cjs'), { createOwners } = require('./owners.cjs');
@@ -972,6 +985,8 @@ function work(final) {
   // (the tracks: written every ten minutes - a day's file is a few MB - and on stop; the old days removed once a day)
   if (final || nowS - tracksSaved >= 600) { tracksSaved = nowS; tracks.save(); }
   if (tracksPruned !== dayOf(nowS)) { tracksPruned = dayOf(nowS); tracks.prune(nowS); }
+  // (the installs counted: written at most once a minute when changed - its own timer too - and on stop)
+  try { installs.save(final); } catch (e) { log('installs', String(e && e.message || e)); }
   if (!final) learnedDue(nowS);
 }
 // (a place the userscript is looking at, to the nearest degree: the most recent few polled with the default areas)
@@ -1228,6 +1243,9 @@ function dashStats() {
   const lastMin = (key, v) => recent.filter(r => r[key] === v).length;
   return {
     uptimeS: process.uptime(), ver: MON_VER, commit: MON_COMMIT, controls: TOKEN ? controls() : null,
+    // (the installs counted, in short - /admin/installs has the rest; the versions; the store on disk)
+    installs: (s => ({ people: s.people, installs: s.installs, active: s.active, outdated: s.outdated, counting: opts.counting }))(instSummary()),
+    versions: verInfo(), disk: diskNow(), options: { public: PUBLIC, rate: RATE, counting: opts.counting, notice: !!opts.notice, minVer: opts.minVer },
     mon: monStatus(),
     srv: { rss: mem.rss, heap: mem.heapUsed, totalMem: os.totalmem(), freeMem: os.freemem(), load: os.loadavg(), cpus: os.cpus().length },
     req: { total: reqTotals.total, lastMin: recent.length, clients: byClient.size, unauthorized: reqTotals.unauthorized, limited: reqTotals.limited, errors: reqTotals.errors },
@@ -1251,8 +1269,99 @@ const controls = () => ({ update: CAN_DEPLOY, restart: UNDER_SYSTEMD });
 function deployLogTail() {
   try { const st = fs.statSync(DEPLOY_LOG); const txt = fs.readFileSync(DEPLOY_LOG, 'utf8'); return { at: st.mtimeMs, text: scrub(txt.split('\n').slice(-40).join('\n')).slice(-6000) }; } catch (e) { return null; }
 }
-function adminAnswer(p, method, q) {
+// ---- installs counted (POST /hello - installs.cjs), the owner's options, the newest version, the store's size ---------
+const INST = require('./installs.cjs');
+const installs = INST.createInstalls({ store: STORE });
+// The owner's options (GET / POST /admin/options), kept in STORE/admin-options.json: notice - a word to every copy of the
+// script (500 characters at most); minVer - the oldest version it should still run ('' none); counting - installs counted
+// (off: /hello still answers, nothing is kept); public / rate - over MON_PUBLIC / MON_RATE / monitor.json while set (null:
+// back to those)
+const OPT_FILE = path.join(STORE, 'admin-options.json');
+const opts = { notice: '', minVer: '', counting: true };
+function applyOptions() { PUBLIC = typeof opts.public === 'boolean' ? opts.public : PUBLIC0; RATE = Number.isInteger(opts.rate) ? opts.rate : rateFor(PUBLIC); }
+const optionsOut = () => ({ notice: opts.notice, minVer: opts.minVer, counting: opts.counting, public: PUBLIC, rate: RATE, startup: { public: PUBLIC0, rate: rateFor(PUBLIC0) }, overridden: { public: 'public' in opts, rate: 'rate' in opts } });
+// (a change: checked whole before any of it is taken - a string: why it was refused)
+function optionsSet(b, save) {
+  if (!b || typeof b !== 'object' || Array.isArray(b)) return 'a JSON object of options';
+  const o = {};
+  for (const [k, v] of Object.entries(b)) {
+    if (k === 'notice') { if (typeof v !== 'string' || v.length > 500) return 'notice: text of 500 characters at most'; o.notice = v.replace(/[\x00-\x09\x0b-\x1f\x7f]/g, '').trim(); }
+    else if (k === 'minVer') { if (typeof v !== 'string' || (v && !/^\d{1,4}\.\d{1,4}\.\d{1,6}$/.test(v))) return 'minVer: empty or a version x.y.z'; o.minVer = v; }
+    else if (k === 'counting') { if (typeof v !== 'boolean') return 'counting: true or false'; o.counting = v; }
+    else if (k === 'public') { if (v !== null && typeof v !== 'boolean') return 'public: true, false or null'; o.public = v; }
+    else if (k === 'rate') { if (v !== null && !(Number.isInteger(v) && v >= 0 && v <= 10000)) return 'rate: a whole number from 0 to 10000, or null'; o.rate = v; }
+    else return 'no option ' + String(k).slice(0, 40);
+  }
+  for (const [k, v] of Object.entries(o)) if (v === null) delete opts[k]; else opts[k] = v;
+  applyOptions();
+  if (save !== false) { fs.mkdirSync(STORE, { recursive: true }); fs.writeFileSync(OPT_FILE + '.tmp', JSON.stringify(opts, null, 1)); fs.renameSync(OPT_FILE + '.tmp', OPT_FILE); }
+  return null;
+}
+function optionsLoad() {
+  let o; try { o = JSON.parse(fs.readFileSync(OPT_FILE, 'utf8')); } catch (e) { return false; }
+  const err = optionsSet(o, false); if (err) log('admin-options.json not taken:', err);
+  return !err;
+}
+// (the newest version: the repository's package.json on GitHub, at start and hourly; while it cannot be read, the last one
+// read - or this monitor's own)
+const VER_URL = 'https://raw.githubusercontent.com/FinlayC1/fr24-ladd-unblocker/main/package.json';
+const latest = { ver: '', at: 0, err: '' };
+const latestVer = () => latest.ver || MON_VER;
+async function latestCheck() {
+  try {
+    const r = await global.fetch(VER_URL, { headers: { 'User-Agent': 'fr24-ladd-unblocker-monitor' }, signal: AbortSignal.timeout(15000) });
+    if (r.status !== 200) throw new Error('HTTP ' + r.status);
+    const v = String(JSON.parse(await r.text()).version || '');
+    if (!/^\d{1,4}\.\d{1,4}\.\d{1,6}$/.test(v)) throw new Error('no version in it');
+    Object.assign(latest, { ver: v, at: Date.now(), err: '' });
+  } catch (e) { latest.err = String(e && e.message || e).slice(0, 200); }
+  instCache = null;
+  return latestVer();
+}
+const verInfo = () => ({ monitor: MON_VER, latest: latestVer(), fromGitHub: latest.at || null, err: latest.err, monitorBehind: !!MON_VER && INST.cmpVer(MON_VER, latestVer()) < 0 });
+// (what the store takes on disk - walked at most every 10 minutes, in the background - and the disk's free space)
+const disk = { at: 0, bytes: 0, files: 0, free: null, total: null, busy: false };
+async function diskScan() {
+  if (disk.busy) return; disk.busy = true;
+  let bytes = 0, files = 0;
+  const walk = async d => { let es; try { es = await fs.promises.readdir(d, { withFileTypes: true }); } catch (e) { return; } for (const e of es) { const p = path.join(d, e.name); if (e.isDirectory()) await walk(p); else if (e.isFile()) { try { bytes += (await fs.promises.stat(p)).size; files++; } catch (e2) { /* gone */ } } } };
+  try {
+    await walk(STORE);
+    if (fs.promises.statfs) { try { const s = await fs.promises.statfs(fs.existsSync(STORE) ? STORE : DIR); disk.free = s.bavail * s.bsize; disk.total = s.blocks * s.bsize; } catch (e) { /* not here */ } }
+    Object.assign(disk, { at: Date.now(), bytes, files });
+  } finally { disk.busy = false; }
+}
+const diskNow = () => { if (Date.now() - disk.at > 600000) diskScan().catch(() => {}); return disk.at ? { bytes: disk.bytes, files: disk.files, free: disk.free, total: disk.total, at: disk.at } : null; };
+// (the counts, worked out at most every 15 s - the dashboard asks every 5 - and again after a hello or a new `latest`)
+let instCache = null;
+const instSummary = () => { const now = Date.now(); if (!instCache || now - instCache.at > 15000) instCache = { at: now, s: installs.summary(now, latestVer()) }; return instCache.s; };
+// GET /badge: shields.io's endpoint format - the people counted, worked out every 10 minutes
+let badgeOut = null;
+function badge() {
+  if (!badgeOut || Date.now() - badgeOut.at > 600000) badgeOut = { at: Date.now(), body: JSON.stringify({ schemaVersion: 1, label: 'users', message: String(new Set(installs.groups().values()).size), color: '1f6feb' }) };
+  return badgeOut.body;
+}
+// POST /hello: one install saying it is there (installs.cjs) - kept unless counting is off; the answer: the newest version,
+// the owner's notice and the oldest version it should run. null: refused. (Never logged: neither the hello nor the address)
+function helloAnswer(d, ip) {
+  const h = INST.valid(d); if (!h) return null;
+  if (opts.counting) { try { installs.hello(h, ip, Date.now()); instCache = null; } catch (e) { log('installs', String(e && e.message || e)); } }
+  return { ok: 1, latest: latestVer(), notice: opts.notice, minVer: opts.minVer };
+}
+// (body: what a POST sent, as text - read for /admin/options only)
+function adminAnswer(p, method, q, body) {
   if (p === '/admin/log') return { lines: logRing.slice(-Math.min(300, Math.max(1, +q('n') || 80))), deploy: deployLogTail(), controls: controls() };
+  // (the installs counted: the counts, and the 500 most recently seen - ids cut short, no address, no network)
+  if (p === '/admin/installs' && method === 'GET') return Object.assign({}, instSummary(), { counting: opts.counting, versions: verInfo(), disk: diskNow(), recent: installs.recent(500) });
+  if (p === '/admin/options') {
+    if (method === 'GET') return optionsOut();
+    if (method !== 'POST') return null;
+    let b; try { b = JSON.parse(body || ''); } catch (e) { return { _http: 400, ok: false, err: 'not JSON' }; }
+    const err = optionsSet(b); if (err) return { _http: 400, ok: false, err };
+    log('options changed from the dashboard:', Object.keys(b).join(', '));
+    instCache = null;
+    return Object.assign({ ok: true }, optionsOut());
+  }
   if (method !== 'POST') return null;
   if (p === '/admin/restart') {
     if (!UNDER_SYSTEMD) return { ok: false, err: 'not run by systemd here: stopping it would leave it stopped' };
@@ -1318,27 +1427,42 @@ function serve() {
     const u = new URL(req.url, 'http://x'), nowS = Date.now() / 1000, t0 = Date.now();
     let body = null;
     const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
-    res.on('finish', () => { if (u.pathname !== '/dash' && !(u.pathname === '/stats' && res.statusCode === 200)) noteReq(ip, u.pathname + u.search, res.statusCode, Date.now() - t0); });
+    // (the owner's panel asking for its own pages is not traffic)
+    res.on('finish', () => { if (u.pathname !== '/dash' && !((u.pathname === '/stats' || (u.pathname.startsWith('/admin/') && req.method === 'GET')) && res.statusCode === 200)) noteReq(ip, u.pathname + u.search, res.statusCode, Date.now() - t0); });
     // (the page itself holds no data - it asks for the numbers with the secret the visitor types in)
     if (u.pathname === '/dash') { try { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(fs.readFileSync(path.join(DIR, 'dash.html'))); } catch (e) { res.writeHead(404); res.end(); } return; }
     // (the owner: the secret, or no secret set; anyone else only on a public monitor, and not the dashboard's numbers)
-    const admin = !TOKEN || req.headers['x-monitor-token'] === TOKEN, ctx = { admin, ip };
+    const admin = !TOKEN || tokenOk(req.headers['x-monitor-token']), ctx = { admin, ip };
+    // (the users badge - shields.io's endpoint format, for a README: open to anyone, any site, even on a private monitor)
+    if (u.pathname === '/badge' && req.method === 'GET') {
+      if (!admin && limited(ip)) { res.writeHead(429, { 'Retry-After': '30' }); res.end(); return; }
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=600', 'Access-Control-Allow-Origin': '*' }); res.end(badge()); return;
+    }
     if (!admin && (!PUBLIC || u.pathname === '/stats')) { res.writeHead(401); res.end(); return; }
     if (!admin && limited(ip)) { res.writeHead(429, { 'Retry-After': '30' }); res.end(); return; }
     // (the owner's controls: only with the secret - a monitor with none set offers none)
     if (u.pathname.startsWith('/admin/')) {
-      if (!TOKEN || req.headers['x-monitor-token'] !== TOKEN) { res.writeHead(401); res.end(); return; }
-      const send = b => { if (res.headersSent) return; if (!b) { res.writeHead(404); res.end(); return; } res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(b)); };
-      req.resume();
-      try { Promise.resolve(adminAnswer(u.pathname, req.method, k => u.searchParams.get(k))).then(send, e => { if (!res.headersSent) { res.writeHead(500); res.end(); } log('admin', e); }); } catch (e) { res.writeHead(500); res.end(); }
+      if (!tokenOk(req.headers['x-monitor-token'])) { res.writeHead(401); res.end(); return; }
+      const send = b => { if (res.headersSent) return; if (!b) { res.writeHead(404); res.end(); return; } const code = b._http || 200; delete b._http; res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(b)); };
+      const go = body => { try { Promise.resolve(adminAnswer(u.pathname, req.method, k => u.searchParams.get(k), body)).then(send, e => { if (!res.headersSent) { res.writeHead(500); res.end(); } log('admin', e); }); } catch (e) { res.writeHead(500); res.end(); } };
+      if (req.method !== 'POST') { req.resume(); go(null); return; }
+      // (a POST's body: read - the options - up to 64 KB)
+      const parts = []; let size = 0;
+      req.on('data', c => { size += c.length; if (size > 65536) { if (!res.headersSent) { res.writeHead(413); res.end(); } req.destroy(); } else parts.push(c); });
+      req.on('end', () => { if (!res.headersSent) go(Buffer.concat(parts).toString('utf8')); });
       return;
     }
     if (req.method === 'POST') {
-      if (u.pathname !== '/report' && u.pathname !== '/pbmatch') { res.writeHead(404); res.end(); return; }
-      const parts = []; let size = 0;
-      req.on('data', c => { size += c.length; if (size > 4e6) { if (!res.headersSent) { res.writeHead(413); res.end(); } req.destroy(); } else parts.push(c); });
+      if (u.pathname !== '/report' && u.pathname !== '/pbmatch' && u.pathname !== '/hello') { res.writeHead(404); res.end(); return; }
+      const parts = [], cap = u.pathname === '/hello' ? 4096 : 4e6; let size = 0;
+      req.on('data', c => { size += c.length; if (size > cap) { if (!res.headersSent) { res.writeHead(413); res.end(); } req.destroy(); } else parts.push(c); });
       req.on('end', () => {
         if (res.headersSent) return;
+        if (u.pathname === '/hello') {
+          let h = null; try { h = helloAnswer(JSON.parse(Buffer.concat(parts).toString('utf8')), ip); } catch (e) { h = null; }
+          if (!h) { res.writeHead(400); res.end(); return; }
+          res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(h)); return;
+        }
         let out; try { const d = JSON.parse(Buffer.concat(parts).toString('utf8') || '{}'); out = u.pathname === '/pbmatch' ? { v: 1, t: +d.t || 0, list: pbMatch(+d.t || 0, d.f) } : report(d, Date.now(), ctx); } catch (e) { res.writeHead(400); res.end(); return; }
         res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(out));
       });
@@ -1366,6 +1490,12 @@ if (require.main === module) {
   learnedLoad();
   const namesKept = names.load(nowS); if (namesKept) log('names of', namesKept, 'FR24 flights of the last two weeks, for playback');
   for (const [id, R] of ident.ids) names.add(id, { hex: R.hex, reg: R.reg, type: R.type, cs: R.cs, flags: R.flags }, R.at || nowS);
+  // (the owner's options over the startup settings; the installs counted; the newest version, now and hourly)
+  if (optionsLoad()) log('options', JSON.stringify({ public: PUBLIC, rate: RATE, counting: opts.counting, minVer: opts.minVer, notice: !!opts.notice }));
+  const counted = installs.load(); if (counted) log('installs counted:', counted);
+  latestCheck().then(v => log('newest version', v + (latest.err ? ' (GitHub not read: ' + latest.err + ')' : '')));
+  setInterval(latestCheck, 3600e3);
+  setInterval(() => { try { installs.save(); } catch (e) { log('installs', String(e && e.message || e)); } }, 60000);
   serve();
   // (blocked aircraft of flights kept before this version kept a state file: from the flights)
   for (const m of legs.values()) for (const l of m.values()) if (l.ladd && !blocked.has(l.hex)) blocked.set(l.hex, { reg: l.reg || '', type: l.type || '', at: Math.round(l.tStart), heard: Math.round(l.tEnd || 0) });
@@ -1389,5 +1519,5 @@ if (require.main === module) {
   ownersLoop();
   setInterval(() => { wx.pump().catch(e => log('wx', String(e))); }, 2000);
 }
-module.exports = { adminAnswer, ctl, logRing, log, MON_VER, learnCheck, learnFromCrowd, crowdLearnSave, crowdRows, LC, tracks, waiting, waitRound, waitLive, waitNamed, waitClaims, WAIT, saveWaiting, loadWaiting, pbMatch, learnedBuild, learnedDue, learnedLoad, learnedRef: () => learnedOut, liveBusy, backWaits, E, CFG, loadEngine, ingest, buildLegs, fr24Legs, fr24Leg, F24ref: () => F24, owners, ownersLoop, APT, legRunways, names, nearAnswer, telAnswer, tel, wx, pbNames, PUBLIC, RATE, limited, wakeQuiet, parkedAt, boardLegs, flightsOfCs, lastHeard, legs, ac, backfillOne, backQ, blocked, markBlocked, seed, gapFill, addArea, userAreas,
+module.exports = { adminAnswer, ctl, logRing, log, MON_VER, learnCheck, learnFromCrowd, crowdLearnSave, crowdRows, LC, tracks, waiting, waitRound, waitLive, waitNamed, waitClaims, WAIT, saveWaiting, loadWaiting, pbMatch, learnedBuild, learnedDue, learnedLoad, learnedRef: () => learnedOut, liveBusy, backWaits, E, CFG, loadEngine, ingest, buildLegs, fr24Legs, fr24Leg, F24ref: () => F24, owners, ownersLoop, APT, legRunways, names, nearAnswer, telAnswer, tel, wx, pbNames, get PUBLIC() { return PUBLIC; }, get RATE() { return RATE; }, limited, tokenOk, installs, opts, optionsSet, optionsLoad, latestCheck, latestVer, helloAnswer, badge, wakeQuiet, parkedAt, boardLegs, flightsOfCs, lastHeard, legs, ac, backfillOne, backQ, blocked, markBlocked, seed, gapFill, addArea, userAreas,
   serve, fr24, ident, dest, F24, report, identRound, fr24Round, saveIdent, loadIdent, histUnknown, learnSince, learnWrite, diskLegs, KEEP_LADD, save, loadStore, dirtyDays, pollOpenSky, adsbxUse, live, liveList, answer, step, P, piaState, apiGet, gate, stats, lastOk, noteWatch, watch, watchedAll, flew, closeDays, histQ, histPend, histOne, histDay, histOf, histRead, nextHist, saveState, loadState, lastW, get closed() { return closed; }, set closed(v) { closed = v; }, pause };
