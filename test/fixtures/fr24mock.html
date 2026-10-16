@@ -129,7 +129,7 @@ const app = createApp({
     <nav v-else class="bar"><div v-for="b in BARS" :key="b" class="item" :data-testid="'map-bar__' + b.toLowerCase()"><button type="button" :class="['bar-btn', S.open===b ? 'is-on' : '']" style="height:100%" @click="toggle(b)"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="8"/></svg><span class="bar-label">{{ b }}</span></button></div></nav>
     <div v-if="S.pbw" class="pbw" data-testid="playback-widget">Playback</div>
     <div v-if="PB" class="pbx">
-      <div data-testid="aircraft-panel" class="acp"><div data-testid="aircraft-panel__header__callsign">{{ S.cs }}</div>
+      <div data-testid="aircraft-panel" class="pbp"><div data-testid="aircraft-panel__header__callsign">{{ S.cs }}</div>
         <div class="fa"><button type="button" data-testid="flight-actions__action-route">Route</button><button type="button" id="pPanel" data-testid="flight-actions__action-playback" @click="S.went.push('log:panel')"><svg width="12" height="12"></svg><span>Playback</span></button></div>
         <a data-testid="aircraft-panel__recent-flights__more-flights-button" href="/data/aircraft/m-arnz" @click.prevent="S.went.push('more')">More M-ARNZ flights</a></div>
       <div data-testid="airport-panel"><ul><li v-for="r in S.rows" :key="r.id" :id="'airport_schedule_' + r.id"><div :data-testid="'airport-panel__schedules__flight__' + r.id">{{ r.cs }}</div>
