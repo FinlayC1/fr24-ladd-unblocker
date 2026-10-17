@@ -73,7 +73,7 @@
   // own trail, then whatever the feed has shown us.
   function trailFor(id, hex, pos) {
     const tr = fr24Trail.get(id), ft = feedTrail.get(id) || [], td = hex ? todayCache.get(hex) : null;
-    let out = [], cut = false, gapFrom = null;
+    let out = [], cut = false, gapFrom = null, gapInfo = null;
     if (td && td.legs && td.legs.length && pos) {
       const leg = td.legs.filter(l => l.start.t <= pos.t + 60).pop();
       const legLast = leg ? (leg.pts.length ? leg.pts[leg.pts.length - 1] : leg.start) : null;
@@ -85,7 +85,7 @@
         // (a later leg of the day after a landing seen - on the ground, a touch-and-go, down into a hole in coverage and up
         // out of it: whatever came before is another leg)
         const pl = td.legs[td.legs.indexOf(leg) - 1]; cut = !!pl && ['ground', 'touch', 'gap-land'].includes(pl.how);
-        if (pl && pl.how === 'gap-land') gapFrom = pl.end;
+        if (pl && pl.how === 'gap-land') { gapFrom = pl.end; gapInfo = pl.gapInfo || null; }
       }
     }
     const lastT = out.length ? out[out.length - 1].t : 0;
@@ -119,35 +119,24 @@
     if (tr && tr.first && fin(tr.first.lat) && out.length && out[0].t < tr.first.t - 300 && (tr.first.alt == null || tr.first.alt < 4000)) {
       const fa = ENGINE.placeAt(tr.first.lat, tr.first.lon, 8, 3), agl = fa && tr.first.alt != null ? tr.first.alt - (fa.airport.alt || 0) : 0;
       const nxt = tr.pts && tr.pts.find(p => p.t > tr.first.t + 20 && p.t < tr.first.t + 180), climbing = !!nxt && nxt.alt != null && tr.first.alt != null && nxt.alt > tr.first.alt + 100;
-      if (fa && (agl < 1000 || (agl < 3000 && climbing && fa.dist < 8))) { out = out.filter(p => p.t >= tr.first.t - 5); cut = true; gapFrom = null; }
+      if (fa && (agl < 1000 || (agl < 3000 && climbing && fa.dist < 8))) { out = out.filter(p => p.t >= tr.first.t - 5); cut = true; gapFrom = null; gapInfo = null; }
     }
     // This leg only. FR24 keeps one flight id through a quick turnaround, and its trail - or the older points put in
     // front - can hold the previous leg: M-ARNZ, just airborne out of Barrow, was still "Farnborough -> Barrow, 100%".
     // The track starts again at the last take-off (on the ground, then airborne) or after a gap in which it came down.
     // (or a gap it cannot have flown through: 20 minutes and more at under 150 km/h on average - it was on the ground
     // somewhere in between; helicopters, which hover, only after 40)
-    const rr = live.get(id) || pubRecs.get(id), cls1 = rr ? ENGINE.classify(acOf(rr)) : '', heliT = cls1 === 'heli', patrolT = cls1 === 'fighter' || cls1 === 'milheavy';
-    for (let i = out.length - 2; i >= 0; i--) {
-      const a = out[i], b2 = out[i + 1], gapS = b2.t - a.t;
-      const slowGap = !a.gnd && ((!patrolT && ENGINE.downAndUp(out, i + 1)) || (gapS > (heliT ? 2400 : 1200) && !(a.alt > 15000 && b2.alt > 15000) && dist(a.lat, a.lon, b2.lat, b2.lon) / (gapS / 3600) < 150));
-      const gapLanding = slowGap || (gapS > 900 && ((a.alt != null && a.alt < 3000) || (b2.alt != null && b2.alt < 3000)) && !a.gnd);
-      // (a touch-and-go or stop-and-go in a local flight - three minutes down at most, where it has been flying around
-      // since it last stood still - is circuits, one flight: it goes on further back)
-      if (a.gnd && !b2.gnd && !gapLanding && !heliT) {
-        let j = i; while (j > 0 && out[j - 1].gnd && a.t - out[j - 1].t <= 600) j--;
-        let k = j - 1; while (k > 0 && !out[k].gnd) k--;
-        const before = out[Math.max(0, k)];
-        // (a stop-and-go with a few minutes on the runway, a trainer's full stop and taxi back - seven minutes - is still the
-        // same session of circuits: G-BOIR at Sleap, its trail cut at each one, never had laps enough to be "in the circuit")
-        if (j > 0 && a.t - out[j].t <= 420 && before && dist(before.lat, before.lon, a.lat, a.lon) < 15) { i = j; continue; }
-      }
-      if ((a.gnd && !b2.gnd) || gapLanding) { if (i > 0 || gapLanding) { out = out.slice(gapLanding ? i + 1 : i); cut = true; gapFrom = gapLanding ? a : null; } break; }
-    }
+    const rr = live.get(id) || pubRecs.get(id), cls1 = rr ? ENGINE.classify(acOf(rr)) : '';
+    const cl = ENGINE.currentLeg(out, { heli: cls1 === 'heli', patrol: cls1 === 'fighter' || cls1 === 'milheavy' });
+    if (cl.cut) { out = cl.pts; cut = true; gapFrom = cl.gapFrom; gapInfo = cl.gapInfo; }
     const thin = []; for (const p of out) if (!thin.length || p.t - thin[thin.length - 1].t >= 15) thin.push(p);
     thin.cut = cut;   // (the track was cut at a landing: whatever came before is another leg)
     // (gone quiet and heard again at the very spot, low and slow both times: it stood there - its take-off was from there)
     if (thin.length && !thin[0].gnd && gapFrom && fin(gapFrom.lat) && dist(gapFrom.lat, gapFrom.lon, thin[0].lat, thin[0].lon) < 0.5 && fin(thin[0].alt) && thin[0].alt < 600 && !(thin[0].gs > 30) && fin(gapFrom.alt) && gapFrom.alt < 600) { thin[0] = Object.assign({}, thin[0], { gnd: true }); gapFrom = null; }
-    thin.gapFrom = thin.length && thin[0].gnd ? null : gapFrom;   // (... one out of coverage: where it was last seen before)
+    thin.gapFrom = thin.length && !thin[0].gnd && gapFrom && gapFrom.t < thin[0].t ? gapFrom : null;   // (... one out of coverage: where it was last seen before - and before this track began, not inside it)
+    // (and what was seen either side of that hole: going down into it, climbing out of it - from this track's first points,
+    // which are not always the ones the leg was found climbing out in)
+    thin.gapInfo = thin.gapFrom && thin.length ? Object.assign({}, gapInfo, { bClimb: ENGINE.gapEnds([thin.gapFrom].concat(thin), 1).bClimb, gap: thin[0].t - thin.gapFrom.t }) : null;
     return thin;
   }
   // ETA from distance, phase and speed: cruise at the current speed, then a slower descent and approach.
@@ -265,7 +254,7 @@
     // (no departure seen - or only its log's last landing: it came down into a hole in coverage and climbed out of it,
     // so it took off from the field that fits both ends, a few minutes before it was seen again)
     if ((!o0 || !o0.airport || o0.conf === 'history') && trail.gapFrom && trail[0] && !heliSlow0) {
-      const g = ENGINE.landingInGap(trail.gapFrom, trail[0], { cls: ENGINE.classify(ac), type: ac.type });
+      const g = ENGINE.landingInGap(trail.gapFrom, trail[0], Object.assign({ cls: ENGINE.classify(ac), type: ac.type }, trail.gapInfo));
       if (g) { o0 = { airport: g.airport, conf: 'low', note: `took off from ${apCode(g.airport)}, out of ADS-B coverage`, departedAt: Math.round(trail[0].t - g.db / 500 * 3600 - 120) }; }
     }
     // (a take-off it cannot have made: from there at that time it could not be where it is now, at any speed it has
@@ -274,6 +263,11 @@
     const vMax = Math.max(100, fin(pos.gs) ? pos.gs : 0, ...trail.map(p => fin(p.gs) && p.gs < 700 ? p.gs : 0)) * 1.852 * 1.5;
     const couldHave = o => !o || !o.airport || !(o.departedAt > 0) || pos.t <= o.departedAt || ENGINE.dist(o.airport.lat, o.airport.lon, pos.lat, pos.lon) <= 30 + vMax * (pos.t - o.departedAt) / 3600;
     if (rec0 && rec0.origin && rec0.origin.id && !couldHave({ airport: apById(rec0.origin.id), departedAt: rec0.origin.departedAt })) rec0.origin = null;
+    // (or one kept from a flight before this one: before the aircraft was last heard ahead of the hole this track began
+    // after, or during a flight of its log that was over before the track began - N6012C's Hanoi, kept for the id that went
+    // on to fly from Baku)
+    const earlier = t => t > 0 && ((trail.gapFrom && t < trail.gapFrom.t - 300) || hist.some(l => t > l.tStart - 600 && t < l.tEnd));
+    if (rec0 && rec0.origin && earlier(rec0.origin.departedAt)) rec0.origin = null;
     const f0 = trail[0] || pos, unseen = { airport: null, conf: '', note: fin(f0.alt) ? `first seen at ${f0.alt >= 18000 ? 'FL' + Math.round(f0.alt / 100) : Math.round(f0.alt) + ' ft'}` : 'first seen airborne', departedAt: 0 };
     let origin = rememberOrigin(rec0, couldHave(o0) ? o0 : unseen, trail[0], !!trail.cut);
     if (!couldHave(origin)) origin = unseen;
@@ -519,12 +513,20 @@
       // another browser's, kept over this one's own Linate / Malpensa / Turin)
       const ca0 = cr.d ? apById(cr.d) : null;
       const ca = ca0 && !crowdContradicted(ca0, Object.assign({}, cr, { sure: cr.by === 2 }), pos, trail, origin && origin.airport, elapsedMin, ac.mil && !/^(bizjet|heavybiz)$/.test(cls) ? 'milheavy' : cls) ? ca0 : null;
-      if (ca && (cr.by === 2 || (!r.destId && !r.destSite) || (r.destP || 0) + 10 < cr.p)) {
+      // (22.30.2) This browser's own answer stands, whatever odds the other put on its own, when it has what an answer takes
+      // - the aircraft's own log, or the take-off seen on the ground: the same as it sends the monitor, so the answers the
+      // browsers hand each other are ones worked out with the evidence. N6012C's panel said "worked out by another
+      // browser" over its own: wrong, with the departure that came with it. The other's fills what this one has none for,
+      // a panel opened before its own log is in, and a destination confirmed there still stands over a guess of its own
+      const informed = r.legCount > 0 || r.originConf === 'ground';
+      if (ca && (cr.by === 2 || (!r.destId && !r.destSite) || (!informed && (r.destP || 0) + 10 < cr.p))) {
         setD(ca, cr.by === 2 ? 'confirmed' : CONF_OF(cr.p / 100), cr.by === 2 ? 'confirmed in another browser' : 'worked out by another browser');
         r.destP = cr.by === 2 ? 100 : Math.min(99, cr.p); r.destSite = null; r.alternatives = (r.alternatives || []).filter(a => a.iata !== apCode(ca)); r.crowdD = true;
       }
       const co = cr.o ? apById(cr.o) : null;
-      if (co && !r.originId && !r.originSite) { setO(co, 'worked out by another browser', cr.oc || 'low'); r.crowdO = true; if (!r.departedAt && cr.atd) { r.departedAt = cr.atd; r.atd = r.atd || cr.atd; } }
+      // (an origin from before this flight began - the one it flew into the hole it came down in, or a leg of the aircraft's
+      // own log that was over by then: the flight before, not this one)
+      if (co && !earlier(cr.atd) && !r.originId && !r.originSite) { setO(co, 'worked out by another browser', cr.oc || 'low'); r.crowdO = true; if (!r.departedAt && cr.atd) { r.departedAt = cr.atd; r.atd = r.atd || cr.atd; } }
     }
     const destAp = apById(r.destId) || (r.destSite && fin(r.destSite.lat) ? r.destSite : null);
     r.eta = (plan && plan.eta && plan.eta > nowS() - 600 ? plan.eta : 0) || estimateEta(pos, destAp, cls);

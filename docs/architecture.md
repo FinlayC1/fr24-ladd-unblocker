@@ -136,7 +136,7 @@ Logs are stored in IndexedDB and shared across FR24 tabs (`BroadcastChannel`).
 
 `engine.js` has three layers:
 
-- **Trace to legs.** It parses readsb traces (positions, altitude, speed, flags, callsign changes) and splits them into legs at landings. Ground reports count, and so do slow gaps, final approaches and "lost low beside a field". It joins legs split by coverage holes and merges circuits.
+- **Trace to legs.** It parses readsb traces (positions, altitude, speed, flags, callsign changes) and splits them into legs at landings. Ground reports count, and so do slow gaps, final approaches and "lost low beside a field". A coverage hole counts as a landing when the aircraft cannot have flown straight through it - a quarter more time than the ground needs at the slower of its speeds either side, and three quarters of an hour over - or when it was found climbing from 8,000 ft and more below where it was lost (or lost going down to 8,000 ft and more above where it is found). It joins legs split by coverage holes and merges circuits. The track of the flight in progress is cut at the last take-off or such a hole (`currentLeg`), in the userscript and the monitor alike: FR24 keeps one flight id through a stop out of coverage, and the departure of the flight before is not this flight's.
 - **Legs to airports.** Take-off and landing are placed at:
   - airports;
   - the OurAirports fields FR24 does not list;

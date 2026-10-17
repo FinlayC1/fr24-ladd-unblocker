@@ -466,12 +466,28 @@ function createRouteEngine() {
   // "Indianapolis -> Palermo", 8,600 km, more than the type can fly. The ground covered, at four fifths of the slower
   // of its speeds either side, must leave 45 minutes over (descent, landing, turnaround and climb take that) - 30 when
   // it is seen going down into the hole or climbing out of it.
+  // (And at the slower of its two speeds itself, with three quarters of an hour and a quarter of the time to spare:
+  // continuous flight out of coverage leaves a few minutes over - over 300,000 real trace points, the longest holes at cruise
+  // within four minutes of it - not that. N6012C, 17 Oct: lost over central Asia at FL430, heard again hours later over the Black Sea,
+  // well over an hour more than the ground between needed at its speed - it had landed at Baku and flown on; the flight
+  // was "Hanoi -> ..." with 8,000 km flown. And found climbing from far below where it was lost, or lost going down to far
+  // below where it is found: it came down in between.)
   function slowGap(arr, i) {
     const a = arr[i - 1], b = arr[i]; if (!a || !b || a.gnd || b.gnd || a.alt == null || b.alt == null) return null;
     const gap = b.t - a.t; if (gap < 1800) return null;
-    const v = Math.min(a.gs || 0, b.gs || 0) * 0.8; if (!(v > 60)) return null;
-    const need = dist(a.lat, a.lon, b.lat, b.lon) / (v * NM) * 3600, e = gapEnds(arr, i);
+    const e = gapEnds(arr, i);
+    if ((e.bClimb && a.alt - b.alt >= 8000) || (e.aDesc && b.alt - a.alt >= 8000)) return e;
+    const g = Math.min(a.gs || 0, b.gs || 0); if (!(g * 0.8 > 60)) return null;
+    const km = dist(a.lat, a.lon, b.lat, b.lon);
+    if (idleHole(gap, km, a.gs, b.gs)) return e;
+    const need = km / (g * 0.8 * NM) * 3600;
     return gap - need >= (e.aDesc || e.bClimb ? 1800 : 2700) ? e : null;
+  }
+  // A hole of `gap` seconds across `km` that cannot have been flown straight through (gsA, gsB: the speeds either side, kt)
+  function idleHole(gap, km, gsA, gsB) {
+    const g = Math.min(gsA || 0, gsB || 0); if (!(gap >= 1800) || !(g * 0.8 > 60) || !(km >= 0)) return false;
+    const need = km / (g * NM) * 3600;
+    return gap - need >= 2700 && gap >= 1.25 * need;
   }
   // A hole with one end low and the other at height that the aircraft flew straight through: lost climbing (not
   // descending) into it or found descending (not climbing) out of it, and the time in it no more than the ground covered
@@ -483,6 +499,38 @@ function createRouteEngine() {
     const v = Math.max(a.gs || 0, b.gs || 0, vCruise || 0) * 0.8; if (!(v > 150)) return false;
     const km = dist(a.lat, a.lon, b.lat, b.lon), need = km / (v * NM) * 3600;
     return e.gap - need < 2700 && km / (e.gap / 3600) >= 0.4 * v * NM;
+  }
+  // The flight in progress: a track that runs together this flight and the ones before it (adsb.lol's leg with FR24's
+  // trail in front of it - FR24 keeps one flight id through a quick turnaround, and a stop out of coverage) cut back to
+  // where it began: the last take-off (on the ground, then airborne), or the last hole it came down in - the rules of
+  // legsFromPoints' holes, a quarter of an hour at under 150 km/h on average, and low down for any longer than 15 minutes.
+  // { pts, cut, gapFrom, gapInfo }: gapFrom the last point heard before that hole, gapInfo what was seen going down into it
+  // and climbing out of it. opts.heli: a helicopter hovers (40 minutes before a stop); opts.patrol: fighters and patrol
+  // aircraft loiter out of sight (none of the hole rules).
+  function currentLeg(pts, opts) {
+    const heliT = !!(opts && opts.heli), patrolT = !!(opts && opts.patrol);
+    let out = pts, cut = false, gapFrom = null, gapInfo = null;
+    for (let i = out.length - 2; i >= 0; i--) {
+      const a = out[i], b = out[i + 1], gapS = b.t - a.t;
+      const sg = !a.gnd && !patrolT ? (downAndUp(out, i + 1) ? gapEnds(out, i + 1) : slowGap(out, i + 1)) : null;
+      const slow = !a.gnd && (!!sg || (gapS > (heliT ? 2400 : 1200) && !(a.alt > 15000 && b.alt > 15000) && dist(a.lat, a.lon, b.lat, b.lon) / (gapS / 3600) < 150));
+      const gapLanding = slow || (gapS > 900 && ((a.alt != null && a.alt < 3000) || (b.alt != null && b.alt < 3000)) && !a.gnd);
+      // (a touch-and-go or stop-and-go in a local flight - three minutes down at most, where it has been flying around
+      // since it last stood still - is circuits, one flight: it goes on further back)
+      if (a.gnd && !b.gnd && !gapLanding && !heliT) {
+        let j = i; while (j > 0 && out[j - 1].gnd && a.t - out[j - 1].t <= 600) j--;
+        let k = j - 1; while (k > 0 && !out[k].gnd) k--;
+        const before = out[Math.max(0, k)];
+        // (a stop-and-go with a few minutes on the runway, a trainer's full stop and taxi back - seven minutes - is still the
+        // same session of circuits: G-BOIR at Sleap, its trail cut at each one, never had laps enough to be "in the circuit")
+        if (j > 0 && a.t - out[j].t <= 420 && before && dist(before.lat, before.lon, a.lat, a.lon) < 15) { i = j; continue; }
+      }
+      if ((a.gnd && !b.gnd) || gapLanding) {
+        if (i > 0 || gapLanding) { gapInfo = gapLanding ? (sg || gapEnds(out, i + 1)) : null; out = out.slice(gapLanding ? i + 1 : i); cut = true; gapFrom = gapLanding ? a : null; }
+        break;
+      }
+    }
+    return { pts: out, cut, gapFrom, gapInfo };
   }
   // Down the final approach of one of a field's runways - on its extended centreline within 20 km, below a generous
   // glide path, not climbing away: where a flight last heard there landed (D-CRUX, 27 Aug: last heard 1.8 km out at
@@ -1085,7 +1133,9 @@ function createRouteEngine() {
       if (p && (!p.ended || holeJoin(p)) && !l.startedOnGround && l.tStart >= p.tEnd - 60) {
         const gapH = (l.tStart - p.tEnd) / 3600, high = (p.endAlt == null || p.endAlt >= 18000) && (l.startAlt == null || l.startAlt >= 18000);
         const gapKm = dist(p.endLat, p.endLon, l.startLat, l.startLon);
-        if (gapH < (high || p.ended ? 10 : 2) && gapKm < Math.max(100, gapH * (p.ended ? 1150 : 1000))) { Object.assign(p, { tOn: l.tOn, tOnEst: l.tOnEst, endGs: l.endGs, tEnd: l.tEnd, endLat: l.endLat, endLon: l.endLon, endAlt: l.endAlt, endTrk: l.endTrk, ended: l.ended, how: l.how, to: l.to, maxAlt: Math.max(p.maxAlt, l.maxAlt), pathKm: p.pathKm + l.pathKm + Math.round(gapKm) }); if (!p.cs) p.cs = l.cs; continue; }
+        // (not across a hole it came down in: N6012C's flight from Hanoi, last heard hours before its flight from Baku was
+        // heard again, became one leg "Hanoi -> ?" with 8,000 km flown)
+        if (gapH < (high || p.ended ? 10 : 2) && gapKm < Math.max(100, gapH * (p.ended ? 1150 : 1000)) && !idleHole(l.tStart - p.tEnd, gapKm, p.endGs, l.startGs)) { Object.assign(p, { tOn: l.tOn, tOnEst: l.tOnEst, endGs: l.endGs, tEnd: l.tEnd, endLat: l.endLat, endLon: l.endLon, endAlt: l.endAlt, endTrk: l.endTrk, ended: l.ended, how: l.how, to: l.to, maxAlt: Math.max(p.maxAlt, l.maxAlt), pathKm: p.pathKm + l.pathKm + Math.round(gapKm) }); if (!p.cs) p.cs = l.cs; continue; }
       }
       out.push(Object.assign({}, l));
     }
@@ -2329,7 +2379,7 @@ function createRouteEngine() {
     return res;
   }
 
-  return { setTables2, get T2() { return T2; }, trackState, offTrack, fieldShortName, placeShort, placeLabels, setApproach, approachCell, approachPath, apprGroup, apprKey, trackAgree, heatNear, heatMatch, reckon, trackErr, remotePath, flowKeysOf, pgrpOf, grp6, sunElev, airData, gsAlong, minutesTo, flowAt, pathOf, pathDev, ownerKey, parseRunwayLengths, setRunwayLengths, csvLine, SQ_NOINFO, tripBin, regionOf, learnLeg, learnRow, learnCollector, addLearnedOp, odAdd: (x, y, w) => { const k = odKey(String(x).toUpperCase(), String(y).toUpperCase()), v = (OD.get(k) || 0) + w; if (v > 1e-9) OD.set(k, v); else OD.delete(k); }, odWeight: (x, y) => OD.get(odKey(String(x).toUpperCase(), String(y).toUpperCase())) || 0, odCount: () => OD.size, setAirports, setUsage, addUsage, setRunways, parseRunwaysCsv, runwayFit, setWeights, setTables, setLogit, calibrated, mergePoints, finalTo, longFinal, typeRangeKm, FEAT, groupOf, W, classify, isStepClimb, rangeKm, parseTrace, legsFromPoints, summarizeLeg, stitchLegs, chainLegs, histStats, inferOrigin, predict, privateSite, rwyImpossible, typeDesc, heliSpots, heliAirportAt, landedSum, localFlew, climbedOut, approachTo, downAndUp, landingInGap, circuits, mergeCircuits, setFields, fieldAt, placeAt, isField, nearbyFields, fieldCount: () => FL.length, airportAt, departureFromClimb, arrivalFromDescent, nearby, dist, brg, xtat, destPoint, angDiff, get airports() { return AP; }, byId: id => byId.get(id), byIcao: c => byIcao.get(String(c || '').toUpperCase()) };
+  return { setTables2, get T2() { return T2; }, trackState, offTrack, fieldShortName, placeShort, placeLabels, setApproach, approachCell, approachPath, apprGroup, apprKey, trackAgree, heatNear, heatMatch, reckon, trackErr, remotePath, flowKeysOf, pgrpOf, grp6, sunElev, airData, gsAlong, minutesTo, flowAt, pathOf, pathDev, ownerKey, parseRunwayLengths, setRunwayLengths, csvLine, SQ_NOINFO, tripBin, regionOf, learnLeg, learnRow, learnCollector, addLearnedOp, odAdd: (x, y, w) => { const k = odKey(String(x).toUpperCase(), String(y).toUpperCase()), v = (OD.get(k) || 0) + w; if (v > 1e-9) OD.set(k, v); else OD.delete(k); }, odWeight: (x, y) => OD.get(odKey(String(x).toUpperCase(), String(y).toUpperCase())) || 0, odCount: () => OD.size, setAirports, setUsage, addUsage, setRunways, parseRunwaysCsv, runwayFit, setWeights, setTables, setLogit, calibrated, mergePoints, finalTo, longFinal, typeRangeKm, FEAT, groupOf, W, classify, isStepClimb, rangeKm, parseTrace, legsFromPoints, summarizeLeg, stitchLegs, chainLegs, histStats, inferOrigin, predict, privateSite, rwyImpossible, typeDesc, heliSpots, heliAirportAt, landedSum, localFlew, climbedOut, approachTo, downAndUp, landingInGap, gapEnds, slowGap, idleHole, currentLeg, circuits, mergeCircuits, setFields, fieldAt, placeAt, isField, nearbyFields, fieldCount: () => FL.length, airportAt, departureFromClimb, arrivalFromDescent, nearby, dist, brg, xtat, destPoint, angDiff, get airports() { return AP; }, byId: id => byId.get(id), byIcao: c => byIcao.get(String(c || '').toUpperCase()) };
 }
 /* ==/ENGINE== */
 if (typeof module !== 'undefined') module.exports = { createRouteEngine };

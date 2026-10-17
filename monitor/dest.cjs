@@ -15,17 +15,23 @@ function createDest(env) {
   const stats = { done: 0, failed: 0, ms: 0, lastRound: 0 };
 
   // the flight's track: recorded ADS-B of its current flight, FR24's trail before it, FR24's positions after it; one point
-  // every 20 s at most
+  // every 20 s at most - cut back to where this flight began (FR24's trail can hold the flight before it: one id through a
+  // stop out of coverage, N6012C's Baku flight under its Hanoi flight's id), with where it was last heard before the hole
+  // that cut it in gapFrom / gapInfo (as the userscript's trailFor)
   function trackOf(hex, F) {
-    let pts = [];
-    const x = env.ac.get(hex), meta = (x && x.meta) || {};
+    let pts = [], gapFrom = null, gapInfo = null;
+    const x = env.ac.get(hex), meta = (x && x.meta) || {}, cls0 = E.classify({ hex, type: meta.type || (F && F.type) || '', reg: meta.reg || '', mil: !!meta.mil, cat: meta.cat || '' });
     if (x && x.rows && x.rows.length >= 2) {
       const info = { hex, type: meta.type || '', reg: meta.reg || '', mil: !!meta.mil, cat: meta.cat || '' }, cls = E.classify(info);
       try {
         const ls = E.legsFromPoints(E.parseTrace({ timestamp: 0, trace: x.rows }), { heli: cls === 'heli', patrol: cls === 'fighter' || cls === 'milheavy', cls, type: info.type, rangeKm: E.typeRangeKm(info) });
         const leg = ls[ls.length - 1];
         // (only a flight still going - and the one FR24 is drawing: heard within the last 3 hours of FR24's position)
-        if (leg && !leg.ended && (!F || F.ts - leg.end.t < 3 * 3600)) pts = [leg.start].concat(leg.pts).filter((p, i, a) => !i || p.t > a[i - 1].t);
+        if (leg && !leg.ended && (!F || F.ts - leg.end.t < 3 * 3600)) {
+          pts = [leg.start].concat(leg.pts).filter((p, i, a) => !i || p.t > a[i - 1].t);
+          // (this flight began after a hole it came down in: where it was last heard before)
+          const pl = ls[ls.length - 2]; if (pl && pl.how === 'gap-land') { gapFrom = pl.end; gapInfo = pl.gapInfo || null; }
+        }
       } catch (e) { pts = []; }
     }
     if (F && F.trail && F.trail.length) {
@@ -37,7 +43,11 @@ function createDest(env) {
       const t1 = pts.length ? pts[pts.length - 1].t : -Infinity;
       for (const p of F.pts) if (p.t > t1 + 20) pts.push({ t: p.t, lat: p.lat, lon: p.lon, alt: p.gnd ? null : p.alt, gs: p.gs, trk: p.trk, gnd: !!p.gnd });
     }
-    const out = []; for (const p of pts) if (fin(p.lat) && fin(p.lon) && (!out.length || p.t - out[out.length - 1].t >= 20)) out.push(p);
+    let out = []; for (const p of pts) if (fin(p.lat) && fin(p.lon) && (!out.length || p.t - out[out.length - 1].t >= 20)) out.push(p);
+    const cl = out.length > 1 ? E.currentLeg(out, { heli: cls0 === 'heli', patrol: cls0 === 'fighter' || cls0 === 'milheavy' }) : null;
+    if (cl && cl.cut) { out = cl.pts; gapFrom = cl.gapFrom; gapInfo = cl.gapInfo; }
+    out.cut = !!(cl && cl.cut) || !!gapFrom;
+    if (gapFrom && out.length && !out[0].gnd && gapFrom.t < out[0].t) { out.gapFrom = gapFrom; out.gapInfo = Object.assign({}, gapInfo, { bClimb: E.gapEnds([gapFrom].concat(out), 1).bClimb, gap: out[0].t - gapFrom.t }); }
     return out;
   }
   // The destination of one named flight: { dest: {id, p, at}, origin: {id, conf} } (null: nothing to say - on the ground,
@@ -58,14 +68,21 @@ function createDest(env) {
     const open = m ? [...m.values()].filter(l => l.open && l.from && Math.abs((l.tStart || 0) - t0) < 1800).sort((a, b) => b.tStart - a.tStart)[0] : null;
     if (open && E.byId(open.from.id)) origin = { airport: E.byId(open.from.id), conf: open.from.conf || 'ground', departedAt: open.tOff || open.tStart };
     else origin = E.inferOrigin({ ac, pos, trail, hs, now: pos.t });
+    // (no departure seen - it came down in a hole in coverage and climbed out of it: the field that fits both ends, as the userscript)
+    if ((!origin || !origin.airport || origin.conf === 'history') && trail.gapFrom) {
+      const g = E.landingInGap(trail.gapFrom, trail[0], Object.assign({ cls: E.classify(ac), type: ac.type }, trail.gapInfo));
+      if (g) origin = { airport: g.airport, conf: 'low', note: `took off from ${g.airport.code}, out of ADS-B coverage`, departedAt: Math.round(trail[0].t - g.db / 500 * 3600 - 120) };
+    }
     const res = E.predict({ ac, pos, trail, hs, now: pos.t, origin });
     const top = res && res.cands && res.cands[0];
     const o = res && res.origin && res.origin.airport ? { id: res.origin.airport.id, conf: res.origin.conf || '', t: Math.round(res.origin.departedAt || trail[0].t) } : null;
-    if (!top || !top.airport) return { dest: null, origin: o };
+    // (when it was last heard before the hole this flight began after: a departure kept from before that is the flight before's)
+    const lostAt = trail.gapFrom ? trail.gapFrom.t : 0;
+    if (!top || !top.airport) return { dest: null, origin: o, lostAt };
     // (when it will be there, roughly: the distance left at its present ground speed, a little longer for the way in)
     const A = top.airport, km = E.dist(pos.lat, pos.lon, A.lat, A.lon), gs = pos.gs > 80 ? pos.gs : 300;
     const eta = Math.round(pos.t + km / (gs * 1.852) * 3600 * 1.06 + (km > 30 ? 420 : 120));
-    return { dest: { id: A.id, p: Math.min(0.99, E.calibrated(top.p, res.cls)), at: Math.round(nowS), eta, why: (top.reasons || []).slice(0, 2).join('; ') }, origin: o };
+    return { dest: { id: A.id, p: Math.min(0.99, E.calibrated(top.p, res.cls)), at: Math.round(nowS), eta, why: (top.reasons || []).slice(0, 2).join('; ') }, origin: o, lostAt };
   }
   // A round: the named airborne flights whose destination is oldest (or none yet), each again after `every` seconds, within
   // a time budget (the server is small); a changed answer is marked so the browsers get it
@@ -81,6 +98,11 @@ function createDest(env) {
       if (!r) continue;
       const before = JSON.stringify([R.dest && R.dest.id, R.dest && Math.round(R.dest.p * 20), R.origin && R.origin.id]);
       R.dest = r.dest; if (r.origin) R.origin = r.origin;
+      // (no departure now, and the one kept is from before the aircraft was last heard ahead of the hole this flight began
+      // after - a stop out of coverage in between: not kept)
+      else if (R.origin && r.lostAt && R.origin.t > 0 && R.origin.t < r.lostAt - 300) R.origin = null;
+      // (and a browser's departure for it from that earlier flight, the same: the one served is this side's own then)
+      const cr = R.crowd; if (cr && cr.o && cr.atd > 0 && r.lostAt && cr.atd < r.lostAt - 300) { Object.assign(cr, { o: 0, oc: '', atd: 0, ot: 0, oOwn: 0 }); if (!cr.d) R.crowd = null; R.chg = nowMs; }
       if (JSON.stringify([R.dest && R.dest.id, R.dest && Math.round(R.dest.p * 20), R.origin && R.origin.id]) !== before) R.chg = nowMs;
     }
     stats.ms = Date.now() - t0; stats.lastRound = nowMs;
