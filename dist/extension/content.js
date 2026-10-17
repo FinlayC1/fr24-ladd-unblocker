@@ -48,7 +48,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
 // ==UserScript==
 // @name         Flightradar24 LADD / N-A Unblocker (feed-level)
 // @namespace    tweeks.io
-// @version      22.30.1
+// @version      22.30.2
 // @description  Identifies every LADD / N/A / blocked military aircraft on Flightradar24 from public ADS-B, and injects callsign, registration, operator, age, country, MSN, squawk, vertical speed, GPS altitude, airspeeds, wind, photos, a reasoned origin/destination with a wind-corrected ETA (also for ordinary flights FR24 shows as N/A - military, private, GA, helicopters, with private landing sites; learned from 63 days of every aircraft worldwide, with live weather and closures), airport-board entries and a rebuilt 7-month flight log straight into FR24's own data - so it all renders like normal FR24 traffic.
 // @author       Finlay Clarke
 // @updateURL    https://raw.githubusercontent.com/FinlayC1/fr24-ladd-unblocker/main/dist/fr24-ladd-unblocker.user.js
@@ -137,7 +137,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "22.30.1";
+    var BRIDGE_V = "22.30.2";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed
@@ -3198,12 +3198,28 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     // "Indianapolis -> Palermo", 8,600 km, more than the type can fly. The ground covered, at four fifths of the slower
     // of its speeds either side, must leave 45 minutes over (descent, landing, turnaround and climb take that) - 30 when
     // it is seen going down into the hole or climbing out of it.
+    // (And at the slower of its two speeds itself, with three quarters of an hour and a quarter of the time to spare:
+    // continuous flight out of coverage leaves a few minutes over - over 300,000 real trace points, the longest holes at cruise
+    // within four minutes of it - not that. N6012C, 17 Oct: lost over central Asia at FL430, heard again hours later over the Black Sea,
+    // well over an hour more than the ground between needed at its speed - it had landed at Baku and flown on; the flight
+    // was "Hanoi -> ..." with 8,000 km flown. And found climbing from far below where it was lost, or lost going down to far
+    // below where it is found: it came down in between.)
     function slowGap(arr, i) {
       const a = arr[i - 1], b = arr[i]; if (!a || !b || a.gnd || b.gnd || a.alt == null || b.alt == null) return null;
       const gap = b.t - a.t; if (gap < 1800) return null;
-      const v = Math.min(a.gs || 0, b.gs || 0) * 0.8; if (!(v > 60)) return null;
-      const need = dist(a.lat, a.lon, b.lat, b.lon) / (v * NM) * 3600, e = gapEnds(arr, i);
+      const e = gapEnds(arr, i);
+      if ((e.bClimb && a.alt - b.alt >= 8000) || (e.aDesc && b.alt - a.alt >= 8000)) return e;
+      const g = Math.min(a.gs || 0, b.gs || 0); if (!(g * 0.8 > 60)) return null;
+      const km = dist(a.lat, a.lon, b.lat, b.lon);
+      if (idleHole(gap, km, a.gs, b.gs)) return e;
+      const need = km / (g * 0.8 * NM) * 3600;
       return gap - need >= (e.aDesc || e.bClimb ? 1800 : 2700) ? e : null;
+    }
+    // A hole of `gap` seconds across `km` that cannot have been flown straight through (gsA, gsB: the speeds either side, kt)
+    function idleHole(gap, km, gsA, gsB) {
+      const g = Math.min(gsA || 0, gsB || 0); if (!(gap >= 1800) || !(g * 0.8 > 60) || !(km >= 0)) return false;
+      const need = km / (g * NM) * 3600;
+      return gap - need >= 2700 && gap >= 1.25 * need;
     }
     // A hole with one end low and the other at height that the aircraft flew straight through: lost climbing (not
     // descending) into it or found descending (not climbing) out of it, and the time in it no more than the ground covered
@@ -3215,6 +3231,38 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       const v = Math.max(a.gs || 0, b.gs || 0, vCruise || 0) * 0.8; if (!(v > 150)) return false;
       const km = dist(a.lat, a.lon, b.lat, b.lon), need = km / (v * NM) * 3600;
       return e.gap - need < 2700 && km / (e.gap / 3600) >= 0.4 * v * NM;
+    }
+    // The flight in progress: a track that runs together this flight and the ones before it (adsb.lol's leg with FR24's
+    // trail in front of it - FR24 keeps one flight id through a quick turnaround, and a stop out of coverage) cut back to
+    // where it began: the last take-off (on the ground, then airborne), or the last hole it came down in - the rules of
+    // legsFromPoints' holes, a quarter of an hour at under 150 km/h on average, and low down for any longer than 15 minutes.
+    // { pts, cut, gapFrom, gapInfo }: gapFrom the last point heard before that hole, gapInfo what was seen going down into it
+    // and climbing out of it. opts.heli: a helicopter hovers (40 minutes before a stop); opts.patrol: fighters and patrol
+    // aircraft loiter out of sight (none of the hole rules).
+    function currentLeg(pts, opts) {
+      const heliT = !!(opts && opts.heli), patrolT = !!(opts && opts.patrol);
+      let out = pts, cut = false, gapFrom = null, gapInfo = null;
+      for (let i = out.length - 2; i >= 0; i--) {
+        const a = out[i], b = out[i + 1], gapS = b.t - a.t;
+        const sg = !a.gnd && !patrolT ? (downAndUp(out, i + 1) ? gapEnds(out, i + 1) : slowGap(out, i + 1)) : null;
+        const slow = !a.gnd && (!!sg || (gapS > (heliT ? 2400 : 1200) && !(a.alt > 15000 && b.alt > 15000) && dist(a.lat, a.lon, b.lat, b.lon) / (gapS / 3600) < 150));
+        const gapLanding = slow || (gapS > 900 && ((a.alt != null && a.alt < 3000) || (b.alt != null && b.alt < 3000)) && !a.gnd);
+        // (a touch-and-go or stop-and-go in a local flight - three minutes down at most, where it has been flying around
+        // since it last stood still - is circuits, one flight: it goes on further back)
+        if (a.gnd && !b.gnd && !gapLanding && !heliT) {
+          let j = i; while (j > 0 && out[j - 1].gnd && a.t - out[j - 1].t <= 600) j--;
+          let k = j - 1; while (k > 0 && !out[k].gnd) k--;
+          const before = out[Math.max(0, k)];
+          // (a stop-and-go with a few minutes on the runway, a trainer's full stop and taxi back - seven minutes - is still the
+          // same session of circuits: G-BOIR at Sleap, its trail cut at each one, never had laps enough to be "in the circuit")
+          if (j > 0 && a.t - out[j].t <= 420 && before && dist(before.lat, before.lon, a.lat, a.lon) < 15) { i = j; continue; }
+        }
+        if ((a.gnd && !b.gnd) || gapLanding) {
+          if (i > 0 || gapLanding) { gapInfo = gapLanding ? (sg || gapEnds(out, i + 1)) : null; out = out.slice(gapLanding ? i + 1 : i); cut = true; gapFrom = gapLanding ? a : null; }
+          break;
+        }
+      }
+      return { pts: out, cut, gapFrom, gapInfo };
     }
     // Down the final approach of one of a field's runways - on its extended centreline within 20 km, below a generous
     // glide path, not climbing away: where a flight last heard there landed (D-CRUX, 27 Aug: last heard 1.8 km out at
@@ -3817,7 +3865,9 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
         if (p && (!p.ended || holeJoin(p)) && !l.startedOnGround && l.tStart >= p.tEnd - 60) {
           const gapH = (l.tStart - p.tEnd) / 3600, high = (p.endAlt == null || p.endAlt >= 18000) && (l.startAlt == null || l.startAlt >= 18000);
           const gapKm = dist(p.endLat, p.endLon, l.startLat, l.startLon);
-          if (gapH < (high || p.ended ? 10 : 2) && gapKm < Math.max(100, gapH * (p.ended ? 1150 : 1000))) { Object.assign(p, { tOn: l.tOn, tOnEst: l.tOnEst, endGs: l.endGs, tEnd: l.tEnd, endLat: l.endLat, endLon: l.endLon, endAlt: l.endAlt, endTrk: l.endTrk, ended: l.ended, how: l.how, to: l.to, maxAlt: Math.max(p.maxAlt, l.maxAlt), pathKm: p.pathKm + l.pathKm + Math.round(gapKm) }); if (!p.cs) p.cs = l.cs; continue; }
+          // (not across a hole it came down in: N6012C's flight from Hanoi, last heard hours before its flight from Baku was
+          // heard again, became one leg "Hanoi -> ?" with 8,000 km flown)
+          if (gapH < (high || p.ended ? 10 : 2) && gapKm < Math.max(100, gapH * (p.ended ? 1150 : 1000)) && !idleHole(l.tStart - p.tEnd, gapKm, p.endGs, l.startGs)) { Object.assign(p, { tOn: l.tOn, tOnEst: l.tOnEst, endGs: l.endGs, tEnd: l.tEnd, endLat: l.endLat, endLon: l.endLon, endAlt: l.endAlt, endTrk: l.endTrk, ended: l.ended, how: l.how, to: l.to, maxAlt: Math.max(p.maxAlt, l.maxAlt), pathKm: p.pathKm + l.pathKm + Math.round(gapKm) }); if (!p.cs) p.cs = l.cs; continue; }
         }
         out.push(Object.assign({}, l));
       }
@@ -5061,7 +5111,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       return res;
     }
 
-    return { setTables2, get T2() { return T2; }, trackState, offTrack, fieldShortName, placeShort, placeLabels, setApproach, approachCell, approachPath, apprGroup, apprKey, trackAgree, heatNear, heatMatch, reckon, trackErr, remotePath, flowKeysOf, pgrpOf, grp6, sunElev, airData, gsAlong, minutesTo, flowAt, pathOf, pathDev, ownerKey, parseRunwayLengths, setRunwayLengths, csvLine, SQ_NOINFO, tripBin, regionOf, learnLeg, learnRow, learnCollector, addLearnedOp, odAdd: (x, y, w) => { const k = odKey(String(x).toUpperCase(), String(y).toUpperCase()), v = (OD.get(k) || 0) + w; if (v > 1e-9) OD.set(k, v); else OD.delete(k); }, odWeight: (x, y) => OD.get(odKey(String(x).toUpperCase(), String(y).toUpperCase())) || 0, odCount: () => OD.size, setAirports, setUsage, addUsage, setRunways, parseRunwaysCsv, runwayFit, setWeights, setTables, setLogit, calibrated, mergePoints, finalTo, longFinal, typeRangeKm, FEAT, groupOf, W, classify, isStepClimb, rangeKm, parseTrace, legsFromPoints, summarizeLeg, stitchLegs, chainLegs, histStats, inferOrigin, predict, privateSite, rwyImpossible, typeDesc, heliSpots, heliAirportAt, landedSum, localFlew, climbedOut, approachTo, downAndUp, landingInGap, circuits, mergeCircuits, setFields, fieldAt, placeAt, isField, nearbyFields, fieldCount: () => FL.length, airportAt, departureFromClimb, arrivalFromDescent, nearby, dist, brg, xtat, destPoint, angDiff, get airports() { return AP; }, byId: id => byId.get(id), byIcao: c => byIcao.get(String(c || '').toUpperCase()) };
+    return { setTables2, get T2() { return T2; }, trackState, offTrack, fieldShortName, placeShort, placeLabels, setApproach, approachCell, approachPath, apprGroup, apprKey, trackAgree, heatNear, heatMatch, reckon, trackErr, remotePath, flowKeysOf, pgrpOf, grp6, sunElev, airData, gsAlong, minutesTo, flowAt, pathOf, pathDev, ownerKey, parseRunwayLengths, setRunwayLengths, csvLine, SQ_NOINFO, tripBin, regionOf, learnLeg, learnRow, learnCollector, addLearnedOp, odAdd: (x, y, w) => { const k = odKey(String(x).toUpperCase(), String(y).toUpperCase()), v = (OD.get(k) || 0) + w; if (v > 1e-9) OD.set(k, v); else OD.delete(k); }, odWeight: (x, y) => OD.get(odKey(String(x).toUpperCase(), String(y).toUpperCase())) || 0, odCount: () => OD.size, setAirports, setUsage, addUsage, setRunways, parseRunwaysCsv, runwayFit, setWeights, setTables, setLogit, calibrated, mergePoints, finalTo, longFinal, typeRangeKm, FEAT, groupOf, W, classify, isStepClimb, rangeKm, parseTrace, legsFromPoints, summarizeLeg, stitchLegs, chainLegs, histStats, inferOrigin, predict, privateSite, rwyImpossible, typeDesc, heliSpots, heliAirportAt, landedSum, localFlew, climbedOut, approachTo, downAndUp, landingInGap, gapEnds, slowGap, idleHole, currentLeg, circuits, mergeCircuits, setFields, fieldAt, placeAt, isField, nearbyFields, fieldCount: () => FL.length, airportAt, departureFromClimb, arrivalFromDescent, nearby, dist, brg, xtat, destPoint, angDiff, get airports() { return AP; }, byId: id => byId.get(id), byIcao: c => byIcao.get(String(c || '').toUpperCase()) };
   }
   /* ==/ENGINE== */
 
@@ -5231,7 +5281,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '22.30.1';
+  const VERSION = '22.30.2';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
@@ -8616,7 +8666,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   // own trail, then whatever the feed has shown us.
   function trailFor(id, hex, pos) {
     const tr = fr24Trail.get(id), ft = feedTrail.get(id) || [], td = hex ? todayCache.get(hex) : null;
-    let out = [], cut = false, gapFrom = null;
+    let out = [], cut = false, gapFrom = null, gapInfo = null;
     if (td && td.legs && td.legs.length && pos) {
       const leg = td.legs.filter(l => l.start.t <= pos.t + 60).pop();
       const legLast = leg ? (leg.pts.length ? leg.pts[leg.pts.length - 1] : leg.start) : null;
@@ -8628,7 +8678,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
         // (a later leg of the day after a landing seen - on the ground, a touch-and-go, down into a hole in coverage and up
         // out of it: whatever came before is another leg)
         const pl = td.legs[td.legs.indexOf(leg) - 1]; cut = !!pl && ['ground', 'touch', 'gap-land'].includes(pl.how);
-        if (pl && pl.how === 'gap-land') gapFrom = pl.end;
+        if (pl && pl.how === 'gap-land') { gapFrom = pl.end; gapInfo = pl.gapInfo || null; }
       }
     }
     const lastT = out.length ? out[out.length - 1].t : 0;
@@ -8662,35 +8712,24 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     if (tr && tr.first && fin(tr.first.lat) && out.length && out[0].t < tr.first.t - 300 && (tr.first.alt == null || tr.first.alt < 4000)) {
       const fa = ENGINE.placeAt(tr.first.lat, tr.first.lon, 8, 3), agl = fa && tr.first.alt != null ? tr.first.alt - (fa.airport.alt || 0) : 0;
       const nxt = tr.pts && tr.pts.find(p => p.t > tr.first.t + 20 && p.t < tr.first.t + 180), climbing = !!nxt && nxt.alt != null && tr.first.alt != null && nxt.alt > tr.first.alt + 100;
-      if (fa && (agl < 1000 || (agl < 3000 && climbing && fa.dist < 8))) { out = out.filter(p => p.t >= tr.first.t - 5); cut = true; gapFrom = null; }
+      if (fa && (agl < 1000 || (agl < 3000 && climbing && fa.dist < 8))) { out = out.filter(p => p.t >= tr.first.t - 5); cut = true; gapFrom = null; gapInfo = null; }
     }
     // This leg only. FR24 keeps one flight id through a quick turnaround, and its trail - or the older points put in
     // front - can hold the previous leg: M-ARNZ, just airborne out of Barrow, was still "Farnborough -> Barrow, 100%".
     // The track starts again at the last take-off (on the ground, then airborne) or after a gap in which it came down.
     // (or a gap it cannot have flown through: 20 minutes and more at under 150 km/h on average - it was on the ground
     // somewhere in between; helicopters, which hover, only after 40)
-    const rr = live.get(id) || pubRecs.get(id), cls1 = rr ? ENGINE.classify(acOf(rr)) : '', heliT = cls1 === 'heli', patrolT = cls1 === 'fighter' || cls1 === 'milheavy';
-    for (let i = out.length - 2; i >= 0; i--) {
-      const a = out[i], b2 = out[i + 1], gapS = b2.t - a.t;
-      const slowGap = !a.gnd && ((!patrolT && ENGINE.downAndUp(out, i + 1)) || (gapS > (heliT ? 2400 : 1200) && !(a.alt > 15000 && b2.alt > 15000) && dist(a.lat, a.lon, b2.lat, b2.lon) / (gapS / 3600) < 150));
-      const gapLanding = slowGap || (gapS > 900 && ((a.alt != null && a.alt < 3000) || (b2.alt != null && b2.alt < 3000)) && !a.gnd);
-      // (a touch-and-go or stop-and-go in a local flight - three minutes down at most, where it has been flying around
-      // since it last stood still - is circuits, one flight: it goes on further back)
-      if (a.gnd && !b2.gnd && !gapLanding && !heliT) {
-        let j = i; while (j > 0 && out[j - 1].gnd && a.t - out[j - 1].t <= 600) j--;
-        let k = j - 1; while (k > 0 && !out[k].gnd) k--;
-        const before = out[Math.max(0, k)];
-        // (a stop-and-go with a few minutes on the runway, a trainer's full stop and taxi back - seven minutes - is still the
-        // same session of circuits: G-BOIR at Sleap, its trail cut at each one, never had laps enough to be "in the circuit")
-        if (j > 0 && a.t - out[j].t <= 420 && before && dist(before.lat, before.lon, a.lat, a.lon) < 15) { i = j; continue; }
-      }
-      if ((a.gnd && !b2.gnd) || gapLanding) { if (i > 0 || gapLanding) { out = out.slice(gapLanding ? i + 1 : i); cut = true; gapFrom = gapLanding ? a : null; } break; }
-    }
+    const rr = live.get(id) || pubRecs.get(id), cls1 = rr ? ENGINE.classify(acOf(rr)) : '';
+    const cl = ENGINE.currentLeg(out, { heli: cls1 === 'heli', patrol: cls1 === 'fighter' || cls1 === 'milheavy' });
+    if (cl.cut) { out = cl.pts; cut = true; gapFrom = cl.gapFrom; gapInfo = cl.gapInfo; }
     const thin = []; for (const p of out) if (!thin.length || p.t - thin[thin.length - 1].t >= 15) thin.push(p);
     thin.cut = cut;   // (the track was cut at a landing: whatever came before is another leg)
     // (gone quiet and heard again at the very spot, low and slow both times: it stood there - its take-off was from there)
     if (thin.length && !thin[0].gnd && gapFrom && fin(gapFrom.lat) && dist(gapFrom.lat, gapFrom.lon, thin[0].lat, thin[0].lon) < 0.5 && fin(thin[0].alt) && thin[0].alt < 600 && !(thin[0].gs > 30) && fin(gapFrom.alt) && gapFrom.alt < 600) { thin[0] = Object.assign({}, thin[0], { gnd: true }); gapFrom = null; }
-    thin.gapFrom = thin.length && thin[0].gnd ? null : gapFrom;   // (... one out of coverage: where it was last seen before)
+    thin.gapFrom = thin.length && !thin[0].gnd && gapFrom && gapFrom.t < thin[0].t ? gapFrom : null;   // (... one out of coverage: where it was last seen before - and before this track began, not inside it)
+    // (and what was seen either side of that hole: going down into it, climbing out of it - from this track's first points,
+    // which are not always the ones the leg was found climbing out in)
+    thin.gapInfo = thin.gapFrom && thin.length ? Object.assign({}, gapInfo, { bClimb: ENGINE.gapEnds([thin.gapFrom].concat(thin), 1).bClimb, gap: thin[0].t - thin.gapFrom.t }) : null;
     return thin;
   }
   // ETA from distance, phase and speed: cruise at the current speed, then a slower descent and approach.
@@ -8808,7 +8847,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     // (no departure seen - or only its log's last landing: it came down into a hole in coverage and climbed out of it,
     // so it took off from the field that fits both ends, a few minutes before it was seen again)
     if ((!o0 || !o0.airport || o0.conf === 'history') && trail.gapFrom && trail[0] && !heliSlow0) {
-      const g = ENGINE.landingInGap(trail.gapFrom, trail[0], { cls: ENGINE.classify(ac), type: ac.type });
+      const g = ENGINE.landingInGap(trail.gapFrom, trail[0], Object.assign({ cls: ENGINE.classify(ac), type: ac.type }, trail.gapInfo));
       if (g) { o0 = { airport: g.airport, conf: 'low', note: `took off from ${apCode(g.airport)}, out of ADS-B coverage`, departedAt: Math.round(trail[0].t - g.db / 500 * 3600 - 120) }; }
     }
     // (a take-off it cannot have made: from there at that time it could not be where it is now, at any speed it has
@@ -8817,6 +8856,11 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     const vMax = Math.max(100, fin(pos.gs) ? pos.gs : 0, ...trail.map(p => fin(p.gs) && p.gs < 700 ? p.gs : 0)) * 1.852 * 1.5;
     const couldHave = o => !o || !o.airport || !(o.departedAt > 0) || pos.t <= o.departedAt || ENGINE.dist(o.airport.lat, o.airport.lon, pos.lat, pos.lon) <= 30 + vMax * (pos.t - o.departedAt) / 3600;
     if (rec0 && rec0.origin && rec0.origin.id && !couldHave({ airport: apById(rec0.origin.id), departedAt: rec0.origin.departedAt })) rec0.origin = null;
+    // (or one kept from a flight before this one: before the aircraft was last heard ahead of the hole this track began
+    // after, or during a flight of its log that was over before the track began - N6012C's Hanoi, kept for the id that went
+    // on to fly from Baku)
+    const earlier = t => t > 0 && ((trail.gapFrom && t < trail.gapFrom.t - 300) || hist.some(l => t > l.tStart - 600 && t < l.tEnd));
+    if (rec0 && rec0.origin && earlier(rec0.origin.departedAt)) rec0.origin = null;
     const f0 = trail[0] || pos, unseen = { airport: null, conf: '', note: fin(f0.alt) ? `first seen at ${f0.alt >= 18000 ? 'FL' + Math.round(f0.alt / 100) : Math.round(f0.alt) + ' ft'}` : 'first seen airborne', departedAt: 0 };
     let origin = rememberOrigin(rec0, couldHave(o0) ? o0 : unseen, trail[0], !!trail.cut);
     if (!couldHave(origin)) origin = unseen;
@@ -9062,12 +9106,20 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       // another browser's, kept over this one's own Linate / Malpensa / Turin)
       const ca0 = cr.d ? apById(cr.d) : null;
       const ca = ca0 && !crowdContradicted(ca0, Object.assign({}, cr, { sure: cr.by === 2 }), pos, trail, origin && origin.airport, elapsedMin, ac.mil && !/^(bizjet|heavybiz)$/.test(cls) ? 'milheavy' : cls) ? ca0 : null;
-      if (ca && (cr.by === 2 || (!r.destId && !r.destSite) || (r.destP || 0) + 10 < cr.p)) {
+      // (22.30.2) This browser's own answer stands, whatever odds the other put on its own, when it has what an answer takes
+      // - the aircraft's own log, or the take-off seen on the ground: the same as it sends the monitor, so the answers the
+      // browsers hand each other are ones worked out with the evidence. N6012C's panel said "worked out by another
+      // browser" over its own: wrong, with the departure that came with it. The other's fills what this one has none for,
+      // a panel opened before its own log is in, and a destination confirmed there still stands over a guess of its own
+      const informed = r.legCount > 0 || r.originConf === 'ground';
+      if (ca && (cr.by === 2 || (!r.destId && !r.destSite) || (!informed && (r.destP || 0) + 10 < cr.p))) {
         setD(ca, cr.by === 2 ? 'confirmed' : CONF_OF(cr.p / 100), cr.by === 2 ? 'confirmed in another browser' : 'worked out by another browser');
         r.destP = cr.by === 2 ? 100 : Math.min(99, cr.p); r.destSite = null; r.alternatives = (r.alternatives || []).filter(a => a.iata !== apCode(ca)); r.crowdD = true;
       }
       const co = cr.o ? apById(cr.o) : null;
-      if (co && !r.originId && !r.originSite) { setO(co, 'worked out by another browser', cr.oc || 'low'); r.crowdO = true; if (!r.departedAt && cr.atd) { r.departedAt = cr.atd; r.atd = r.atd || cr.atd; } }
+      // (an origin from before this flight began - the one it flew into the hole it came down in, or a leg of the aircraft's
+      // own log that was over by then: the flight before, not this one)
+      if (co && !earlier(cr.atd) && !r.originId && !r.originSite) { setO(co, 'worked out by another browser', cr.oc || 'low'); r.crowdO = true; if (!r.departedAt && cr.atd) { r.departedAt = cr.atd; r.atd = r.atd || cr.atd; } }
     }
     const destAp = apById(r.destId) || (r.destSite && fin(r.destSite.lat) ? r.destSite : null);
     r.eta = (plan && plan.eta && plan.eta > nowS() - 600 ? plan.eta : 0) || estimateEta(pos, destAp, cls);
@@ -12772,7 +12824,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // (the version whose "what's new" was put away, and the one whose dot on the button the window was opened for)
   const UB_SEEN_KEY = 'tweeks.fr24.ladd.seenver', UB_DOT_KEY = 'tweeks.fr24.ladd.dotver';
   // (the newest CHANGELOG section's headlines, written in by build.mjs: { v, items })
-  const UB_WHATS_NEW = {"v":"22.30.1","items":["Playback on a blocked flight opens its track on airplanes.live again","The LADD Unblock button is on the bottom bar from the first frame the bar is drawn","The LADD Unblock button changes size with FR24's other bar buttons."]};
+  const UB_WHATS_NEW = {"v":"22.30.2","items":["A flight that came down in a hole in coverage and flew on is two flights, not one from where the first began.","The flight in progress begins after that hole","A browser's own answer stands over another browser's."]};
   // (an aircraft with an open padlock: FR24's outline style - 24 grid, 1.5 stroke in the text colour)
   const UB_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
   const UB_X = '<svg viewBox="0 0 14 14" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5l11 11M12.5 1.5l-11 11"/></svg>';

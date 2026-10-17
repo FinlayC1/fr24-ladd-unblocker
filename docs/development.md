@@ -41,6 +41,7 @@ npm run test:all       # also the live end-to-end runs (normal and Tampermonkey-
 | `unit_cases` | Flights the user reported (correct destinations) | – |
 | `unit_final` | Final-approach confirmation | – |
 | `unit_legs` | Leg reconstruction from traces | – |
+| `unit_n6012c` | A flight that came down in a hole in coverage and flew on (N6012C, 16-17 Oct): the hole rules, with 315,000 real trace points kept whole; the flight in progress cut at the hole in the userscript and the monitor; the built userscript on it as FR24 and adsb.lol could have shown it; a browser's own route standing over another's; a departure from the flight before dropped from the routes handed out | – |
 | `unit_monitor` | Monitor: flights from 30 s reports match the whole track; backfill; quiet aircraft closed; parked; callsigns; areas | – |
 | `unit_monitor2` | Monitor: poll order, backups (adsb.fi, ADS-B Exchange, OpenSky), `/live`, rate cap, watch records, `/hist` (format, empty days, retries, unknown days), state on disk, SIGTERM | – |
 | `unit_merge` | `merge-store.cjs`: one copy per flight, union of blocked aircraft, running state kept, refuses while running | – |

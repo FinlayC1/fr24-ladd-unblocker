@@ -2,6 +2,18 @@
 
 All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PATCH`. The userscript and the monitor are released together.
 
+## [22.30.2] - 2026-10-17
+
+### Fixed
+- **A flight that came down in a hole in coverage and flew on is two flights, not one from where the first began.** N6012C (a Gulfstream G600) was heard at cruise over central Asia, not heard for hours, and heard again over the Black Sea: it had landed at Baku and flown on, and the panel said it took off from Hanoi, 8,000 km back. A hole at cruise is now a stop when the ground across it, at the slower of the aircraft's two speeds either side, leaves three quarters of an hour and a quarter more time than the flight needed (flying straight through leaves a few minutes: none of the holes in over 300,000 real trace points changes), and when the aircraft is found climbing from 8,000 ft or more below where it was lost, or lost going down to 8,000 ft or more above where it is found. The aircraft's log no longer joins the flights either side of such a hole.
+- **The flight in progress begins after that hole**, in the userscript and in the monitor. FR24 keeps one flight id through a stop, and its trail, with the ADS-B in front of it, held the flight before; the track is now cut at the last take-off or hole it came down in, as the log's flights are. The departure is then the field that fits both ends of the hole, said to be "out of ADS-B coverage", or none: never the take-off of the flight before.
+- **A browser's own answer stands over another browser's.** "Worked out by another browser" took the place of the destination this browser had worked out itself, with the aircraft's log or its take-off seen, whenever the other put its odds 10 points higher; and what this browser had worked out was not sent to the monitor. Every browser now calculates as normal and keeps its own answer; another's fills a panel that has none, and a destination confirmed in another browser still stands. Its own answer goes to the monitor to be kept and handed to the others.
+- **The departure of the flight before is dropped wherever it is kept**: by the browser for the flight id, in the route another browser sent (the departure that came with a wrong destination), and on the monitor in its own answer and in the route it hands out.
+- **The odds were worked out for the wrong flight.** With the departure of the flight before, the distance flown, the line flown and the range left were those of a flight from Hanoi, so the destinations it weighed lay along that line and none stood out. They are now worked out for the flight it is on. A jet still thousands of kilometres out, on a line a dozen airports share (across the Atlantic to the US East Coast), keeps near-equal odds for them: that is what is known until it is nearer.
+
+### Tests
+- New `unit_n6012c`: the hole rules (a stop, a hole flown straight through, climbing out and going down), with over 300,000 real trace points checked to keep their flights whole; the flight in progress cut at the hole in the userscript and the monitor; the built userscript on N6012C as FR24 and adsb.lol could have given it (FR24's first point on the ground at Baku, climbing, at 26,400 ft, none; one flight id from Hanoi; today's trace only), its log, its own route standing over another's and being sent to the monitor, and the departures of the flight before dropped from the browser's record, the shared route and the monitor's rows.
+
 ## [22.30.1] - 2026-10-16
 
 ### Fixed
