@@ -643,8 +643,32 @@
   // ---- FR24's search box, on every page (map, playback, boards, logs): the blocked aircraft this script keeps logs of, as
   // FR24 lists aircraft (to the log page built here), and the callsigns they flew under, as FR24 lists flight numbers (to
   // the flight-number page built here) - FR24's own results stand, none listed twice (the page merges them)
+  // A route searched for - "LPL-EIS", "EGGP-TUPJ": every flight on it this browser has worked out, blocked or one FR24
+  // shows without a destination (M-PORT, worked out as Liverpool to EIS) - as FR24 lists its own flights on a route: the
+  // flight (its card, and its panel when clicked), then its callsign (to the flight-number page).
+  const apForCode = c => airports.byIata.get(c) || (c.length === 4 ? ENGINE.byIcao(c) : null) || null;
+  function routeSearch(q) {
+    const m = String(q || '').toUpperCase().match(/^\s*([A-Z0-9]{3,4})\s*[-–—>/]\s*([A-Z0-9]{3,4})\s*$/); if (!m || !airportsReady()) return null;
+    const A = apForCode(m[1]), B = apForCode(m[2]);
+    const at = (id, code, ap, c) => (ap ? id === ap.id : false) || String(code || '').toUpperCase() === c;
+    const on = r => !!r && !r.landed && at(r.originId, r.originIata, A, m[1]) && at(r.destId, r.destIata, B, m[2]);
+    const out = [], seen = new Set();
+    const add = (id, rec, route, fb) => {
+      if (seen.has(id) || !on(route)) return; const c = currentPos(id) || fb; if (!c) return;
+      seen.add(id); out.push({ id, cs: rec.cs, rec, route: routeForPage(route), pos: { lat: c.lat, lon: c.lon, alt: c.alt, gnd: !!c.gnd, at: c.t * 1000 } });
+    };
+    for (const [id, rec] of live) { const st = routeState.get(id); add(id, { cs: csOfRec(rec), reg: rec.reg || '', type: rec.type || '', hex: rec.hex || '', operatorId: operatorIdOf(store.getHex(rec.hex) || {}, rec.cs) || 0 }, (st && st.route) || rec.route); }
+    for (const [id, p] of pubRecs) if (pubRouted(id)) { const st = routeState.get(id); add(id, { cs: p.cs || '', reg: p.reg || '', type: p.type || '', hex: p.hex || '', operatorId: operatorIdOf({}, p.cs) || 0 }, (st && st.route) || p.route); }
+    for (const [id, e] of naFeed) if (e.pub) add(id, { cs: e.f.cs || '', reg: e.f.reg || '', type: e.f.type || '', hex: e.f.hex ? Number(e.f.hex).toString(16).padStart(6, '0') : '', operatorId: operatorIdOf({}, e.f.cs) || 0 }, e.pub, { t: Math.floor(e.at / 1000), lat: e.f.lat, lon: e.f.lon, alt: e.f.alt, gnd: !!e.f.gnd });
+    return out.slice(0, 20);
+  }
   async function onNeedSearch(d) {
     const q = csKey(d.q), rows = [], cs = new Map();
+    const onRoute = routeSearch(d.q);
+    if (onRoute) {
+      for (const x of onRoute) { const c = csKey(x.cs || x.rec.reg); if (c && !rows.some(r => r.id === c)) rows.push({ type: 'schedule', id: c, label: c + ' / ' + c, match: 'begins', detail: { callsign: c, flight: c, operator: (c.match(/^[A-Z]{3}(?=\d)/) || [''])[0], operator_id: x.rec.operatorId || 0 } }); }
+      return postToPage('searchAdd', { rid: d.rid, rows, live: onRoute });
+    }
     if (q.length >= 2) {
       await Promise.race([store.ready, sleep(400)]);
       if (!fr24.airlines) await Promise.race([fr24.loadAirlines().catch(() => {}), sleep(300)]);

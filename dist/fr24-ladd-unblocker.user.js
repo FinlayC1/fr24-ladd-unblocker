@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Flightradar24 LADD / N-A Unblocker (feed-level)
 // @namespace    tweeks.io
-// @version      22.30.2
+// @version      22.30.3
 // @description  Identifies every LADD / N/A / blocked military aircraft on Flightradar24 from public ADS-B, and injects callsign, registration, operator, age, country, MSN, squawk, vertical speed, GPS altitude, airspeeds, wind, photos, a reasoned origin/destination with a wind-corrected ETA (also for ordinary flights FR24 shows as N/A - military, private, GA, helicopters, with private landing sites; learned from 63 days of every aircraft worldwide, with live weather and closures), airport-board entries and a rebuilt 7-month flight log straight into FR24's own data - so it all renders like normal FR24 traffic.
 // @author       Finlay Clarke
 // @updateURL    https://raw.githubusercontent.com/FinlayC1/fr24-ladd-unblocker/main/dist/fr24-ladd-unblocker.user.js
@@ -90,7 +90,7 @@
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "22.30.2";
+    var BRIDGE_V = "22.30.3";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed
@@ -897,6 +897,9 @@
           var ppr = pst.id ? resolved.get(pst.id) : null, pphWait = !!(ppr && ppr.hex && !hasPhotos(ppr) && !((photoCache.get(String(ppr.hex).toUpperCase()) || {}).final));
           if (ppr && ppr.hex && !((photoCache.get(String(ppr.hex).toUpperCase()) || {}).final)) photosFor(ppr, true);
           if (pst.id && (!pbReady(pst.id) || pphWait)) { var xpb = this, bpb = sendBody; Promise.all([whenPbReady(pst.id, 1500), pphWait ? photosWithin(ppr, 2500) : null]).then(function () { try { oSend.call(xpb, bpb); } catch (e) { /* aborted meanwhile */ } }); return; }
+        } else if (!this.__tlOwn && /fr24\.feed\.api\.v1\.Feed\/TopFlights(?:$|\?)/.test(url)) {
+          if (this.responseType === 'arraybuffer') installBinary(this, patchTopFlights);
+          else installText(this, function (b) { return patchTopFlights(b); }, {});
         } else if (!this.__tlOwn && /fr24\.feed\.api\.v1\.Feed\/(?:FollowFlight|FlightDetails)(?:$|\?)/.test(url)) {
           // FollowFlight feeds the aircraft panel; FlightDetails the expanded card of a live search result
           var isFollow = /FollowFlight/.test(url), FM = isFollow ? FOLLOW : DETAILS, st = { id: followIdFromBody(body) };
@@ -960,6 +963,61 @@
     // FL450 mid-Atlantic, 9 Oct: 532 fixes back to the runway at Baltimore). Asked for by the userscript for an unnamed
     // flight out of public coverage; read up to the first frame, then closed - one every 20 s at most.
     var bgFollowAt = 0;
+    // ---- FR24's Most tracked flights: its widget's list (Feed/TopFlights; the JSON /flights/most-tracked elsewhere) --------
+    // A flight FR24 lists with no destination - "N/A": Air Force One out of Andrews - is given the one worked out here, as on
+    // its panel and the boards. One not worked out yet is asked for (the userscript fetches its track in the background):
+    // FR24 asks for the list again every little while, and it is in the list then.
+    //   TopFlightsResponse 1 FollowedFlight (repeated): 1 flight_id 2 live_clicks 3 total_clicks 4 flight_number 5 callsign
+    //   6 squawk 7 from_iata 8 from_city 9 to_iata 10 to_city 11 type 12 full_description
+    var naAsked = new Map();
+    var isCode = function (c) { return /^[A-Z0-9]{3,4}$/.test(String(c || '')); };
+    function destFor(id) { var r = id ? routeNow(id) : null; return r && isCode(r.destIata) ? r : null; }
+    function askNaRoutes(list) {
+      // (one not worked out yet asked for again after a minute; one already given, to keep it current, every two)
+      var now = Date.now(), ask = list.filter(function (x) { var t = naAsked.get(x.id); return !t || now - t > (x.has ? 120000 : 60000); }).slice(0, 6);
+      if (!ask.length) return;
+      ask.forEach(function (x) { naAsked.set(x.id, now); }); if (naAsked.size > 300) naAsked.delete(naAsked.keys().next().value);
+      post('needNaRoutes', { list: ask });
+    }
+    function patchTopFlights(body) {
+      var fs = parse(body), parts = [], changed = false, ask = [];
+      for (var i = 0; i < fs.length; i++) {
+        var f = fs[i], it = null;
+        if (f.fn === 1 && f.wt === 2) { try { it = parse(f.val); } catch (e) { it = null; } }
+        // (only what reads as FR24's entry: an id, a flight number or callsign, its airports as codes - and no destination)
+        var id = it ? numOf(it, 1) : 0, from = it ? strOf(it, 7) : '', to = it ? strOf(it, 9) : '';
+        if (!id || !(strOf(it, 4) || strOf(it, 5)) || (from && !isCode(from)) || to) { parts.push(f.raw); continue; }
+        var r = destFor(id);
+        ask.push({ id: id, cs: strOf(it, 5) || strOf(it, 4), from: from, type: strOf(it, 11), has: !!r });
+        if (!r) { parts.push(f.raw); continue; }
+        var keep = it.filter(function (x) { return x.fn !== 9 && x.fn !== 10; }).map(function (x) { return x.raw; });
+        keep.push(fStr(9, r.destIata)); if (r.destCity) keep.push(fStr(10, r.destCity));
+        parts.push(fLen(1, concat(keep))); changed = true;
+      }
+      if (ask.length) askNaRoutes(ask);
+      if (changed) stats.topFlights = (stats.topFlights || 0) + 1;
+      return changed ? concat(parts) : body;
+    }
+    // (the same list as JSON - whatever it nests the flights in: each one with a flight id and an empty destination)
+    function fillFlightList(j) {
+      var n = 0, ask = [];
+      (function walk(o, depth) {
+        if (!o || typeof o !== 'object' || depth > 6) return;
+        if (Array.isArray(o)) { o.forEach(function (x) { walk(x, depth + 1); }); return; }
+        var idv = o.flight_id != null ? o.flight_id : o.flightId, id = typeof idv === 'number' ? idv : /^[0-9a-f]{6,8}$/i.test(String(idv || '')) ? parseInt(idv, 16) : 0;
+        var tk = ['to_iata', 'toIata', 'destination_iata', 'destinationIata'].filter(function (k) { return k in o; })[0];
+        if (id && tk && !isCode(o[tk])) {
+          var r = destFor(id), ck = ['to_city', 'toCity', 'destination_city', 'destinationCity'].filter(function (k) { return k in o; })[0];
+          if (r) { o[tk] = r.destIata; if (ck && r.destCity) o[ck] = r.destCity; n++; }
+          ask.push({ id: id, cs: String(o.callsign || o.flight || o.flight_number || o.flightNumber || ''), from: String(o.from_iata || o.fromIata || ''), type: String(o.model || o.type || ''), has: !!r });
+          return;
+        }
+        for (var k in o) if (o[k] && typeof o[k] === 'object') walk(o[k], depth + 1);
+      })(j, 0);
+      if (ask.length) askNaRoutes(ask);
+      return n;
+    }
+
     function bgFollowTrail(id) {
       if (!feedHeaders || !id || Date.now() - bgFollowAt < 20000) return;
       bgFollowAt = Date.now();
@@ -1188,25 +1246,46 @@
         if (!cur || pos.at > cur.pos.at || (pos.at === cur.pos.at && id > cur.id)) best[ak] = { id: id, rec: rec, pos: pos };
       });
       Object.keys(best).forEach(function (ak) {
-        var id = best[ak].id, rec = best[ak].rec, pos = best[ak].pos;
-        var route = (pb ? pbRoutes.get(id) : routes.get(id)) || {};
-        var from = route.originIata || '', to = route.destIata || '';
-        var routeText = from || to ? ((route.originCity || from || '?') + (from ? ' (' + from + ')' : '') + ' ⟶ ' + (route.destCity || to || '?') + (to ? ' (' + to + ')' : '')) : '';
-        var label = csOf(rec);
-        out.push({ id: id.toString(16), label: label + (rec.reg && csOf(rec) !== String(rec.reg).replace(/[^A-Za-z0-9]/g, '').toUpperCase() ? ' / ' + rec.reg : '') + ' / ' + (rec.type || '') + ' (' + (rec.reg || rec.hex) + ')',
-          detail: { lat: pos.lat, lon: pos.lon, schd_from: from, schd_to: to, ac_type: rec.type || '', route: routeText, logo: logoOf(rec.operatorId), reg: rec.reg || '', callsign: label, flight: label, operator: rec.operatorIcao || '', operator_id: rec.operatorId || 0 },
-          type: 'live', match: 'begins' });
+        var id = best[ak].id;
+        out.push(liveRow(id, best[ak].rec, (pb ? pbRoutes.get(id) : routes.get(id)) || {}, best[ak].pos, 'begins'));
       });
       return out.slice(0, 20);
+    }
+    var routeText = function (from, fromCity, to, toCity) { return from || to ? ((fromCity || from || '?') + (from ? ' (' + from + ')' : '') + ' ⟶ ' + (toCity || to || '?') + (to ? ' (' + to + ')' : '')) : ''; };
+    function liveRow(id, rec, route, pos, match) {
+      var from = route.originIata || '', to = route.destIata || '', label = csOf(rec);
+      return { id: id.toString(16), label: label + (rec.reg && csOf(rec) !== String(rec.reg).replace(/[^A-Za-z0-9]/g, '').toUpperCase() ? ' / ' + rec.reg : '') + ' / ' + (rec.type || '') + ' (' + (rec.reg || rec.hex) + ')',
+        detail: { lat: pos.lat, lon: pos.lon, schd_from: from, schd_to: to, ac_type: rec.type || '', route: routeText(from, route.originCity, to, route.destCity), logo: logoOf(rec.operatorId), reg: rec.reg || '', callsign: label, flight: label, operator: rec.operatorIcao || '', operator_id: rec.operatorId || 0 },
+        type: 'live', match: match };
+    }
+    // (a route searched for - "LPL-EIS": the flights the userscript has worked out between the two, each { id, rec, route,
+    // pos } - those named here and those FR24 shows without a destination alike - as live flights, as FR24 lists its own)
+    function routeRows(list) {
+      var out = [], now = Date.now();
+      (list || []).forEach(function (x) {
+        if (!x || x.id == null || !x.route || !x.pos || !fin(x.pos.lat) || now - (x.pos.at || 0) > 30 * 60000) return;
+        var id = Number(x.id), rec = resolved.get(id) || x.rec; if (!rec) return;
+        out.push(liveRow(id, rec, routeOf(id) || x.route, lastPos.get(id) || x.pos, 'begins'));
+      });
+      return out.slice(0, 20);
+    }
+    // (FR24's own row of a flight it has no destination for: the one worked out here, as on its panel)
+    function liveDestFix(r) {
+      if (!r || r.type !== 'live' || !r.id || !r.detail || r.detail.schd_to) return false;
+      var route = routeNow(parseInt(r.id, 16)); if (!route || !/^[A-Z0-9]{3,4}$/.test(route.destIata || '')) return false;
+      var d = r.detail, from = d.schd_from || route.originIata || '';
+      d.schd_to = route.destIata; if (!d.schd_from && from) d.schd_from = from;
+      d.route = routeText(from, route.originCity, route.destIata, route.destCity);
+      return true;
     }
     // (the userscript's search answer - the blocked aircraft and callsigns it keeps logs of - asked for as FR24 asks its own;
     // a moment at most, then without it)
     var searchWait = {}, searchSeq = 0;
-    function askSearch(q) { var rid = 's' + (++searchSeq); return new Promise(function (res) { searchWait[rid] = res; oSetTimeout(function () { if (searchWait[rid]) { delete searchWait[rid]; res([]); } }, 700); post('needSearch', { q: q, rid: rid }); }); }
+    function askSearch(q) { var rid = 's' + (++searchSeq); return new Promise(function (res) { searchWait[rid] = res; oSetTimeout(function () { if (searchWait[rid]) { delete searchWait[rid]; res({ rows: [], live: [] }); } }, 700); post('needSearch', { q: q, rid: rid }); }); }
     function onSearchAdd(d) {
       // (each a blocked aircraft or a callsign of one: its Playback is FR24's map playback of its flight)
       (Array.isArray(d.rows) ? d.rows : []).forEach(function (r) { if (r && r.id && (r.type === 'aircraft' || r.type === 'schedule')) pbBlkNote(r.type === 'aircraft' ? 'A' : 'C', r.id, r.type === 'aircraft' && r.detail ? r.detail.hex : ''); });
-      var f = searchWait[d.rid]; if (f) { delete searchWait[d.rid]; f(Array.isArray(d.rows) ? d.rows : []); }
+      var f = searchWait[d.rid]; if (f) { delete searchWait[d.rid]; f({ rows: Array.isArray(d.rows) ? d.rows : [], live: Array.isArray(d.live) ? d.live : [] }); }
     }
     // (a logo FR24 has none of - BAE Systems' - on any row of its search: airline, aircraft, flight)
     function logoFix(r) { var id = r && r.detail && r.detail.operator_id; if (!id || !LOGO_ADD[id] || r.detail.logo === LOGO_ADD[id].source) return false; r.detail.logo = LOGO_ADD[id].source; return true; }
@@ -2134,26 +2213,33 @@
             }, function () { return res; });
           });
         }
+        if (/\/most-tracked(?:$|[?#/])/.test(url)) {
+          return p.then(function (res) {
+            if (!res.ok) return res;
+            return res.clone().json().then(function (j) { return fillFlightList(j) ? jsonResponse(res, j) : res; }, function () { return res; });
+          });
+        }
         if (optOn('search') && /\/v1\/search\/web\/find\?/.test(url)) {
           var qm = url.match(/[?&]query=([^&]*)/); var q = qm ? decodeURIComponent(qm[1].replace(/\+/g, ' ')).trim().toUpperCase() : '';
           if (q.length < 2) return p;
           var mine = askSearch(q);     // (asked of the userscript at once, answered while FR24's own search runs)
           return p.then(function (res) {
-            if (!res.ok) return res;
+            // (a route FR24 has nothing for - or no answer at all: the flights worked out here on it, on their own)
+            if (!res.ok) return /^[A-Z0-9]{3,4}\s*[-–—>/]\s*[A-Z0-9]{3,4}$/.test(q) ? mine.then(function (ans) { var rr = routeRows(ans && ans.live), sc = rr.length ? ((ans && ans.rows) || []).filter(function (r) { return r && r.type === 'schedule'; }) : []; if (!rr.length) return res; stats.searchHits += rr.length + sc.length; return jsonResponse(null, { results: rr.concat(sc), stats: { total: { all: rr.length + sc.length, live: rr.length, schedule: sc.length }, count: { live: rr.length, schedule: sc.length } } }); }) : res;
             return Promise.all([res.clone().json(), mine]).then(function (both) {
-              var j = both[0], extra = both[1] || [];
+              var j = both[0], ans = both[1] || {}, extra = ans.rows || [];
               if (!j || !Array.isArray(j.results)) return res;
-              var enriched = 0; j.results.forEach(function (r) { if (enrichAircraftRow(r)) enriched++; if (logoFix(r)) enriched++; });
+              var enriched = 0; j.results.forEach(function (r) { if (enrichAircraftRow(r)) enriched++; if (logoFix(r)) enriched++; if (liveDestFix(r)) enriched++; });
               // (aircraft found by registration: blocked on FR24 or not - its register lookup lists no flights for a blocked
               // one - for the yellow tag in the list: M-CDJC, M-PORT)
               if (q.length >= 4) j.results.filter(function (r) { return r && r.type === 'aircraft' && r.id && !recByReg(r.id); }).slice(0, 3).forEach(function (r) {
                 var hx = String((r.detail && r.detail.hex) || '').toLowerCase();
                 regInfo(r.id).then(function (x) { if (x && x.blocked) pbBlkNote('A', x.reg, x.hex || hx); if (x) post('searchRows', { rows: [{ reg: x.reg, hex: x.hex || hx, type: x.ty, blocked: !!x.blocked }] }); });
               });
-              var add = liveEntries(q);
+              var add = liveEntries(q).concat(routeRows(ans.live));
               // one row per aircraft: none added for a flight - or a registration - FR24's own results already list live
               var have = {}, haveReg = {}, seen = {}; j.results.forEach(function (r) { if (!r) return; seen[r.type + ':' + String(r.id).toUpperCase()] = true; if (r.type === 'live') { have[r.id] = true; if (r.detail && r.detail.reg) haveReg[String(r.detail.reg).toUpperCase()] = true; } });
-              add = add.filter(function (a) { return !have[a.id] && !(a.detail.reg && haveReg[String(a.detail.reg).toUpperCase()]); });
+              var once = {}; add = add.filter(function (a) { if (once[a.id]) return false; once[a.id] = true; return !have[a.id] && !(a.detail.reg && haveReg[String(a.detail.reg).toUpperCase()]); });
               // the blocked aircraft and the callsigns they flew under that the userscript keeps logs of - FR24 lists neither:
               // as its aircraft (to the log page) and flight numbers (to the flight-number page)
               var more = extra.filter(function (r) { return r && r.id && !seen[r.type + ':' + String(r.id).toUpperCase()]; });
@@ -2678,7 +2764,7 @@
       else if (d.__tweeksLadd === 'hello') post('ready', { stats: stats, feedReady: !!feedHeaders, hdr: feedHdrPublic(), v: BRIDGE_V });
     });
     window[NS] = { resolved: resolved, routes: routes, naRecs: naRecs, naRoutes: naRoutes, telem: telem, hist: hist, lastPos: lastPos, photoCache: photoCache, psCache: psCache, stats: stats, fetchPhotos: fetchPhotos, hello: function () { post('ready', { stats: stats, feedReady: !!feedHeaders, v: BRIDGE_V }); }, v: BRIDGE_V };
-    if (window.__tlTestHook) try { window.__tlTestHook({ csOf: csOf, hist: hist, preloaded: function () { return preloaded; }, parse: parse, photoFits: photoFits, makerOf: makerOf, patchFollow: patchFollow, patchFlightMsg: patchFlightMsg, pushFollow: pushFollow, followSt: function () { return followSt; }, setFollowSt: function (s) { followSt = s; }, shownPhotos: shownPhotos, photoCache: photoCache, FOLLOW: FOLLOW, DETAILS: DETAILS, fLen: fLen, fStr: fStr, fVar: fVar, patchFlight: patchFlight, patchLiveFeed: patchLiveFeed, fr24Named: fr24Named, psState: function () { return { q: psQ.length, busy: psBusy, last: psLast, blockedFor: Math.max(0, psBlockedUntil - Date.now()), pri: Array.from(psPri), jobs: photoJobs.size, head: psQ.slice(0, 3).map(function (j) { return j.hex; }) }; }, acceptPubTel: acceptPubTel, pubTelFor: pubTelFor, fillNativeCard: fillNativeCard, regsOfCallsign: regsOfCallsign, categoryOf: categoryOf, placeShort: placeShort, nativeFill: nativeFill, natInfo: natInfo, addArch: addArch, acceptBoardArch: acceptBoardArch, telem: telem, b64Encode: b64Encode, b64DecodeInto: b64DecodeInto, frameHeader: frameHeader, concat: concat, varintInt32: varintInt32, PLAYBACK: PLAYBACK, patchPlayback: patchPlayback, patchPlaybackRequest: patchPlaybackRequest, pbRoutes: pbRoutes, pbTelAt: pbTelAt, setPbTrace: function (t) { pbTrace = t; }, patchList: patchList, acceptSites: acceptSites, listSig: listSig, mergeRoutes: mergeRoutes, applyRoutes: applyRoutes, routesAdd: routesAdd, applyAirport: applyAirport, applyBoardPage: applyBoardPage, applyStats: applyStats, mergeFlights: mergeFlights, apData: apData, telAt: telAt, noteTelem: noteTelem, pbTraceOf: function () { return pbTrace; }, logoOf: logoOf, archDetail: archDetail, tsOf: tsOf, noteAirportJson: noteAirportJson, rwyOf: rwyOf, rwyPanel: rwyPanel, panelTick: panelTick, panelData: panelData, promoSlots: promoSlots, acceptAirportPanel: acceptAirportPanel, unlockRunways: unlockRunways, mvRows: mvRows, mvKept: mvKept, dayOf: dayOf, pbPanelTick: pbPanelTick, logoFix: logoFix, liveEntries: liveEntries, pbPos: pbPos, unlockFeed: unlockFeed, derivedVs: derivedVs, altHist: altHist, acceptAir: acceptAir, airCache: airCache, flushAir: flushAir, airWant: function () { return airWant; }, lastPos: lastPos, resolved: resolved, stats: stats, pbFind: pbFind, pbTraceUrl: pbTraceUrl, pbMerge: pbMerge, inBar: inBar, pbBlk: pbBlk, cardInfo: cardInfo, boardRowsSeen: boardRowsSeen, archById: archById, routes: routes, setCurFollow: function (id) { curFollowId = id; } }); } catch (e) { /* ignore */ }
+    if (window.__tlTestHook) try { window.__tlTestHook({ csOf: csOf, patchTopFlights: patchTopFlights, fillFlightList: fillFlightList, routeRows: routeRows, liveDestFix: liveDestFix, hist: hist, preloaded: function () { return preloaded; }, parse: parse, photoFits: photoFits, makerOf: makerOf, patchFollow: patchFollow, patchFlightMsg: patchFlightMsg, pushFollow: pushFollow, followSt: function () { return followSt; }, setFollowSt: function (s) { followSt = s; }, shownPhotos: shownPhotos, photoCache: photoCache, FOLLOW: FOLLOW, DETAILS: DETAILS, fLen: fLen, fStr: fStr, fVar: fVar, patchFlight: patchFlight, patchLiveFeed: patchLiveFeed, fr24Named: fr24Named, psState: function () { return { q: psQ.length, busy: psBusy, last: psLast, blockedFor: Math.max(0, psBlockedUntil - Date.now()), pri: Array.from(psPri), jobs: photoJobs.size, head: psQ.slice(0, 3).map(function (j) { return j.hex; }) }; }, acceptPubTel: acceptPubTel, pubTelFor: pubTelFor, fillNativeCard: fillNativeCard, regsOfCallsign: regsOfCallsign, categoryOf: categoryOf, placeShort: placeShort, nativeFill: nativeFill, natInfo: natInfo, addArch: addArch, acceptBoardArch: acceptBoardArch, telem: telem, b64Encode: b64Encode, b64DecodeInto: b64DecodeInto, frameHeader: frameHeader, concat: concat, varintInt32: varintInt32, PLAYBACK: PLAYBACK, patchPlayback: patchPlayback, patchPlaybackRequest: patchPlaybackRequest, pbRoutes: pbRoutes, pbTelAt: pbTelAt, setPbTrace: function (t) { pbTrace = t; }, patchList: patchList, acceptSites: acceptSites, listSig: listSig, mergeRoutes: mergeRoutes, applyRoutes: applyRoutes, routesAdd: routesAdd, applyAirport: applyAirport, applyBoardPage: applyBoardPage, applyStats: applyStats, mergeFlights: mergeFlights, apData: apData, telAt: telAt, noteTelem: noteTelem, pbTraceOf: function () { return pbTrace; }, logoOf: logoOf, archDetail: archDetail, tsOf: tsOf, noteAirportJson: noteAirportJson, rwyOf: rwyOf, rwyPanel: rwyPanel, panelTick: panelTick, panelData: panelData, promoSlots: promoSlots, acceptAirportPanel: acceptAirportPanel, unlockRunways: unlockRunways, mvRows: mvRows, mvKept: mvKept, dayOf: dayOf, pbPanelTick: pbPanelTick, logoFix: logoFix, liveEntries: liveEntries, pbPos: pbPos, unlockFeed: unlockFeed, derivedVs: derivedVs, altHist: altHist, acceptAir: acceptAir, airCache: airCache, flushAir: flushAir, airWant: function () { return airWant; }, lastPos: lastPos, resolved: resolved, stats: stats, pbFind: pbFind, pbTraceUrl: pbTraceUrl, pbMerge: pbMerge, inBar: inBar, pbBlk: pbBlk, cardInfo: cardInfo, boardRowsSeen: boardRowsSeen, archById: archById, routes: routes, setCurFollow: function (id) { curFollowId = id; } }); } catch (e) { /* ignore */ }
     post('ready', { stats: stats, feedReady: false, v: BRIDGE_V });
   }
 
@@ -5239,7 +5325,7 @@
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '22.30.2';
+  const VERSION = '22.30.3';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
@@ -5389,6 +5475,28 @@
   const isDataPage = /^\/data\//i.test(location.pathname) && !isAircraftPage && !isFlightPage;
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const sleep = ms => new Promise(r => setTimeout(r, ms));
+  // A part of the page brought up to new HTML by changing only what differs, not drawn afresh: its elements stay, so a
+  // switch moves as it is turned (a new one would just appear turned), a spinner keeps turning, a field keeps what is
+  // being typed in it, and a tooltip being read stays up - the title of an element under the mouse is left as it is
+  // until the mouse leaves (the destination's reasons went every time the panel was updated, a few times a second).
+  function morphHtml(el, html) {
+    const t = document.createElement('template'); t.innerHTML = html;
+    morphKids(el, t.content);
+  }
+  function morphKids(a, b) {
+    const an = [...a.childNodes], bn = [...b.childNodes];
+    for (let i = 0; i < bn.length; i++) {
+      const x = an[i], y = bn[i];
+      if (!x) { a.appendChild(y); continue; }
+      if (x.nodeType !== y.nodeType || x.nodeName !== y.nodeName || (x.nodeType === 1 && x.id !== y.id)) { a.replaceChild(y, x); continue; }
+      if (x.nodeType !== 1) { if (x.data !== y.data) x.data = y.data; continue; }
+      let hover = false; try { hover = x.matches(':hover'); } catch (e) { /* no :hover here */ }
+      for (const n of x.getAttributeNames()) if (!y.hasAttribute(n) && !(hover && n === 'title')) x.removeAttribute(n);
+      for (const n of y.getAttributeNames()) { const v = y.getAttribute(n); if (x.getAttribute(n) !== v && !(hover && n === 'title')) x.setAttribute(n, v); }
+      morphKids(x, y);
+    }
+    for (let i = an.length - 1; i >= bn.length; i--) an[i].remove();
+  }
 
   // ---- staying out of the map's way ----------------------------------------------------------------------------------
   // Background work - routes for every identified aircraft, the boards' predictions, other aircraft's logs and tracks -
@@ -9347,6 +9455,39 @@
     } finally { naBusy = false; }
   }
   setInterval(() => { naTick().catch(e => log('na boards', e)); }, 20000);
+  // ---- a flight FR24 lists elsewhere with no destination (its Most tracked widget), anywhere in the world -----------------
+  // Asked for by the page; worked out the same way from FR24's own track of the flight, fetched in the background one at a
+  // time (the page's FollowFlight, its first frame). The answer goes to the page as the boards' N/A flights' do; FR24's
+  // next asking for the list has it. (One opened in the panel, or in view on the map, is worked out there already.)
+  const naWanted = new Map();   // fr24 id -> { cs, from, type, at, trailAt }
+  function onNeedNaRoutes(d) {
+    for (const x of (d && d.list) || []) {
+      const id = Number(x && x.id) || 0; if (!id || live.has(id) || pubRouted(id) || (naFeed.get(id) || {}).pub) continue;
+      const w = naWanted.get(id) || { trailAt: 0 };
+      naWanted.set(id, Object.assign(w, { cs: String(x.cs || ''), from: String(x.from || '').toUpperCase(), type: String(x.type || ''), at: now() }));
+    }
+    naWantedTick();
+  }
+  function naWantedTick() {
+    if (!naWanted.size || !airportsReady()) return;
+    let asked = false;
+    for (const [id, w] of naWanted) {
+      if (now() - w.at > 10 * 60000) { naWanted.delete(id); continue; }
+      const ft = fr24Trail.get(id);
+      if (ft && ft.pts && ft.pts.length >= 3 && (ft.at || 0) >= w.at - 60000) { naWanted.delete(id); try { naFromTrail(id, w, ft); } catch (e) { log('na route', e); } continue; }
+      if (!asked && now() - w.trailAt > 30000) { w.trailAt = now(); asked = true; postToPage('needTrail', { id }); }
+    }
+  }
+  setInterval(naWantedTick, 10000);
+  function naFromTrail(id, w, ft) {
+    const trail = [];
+    for (const p of ft.pts) { if (!fin(p.lat) || !fin(p.lon) || !fin(p.t)) continue; const last = trail[trail.length - 1]; if (!last || p.t - last.t >= 20) trail.push({ t: p.t, lat: p.lat, lon: p.lon, alt: p.alt, gs: p.gs, trk: p.trk, gnd: false }); }
+    const pos = trail[trail.length - 1]; if (!pos || nowS() - pos.t > 15 * 60) return null;
+    const f = { id, cs: w.cs, reg: '', type: w.type, hex: 0, from: w.from, lat: pos.lat, lon: pos.lon, alt: pos.alt, spd: pos.gs, trk: pos.trk, gnd: false };
+    const r = naRouteOf({ f, trail: trail.slice(-400), pub: null }); if (!r) return null;
+    postToPage('naBoard', { list: [{ id, rec: { cs: w.cs, reg: '', type: w.type, hex: '', cat: '', fcat: fr24Cat({ type: w.type }), mil: false, operatorId: operatorIdOf({}, w.cs) }, route: routeForPage(r), pos: { lat: pos.lat, lon: pos.lon, alt: pos.alt, gnd: false, at: pos.t * 1000 } }] });
+    return r;
+  }
   // ---- zero-network routes for every identified aircraft (airport boards, search, labels) ---------------------------
   // Never-routed aircraft first (just identified; those in view ahead of the world scan's), then the rest in rotation -
   // in view every 20 s, elsewhere every 2 min. All in idle slices: the newly identified in view as fast as idle time
@@ -9863,7 +10004,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       const idCell = cellHtml('Identified from public ADS-B' + tagHtml(badge, 'ladd'), `${esc(hexU || '?')}${tail ? ` <span class="tl-muted">· ${tail}</span>` : ''}`, '', true);
       html = rowHtml('plane', `${gridHtml([idCell])}${routeHtml ? '<hr class="border border-white">' + routeHtml : ''}${links ? `<div class="tl-links">${links}</div>` : ''}<div class="tl-links">${toolLinks(rec)}</div>${healthHtml()}${bridgeWarnHtml()}`);
     }
-    if (el.__tlHtml !== html) { el.innerHTML = html; el.__tlHtml = html; }
+    if (el.__tlHtml !== html) { morphHtml(el, html); el.__tlHtml = html; }
   }
   // flight log · trace · photos · registry: the aircraft's pages elsewhere (every aircraft's strip, LADD or not)
   function aircraftLinks(hx) {
@@ -10019,7 +10160,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       const diag = !pos ? `live positions: ${posStats.n ? posStats.n + ' received, none for this flight id' : 'none received yet'}` : '';
       html = rowHtml('pin', gridHtml([cellHtml((what === 'departure airport' ? 'Departure' : 'Destination') + tagHtml('Predicted', 'pred'), `${/^working/.test(why) ? '<span class="tl-spin"></span> ' : ''}<span class="tl-muted" title="${esc(diag)}">${esc(why)}…</span>`, '', true)]) + linksHtml(pub) + foot);
     }
-    if (el.__tlHtml !== html) { el.innerHTML = html; el.__tlHtml = html; }
+    if (el.__tlHtml !== html) { morphHtml(el, html); el.__tlHtml = html; }
   }
   // the LADD tag: the FAA's LADD programme page; PIA: its ADS-B privacy page; a military aircraft: its rebuilt log
   const tagLink = hx => hx.ladd || !hx.mil ? (hx.pia && !hx.ladd ? 'https://www.faa.gov/air_traffic/technology/equipadsb/privacy' : 'https://www.faa.gov/pilots/ladd') : (hx.reg ? `/data/aircraft/${encodeURIComponent(hx.reg.toLowerCase())}` : 'https://www.faa.gov/pilots/ladd');
@@ -10259,7 +10400,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     try { syncPanel0(); } catch (e) {
       log('panel sync failed', e);
       const panel = document.querySelector(SEL.panel); if (!panel) return;
-      try { const el = strip(panel); el.dataset.state = 'failed'; const html = rowHtml('pin', gridHtml([cellHtml('LADD unblocker', '<span class="tl-warn">script error</span>', esc(String((e && e.message) || e).slice(0, 160)) + ' · v' + VERSION, true)])); if (el.__tlHtml !== html) { el.innerHTML = html; el.__tlHtml = html; } } catch (_) { /* ignore */ }
+      try { const el = strip(panel); el.dataset.state = 'failed'; const html = rowHtml('pin', gridHtml([cellHtml('LADD unblocker', '<span class="tl-warn">script error</span>', esc(String((e && e.message) || e).slice(0, 160)) + ' · v' + VERSION, true)])); if (el.__tlHtml !== html) { morphHtml(el, html); el.__tlHtml = html; } } catch (_) { /* ignore */ }
     }
   }
   function syncPanel0() {
@@ -10344,13 +10485,13 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
         if (na(q(panel, SEL.arrIata)) || na(q(panel, SEL.depIata))) {
           const s = schedOf(pub.id), hx = store.getHex(pub.hex) || {};
           const why = s && s.d && s.o ? '' : noDestCraft(pub.type || hx.type, hx.cat) ? '' : 'waiting for FR24\'s flight data';
-          if (why) { const el = strip(panel); el.dataset.state = 'pending'; const html = rowHtml('pin', gridHtml([cellHtml('Destination' + tagHtml('Predicted', 'pred'), `<span class="tl-muted">${esc(why)}…</span>`, '', true)]) + `<div class="tl-links"><span class="tl-muted">v${VERSION}</span></div>${bridgeWarnHtml()}`); if (el.__tlHtml !== html) { el.innerHTML = html; el.__tlHtml = html; } return; }
+          if (why) { const el = strip(panel); el.dataset.state = 'pending'; const html = rowHtml('pin', gridHtml([cellHtml('Destination' + tagHtml('Predicted', 'pred'), `<span class="tl-muted">${esc(why)}…</span>`, '', true)]) + `<div class="tl-links"><span class="tl-muted">v${VERSION}</span></div>${bridgeWarnHtml()}`); if (el.__tlHtml !== html) { morphHtml(el, html); el.__tlHtml = html; } return; }
         }
       } else if ((e => e && isNA(e.dataset.tlVal ? e.dataset.tlOrig : textOf(e)))(q(panel, SEL.arrIata))) {
         // no record of this flight yet (its identity comes with FR24's first data)
         const el = strip(panel); el.dataset.state = 'pending';
         const html = rowHtml('pin', gridHtml([cellHtml('Destination' + tagHtml('Predicted', 'pred'), `<span class="tl-muted">waiting for the aircraft's identity${shown ? '' : ' (no ICAO address on screen)'}…</span>`, '', true)]) + `<div class="tl-links"><span class="tl-muted">v${VERSION}</span></div>`);
-        if (el.__tlHtml !== html) { el.innerHTML = html; el.__tlHtml = html; }
+        if (el.__tlHtml !== html) { morphHtml(el, html); el.__tlHtml = html; }
         return;
       }
       panel.querySelectorAll('.tl-strip').forEach(e => e.remove());
@@ -11008,8 +11149,32 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // ---- FR24's search box, on every page (map, playback, boards, logs): the blocked aircraft this script keeps logs of, as
   // FR24 lists aircraft (to the log page built here), and the callsigns they flew under, as FR24 lists flight numbers (to
   // the flight-number page built here) - FR24's own results stand, none listed twice (the page merges them)
+  // A route searched for - "LPL-EIS", "EGGP-TUPJ": every flight on it this browser has worked out, blocked or one FR24
+  // shows without a destination (M-PORT, worked out as Liverpool to EIS) - as FR24 lists its own flights on a route: the
+  // flight (its card, and its panel when clicked), then its callsign (to the flight-number page).
+  const apForCode = c => airports.byIata.get(c) || (c.length === 4 ? ENGINE.byIcao(c) : null) || null;
+  function routeSearch(q) {
+    const m = String(q || '').toUpperCase().match(/^\s*([A-Z0-9]{3,4})\s*[-–—>/]\s*([A-Z0-9]{3,4})\s*$/); if (!m || !airportsReady()) return null;
+    const A = apForCode(m[1]), B = apForCode(m[2]);
+    const at = (id, code, ap, c) => (ap ? id === ap.id : false) || String(code || '').toUpperCase() === c;
+    const on = r => !!r && !r.landed && at(r.originId, r.originIata, A, m[1]) && at(r.destId, r.destIata, B, m[2]);
+    const out = [], seen = new Set();
+    const add = (id, rec, route, fb) => {
+      if (seen.has(id) || !on(route)) return; const c = currentPos(id) || fb; if (!c) return;
+      seen.add(id); out.push({ id, cs: rec.cs, rec, route: routeForPage(route), pos: { lat: c.lat, lon: c.lon, alt: c.alt, gnd: !!c.gnd, at: c.t * 1000 } });
+    };
+    for (const [id, rec] of live) { const st = routeState.get(id); add(id, { cs: csOfRec(rec), reg: rec.reg || '', type: rec.type || '', hex: rec.hex || '', operatorId: operatorIdOf(store.getHex(rec.hex) || {}, rec.cs) || 0 }, (st && st.route) || rec.route); }
+    for (const [id, p] of pubRecs) if (pubRouted(id)) { const st = routeState.get(id); add(id, { cs: p.cs || '', reg: p.reg || '', type: p.type || '', hex: p.hex || '', operatorId: operatorIdOf({}, p.cs) || 0 }, (st && st.route) || p.route); }
+    for (const [id, e] of naFeed) if (e.pub) add(id, { cs: e.f.cs || '', reg: e.f.reg || '', type: e.f.type || '', hex: e.f.hex ? Number(e.f.hex).toString(16).padStart(6, '0') : '', operatorId: operatorIdOf({}, e.f.cs) || 0 }, e.pub, { t: Math.floor(e.at / 1000), lat: e.f.lat, lon: e.f.lon, alt: e.f.alt, gnd: !!e.f.gnd });
+    return out.slice(0, 20);
+  }
   async function onNeedSearch(d) {
     const q = csKey(d.q), rows = [], cs = new Map();
+    const onRoute = routeSearch(d.q);
+    if (onRoute) {
+      for (const x of onRoute) { const c = csKey(x.cs || x.rec.reg); if (c && !rows.some(r => r.id === c)) rows.push({ type: 'schedule', id: c, label: c + ' / ' + c, match: 'begins', detail: { callsign: c, flight: c, operator: (c.match(/^[A-Z]{3}(?=\d)/) || [''])[0], operator_id: x.rec.operatorId || 0 } }); }
+      return postToPage('searchAdd', { rid: d.rid, rows, live: onRoute });
+    }
     if (q.length >= 2) {
       await Promise.race([store.ready, sleep(400)]);
       if (!fr24.airlines) await Promise.race([fr24.loadAirlines().catch(() => {}), sleep(300)]);
@@ -12782,9 +12947,9 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // (the version whose "what's new" was put away, and the one whose dot on the button the window was opened for)
   const UB_SEEN_KEY = 'tweeks.fr24.ladd.seenver', UB_DOT_KEY = 'tweeks.fr24.ladd.dotver';
   // (the newest CHANGELOG section's headlines, written in by build.mjs: { v, items })
-  const UB_WHATS_NEW = {"v":"22.30.2","items":["A flight that came down in a hole in coverage and flew on is two flights, not one from where the first began.","The flight in progress begins after that hole","A browser's own answer stands over another browser's."]};
+  const UB_WHATS_NEW = {"v":"22.30.3","items":["FR24's Most tracked flights list shows predicted destinations.","Route searches list the flights worked out on that route.","FR24's own search results get the predicted destination"]};
   // (an aircraft with an open padlock: FR24's outline style - 24 grid, 1.5 stroke in the text colour)
-  const UB_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
+  const UB_ICON = '<svg data-tl-ub-icon="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
   const UB_X = '<svg viewBox="0 0 14 14" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5l11 11M12.5 1.5l-11 11"/></svg>';
   // (the size of the window's text: M is FR24's own - the 14 px of its windows' lists - and the others scale it)
   const UB_SIZE_KEY = 'tweeks.fr24.ladd.textsize', UB_SIZES = [['S', 0.9], ['M', 1], ['L', 1.15], ['XL', 1.3]];
@@ -12813,10 +12978,10 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
 .tl-ub-c .tl-ub-item{padding:10px 8px;border-top:1px solid #fff}
 .tl-ub-c .tl-ub-item p{margin:4px 0 0;font-size:calc(var(--tl-f)*14px);line-height:1.43;color:#393939}
 .tl-ub-off .tl-ub-feat{opacity:.45}
-.tl-ub-c .tl-ub-tg{flex:none;position:relative;width:44px;height:24px;margin:0;padding:0;border:0;border-radius:12px;background:#c4c4c4;cursor:pointer;transition:background .15s}
+.tl-ub-c .tl-ub-tg{flex:none;position:relative;width:44px;height:24px;margin:0;padding:0;border:0;border-radius:12px;background:#c4c4c4;cursor:pointer;transition:background-color var(--tl-tg-d,.2s) var(--tl-tg-e,cubic-bezier(.4,0,.2,1))}
 .tl-ub-c .tl-ub-tg[aria-checked="true"]{background:#f8c023}
-.tl-ub-c .tl-ub-tg i{position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.3);transition:left .15s}
-.tl-ub-c .tl-ub-tg[aria-checked="true"] i{left:22px}
+.tl-ub-c .tl-ub-tg i{position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.3);transform:translateX(0);transition:transform var(--tl-tg-d,.2s) var(--tl-tg-e,cubic-bezier(.4,0,.2,1))}
+.tl-ub-c .tl-ub-tg[aria-checked="true"] i{transform:translateX(20px)}
 .tl-ub-c .tl-ub-reload{position:sticky;top:0;z-index:1;display:flex;align-items:center;justify-content:space-between;gap:6px;padding:6px 8px;background:#fff4d1;border-bottom:1px solid #f8c023;font-size:calc(var(--tl-f)*13px);font-weight:600}
 .tl-ub-c .tl-ub-reload[hidden]{display:none}
 .tl-ub-c .tl-ub-b{flex:none;margin:0;padding:5px 12px;border:0;border-radius:4px;background:#f8c023;color:#1b1b1b;font:inherit;font-size:calc(var(--tl-f)*13px);line-height:1.4;font-weight:700;cursor:pointer}
@@ -13071,8 +13236,8 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   }
   function monPaint() {
     if (!ubBody || !ubBody.isConnected) return;
-    const m = ubBody.querySelector('#tl-ub-mon'); if (m) m.innerHTML = monHtml();
-    const l = ubBody.querySelector('#tl-ub-local'); if (l) l.innerHTML = localHtml();
+    const m = ubBody.querySelector('#tl-ub-mon'); if (m) morphHtml(m, monHtml());
+    const l = ubBody.querySelector('#tl-ub-local'); if (l) morphHtml(l, localHtml());
   }
   function monStart() { monStop(); monRefresh(); ubMon.timer = setInterval(() => { if (!unblockWindowOpen()) return monStop(); monRefresh(); }, 20000); }
   function monStop() { if (ubMon.timer) clearInterval(ubMon.timer); ubMon.timer = 0; }
@@ -13091,14 +13256,33 @@ html.tl-no-strip .tl-strip{display:none!important}`;
       <div class="tl-ub-item"><span class="tl-ub-t">This browser</span><div id="tl-ub-local">${opt.on ? localHtml() : '<p>Switched off.</p>'}</div></div>
       <div class="tl-ub-item"><span class="tl-ub-t">Data sources</span><div id="tl-ub-sources">${opt.on ? sourcesHtml() : '<p>Switched off.</p>'}</div></div>`;
   }
-  // (the content: in FR24's own window, or in the stand-in)
+  // (the content: in FR24's own window, or in the stand-in - changed where it differs, so a switch slides across as it is
+  // turned, as FR24's do; drawn afresh, it only ever appeared in its new place)
   let ubBody = null;
   function renderUnblockWindow() {
     if (!ubBody || !ubBody.isConnected) return;
     const top = ubBody.scrollTop;
     ubBody.classList.toggle('tl-ub-off', !opt.on);
     ubBody.style.setProperty('--tl-f', String(UB_SIZES[ubSize()][1]));
-    ubBody.innerHTML = ubBodyHtml(); ubBody.scrollTop = top;
+    const L = ubSwitchLook(); if (L) { ubBody.style.setProperty('--tl-tg-d', L.d); ubBody.style.setProperty('--tl-tg-e', L.e); }
+    morphHtml(ubBody, ubBodyHtml()); ubBody.scrollTop = top;
+  }
+  // FR24's own switches move as they are turned: how long they take and how they ease, read off one of them - in its
+  // Widgets list, kept in the window out of sight while this content is in it - and kept for the stand-in and next time
+  const UB_TG_KEY = 'tweeks.fr24.ladd.switchlook';
+  const ubSwitchLook = () => { try { const L = JSON.parse(lsGet(UB_TG_KEY) || 'null'); return L && /^[\d.]+m?s$/.test(L.d) && /^[a-z-]+(\([\d.,\s-]*\))?$/.test(L.e) ? L : null; } catch (e) { return null; } };
+  function learnSwitch(root) {
+    const sw = root && root.querySelector('[role="switch"]:not(.tl-ub-tg),input[type="checkbox"]'); if (!sw) return;
+    const box = sw.matches('input') ? sw.parentElement : sw;
+    for (const el of [box, ...box.querySelectorAll('*')].slice(0, 12)) {
+      for (const pe of [null, '::before', '::after']) {
+        let cs; try { cs = getComputedStyle(el, pe); } catch (e) { continue; }
+        if (!/transform|translate|left|margin|inset|all/.test(cs.transitionProperty || '')) continue;
+        const d = String(cs.transitionDuration || '').split(',').map(x => x.trim()).find(x => parseFloat(x) > 0);
+        const e = (String(cs.transitionTimingFunction || '').match(/^(cubic-bezier\([^)]*\)|steps\([^)]*\)|[a-z-]+)/) || [])[1];
+        if (d && e) { lsSet(UB_TG_KEY, JSON.stringify({ d, e })); return; }
+      }
+    }
   }
   // (the data sources' own buttons - monitor, keys - are handled with the strip's tools, which redraw this part)
   function refreshSources() { const el = ubBody && ubBody.isConnected ? ubBody.querySelector('#tl-ub-sources') : null; if (el && opt.on) el.innerHTML = sourcesHtml(); }
@@ -13205,7 +13389,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     const it = HJ.item;
     if (on && it && it.isConnected) {
       const sig = sigOf(lookOf(it));
-      if (ubBtn && HJ.rest && sig !== HJ.rest && sig !== HJ.actSig) { HJ.actSig = sig; HJ.act = faceOf(it, 'Widgets', true); dress(ubBtn, HJ.act); ubBadge(); }
+      if (ubBtn && HJ.rest && sig !== HJ.rest && sig !== HJ.actSig) { HJ.actSig = sig; learnLook('open', it); HJ.act = faceOf(it, 'Widgets', true); dress(ubBtn, HJ.act); ubBadge(); }
       if (ubBtn && !HJ.act) ubBtn.classList.add('tl-ub-btn-on');
       if (HJ.restFace) {
         if (!HJ.face || !HJ.face.isConnected || HJ.face.previousElementSibling !== it) {
@@ -13223,6 +13407,8 @@ html.tl-no-strip .tl-strip{display:none!important}`;
       if (it) it.removeAttribute('data-tl-ub-under');
       HJ.act = null; HJ.actSig = '';
     }
+    // (open: its icon drawn as FR24 draws an open button's - see ubIconStyle)
+    if (ubBtn) ubBtn.toggleAttribute('data-tl-ub-open', !!(on && it && it.isConnected));
     if (barMo) barMo.takeRecords();
   }
   // (Widgets, in its resting look, pressed while this has its window: FR24 puts the window away, then Widgets' own comes up)
@@ -13238,6 +13424,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     barMo = new MutationObserver(recs => {
       try { if (recs.some(r => !(r.target.closest && r.target.closest('.tl-ub-btn,.tl-ub-face')))) ubResync(); } catch (e) { log('LADD Unblock button', e); }
       const it = HJ.item;
+      if (HJ.st === 'off' && !ubFloat) { try { learnBarLooks(); } catch (e) { log('LADD Unblock button', e); } }
       if (!it || !(HJ.st === 'on' || (HJ.st === 'opening' && HJ.pressed)) || !HJ.rest || !recs.some(r => it.contains(r.target))) return;
       if (sigOf(lookOf(it)) !== HJ.rest) swapBar(true); else if (HJ.st === 'on') lendDone();
     });
@@ -13334,6 +13521,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     HJ.tnode = tn; HJ.tdata = tn ? tn.data : ''; if (tn) tn.data = tn.data.replace(/\S.*\S|\S/, 'LADD Unblock');
     const kb = w.keep.getBoundingClientRect();
     for (const c of w.host.children) { const r = c.getBoundingClientRect(); if (c === w.keep || (kb.height > 0 && r.height > 0 && r.top < kb.bottom - 1 && r.height <= kb.height + 2)) c.setAttribute('data-tl-ub-keep', ''); }
+    try { learnSwitch(w.host); } catch (e) { /* drawn as before */ }
     w.host.setAttribute('data-tl-ub-host', '');
     ubBody = newBody('tl-ub-in');
     w.host.appendChild(ubBody);
@@ -13501,6 +13689,91 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     }
   }
 
+  // ---- the button's icon: drawn as FR24 draws its buttons' icons at rest, under the mouse and open ----------------------
+  // FR24's icons are drawn thicker, and in another colour, when a button is pointed at and when it is open: read off its
+  // own buttons in each state (at rest, the one under the mouse, the one open) and kept for next time. This icon is a line
+  // drawing: it takes their colour, and their line width relative to theirs at rest. (It was copied with FR24's classes on
+  // the icon itself, and FR24 draws the change on the drawing inside it: it stayed as it was.)
+  const UB_LOOK_KEY = 'tweeks.fr24.ladd.barlook';
+  // (a colour as the browser gives it, or the text colour - what is kept goes into a stylesheet: nothing else is let in)
+  const lookOk = L => !!L && typeof L === 'object' && (L.col === 'currentColor' || /^(rgba?\([\d.,\s%/]+\)|#[0-9a-f]{3,8})$/i.test(String(L.col))) && typeof L.sw === 'number' && L.sw >= 0 && L.sw < 20;
+  let ubLook = (() => { const out = {}; try { const o = JSON.parse(lsGet(UB_LOOK_KEY) || '{}'); for (const k of ['rest', 'hover', 'open']) if (o && lookOk(o[k])) out[k] = o[k]; } catch (e) { /* none kept */ } return out; })();
+  // (the colour its drawing is in - the text colour where it is that, so this one follows the text colour as FR24's does,
+  // whatever else recolours the page)
+  function iconLook(it) {
+    const s = it && it.querySelector('svg'); if (!s) return null;
+    const sh = s.querySelector('path,rect,circle,ellipse,line,polyline,polygon') || s;
+    let cs, text; try { cs = getComputedStyle(sh); text = getComputedStyle(s).color; } catch (e) { return null; }
+    const stroke = cs.stroke && cs.stroke !== 'none' ? cs.stroke : '', fill = cs.fill && cs.fill !== 'none' ? cs.fill : '', sw = stroke ? parseFloat(cs.strokeWidth) : NaN;
+    const raw = stroke || fill, L = { col: raw && raw === text ? 'currentColor' : raw, sw: isFinite(sw) && sw > 0 ? sw : 0 };
+    return lookOk(L) ? L : null;
+  }
+  function learnLook(state, it) {
+    const L = iconLook(it); if (!L) return;
+    const was = ubLook[state]; if (was && was.col === L.col && was.sw === L.sw) return;
+    ubLook[state] = L; lsSet(UB_LOOK_KEY, JSON.stringify(ubLook)); ubIconStyle();
+  }
+  // (FR24's look not yet seen: a little thicker under the mouse and open, and FR24's yellow when open)
+  function ubIconStyle() {
+    let el = document.getElementById('tl-ub-icon-style');
+    if (!el) { el = document.createElement('style'); el.id = 'tl-ub-icon-style'; (document.head || document.documentElement).appendChild(el); }
+    const base = (ubLook.rest && ubLook.rest.sw) || 0;
+    const w = st => { const L = ubLook[st]; return base && L && L.sw ? +(1.5 * L.sw / base).toFixed(2) : st === 'rest' ? 1.5 : 2; };
+    const col = st => (ubLook[st] && ubLook[st].col) || (st === 'open' ? '#f8c023' : 'currentColor');
+    const I = 'svg[data-tl-ub-icon] *';
+    const css = `.tl-ub-btn ${I}{stroke:${col('rest')};stroke-width:${w('rest')};transition:stroke .15s,stroke-width .15s}
+.tl-ub-btn:hover ${I}{stroke:${col('hover')};stroke-width:${w('hover')}}
+.tl-ub-btn[data-tl-ub-open] ${I},.tl-ub-btn.tl-ub-btn-on ${I}{stroke:${col('open')}!important;stroke-width:${w('open')}}`;
+    if (el.textContent !== css) el.textContent = css;
+  }
+  // (one of FR24's buttons pointed at - not open: its look under the mouse, once FR24 has drawn it so)
+  let ubHoverT = 0;
+  function onBarOver(ev) {
+    const it = [...ubItems.values()].find(x => x.contains(ev.target)); if (!it || it.hasAttribute('data-tl-ub-under')) return;
+    if (sigOf(lookOf(it)) !== ubCommon) return;
+    clearTimeout(ubHoverT);
+    ubHoverT = setTimeout(() => { try { if (it.isConnected && it.matches(':hover')) learnLook('hover', it); } catch (e) { /* no :hover */ } }, 400);
+  }
+  // (FR24's buttons at rest - one not pointed at - and one of theirs open, as they come)
+  function learnBarLooks() {
+    const its = [...ubItems.values()].filter(x => x.isConnected && !x.hasAttribute('data-tl-ub-under'));
+    const rest = its.find(x => { try { return sigOf(lookOf(x)) === ubCommon && !x.matches(':hover'); } catch (e) { return false; } });
+    if (rest) learnLook('rest', rest);
+    const open = openItems()[0]; let hov = true; try { hov = !!open && open.matches(':hover'); } catch (e) { /* no :hover */ }
+    if (open && !hov && !open.hasAttribute('data-tl-ub-under')) learnLook('open', open);
+  }
+
+  // ---- a click on the map puts the bar's open window away, as its X does ----------------------------------------------
+  // A click - pressed and let go within a few pixels, not a drag of the map - on the map itself (FR24's map, or a canvas
+  // over most of the page), never in a window, on the bar or in a panel. LADD Unblock's window, or FR24's own Settings,
+  // Weather, Filters or Widgets; Playback - FR24's playback - is left as it is. Looked at a moment after, so a window FR24
+  // has put away itself (opening a flight) is not opened again by pressing its button.
+  const UB_MAP_SEL = '.gm-style,.maplibregl-map,.mapboxgl-map,.leaflet-container,.ol-viewport';
+  let ubDown = null;
+  function onTheMap(t) {
+    if (!t || t.nodeType !== 1 || !t.isConnected) return false;
+    if (t.closest('.tl-ub,.tl-ub-c,.tl-ub-btn,.tl-ub-face,.tl-pop,.tl-strip,[data-tl-ub-host],[role="dialog"]') || (ubBar && ubBar.contains(t))) return false;
+    if (t.closest(UB_MAP_SEL)) return true;
+    if (t.tagName !== 'CANVAS') return false;
+    const r = t.getBoundingClientRect(), W = window.innerWidth || 1, H = window.innerHeight || 1;
+    return r.width * r.height >= 0.5 * W * H;
+  }
+  function onMapDown(ev) { ubDown = ev.button === 0 && ev.isPrimary !== false ? { x: ev.clientX, y: ev.clientY, t: clock(), el: ev.target } : null; }
+  function onMapUp(ev) {
+    const d = ubDown; ubDown = null;
+    if (!d || ev.button !== 0 || clock() - d.t > 800 || Math.abs(ev.clientX - d.x) > 6 || Math.abs(ev.clientY - d.y) > 6) return;
+    if (!onTheMap(d.el) || !onTheMap(ev.target)) return;
+    const body = unblockWindowOpen() ? ubBody : null;
+    const it = body || HJ.st !== 'off' ? null : [...ubItems.entries()].find(([l, x]) => l !== 'Playback' && openItems().includes(x));
+    if (!body && !it) return;
+    setTimeout(() => {
+      try {
+        if (body) { if (unblockWindowOpen() && ubBody === body) closeUnblockWindow(); return; }
+        if (HJ.st === 'off' && it[1].isConnected && openItems().includes(it[1])) progClick(it[1]);
+      } catch (e) { log('LADD Unblock window', e); }
+    }, 300);
+  }
+
   // ---- the button on FR24's bar ---------------------------------------------------------------------------------------
   // (the elements holding exactly these words - the bar's labels, and a window's title, which the bar test below leaves out -
   // in one walk over the page's text: label -> [elements])
@@ -13567,6 +13840,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
         const t = ev.target; if (t && t.closest && t.closest('.tl-ub-btn,.tl-ub-face')) return;
         if (ubFloat) closeStandIn();
       }, true);
+      ubBar.addEventListener('mouseover', onBarOver, true);
       watchBar();
     }
     placeBarButton(found);
@@ -13580,6 +13854,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     last.after(ubBtn);
     if (HJ.st === 'on') { HJ.item = found.items.get('Widgets') || HJ.item; HJ.actSig = ''; HJ.act = null; swapBar(true); } else if (ubFloat) ubBtn.classList.add('tl-ub-btn-on');
     ubBadge();
+    try { learnBarLooks(); } catch (e) { log('LADD Unblock button', e); }
   }
   // FR24 drawing its buttons another way while this one is there - smaller while its playback is open, larger when that is
   // put away, or its buttons drawn afresh in the same bar: this button made the same way as theirs again, before the
@@ -13611,7 +13886,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
       if (UB_LABELS.some(l => t.includes(l))) { ubTryAt = clock(); ubDirty = true; ensureBarButton(); return; }
     }
   }
-  function addUnblockStyle() { if (document.getElementById('tl-ub-style')) return; const s = document.createElement('style'); s.id = 'tl-ub-style'; s.textContent = UB_STYLE + BN_STYLE + '\n[data-tl-gone],[data-tl-ub-hid],[data-tl-ub-under]{display:none!important}'; (document.head || document.documentElement).appendChild(s); }
+  function addUnblockStyle() { if (document.getElementById('tl-ub-style')) return; const s = document.createElement('style'); s.id = 'tl-ub-style'; s.textContent = UB_STYLE + BN_STYLE + '\n[data-tl-gone],[data-tl-ub-hid],[data-tl-ub-under]{display:none!important}'; (document.head || document.documentElement).appendChild(s); ubIconStyle(); }
   function startUnblockWindow() {
     const go = () => {
       addUnblockStyle(); if (opt.on) applyOptsLive();
@@ -13645,6 +13920,8 @@ html.tl-no-strip .tl-strip{display:none!important}`;
       // (Later, a closed notice or a newer answer in another FR24 tab: the same here)
       window.addEventListener('storage', ev => { if ([UB_LATER_KEY, UB_NOTICE_KEY, HELLO_KEY].includes(ev.key)) ubBanners(); });
       document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && ubFloat) closeStandIn(); });
+      document.addEventListener('pointerdown', onMapDown, true);
+      document.addEventListener('pointerup', onMapUp, true);
       window.addEventListener('resize', () => { fitBody(); placeStandIn(); bnPlace(); });
     };
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', go, { once: true }); else go();
@@ -13736,6 +14013,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     if (!prev || (d.pts || []).length >= (prev.pts || []).length || d.first.t < prev.first.t) fr24Trail.set(id, { first: d.first, pts: d.pts || [], maxAlt: Math.max(d.maxAlt || 0, prev ? prev.maxAlt : 0), at: d.at || now() });
     const st = routeState.get(id); if (st && d.maxAlt > (st.maxAlt || 0)) st.maxAlt = d.maxAlt;
     if (live.get(id) || pubRouted(id)) scheduleReplan(id, 100);
+    if (naWanted.has(id)) naWantedTick();
   }
   function onBoardSeen(d) {
     // an airport board just listed these flights: make sure their photos and a proper route are ready before a click
@@ -13773,6 +14051,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
       case 'pbHex': onPbHex(d); break;
       case 'pbWhere': onPbWhere(d).catch(e => { log('playback where', e); postToPage('pbWhereRes', { rid: d.rid }); }); break;
       case 'searchRows': onSearchRows(d); break;
+      case 'needNaRoutes': onNeedNaRoutes(d); break;
       case 'needSearch': onNeedSearch(d).catch(e => { log('search', e); postToPage('searchAdd', { rid: d.rid, rows: [] }); }); break;
       case 'needPub': publicIdentity(d.hex, d.reg).then(() => pushPubIds([String(d.hex || '').toLowerCase()])).catch(() => {}); break;
       case 'osmRes': onOsmRes(d); break;
@@ -13977,7 +14256,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true }); else start();
   }
   }
-  try { (pageWindow()).__tweeksLadd = { version: VERSION, msgCount, schedOf, trailFor, get shownId() { return shownId; }, posStats, get bridgeV() { return bridgeV; }, hexOfId, currentPos, idHex, engine: ENGINE, live, pending, telemetry, store, routeState, planState, globalList, fr24, todayCache, sweep, resolveTargeted, routeFor, composeRoute, altsOf, holdTerminal, termHold, worldScan, refreshLists, quickRouteAll, historyPump, histPumped, learnedStore, regCountry, fr24Sched, pubRouted, pubRecs, privatePlace, loadSites, siteNear, sites, onSched, pubMem: () => pubMem, publishRoute, syncPanel, normalizeReadsb, telemOf, noteCands, csOfRec, warmHist, hostStat, loadT2, wantWx, wxMap, wantNotams, closedMap, estimateEta, nNumberHex, watchList, pollWatch, accStore, accNote, statsHtml, fleetList, checkHealth, health, exportCsv, predictForHex, verifyAgainstList, strikes, revokedIds, fr24Named, noteFr24Named, loadHistory, loadToday, fetchJetphotos, loadRunways, knownLegs, areaCache, pollView, saveSnapshot, boardNoteLegs, boardNoteFlight, boardNoteSched, boardScrub, boardLoad, boardList, naRouteOf, pbWhere, noteNa, naFeed, matchParked, matchByTraces, boardDrain, boardMem, onNeedBoard, operatorOf, shownOwner, enrich, userConfirm, userDestOf, loadApprTable, monGet, monPost, monCheck, monLive, monUp, MON_DEFAULTS, get monBase() { return monBase; }, liveSources, telOut, noteTelOut, reportTel, pbOut, srvIds, pullSrvIds, srvAdopt, reportToMonitor, syncSrvLearn, applyLearned, srvRoute, srvRec, crowdOf, routesOut, routesSent, noteRouteOut, learnFromLeg, learnOutTake, learnOutBack, get learnOutN() { return learnOut.length; }, srvCovers, get srvLearned() { return srvLearned; }, set srvLearned(v) { srvLearned = v; }, addSrvLearned, get feedHdr() { return feedHdr; }, boardMonFill, natRowOf, fnRows, buildSnapshot, bootHold, firAt, loadFir, onAirAsk, pb, onPbFeed, onPbFollow, onPbHex, pbRouteFor, pbMatch, pbFromMonitor, onNeedRoutes, onNeedAirportData, onNeedAirportPanel, liveBoardRows, runwaysOf, parseRunwayEnds, flightsOfCallsign, bootFlightPage, unlockExports, exportFile, rowWindow, hexOfFid, onNeedSearch, osmPick, wantOsmPlace, osmPlaceAt, learnSite, siteIdAt, siteBk, siteRow, apById, operatorIdOf, airlineIdByName, fr24Cat, onHistElsewhere, get viewBox() { return viewBox; }, get selectedId() { return currentId(); }, opt, setOpt, notify, openUnblockWindow, closeUnblockWindow, ensureBarButton, findBar, checkLatest, installKind, sayHello, helloSt, ubBanners, ubOffer, installId }; } catch (_) { /* ignore */ }
+  try { (pageWindow()).__tweeksLadd = { version: VERSION, msgCount, morphHtml, routeSearch, onNeedNaRoutes, naFromTrail, naWanted, fr24Trail, schedOf, trailFor, get shownId() { return shownId; }, posStats, get bridgeV() { return bridgeV; }, hexOfId, currentPos, idHex, engine: ENGINE, live, pending, telemetry, store, routeState, planState, globalList, fr24, todayCache, sweep, resolveTargeted, routeFor, composeRoute, altsOf, holdTerminal, termHold, worldScan, refreshLists, quickRouteAll, historyPump, histPumped, learnedStore, regCountry, fr24Sched, pubRouted, pubRecs, privatePlace, loadSites, siteNear, sites, onSched, pubMem: () => pubMem, publishRoute, syncPanel, normalizeReadsb, telemOf, noteCands, csOfRec, warmHist, hostStat, loadT2, wantWx, wxMap, wantNotams, closedMap, estimateEta, nNumberHex, watchList, pollWatch, accStore, accNote, statsHtml, fleetList, checkHealth, health, exportCsv, predictForHex, verifyAgainstList, strikes, revokedIds, fr24Named, noteFr24Named, loadHistory, loadToday, fetchJetphotos, loadRunways, knownLegs, areaCache, pollView, saveSnapshot, boardNoteLegs, boardNoteFlight, boardNoteSched, boardScrub, boardLoad, boardList, naRouteOf, pbWhere, noteNa, naFeed, matchParked, matchByTraces, boardDrain, boardMem, onNeedBoard, operatorOf, shownOwner, enrich, userConfirm, userDestOf, loadApprTable, monGet, monPost, monCheck, monLive, monUp, MON_DEFAULTS, get monBase() { return monBase; }, liveSources, telOut, noteTelOut, reportTel, pbOut, srvIds, pullSrvIds, srvAdopt, reportToMonitor, syncSrvLearn, applyLearned, srvRoute, srvRec, crowdOf, routesOut, routesSent, noteRouteOut, learnFromLeg, learnOutTake, learnOutBack, get learnOutN() { return learnOut.length; }, srvCovers, get srvLearned() { return srvLearned; }, set srvLearned(v) { srvLearned = v; }, addSrvLearned, get feedHdr() { return feedHdr; }, boardMonFill, natRowOf, fnRows, buildSnapshot, bootHold, firAt, loadFir, onAirAsk, pb, onPbFeed, onPbFollow, onPbHex, pbRouteFor, pbMatch, pbFromMonitor, onNeedRoutes, onNeedAirportData, onNeedAirportPanel, liveBoardRows, runwaysOf, parseRunwayEnds, flightsOfCallsign, bootFlightPage, unlockExports, exportFile, rowWindow, hexOfFid, onNeedSearch, osmPick, wantOsmPlace, osmPlaceAt, learnSite, siteIdAt, siteBk, siteRow, apById, operatorIdOf, airlineIdByName, fr24Cat, onHistElsewhere, get viewBox() { return viewBox; }, get selectedId() { return currentId(); }, opt, setOpt, notify, openUnblockWindow, closeUnblockWindow, ensureBarButton, findBar, checkLatest, installKind, sayHello, helloSt, ubBanners, ubOffer, installId }; } catch (_) { /* ignore */ }
   log('loaded v' + VERSION);
 
 })();
