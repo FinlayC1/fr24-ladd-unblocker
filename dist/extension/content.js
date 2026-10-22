@@ -48,7 +48,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
 // ==UserScript==
 // @name         Flightradar24 LADD / N-A Unblocker (feed-level)
 // @namespace    tweeks.io
-// @version      22.31.5
+// @version      22.31.6
 // @description  Identifies every LADD / N/A / blocked military aircraft on Flightradar24 from public ADS-B, and injects callsign, registration, operator, age, country, MSN, squawk, vertical speed, GPS altitude, airspeeds, wind, photos, a reasoned origin/destination with a wind-corrected ETA (also for ordinary flights FR24 shows as N/A - military, private, GA, helicopters, with private landing sites; learned from 63 days of every aircraft worldwide, with live weather and closures), airport-board entries and a rebuilt 7-month flight log straight into FR24's own data - so it all renders like normal FR24 traffic.
 // @author       Finlay Clarke
 // @updateURL    https://raw.githubusercontent.com/FinlayC1/fr24-ladd-unblocker/main/dist/fr24-ladd-unblocker.user.js
@@ -137,7 +137,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "22.31.5";
+    var BRIDGE_V = "22.31.6";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed
@@ -5435,7 +5435,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '22.31.5';
+  const VERSION = '22.31.6';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
@@ -5461,9 +5461,8 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   const LIST_REFRESH_MS = 75000;        // global LADD / military list refresh
   const WORLD_SCAN_INTERVAL_MS = 180000; // background world scan for new callsign-less flights
   const TELEMETRY_MS = 2000;            // live ADS-B telemetry poll for the selected aircraft (each aggregator every 4 s)
-  const PHOTO_V = 9;                    // photo-pipeline version; a bump re-ranks photos cached by an older one (5: JetPhotos through FR24's own lookup)
-  const HIST_V = 5;                     // flight-log reconstruction version; a bump rebuilds cached logs (5: each flight's path, for matching its own routes)
-  const HIST_VM = 3;                    // ... a minor one re-reads only some days (1: an unended / unbegun flight - holes at one end, strips; 2, 3: the last 40 days without flights - adsb.lol's missing files, the monitor's days without flights)
+  const PHOTO_V = 10;                   // photo-pipeline version; a bump re-ranks photos cached by an older one (5: JetPhotos through FR24's own lookup; 10: FR24's aircraft page and JetPhotos itself where FR24's lookup holds none back)
+  const HIST_V = 6;                     // flight-log reconstruction version; a bump rebuilds cached logs from scratch (5: each flight's path, for matching its own routes; 6: every day from both networks, a day done only once each network asked has answered)
   const PRECOMPUTE_MAX = 8;
   // landing places learned away from FR24's airports (03-data): their ids, below the route engine's unlisted fields (1e7 on)
   const SITE_BASE = 9000000, isSiteId = id => id > SITE_BASE && id < 1e7;             // in-view aircraft whose full route (trace + plan) is prepared before a click
@@ -7913,7 +7912,17 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     photos.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
     return { photos: photos.slice(0, 3), msn, typeName };
   }
-  async function fetchJetphotos(reg, pri) {
+  // (one request per registration at a time, and its answer for a minute: the pictures and the serial number are both
+  // read from it - asked twice, JetPhotos' limit on scripts was spent twice)
+  const jpMemo = new Map();
+  function fetchJetphotos(reg, pri) {
+    const k = String(reg || '').toUpperCase(), m = jpMemo.get(k);
+    if (m && now() - m.at < 60000) return m.p;
+    const p = fetchJetphotosNow(reg, pri);
+    jpMemo.set(k, { at: now(), p }); if (jpMemo.size > 200) jpMemo.delete(jpMemo.keys().next().value);
+    return p;
+  }
+  async function fetchJetphotosNow(reg, pri) {
     const urls = [`https://www.jetphotos.com/showphotos.php?regsearch=${encodeURIComponent(reg)}`, `https://www.jetphotos.com/registration/${encodeURIComponent(reg)}`];
     let lastErr = '';
     for (const url of urls) {
@@ -7966,8 +7975,41 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     // (nor its stock picture of the type, "Flightradar24" with no JetPhotos page - adPhoto)
     return { photos: goodPhotos(photos), info: r.aircraftInfo || null };
   }
+  // FR24's own page of an aircraft (/data/aircraft/<reg>): its header shows the airframe's JetPhotos pictures - each its
+  // picture on cdn.jetphotos.com, its photo page and "© name | JetPhotos" - for a blocked aircraft too, whose pictures
+  // FR24's registration lookup holds back (HB-IGO: four on JetPhotos, two on its FR24 page, none in its lookup - and its
+  // panel said "Aircraft photo not available"). Read from the page's own address, as the browser reads it.
+  function parseFr24AircraftPage(html) {
+    html = String(html || '');
+    const imgs = [], links = [], credits = [];
+    for (const m of html.matchAll(/(?:https?:)?\/\/cdn\.jetphotos\.com\/(?:\d+|full)\/[^"'\s<>()]+?\.jpe?g/gi)) { const u = 'https:' + m[0].replace(/^https?:/i, ''); if (!imgs.includes(u)) imgs.push(u); }
+    for (const m of html.matchAll(/https?:\/\/(?:www\.)?jetphotos\.com\/photo\/(\d+)/gi)) { const u = 'https://www.jetphotos.com/photo/' + m[1]; if (!links.includes(u)) links.push(u); }
+    for (const m of html.matchAll(/(?:©|&copy;|&#169;)\s*([^<|]{2,80}?)\s*\|\s*JetPhotos/gi)) credits.push(clean(m[1].replace(/&amp;/g, '&')));
+    return imgs.slice(0, 3).map((img, i) => {
+      const large = noBar(img.replace(/\/(?:200|400)\//, '/640/')), small = noBar(img);
+      return { link: links[i] || large, credit: credits[i] || '', thumb: small, medium: small, large, source: 'JetPhotos', date: '' };
+    });
+  }
+  async function fetchFr24PagePhotos(reg) {
+    const pw = pageWindow(), pf = typeof pw.fetch === 'function' ? pw.fetch.bind(pw) : fetch;
+    const res = await Promise.race([pf('/data/aircraft/' + encodeURIComponent(String(reg).toLowerCase()), { credentials: 'same-origin', headers: { Accept: 'text/html' } }), sleep(12000).then(() => null)]);
+    if (!res || !res.ok) throw new Error('FR24 aircraft page ' + (res ? 'HTTP ' + res.status : 'timed out'));
+    return goodPhotos(parseFr24AircraftPage(await res.text()));
+  }
   async function fetchPhotos(rec, pri, early, fill) {
     const hex = rec.hex.toLowerCase(), errs = [];
+    // (FR24's lookup holding none - a blocked aircraft's, held back - or not answering: FR24's own page of the aircraft,
+    // then JetPhotos itself; a reused registration lists the earlier airframe too there: this one's manufacturer only)
+    const jpDirect = () => fetchJetphotos(rec.reg, pri).then(jp => {
+      const mine = clean((rec.desc || '').split(/\s+/)[0]).toLowerCase();
+      const known = /^(airbus|boeing|embraer|bombardier|cessna|gulfstream|dassault|pilatus|beech|hawker|learjet|piper|cirrus|bell|robinson|sikorsky|eurocopter|mcdonnell|lockheed|canadair|raytheon|textron)/i;
+      const photos = mine.length >= 3 ? jp.photos.filter(ph => !ph.aircraft || ph.aircraft.toLowerCase().includes(mine) || !known.test(ph.aircraft)) : jp.photos;
+      const msn = (photos.find(ph => ph.msn) || {}).msn; if (msn && !rec.msn) rec.msn = msn; if (jp.typeName && !rec.desc) rec.desc = jp.typeName;
+      if (jp.err) errs.push('JetPhotos: ' + jp.err);
+      return photos;
+    }, e2 => { errs.push('JetPhotos: ' + (e2.message || e2)); return []; });
+    const jpMore = () => fetchFr24PagePhotos(rec.reg).then(ph => { if (ph.length) return ph; errs.push('FR24 aircraft page: none'); return jpDirect(); }, e => { errs.push(String(e.message || e)); return jpDirect(); })
+      .then(ph => { rec.jpFailAt = ph.length ? 0 : now(); return ph; });
     const jpJob = rec.reg ? fetchFr24Photos(rec.reg, pri).then(({ photos, info }) => {
       if (info) {
         const sn = clean(info.serialNo), model = clean(info.model && info.model.text), op = clean(info.airline && info.airline.name);
@@ -7989,19 +8031,10 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
           }).catch(() => { /* none */ });
         }
       }
-      if (!photos.length) errs.push('JetPhotos: none for ' + rec.reg);
-      rec.jpFailAt = 0;
-      return photos;
-    }, e => { rec.jpFailAt = now(); return fetchJetphotos(rec.reg, pri).then(jp => {
-      // a reused registration lists the earlier airframe too: keep the photos of this aircraft's manufacturer only
-      const mine = clean((rec.desc || '').split(/\s+/)[0]).toLowerCase();
-      const known = /^(airbus|boeing|embraer|bombardier|cessna|gulfstream|dassault|pilatus|beech|hawker|learjet|piper|cirrus|bell|robinson|sikorsky|eurocopter|mcdonnell|lockheed|canadair|raytheon|textron)/i;
-      const photos = mine.length >= 3 ? jp.photos.filter(ph => !ph.aircraft || ph.aircraft.toLowerCase().includes(mine) || !known.test(ph.aircraft)) : jp.photos;
-      const msn = (photos.find(ph => ph.msn) || {}).msn; if (msn && !rec.msn) rec.msn = msn; if (jp.typeName && !rec.desc) rec.desc = jp.typeName;
-      if (jp.err) errs.push('JetPhotos: ' + jp.err);
-      if (photos.length) rec.jpFailAt = 0;
-      return photos;
-    }).catch(e2 => { errs.push('JetPhotos: ' + (e.message || e) + ' / ' + (e2.message || e2)); return []; }); }) : Promise.resolve([]);
+      if (photos.length) { rec.jpFailAt = 0; return photos; }
+      errs.push('FR24 lookup: none for ' + rec.reg);
+      return jpMore();
+    }, e => { errs.push('FR24 lookup: ' + (e.message || e)); return jpMore(); }) : Promise.resolve([]);
     // Planespotters only when it is needed: FR24's JetPhotos lookup answers in a few hundred ms with up to five
     // pictures, while Planespotters is asked one aircraft at a time (its rate limit) - asking it for every aircraft had
     // every slideshow on the map wait in that one queue.
@@ -8263,32 +8296,33 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       await loadAirports();
       await Promise.race([loadSites(), sleep(8000)]);        // (landings at unlisted fields are read as such)
       let h = (await store.getHist(hex)) || { legs: [], days: {}, savedAt: 0, v: HIST_V };
-      if (h.v !== HIST_V) h = { legs: [], days: {}, savedAt: 0, v: HIST_V };   // logs from an older leg reconstruction are rebuilt
+      if (h.v !== HIST_V) h = { legs: [], days: {}, savedAt: 0, v: HIST_V };   // logs from an older build are rebuilt from scratch
       h.days = h.days || {}; h.legs = h.legs || [];
-      // (a log kept by an older build: only the days with a flight it could not end or begin - lost low near a strip, a
-      // flight cut in two by a hole in coverage - are read again, once; the rest of it stands)
-      if ((h.vm || 0) < HIST_VM) {
-        const from = dayStr(now() - LOL_DAYS * 864e5), redo = new Set();
-        for (const l of h.legs) if (l.day && l.day >= from && ((!l.to && (!l.ended || /^(gap|lost)/.test(l.how || ''))) || (!l.from && !l.startedOnGround))) redo.add(l.day);
-        // (2: a day adsb.lol had no file of was kept as a day without flights - and adsb.lol's files stopped coming: N527P's
-        // log empty from 11 Sep to 20 Oct, its last 40 days, though airplanes.live has its flights. Those days are read again)
-        // (3: and again - 22.31.0 took them back from the monitor, which gave them as days without flights)
-        if ((h.vm || 0) < 3) { const flown = new Set(h.legs.map(l => l.day)); for (const d of Object.keys(h.days)) if (d >= from && !flown.has(d)) redo.add(d); }
-        for (const d of redo) delete h.days[d];
-        h.vm = HIST_VM;
-      }
-      // (a day adsb.lol has no file of, in the background: asked again later - a day after for the last three days, a week
-      // after for older ones - never taken for a day without flights. The background asks only adsb.lol; with the aircraft
-      // being looked at, airplanes.live is asked too, and both having none is a day without flights)
+      // A day is done once every network asked of it has answered - each mark says which: 'b' both networks (the last 40
+      // days, the aircraft looked at), 'l' adsb.lol alone (the background, which never asks airplanes.live), 'a'
+      // airplanes.live (older than adsb.lol keeps), 'm' the monitor's (both networks, built there), 'p' part of it - a
+      // network did not answer, the flights the other had kept. One refused or not answering is never taken for a day
+      // without flights: asked again later (h.miss), the reason kept (h.err) for the log page to say. When the aircraft is
+      // looked at, a day of the last 40 not read from both networks is read again with both; and a day of the last three
+      // read before its files could be complete (six hours after it ended) is read again.
       h.miss = h.miss && typeof h.miss === 'object' ? h.miss : {};
+      h.err = h.err && typeof h.err === 'object' ? h.err : {};
+      h.rd = h.rd && typeof h.rd === 'object' ? h.rd : {};
+      const looked = !bgWork || front;
       const upTo = bgWork ? Math.min(maxDays, LOL_DAYS) : maxDays;
-      let todo = []; const backOf = {}; for (let back = 1; back <= upTo; back++) { const d = dayStr(now() - back * 864e5); if (!h.days[d] && !(bgWork && now() - (h.miss[d] || 0) < (back <= 3 ? 1 : 7) * 864e5)) { todo.push(d); backOf[d] = back; } }
+      const want = (d, back) => {
+        const v = h.days[d];
+        if (!v) return !(bgWork && now() - (h.miss[d] || 0) < (back <= 3 ? 1 : 7) * 864e5);
+        if (back <= 3 && (h.rd[d] || 0) < (dayEndS(d) + 6 * 3600) * 1000) return looked || now() - (h.rd[d] || 0) > 3 * 3600e3;
+        return looked && back <= LOL_DAYS && (v === 'l' || v === 'p');
+      };
+      let todo = []; const backOf = {}; for (let back = 1; back <= upTo; back++) { const d = dayStr(now() - back * 864e5); if (want(d, back)) { todo.push(d); backOf[d] = back; } }
       let done = 0, dirty = false, monDays = 0;
       const flush = () => {
         if (!dirty) return; dirty = false;
         h.legs.sort((a, b) => b.tStart - a.tStart); h.legs = h.legs.slice(0, 1500);
         const oldest = dayStr(now() - (HISTORY_DAYS + 3) * 864e5); for (const k of Object.keys(h.days)) if (k < oldest) delete h.days[k];
-        for (const k of Object.keys(h.miss || {})) if (k < oldest || h.days[k]) delete h.miss[k];
+        for (const o of [h.miss, h.err, h.rd]) for (const k of Object.keys(o)) if (k < oldest || (o !== h.rd && h.days[k] && h.days[k] !== 'p')) delete o[k];
         h.savedAt = now(); store.setHist(hex, h);
         const chained = ENGINE.chainLegs(ENGINE.stitchLegs(h.legs.slice().reverse()));
         store.mergeHex(hex, { recent: legsToCompact(chained) });
@@ -8296,63 +8330,64 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
         if (onProgress) { try { onProgress(h, done, todo.length); } catch (e) { log('history progress', e); } }
       };
       const ac0 = acOfHex(hex), cls0 = ENGINE.classify(ac0), heli = cls0 === 'heli', patrol = cls0 === 'fighter' || cls0 === 'milheavy';
-      // (the days the monitor has: taken as they are - no request to adsb.lol for them; only a day whose flights all came
-      // with it, and never one it could not complete. Never a day it has no flights for: it says so of a day adsb.lol had
-      // no file of, or one it watched the aircraft all day and did not hear it fly - and airplanes.live has TC-ACN's
-      // London - Istanbul of 13 Sep and Larnaca - Istanbul of 26 Sep, days the monitor gave as none. Those days are read
-      // here, both networks)
+      // (the days the monitor has: taken as they are - no request for them; only a day whose flights all came with it, and
+      // never one it has no flights for: it says so of a day it watched the aircraft all day and did not hear it fly, and
+      // airplanes.live had TC-ACN's London - Istanbul of 13 Sep and Larnaca - Istanbul of 26 Sep on days given as none. A
+      // day it built with one network only - the other refusing it - is 'p': read again here, both networks, when looked at)
       if (todo.length) {
         const mh = await monHist(hex).catch(() => null);
         if (mh && mh.days && typeof mh.days === 'object') {
           const byDay = new Map(); for (const l of Array.isArray(mh.legs) ? mh.legs : []) if (l && l.day && fin(l.tStart)) (byDay.get(l.day) || byDay.set(l.day, []).get(l.day)).push(l);
-          const have = todo.filter(d => Number.isInteger(mh.days[d]) && mh.days[d] > 0 && (byDay.get(d) || []).length === mh.days[d]);
+          const part = new Set(Array.isArray(mh.part) ? mh.part : []);
+          const have = todo.filter(d => Number.isInteger(mh.days[d]) && mh.days[d] > 0 && (byDay.get(d) || []).length === mh.days[d] && !(h.days[d] === 'b' && part.has(d)));
           for (const d of have) {
             const legs = (byDay.get(d) || []).map(l => { const s = Object.assign({}, l), lx = s.lx; delete s.lx; s.day = d; learnFromLeg(hex, null, s, cls0, ac0.mil, lx); return s; });
-            h.days[d] = true; h.legs = h.legs.filter(l => l.day !== d).concat(legs); dirty = true;
+            h.days[d] = part.has(d) ? 'p' : 'm'; h.rd[d] = now(); h.legs = h.legs.filter(l => l.day !== d).concat(legs); dirty = true;
           }
-          if (have.length) { const got = new Set(have); todo = todo.filter(d => !got.has(d)); monDays = have.length; flush(); }
+          if (have.length) { const got = new Set(have.filter(d => !(looked && part.has(d) && backOf[d] <= LOL_DAYS))); todo = todo.filter(d => !got.has(d)); monDays = have.length; flush(); }
         }
       }
       const legsOf = (pts, day) => ENGINE.legsFromPoints(pts, { heli, patrol, cls: cls0, type: ac0.type, rangeKm: ENGINE.typeRangeKm(ac0), dataEnd: dayEndS(day) });
-      // A day with a flight whose landing or take-off was not heard (lost low, ended in a hole, only a guess at the
-      // field) - or no trace at all while the user is looking: the other network's trace of that day too, merged. Each
-      // hears what the other's receivers miss (D-CRUX at Palma: adsb.lol lost it at 1,650 ft, airplanes.live heard it to
-      // 250 ft). Flights cut by midnight are not incomplete, the next day has the rest.
-      const incomplete = (sums, day) => {
-        const e = dayEndS(day), b = e - 86400;
-        return sums.some(x => (e - x.tEnd >= 1200 && (!x.ended || !x.to || x.to.conf === 'near' || x.how === 'gap' || x.how === 'gap-low')) || (x.tStart - b >= 600 && !x.startedOnGround && (!x.from || x.from.conf === 'near')));
-      };
-      const one = async day => {
-        let legs = [], answered = false;
+      const aplUrl = day => `https://globe.airplanes.live/globe_history/${day}/traces/${hex.slice(-2)}/trace_full_${hex}.json`;
+      // (one network's file of the day: its points, 'none' - no file, a day it heard nothing of the aircraft - or the
+      // reason it could not be had; a refusal to slow down is waited out, twice)
+      const readNet = async (net, get) => {
         for (let attempt = 0; attempt < 3; attempt++) {
-          let pts = null;
-          try {
-            const j = await fetchTrace(hex, day, { bg: bgWork && !st.front, back: backOf[day], priority: st.front });
-            pts = ENGINE.parseTrace(j); answered = pts.length > 0;
+          try { return { net, state: 'ok', pts: ENGINE.parseTrace(await get()) }; }
+          catch (e) {
+            const m = String(e && e.message || e);
+            if (/HTTP 404/.test(m)) return { net, state: 'none', pts: [] };
+            if (/HTTP 429/.test(m) && attempt < 2) { await sleep(4000 * (attempt + 1)); continue; }
+            return { net, state: 'err', pts: [], err: m.replace(/^Error:\s*/, '').slice(0, 80) };
           }
-          catch (e) { if (/HTTP 404/.test(String(e))) { pts = []; } else if (/HTTP 429/.test(String(e))) { await sleep(4000); continue; } else { log('trace history', hex, day, String(e.message || e)); break; } }
-          // (nothing from the first network asked: a day without flights only once the other has none either - a day older
-          // than adsb.lol keeps was asked of airplanes.live already)
-          if (!pts.length && backOf[day] > LOL_DAYS) answered = true;
-          let raws = legsOf(pts, day);
-          legs = summarize(raws, hex);
-          if (backOf[day] <= LOL_DAYS && (pts.length ? incomplete(legs, day) : !bgWork || st.front)) {
-            try {
-              const j2 = await gmRequest(`https://globe.airplanes.live/globe_history/${day}/traces/${hex.slice(-2)}/trace_full_${hex}.json`, { timeout: 20000, priority: st.front, bg: bgWork && !st.front });
-              const both = ENGINE.mergePoints(pts, ENGINE.parseTrace(j2));
-              if (both.length > pts.length) { pts = both; raws = legsOf(pts, day); legs = summarize(raws, hex); }
-              answered = true;
-            } catch (e) { if (/HTTP 404/.test(String(e))) answered = true; /* else: the one network's day stands, or none */ }
-          }
-          if (!answered) { h.miss[day] = now(); dirty = true; }
-          legs = legs.map(l => Object.assign(l, { day }));
-          raws.forEach((r, i) => learnFromLeg(hex, r, legs[i], cls0, ac0.mil));
-          break;
         }
-        // (a day that could not be had - a refused or failed request - is asked again next time, not marked as empty)
+        return { net, state: 'err', pts: [], err: 'HTTP 429' };
+      };
+      // Each day: adsb.lol's file (the last 40 days) and airplanes.live's (the aircraft looked at, or older than adsb.lol
+      // keeps), merged - each hears what the other's receivers miss (D-CRUX at Palma: adsb.lol lost it at 1,650 ft,
+      // airplanes.live heard it to 250 ft; a whole flight one of them never heard)
+      const one = async day => {
+        const back = backOf[day], old = back > LOL_DAYS, nets = [];
+        const bgReq = bgWork && !st.front;
+        if (!old) nets.push(readNet('adsb.lol', () => fetchTrace(hex, day, { bg: bgReq, back, priority: st.front })));
+        if (old) nets.push(readNet('airplanes.live', () => fetchTrace(hex, day, { bg: bgReq, back, priority: st.front })));
+        else if (looked) nets.push(readNet('airplanes.live', () => gmRequest(aplUrl(day), { timeout: 20000, priority: st.front, bg: bgReq })));
+        const res = await Promise.all(nets);
         done++;
-        if (!answered) return;
-        h.days[day] = true; delete h.miss[day]; h.legs = h.legs.filter(l => l.day !== day).concat(legs); dirty = true;
+        let pts = []; for (const r of res) if (r.pts.length) pts = pts.length ? ENGINE.mergePoints(pts, r.pts) : r.pts;
+        const complete = res.every(r => r.state !== 'err');
+        if (!complete) { h.err[day] = res.filter(r => r.state === 'err').map(r => r.net + ': ' + r.err).join('; '); dirty = true; }
+        // (nothing had, and a network not answering - or not asked: the background asks adsb.lol alone, and airplanes.live
+        // can have what adsb.lol has no file of: not known - asked again later, the day's flights as they were kept)
+        if (!pts.length && (!complete || (!old && res.length < 2))) { h.miss[day] = now(); dirty = true; return; }
+        const raws = legsOf(pts, day), legs = summarize(raws, hex).map(l => Object.assign(l, { day }));
+        raws.forEach((r, i) => learnFromLeg(hex, r, legs[i], cls0, ac0.mil));
+        // (a day read again keeps its flights should the new read find fewer from a network that did not answer this time)
+        const had = h.legs.filter(l => l.day === day);
+        if (!complete && had.length > legs.length) { h.rd[day] = now(); return; }
+        h.days[day] = !complete ? 'p' : old ? 'a' : res.length > 1 ? 'b' : 'l';
+        h.rd[day] = now(); delete h.miss[day]; if (complete) delete h.err[day];
+        h.legs = h.legs.filter(l => l.day !== day).concat(legs); dirty = true;
       };
       // newest days first, a few at a time; progress is flushed after every batch
       // (a background log's bookkeeping - joining legs, the copy kept on disk - waits for an idle moment too)
@@ -9916,7 +9951,12 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     // it when the first answer has nothing to list)
     const more = !store.peekHist(hex) || Object.keys((store.peekHist(hex) || {}).days || {}).length < 14;
     postToPage('hist', { reg, data: build(past()), partial: more });
-    if (more && !warm) loadHistory(hex, 21, null, { front: true }).then(() => postToPage('hist', { reg, data: build(past()) }), () => postToPage('hist', { reg, data: build(past()) }));
+    // (handed over the moment it has flights to list - the monitor's days come in one request, well before every day is
+    // read from the networks: FR24 draws the list once, from its first answer, and that answer waits nine seconds at most;
+    // a log read day by day took longer, and N1876T's and HB-IGO's lists said "No flights available")
+    let sent = 0;
+    const progress = () => { const d = build(past()); if (d.length > 1 && d.length !== sent) { sent = d.length; postToPage('hist', { reg, data: d, partial: true }); } };
+    if (more && !warm) loadHistory(hex, 21, progress, { front: true }).then(() => postToPage('hist', { reg, data: build(past()) }), () => postToPage('hist', { reg, data: build(past()) }));
   }
   // A flight still "on its way" whose positions stopped five minutes and more ago (a blocked jet FR24 no longer sends
   // once it is down, its transponder off at the stand): its ADS-B track of today read again - landed there, it says so
@@ -11035,6 +11075,14 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     }).catch(() => { const h = reg && store.byReg(clean(reg).toUpperCase()); return h && h.hex ? h.hex : ''; }));
     return fidHex.get(k);
   }
+  // (the days of a log a network did not answer for - refused, timed out: how many, and why - said under the log, not
+  // left as a silent gap; they are read again next time)
+  function logGaps(hex) {
+    const h = store.peekHist(hex); if (!h || !h.err) return '';
+    const ds = Object.keys(h.err).filter(d => !h.days[d] || h.days[d] === 'p'); if (!ds.length) return '';
+    const why = [...new Set(ds.map(d => h.err[d]))].slice(0, 2).join('; ');
+    return ` · ${ds.length} day${ds.length > 1 ? 's' : ''} not fully read yet (${esc(why)}) - read again next time`;
+  }
   const regOfRow = tr => { const a = tr && tr.querySelector('a[href*="/data/aircraft/"]'); return a ? decodeURIComponent(((a.getAttribute('href') || '').match(/\/data\/aircraft\/([^/?#]+)/i) || [])[1] || '').toUpperCase() : ''; };
   function flightPagePlayback(tbody, cs) {
     let cur = '';
@@ -11191,7 +11239,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
               tail.insertAdjacentHTML('beforebegin', html); tail.dataset.html = html;
             }
             const busy = total > 0 && done < total;
-            tail.firstChild.innerHTML = `${busy ? '<span class="tl-spin"></span>&nbsp; ' : ''}${legs.length} earlier flight${legs.length === 1 ? '' : 's'} rebuilt from public ADS-B data (adsb.lol, <a href="https://globe.airplanes.live/?icao=${esc(hex0)}" target="_blank" rel="noopener noreferrer">airplanes.live</a>) · ${Math.round(OLDER_DAYS / 30)} months before FR24's week${busy ? ` · loading… (${done} of ${total} days)` : ''}`;
+            tail.firstChild.innerHTML = `${busy ? '<span class="tl-spin"></span>&nbsp; ' : ''}${legs.length} earlier flight${legs.length === 1 ? '' : 's'} rebuilt from public ADS-B data (adsb.lol, <a href="https://globe.airplanes.live/?icao=${esc(hex0)}" target="_blank" rel="noopener noreferrer">airplanes.live</a>) · ${Math.round(OLDER_DAYS / 30)} months before FR24's week${busy ? ` · loading… (${done} of ${total} days)` : ''}${busy ? '' : logGaps(hex0)}`;
           };
           renderOlder(null, 0, 1);
           histHook = Object.assign(h => { if (h === hex0) { fill(); renderOlder(null, 1, 1); } }, { hex: hex0 });
@@ -11267,7 +11315,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
         const days = Object.keys((store.peekHist(hex) || {}).days || {}).length;
         const inferred = shown.filter(l => (l.from && l.from.conf === 'chain') || (l.to && l.to.conf === 'chain')).length;
         const other = pageHex && pageHex !== hex ? ` · FR24's register lists Mode S ${esc(pageHex.toUpperCase())} for ${esc(reg)}; the ${esc(reg)} seen flying uses ${esc(hex.toUpperCase())}` : '';
-        foot.firstChild.innerHTML = `Flight history rebuilt from public ADS-B data (adsb.lol, <a href="https://globe.airplanes.live/?icao=${esc(hex)}" target="_blank" rel="noopener noreferrer">airplanes.live</a>, Mode S ${esc(hex.toUpperCase())}) · ${shown.length + (liveState ? 1 : 0)} flights in the last ${Math.min(HISTORY_DAYS, days + 1)} days · times are local to each airport${inferred ? ` · ${inferred} airport${inferred > 1 ? 's' : ''} marked ? inferred where coverage was missing` : ''}${other}`;
+        foot.firstChild.innerHTML = `Flight history rebuilt from public ADS-B data (adsb.lol, <a href="https://globe.airplanes.live/?icao=${esc(hex)}" target="_blank" rel="noopener noreferrer">airplanes.live</a>, Mode S ${esc(hex.toUpperCase())}) · ${shown.length + (liveState ? 1 : 0)} flights in the last ${Math.min(HISTORY_DAYS, days + 1)} days · times are local to each airport${inferred ? ` · ${inferred} airport${inferred > 1 ? 's' : ''} marked ? inferred where coverage was missing` : ''}${other}${run.loaded ? logGaps(hex) : ''}`;
         // (done when every day is in - or when the load has finished and a source did not answer for some of them: they
         // are asked again next time, the spinner does not wait for them)
         if ((days >= HISTORY_DAYS - 1 || run.loaded) && (legs.length || liveState || run.last || run.loaded)) loading.remove();
@@ -13124,7 +13172,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // (the version whose "what's new" was put away, and the one whose dot on the button the window was opened for)
   const UB_SEEN_KEY = 'tweeks.fr24.ladd.seenver', UB_DOT_KEY = 'tweeks.fr24.ladd.dotver';
   // (the newest CHANGELOG section's headlines, written in by build.mjs: { v, items })
-  const UB_WHATS_NEW = {"v":"22.31.5","items":["A map click closed the window only after FR24 had redrawn it: the window went, came back, then closed."]};
+  const UB_WHATS_NEW = {"v":"22.31.6","items":["Panel photos: \"Aircraft photo not available\" for an aircraft JetPhotos has photos of","\"Recent <reg> flights\" said \"No flights available\" for a blocked aircraft whose log has flights.","Flight logs: much more thorough, in the browser and on the monitor, and rebuilt from scratch."]};
   // (an aircraft with an open padlock: FR24's outline style - 24 grid, 1.5 stroke in the text colour)
   const UB_ICON = '<svg data-tl-ub-icon="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
   const UB_X = '<svg viewBox="0 0 14 14" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5l11 11M12.5 1.5l-11 11"/></svg>';

@@ -84,17 +84,17 @@ function makeWin() {
 
   // ---- a log kept by an older build: those days empty, taken as days without flights
   L.store.mergeHex('4ca002', { reg: 'EI-OLD', type: 'PC24', ladd: true });
-  L.store.setHist('4ca002', { v: HIST_V, vm: 1, days: Object.fromEntries(days(10).map(d => [d, true])), legs: [], savedAt: Date.now() });
+  L.store.setHist('4ca002', { v: HIST_V - 1, vm: 1, days: Object.fromEntries(days(10).map(d => [d, true])), legs: [], savedAt: Date.now() });
   asked.length = 0;
   await L.loadHistory('4ca002', 10, null, { front: true });
   h = await L.store.getHist('4ca002');
-  check('a log from an older build with its last 40 days empty: those days read again - the flights are there', flightsOn(h, TARGET).length >= 3 && asked.filter(a => a[0] === 'lol').length === 10, flightsOn(h, TARGET).length);
+  check('a log kept by an older build, with its days empty: not used - rebuilt from scratch, both networks; the flights are there', flightsOn(h, TARGET).length >= 3 && asked.filter(a => a[0] === 'lol').length === 10 && asked.filter(a => a[0] === 'apl').length === 10 && h.v === HIST_V, flightsOn(h, TARGET).length);
 
   // ---- a log kept by 22.31.0 (its days without flights taken back from the monitor): read again too
   L.store.mergeHex('4ca003', { reg: 'EI-VM2', type: 'PC24', ladd: true });
-  L.store.setHist('4ca003', { v: HIST_V, vm: 2, days: Object.fromEntries(days(10).map(d => [d, true])), legs: [], savedAt: Date.now() });
+  L.store.setHist('4ca003', { v: HIST_V, days: Object.fromEntries(days(10).map(d => [d, 'l'])), legs: [], savedAt: Date.now() });
   await L.loadHistory('4ca003', 10, null, { front: true });
-  check('a log kept by 22.31.0, its days without flights from the monitor: read again - the flights are there', flightsOn(await L.store.getHist('4ca003'), TARGET).length >= 3);
+  check('a day read from adsb.lol alone (the background): read again with both networks once looked at - the flights are there', flightsOn(await L.store.getHist('4ca003'), TARGET).length >= 3);
 
   // ---- the monitor giving days as without flights (it watched and did not hear it; adsb.lol had no file): not taken -
   // TC-ACN's London - Istanbul of 13 Sep and Larnaca - Istanbul of 26 Sep, on airplanes.live, were lost so

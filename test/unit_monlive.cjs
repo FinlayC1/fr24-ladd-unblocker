@@ -68,11 +68,11 @@ function makeWin(net, idb) {
 }
 const sameDayFlights = l => `${l.from ? l.from.code : '?'}-${l.to ? l.to.code : '?'}@${Math.round(l.tStart)}/${Math.round(l.tEnd)}/${l.how}`;
 (async () => {
-  for (const d of ['2026-10-06', '2026-10-07']) await M.histDay('424c60', d, JSON.parse(fxTrace('424c60', d)));
+  for (const d of ['2026-10-06', '2026-10-07']) await M.histDay('424c60', d, { state: 'ok', j: JSON.parse(fxTrace('424c60', d)) }, { state: 'none' });
   const H = M.histRead('424c60');
   // (one more aircraft with only a day of no flights, for the batch)
   const histOf = hex => hex === '424c60' ? { hex, days: Object.assign({ '2026/10/05': 0 }, H.days), legs: H.legs } : { hex, days: { '2026/10/05': 0 }, legs: [] };
-  let live = null, hv = 5, histReq = [];
+  let live = null, hv = M.HIST_V, histReq = [];
   const now0 = Date.now();
   const mon = (url, headers) => {
     if (headers['X-Monitor-Token'] !== 'tok') return { status: 401, text: '' };
@@ -264,16 +264,16 @@ const sameDayFlights = l => `${l.from ? l.from.code : '?'}-${l.to ? l.to.code : 
   check('... the same fields (path, take-off and landing times...), no monitor-only field left in the log', !!oneB && keys(one) === keys(oneB) && !('lx' in one) && JSON.stringify(one.path) === JSON.stringify(oneB.path) && one.tOn === oneB.tOn && one.tOff === oneB.tOff, { m: keys(one), b: oneB && keys(oneB) });
   check('... and the days marked done, so not asked for again', hm.days['2026/10/06'] && hm.days['2026/10/07'] && hm.days['2026/10/05']);
   // ---- not used: another log version; a day whose flights did not all come -------------------------------------------
-  hv = 4; net.asked.length = 0;
+  hv = M.HIST_V - 1; net.asked.length = 0;
   await L.loadHistory('d0d0d0', N, null, {});
   check('a /hist of another log version: not used (adsb.lol asked for every day)', days.every(d => net.asked.some(a => a.url.includes(d + '/traces/d0/trace_full_d0d0d0'))));
-  hv = 5;
+  hv = M.HIST_V;
   const keep = H.legs; H.legs = H.legs.filter(l => !(l.day === '2026/10/06' && l.tStart === Math.min(...H.legs.filter(x => x.day === '2026/10/06').map(x => x.tStart))));
   net.asked.length = 0;
   const hx = 'e0e0e0', histOf0 = histOf;
   void histOf0;
   // (as 424c60's answer, under another address: 6 Oct says 4 flights, 3 came)
-  const mon2 = (url, headers) => { const u = new URL(url); if (u.pathname === '/hist') return { status: 200, text: JSON.stringify({ hv: 5, list: [{ hex: hx, days: H.days, legs: H.legs }] }) }; return mon(url, headers); };
+  const mon2 = (url, headers) => { const u = new URL(url); if (u.pathname === '/hist') return { status: 200, text: JSON.stringify({ hv: M.HIST_V, list: [{ hex: hx, days: H.days, legs: H.legs }] }) }; return mon(url, headers); };
   const net3 = makeNet(mon2), w3 = makeWin(net3), L3 = w3.__tweeksLadd;
   await until(() => L3 && L3.engine.airports.length > 5000, 60000);
   await L3.store.kvReady; L3.store.kvSet('monRemote', { url: 'https://mon.test', token: 'tok' }); L3.store.mergeHex(hx, { hex: hx, ladd: true }); await L3.monCheck(true).catch(() => {});
