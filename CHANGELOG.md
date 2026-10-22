@@ -2,6 +2,23 @@
 
 All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PATCH`. The userscript and the monitor are released together.
 
+## [22.30.3] - 2026-10-21
+
+### Added
+- **FR24's Most tracked flights list shows predicted destinations.** A flight that FR24 lists with no destination now shows the one worked out here, as it would on the flight's panel and the airport boards. For example, AF1 out of Andrews showed "ADW – N/A" and now shows GSP. A flight not yet worked out is worked out from FR24's own track of it, fetched in the background, wherever it is in the world, and appears the next time FR24 refreshes the list. FR24's own destinations are left as they are.
+- **Route searches list the flights worked out on that route.** Searching for a route such as "LPL-EIS" (or "EGGP-TUPJ" in ICAO codes) lists every flight in the air on it, as FR24 lists its own: blocked aircraft such as M-PORT, and flights FR24 shows without a destination. Each comes with its flight card and dropdown, and its callsign follows it in the list, linking to its flight-number page (MPORT). This also works when FR24's search returns nothing for the route.
+- **FR24's own search results get the predicted destination** of a flight FR24 has none for, in the result and its route line.
+
+### Fixed
+- **A click on the map closes the bottom bar's open window, as its X does.** This covers LADD Unblock and FR24's own Settings, Weather, Filters and Widgets windows. Dragging the map, clicking inside the window, and FR24's Playback are left alone.
+- **The LADD Unblock icon changes like FR24's other bar icons.** It gets thicker and changes colour on hover, and thicker and yellow when open. The thickness and colours are read from FR24's own buttons in each state; the icon used to stay the same throughout.
+- **The LADD Unblock window's switches slide across when turned**, as FR24's do, using the speed and easing of FR24's own switches when they can be read. The window used to be redrawn on every change, so a switch only appeared in its new position. The window now changes only what differs, which also keeps text typed into its fields.
+- **The tooltip with the reasons for a predicted destination stays up while you read it.** The aircraft panel's strip was redrawn every time it was updated, several times a second, which closed the tooltip. Only what changed is updated now, and the tooltip's text updates once the mouse leaves.
+
+### Tests
+- New `unit_barlook` (real Chromium, on the Vue page made like FR24's, with Google's map under it): a map click closes FR24's window and LADD Unblock's, but not after a drag, a click in the window, or with playback open. A switch slides part-way across on each frame and stays the same element. The icon at rest, on hover and open matches FR24's icons. A tooltip being read stays up.
+- New `unit_mosttracked` (the built userscript in jsdom, both halves): Most tracked (Feed/TopFlights and JSON) is filled, FR24's own destinations are kept, and unworked flights are requested and then worked out from FR24's track. Route searches are tested in IATA and ICAO codes, with FR24 failing, and are not listed after landing or for another route. FR24's own search row gets the destination.
+
 ## [22.30.2] - 2026-10-17
 
 ### Fixed

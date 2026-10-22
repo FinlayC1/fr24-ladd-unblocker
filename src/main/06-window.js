@@ -13,7 +13,7 @@
   // (the newest CHANGELOG section's headlines, written in by build.mjs: { v, items })
   const UB_WHATS_NEW = '__TL_WHATSNEW__';
   // (an aircraft with an open padlock: FR24's outline style - 24 grid, 1.5 stroke in the text colour)
-  const UB_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
+  const UB_ICON = '<svg data-tl-ub-icon="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
   const UB_X = '<svg viewBox="0 0 14 14" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5l11 11M12.5 1.5l-11 11"/></svg>';
   // (the size of the window's text: M is FR24's own - the 14 px of its windows' lists - and the others scale it)
   const UB_SIZE_KEY = 'tweeks.fr24.ladd.textsize', UB_SIZES = [['S', 0.9], ['M', 1], ['L', 1.15], ['XL', 1.3]];
@@ -42,10 +42,10 @@
 .tl-ub-c .tl-ub-item{padding:10px 8px;border-top:1px solid #fff}
 .tl-ub-c .tl-ub-item p{margin:4px 0 0;font-size:calc(var(--tl-f)*14px);line-height:1.43;color:#393939}
 .tl-ub-off .tl-ub-feat{opacity:.45}
-.tl-ub-c .tl-ub-tg{flex:none;position:relative;width:44px;height:24px;margin:0;padding:0;border:0;border-radius:12px;background:#c4c4c4;cursor:pointer;transition:background .15s}
+.tl-ub-c .tl-ub-tg{flex:none;position:relative;width:44px;height:24px;margin:0;padding:0;border:0;border-radius:12px;background:#c4c4c4;cursor:pointer;transition:background-color var(--tl-tg-d,.2s) var(--tl-tg-e,cubic-bezier(.4,0,.2,1))}
 .tl-ub-c .tl-ub-tg[aria-checked="true"]{background:#f8c023}
-.tl-ub-c .tl-ub-tg i{position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.3);transition:left .15s}
-.tl-ub-c .tl-ub-tg[aria-checked="true"] i{left:22px}
+.tl-ub-c .tl-ub-tg i{position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.3);transform:translateX(0);transition:transform var(--tl-tg-d,.2s) var(--tl-tg-e,cubic-bezier(.4,0,.2,1))}
+.tl-ub-c .tl-ub-tg[aria-checked="true"] i{transform:translateX(20px)}
 .tl-ub-c .tl-ub-reload{position:sticky;top:0;z-index:1;display:flex;align-items:center;justify-content:space-between;gap:6px;padding:6px 8px;background:#fff4d1;border-bottom:1px solid #f8c023;font-size:calc(var(--tl-f)*13px);font-weight:600}
 .tl-ub-c .tl-ub-reload[hidden]{display:none}
 .tl-ub-c .tl-ub-b{flex:none;margin:0;padding:5px 12px;border:0;border-radius:4px;background:#f8c023;color:#1b1b1b;font:inherit;font-size:calc(var(--tl-f)*13px);line-height:1.4;font-weight:700;cursor:pointer}
@@ -300,8 +300,8 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   }
   function monPaint() {
     if (!ubBody || !ubBody.isConnected) return;
-    const m = ubBody.querySelector('#tl-ub-mon'); if (m) m.innerHTML = monHtml();
-    const l = ubBody.querySelector('#tl-ub-local'); if (l) l.innerHTML = localHtml();
+    const m = ubBody.querySelector('#tl-ub-mon'); if (m) morphHtml(m, monHtml());
+    const l = ubBody.querySelector('#tl-ub-local'); if (l) morphHtml(l, localHtml());
   }
   function monStart() { monStop(); monRefresh(); ubMon.timer = setInterval(() => { if (!unblockWindowOpen()) return monStop(); monRefresh(); }, 20000); }
   function monStop() { if (ubMon.timer) clearInterval(ubMon.timer); ubMon.timer = 0; }
@@ -320,14 +320,33 @@ html.tl-no-strip .tl-strip{display:none!important}`;
       <div class="tl-ub-item"><span class="tl-ub-t">This browser</span><div id="tl-ub-local">${opt.on ? localHtml() : '<p>Switched off.</p>'}</div></div>
       <div class="tl-ub-item"><span class="tl-ub-t">Data sources</span><div id="tl-ub-sources">${opt.on ? sourcesHtml() : '<p>Switched off.</p>'}</div></div>`;
   }
-  // (the content: in FR24's own window, or in the stand-in)
+  // (the content: in FR24's own window, or in the stand-in - changed where it differs, so a switch slides across as it is
+  // turned, as FR24's do; drawn afresh, it only ever appeared in its new place)
   let ubBody = null;
   function renderUnblockWindow() {
     if (!ubBody || !ubBody.isConnected) return;
     const top = ubBody.scrollTop;
     ubBody.classList.toggle('tl-ub-off', !opt.on);
     ubBody.style.setProperty('--tl-f', String(UB_SIZES[ubSize()][1]));
-    ubBody.innerHTML = ubBodyHtml(); ubBody.scrollTop = top;
+    const L = ubSwitchLook(); if (L) { ubBody.style.setProperty('--tl-tg-d', L.d); ubBody.style.setProperty('--tl-tg-e', L.e); }
+    morphHtml(ubBody, ubBodyHtml()); ubBody.scrollTop = top;
+  }
+  // FR24's own switches move as they are turned: how long they take and how they ease, read off one of them - in its
+  // Widgets list, kept in the window out of sight while this content is in it - and kept for the stand-in and next time
+  const UB_TG_KEY = 'tweeks.fr24.ladd.switchlook';
+  const ubSwitchLook = () => { try { const L = JSON.parse(lsGet(UB_TG_KEY) || 'null'); return L && /^[\d.]+m?s$/.test(L.d) && /^[a-z-]+(\([\d.,\s-]*\))?$/.test(L.e) ? L : null; } catch (e) { return null; } };
+  function learnSwitch(root) {
+    const sw = root && root.querySelector('[role="switch"]:not(.tl-ub-tg),input[type="checkbox"]'); if (!sw) return;
+    const box = sw.matches('input') ? sw.parentElement : sw;
+    for (const el of [box, ...box.querySelectorAll('*')].slice(0, 12)) {
+      for (const pe of [null, '::before', '::after']) {
+        let cs; try { cs = getComputedStyle(el, pe); } catch (e) { continue; }
+        if (!/transform|translate|left|margin|inset|all/.test(cs.transitionProperty || '')) continue;
+        const d = String(cs.transitionDuration || '').split(',').map(x => x.trim()).find(x => parseFloat(x) > 0);
+        const e = (String(cs.transitionTimingFunction || '').match(/^(cubic-bezier\([^)]*\)|steps\([^)]*\)|[a-z-]+)/) || [])[1];
+        if (d && e) { lsSet(UB_TG_KEY, JSON.stringify({ d, e })); return; }
+      }
+    }
   }
   // (the data sources' own buttons - monitor, keys - are handled with the strip's tools, which redraw this part)
   function refreshSources() { const el = ubBody && ubBody.isConnected ? ubBody.querySelector('#tl-ub-sources') : null; if (el && opt.on) el.innerHTML = sourcesHtml(); }
@@ -434,7 +453,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     const it = HJ.item;
     if (on && it && it.isConnected) {
       const sig = sigOf(lookOf(it));
-      if (ubBtn && HJ.rest && sig !== HJ.rest && sig !== HJ.actSig) { HJ.actSig = sig; HJ.act = faceOf(it, 'Widgets', true); dress(ubBtn, HJ.act); ubBadge(); }
+      if (ubBtn && HJ.rest && sig !== HJ.rest && sig !== HJ.actSig) { HJ.actSig = sig; learnLook('open', it); HJ.act = faceOf(it, 'Widgets', true); dress(ubBtn, HJ.act); ubBadge(); }
       if (ubBtn && !HJ.act) ubBtn.classList.add('tl-ub-btn-on');
       if (HJ.restFace) {
         if (!HJ.face || !HJ.face.isConnected || HJ.face.previousElementSibling !== it) {
@@ -452,6 +471,8 @@ html.tl-no-strip .tl-strip{display:none!important}`;
       if (it) it.removeAttribute('data-tl-ub-under');
       HJ.act = null; HJ.actSig = '';
     }
+    // (open: its icon drawn as FR24 draws an open button's - see ubIconStyle)
+    if (ubBtn) ubBtn.toggleAttribute('data-tl-ub-open', !!(on && it && it.isConnected));
     if (barMo) barMo.takeRecords();
   }
   // (Widgets, in its resting look, pressed while this has its window: FR24 puts the window away, then Widgets' own comes up)
@@ -467,6 +488,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     barMo = new MutationObserver(recs => {
       try { if (recs.some(r => !(r.target.closest && r.target.closest('.tl-ub-btn,.tl-ub-face')))) ubResync(); } catch (e) { log('LADD Unblock button', e); }
       const it = HJ.item;
+      if (HJ.st === 'off' && !ubFloat) { try { learnBarLooks(); } catch (e) { log('LADD Unblock button', e); } }
       if (!it || !(HJ.st === 'on' || (HJ.st === 'opening' && HJ.pressed)) || !HJ.rest || !recs.some(r => it.contains(r.target))) return;
       if (sigOf(lookOf(it)) !== HJ.rest) swapBar(true); else if (HJ.st === 'on') lendDone();
     });
@@ -563,6 +585,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     HJ.tnode = tn; HJ.tdata = tn ? tn.data : ''; if (tn) tn.data = tn.data.replace(/\S.*\S|\S/, 'LADD Unblock');
     const kb = w.keep.getBoundingClientRect();
     for (const c of w.host.children) { const r = c.getBoundingClientRect(); if (c === w.keep || (kb.height > 0 && r.height > 0 && r.top < kb.bottom - 1 && r.height <= kb.height + 2)) c.setAttribute('data-tl-ub-keep', ''); }
+    try { learnSwitch(w.host); } catch (e) { /* drawn as before */ }
     w.host.setAttribute('data-tl-ub-host', '');
     ubBody = newBody('tl-ub-in');
     w.host.appendChild(ubBody);
@@ -730,6 +753,91 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     }
   }
 
+  // ---- the button's icon: drawn as FR24 draws its buttons' icons at rest, under the mouse and open ----------------------
+  // FR24's icons are drawn thicker, and in another colour, when a button is pointed at and when it is open: read off its
+  // own buttons in each state (at rest, the one under the mouse, the one open) and kept for next time. This icon is a line
+  // drawing: it takes their colour, and their line width relative to theirs at rest. (It was copied with FR24's classes on
+  // the icon itself, and FR24 draws the change on the drawing inside it: it stayed as it was.)
+  const UB_LOOK_KEY = 'tweeks.fr24.ladd.barlook';
+  // (a colour as the browser gives it, or the text colour - what is kept goes into a stylesheet: nothing else is let in)
+  const lookOk = L => !!L && typeof L === 'object' && (L.col === 'currentColor' || /^(rgba?\([\d.,\s%/]+\)|#[0-9a-f]{3,8})$/i.test(String(L.col))) && typeof L.sw === 'number' && L.sw >= 0 && L.sw < 20;
+  let ubLook = (() => { const out = {}; try { const o = JSON.parse(lsGet(UB_LOOK_KEY) || '{}'); for (const k of ['rest', 'hover', 'open']) if (o && lookOk(o[k])) out[k] = o[k]; } catch (e) { /* none kept */ } return out; })();
+  // (the colour its drawing is in - the text colour where it is that, so this one follows the text colour as FR24's does,
+  // whatever else recolours the page)
+  function iconLook(it) {
+    const s = it && it.querySelector('svg'); if (!s) return null;
+    const sh = s.querySelector('path,rect,circle,ellipse,line,polyline,polygon') || s;
+    let cs, text; try { cs = getComputedStyle(sh); text = getComputedStyle(s).color; } catch (e) { return null; }
+    const stroke = cs.stroke && cs.stroke !== 'none' ? cs.stroke : '', fill = cs.fill && cs.fill !== 'none' ? cs.fill : '', sw = stroke ? parseFloat(cs.strokeWidth) : NaN;
+    const raw = stroke || fill, L = { col: raw && raw === text ? 'currentColor' : raw, sw: isFinite(sw) && sw > 0 ? sw : 0 };
+    return lookOk(L) ? L : null;
+  }
+  function learnLook(state, it) {
+    const L = iconLook(it); if (!L) return;
+    const was = ubLook[state]; if (was && was.col === L.col && was.sw === L.sw) return;
+    ubLook[state] = L; lsSet(UB_LOOK_KEY, JSON.stringify(ubLook)); ubIconStyle();
+  }
+  // (FR24's look not yet seen: a little thicker under the mouse and open, and FR24's yellow when open)
+  function ubIconStyle() {
+    let el = document.getElementById('tl-ub-icon-style');
+    if (!el) { el = document.createElement('style'); el.id = 'tl-ub-icon-style'; (document.head || document.documentElement).appendChild(el); }
+    const base = (ubLook.rest && ubLook.rest.sw) || 0;
+    const w = st => { const L = ubLook[st]; return base && L && L.sw ? +(1.5 * L.sw / base).toFixed(2) : st === 'rest' ? 1.5 : 2; };
+    const col = st => (ubLook[st] && ubLook[st].col) || (st === 'open' ? '#f8c023' : 'currentColor');
+    const I = 'svg[data-tl-ub-icon] *';
+    const css = `.tl-ub-btn ${I}{stroke:${col('rest')};stroke-width:${w('rest')};transition:stroke .15s,stroke-width .15s}
+.tl-ub-btn:hover ${I}{stroke:${col('hover')};stroke-width:${w('hover')}}
+.tl-ub-btn[data-tl-ub-open] ${I},.tl-ub-btn.tl-ub-btn-on ${I}{stroke:${col('open')}!important;stroke-width:${w('open')}}`;
+    if (el.textContent !== css) el.textContent = css;
+  }
+  // (one of FR24's buttons pointed at - not open: its look under the mouse, once FR24 has drawn it so)
+  let ubHoverT = 0;
+  function onBarOver(ev) {
+    const it = [...ubItems.values()].find(x => x.contains(ev.target)); if (!it || it.hasAttribute('data-tl-ub-under')) return;
+    if (sigOf(lookOf(it)) !== ubCommon) return;
+    clearTimeout(ubHoverT);
+    ubHoverT = setTimeout(() => { try { if (it.isConnected && it.matches(':hover')) learnLook('hover', it); } catch (e) { /* no :hover */ } }, 400);
+  }
+  // (FR24's buttons at rest - one not pointed at - and one of theirs open, as they come)
+  function learnBarLooks() {
+    const its = [...ubItems.values()].filter(x => x.isConnected && !x.hasAttribute('data-tl-ub-under'));
+    const rest = its.find(x => { try { return sigOf(lookOf(x)) === ubCommon && !x.matches(':hover'); } catch (e) { return false; } });
+    if (rest) learnLook('rest', rest);
+    const open = openItems()[0]; let hov = true; try { hov = !!open && open.matches(':hover'); } catch (e) { /* no :hover */ }
+    if (open && !hov && !open.hasAttribute('data-tl-ub-under')) learnLook('open', open);
+  }
+
+  // ---- a click on the map puts the bar's open window away, as its X does ----------------------------------------------
+  // A click - pressed and let go within a few pixels, not a drag of the map - on the map itself (FR24's map, or a canvas
+  // over most of the page), never in a window, on the bar or in a panel. LADD Unblock's window, or FR24's own Settings,
+  // Weather, Filters or Widgets; Playback - FR24's playback - is left as it is. Looked at a moment after, so a window FR24
+  // has put away itself (opening a flight) is not opened again by pressing its button.
+  const UB_MAP_SEL = '.gm-style,.maplibregl-map,.mapboxgl-map,.leaflet-container,.ol-viewport';
+  let ubDown = null;
+  function onTheMap(t) {
+    if (!t || t.nodeType !== 1 || !t.isConnected) return false;
+    if (t.closest('.tl-ub,.tl-ub-c,.tl-ub-btn,.tl-ub-face,.tl-pop,.tl-strip,[data-tl-ub-host],[role="dialog"]') || (ubBar && ubBar.contains(t))) return false;
+    if (t.closest(UB_MAP_SEL)) return true;
+    if (t.tagName !== 'CANVAS') return false;
+    const r = t.getBoundingClientRect(), W = window.innerWidth || 1, H = window.innerHeight || 1;
+    return r.width * r.height >= 0.5 * W * H;
+  }
+  function onMapDown(ev) { ubDown = ev.button === 0 && ev.isPrimary !== false ? { x: ev.clientX, y: ev.clientY, t: clock(), el: ev.target } : null; }
+  function onMapUp(ev) {
+    const d = ubDown; ubDown = null;
+    if (!d || ev.button !== 0 || clock() - d.t > 800 || Math.abs(ev.clientX - d.x) > 6 || Math.abs(ev.clientY - d.y) > 6) return;
+    if (!onTheMap(d.el) || !onTheMap(ev.target)) return;
+    const body = unblockWindowOpen() ? ubBody : null;
+    const it = body || HJ.st !== 'off' ? null : [...ubItems.entries()].find(([l, x]) => l !== 'Playback' && openItems().includes(x));
+    if (!body && !it) return;
+    setTimeout(() => {
+      try {
+        if (body) { if (unblockWindowOpen() && ubBody === body) closeUnblockWindow(); return; }
+        if (HJ.st === 'off' && it[1].isConnected && openItems().includes(it[1])) progClick(it[1]);
+      } catch (e) { log('LADD Unblock window', e); }
+    }, 300);
+  }
+
   // ---- the button on FR24's bar ---------------------------------------------------------------------------------------
   // (the elements holding exactly these words - the bar's labels, and a window's title, which the bar test below leaves out -
   // in one walk over the page's text: label -> [elements])
@@ -796,6 +904,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
         const t = ev.target; if (t && t.closest && t.closest('.tl-ub-btn,.tl-ub-face')) return;
         if (ubFloat) closeStandIn();
       }, true);
+      ubBar.addEventListener('mouseover', onBarOver, true);
       watchBar();
     }
     placeBarButton(found);
@@ -809,6 +918,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     last.after(ubBtn);
     if (HJ.st === 'on') { HJ.item = found.items.get('Widgets') || HJ.item; HJ.actSig = ''; HJ.act = null; swapBar(true); } else if (ubFloat) ubBtn.classList.add('tl-ub-btn-on');
     ubBadge();
+    try { learnBarLooks(); } catch (e) { log('LADD Unblock button', e); }
   }
   // FR24 drawing its buttons another way while this one is there - smaller while its playback is open, larger when that is
   // put away, or its buttons drawn afresh in the same bar: this button made the same way as theirs again, before the
@@ -840,7 +950,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
       if (UB_LABELS.some(l => t.includes(l))) { ubTryAt = clock(); ubDirty = true; ensureBarButton(); return; }
     }
   }
-  function addUnblockStyle() { if (document.getElementById('tl-ub-style')) return; const s = document.createElement('style'); s.id = 'tl-ub-style'; s.textContent = UB_STYLE + BN_STYLE + '\n[data-tl-gone],[data-tl-ub-hid],[data-tl-ub-under]{display:none!important}'; (document.head || document.documentElement).appendChild(s); }
+  function addUnblockStyle() { if (document.getElementById('tl-ub-style')) return; const s = document.createElement('style'); s.id = 'tl-ub-style'; s.textContent = UB_STYLE + BN_STYLE + '\n[data-tl-gone],[data-tl-ub-hid],[data-tl-ub-under]{display:none!important}'; (document.head || document.documentElement).appendChild(s); ubIconStyle(); }
   function startUnblockWindow() {
     const go = () => {
       addUnblockStyle(); if (opt.on) applyOptsLive();
@@ -874,6 +984,8 @@ html.tl-no-strip .tl-strip{display:none!important}`;
       // (Later, a closed notice or a newer answer in another FR24 tab: the same here)
       window.addEventListener('storage', ev => { if ([UB_LATER_KEY, UB_NOTICE_KEY, HELLO_KEY].includes(ev.key)) ubBanners(); });
       document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && ubFloat) closeStandIn(); });
+      document.addEventListener('pointerdown', onMapDown, true);
+      document.addEventListener('pointerup', onMapUp, true);
       window.addEventListener('resize', () => { fitBody(); placeStandIn(); bnPlace(); });
     };
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', go, { once: true }); else go();

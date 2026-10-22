@@ -99,7 +99,8 @@ const read = d => JSON.parse(fs.readFileSync(path.join(STORE, 'legs-' + d + '.js
     const after = [...M.legs.get(hex).values()];
     check('... ADS-B\'s own record of it later: replaces FR24\'s (one flight, not two)', after.length === 1 && after[0].via !== 'fr24' && code(after[0].to.id) === 'FAB', after.map(x => [x.via || 'adsb', x.from && code(x.from.id), x.to && code(x.to.id)]));
     check('... the runways it used: off Walney\'s 35, onto Farnborough\'s 06 (its tracks: 347 then 062)', after[0].rwyOff === '35' && after[0].rwyOn === '06', [after[0].rwyOff, after[0].rwyOn]);
-    const fab = E.byIcao('EGLF'), ai = M.answer(new URL('http://x/airport?ap=' + fab.id + '&days=14'), nowS);
+    // (asked as of the day after the flight: the recorded flight of 7 Oct, not today's 14 days, which it falls out of)
+    const fab = E.byIcao('EGLF'), ai = M.answer(new URL('http://x/airport?ap=' + fab.id + '&days=14'), truth.tOn + 86400);
     check('/airport: Farnborough\'s runway in full (06/24, 8,005 ft, 148 ft wide, asphalt, lit, each end\'s elevation, heading and displaced threshold), its frequencies, and the runways the tracked flights used', ai.known && ai.icao === 'EGLF' && ai.runways.length === 1 && ai.runways[0][0] === '06' && ai.runways[0][1] === '24' && ai.runways[0][2] === 8005 && ai.runways[0][3] === 148 && ai.runways[0][4] === 'ASPH' && ai.runways[0][6] === 1 && ai.runways[0][8] === 225 && ai.freqs.some(f => f[0] === 'TWR' && f[2] === 122.5) && JSON.stringify(ai.usage) === JSON.stringify([['06', 0, 1]]) && ai.withRunway === 1, { rw: ai.runways, usage: ai.usage, moves: ai.moves, f: ai.freqs.slice(0, 2) });
     check('... an airport it does not know of: said so', M.answer(new URL('http://x/airport?ap=99999999'), nowS).known === false);
     // a finished ADS-B record missing its departure: FR24's track gives it

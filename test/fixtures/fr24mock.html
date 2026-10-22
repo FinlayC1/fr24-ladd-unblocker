@@ -63,6 +63,10 @@ html,body{margin:0;height:100%;font-family:Arial,Helvetica,sans-serif;font-size:
 </head><body><div id="app"></div>
 <script>
 const Q = new URLSearchParams(location.search), MODE = Q.get('mode') || 'keyed', IND = Q.get('ind') === '1', LI = Q.get('li') === '1', ODD = Q.get('odd') === '1', ASYNC = Q.get('async') === '1', PB = Q.get('pb') === '1', PANEL = Q.get('panel') === 'photo';
+// ?gm=1: Google's map under everything (FR24's map is Google Maps: .gm-style); ?look=1: the bar's icons drawn thicker under
+// the mouse, and thicker and yellow open - on the drawing inside the icon, as FR24 does
+const GM = Q.get('gm') === '1', LOOK = Q.get('look') === '1';
+if (LOOK) document.head.insertAdjacentHTML('beforeend', '<style>.bar-btn svg circle{stroke-width:1.5}.bar-btn:hover svg circle{stroke-width:2.5;stroke:#dddddd}.bar-btn.is-on svg circle{stroke-width:2.5;stroke:#f8c023}</style>');
 const { createApp, reactive, defineAsyncComponent } = Vue;
 const saved = (() => { try { return JSON.parse(localStorage.getItem('mock.widgets') || 'null'); } catch (e) { return null; } })();
 const S = reactive({ rk: 0, open: null, flight: false, enabled: true, airport: false, events: ['Runway 09/27 works'], pbw: false, went: [], rows: [], search: [], cs: 'VSB82',
@@ -105,11 +109,12 @@ const tpl = {
 const app = createApp({
   components: { Win, WidgetsList, Other, WinLazy, AcPhoto },
   setup() {
-    return { S, BARS, IND, LI, PB, PANEL,
+    return { S, BARS, IND, LI, PB, PANEL, GM,
       toggle(b) { if (b === 'Playback') { S.pbw = !S.pbw; return; } S.flight = false; S.open = S.open === b ? null : b; },
       openFlight() { S.open = null; S.flight = true; } };
   },
   template: `<div class="map">
+    <div v-if="GM" class="gm-style" style="position:absolute;inset:0"></div>
     <div class="left">
       ${tpl}
       <Transition name="col"><div v-if="!S.open && !S.flight && S.enabled" class="col"><template v-for="w in S.widgets" :key="w.k"><div v-if="w.on" class="card" :data-card="w.k"><h3>{{ w.title }}</h3><p>...</p></div></template></div></Transition>

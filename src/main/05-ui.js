@@ -225,7 +225,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       const idCell = cellHtml('Identified from public ADS-B' + tagHtml(badge, 'ladd'), `${esc(hexU || '?')}${tail ? ` <span class="tl-muted">· ${tail}</span>` : ''}`, '', true);
       html = rowHtml('plane', `${gridHtml([idCell])}${routeHtml ? '<hr class="border border-white">' + routeHtml : ''}${links ? `<div class="tl-links">${links}</div>` : ''}<div class="tl-links">${toolLinks(rec)}</div>${healthHtml()}${bridgeWarnHtml()}`);
     }
-    if (el.__tlHtml !== html) { el.innerHTML = html; el.__tlHtml = html; }
+    if (el.__tlHtml !== html) { morphHtml(el, html); el.__tlHtml = html; }
   }
   // flight log · trace · photos · registry: the aircraft's pages elsewhere (every aircraft's strip, LADD or not)
   function aircraftLinks(hx) {
@@ -381,7 +381,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       const diag = !pos ? `live positions: ${posStats.n ? posStats.n + ' received, none for this flight id' : 'none received yet'}` : '';
       html = rowHtml('pin', gridHtml([cellHtml((what === 'departure airport' ? 'Departure' : 'Destination') + tagHtml('Predicted', 'pred'), `${/^working/.test(why) ? '<span class="tl-spin"></span> ' : ''}<span class="tl-muted" title="${esc(diag)}">${esc(why)}…</span>`, '', true)]) + linksHtml(pub) + foot);
     }
-    if (el.__tlHtml !== html) { el.innerHTML = html; el.__tlHtml = html; }
+    if (el.__tlHtml !== html) { morphHtml(el, html); el.__tlHtml = html; }
   }
   // the LADD tag: the FAA's LADD programme page; PIA: its ADS-B privacy page; a military aircraft: its rebuilt log
   const tagLink = hx => hx.ladd || !hx.mil ? (hx.pia && !hx.ladd ? 'https://www.faa.gov/air_traffic/technology/equipadsb/privacy' : 'https://www.faa.gov/pilots/ladd') : (hx.reg ? `/data/aircraft/${encodeURIComponent(hx.reg.toLowerCase())}` : 'https://www.faa.gov/pilots/ladd');
@@ -621,7 +621,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     try { syncPanel0(); } catch (e) {
       log('panel sync failed', e);
       const panel = document.querySelector(SEL.panel); if (!panel) return;
-      try { const el = strip(panel); el.dataset.state = 'failed'; const html = rowHtml('pin', gridHtml([cellHtml('LADD unblocker', '<span class="tl-warn">script error</span>', esc(String((e && e.message) || e).slice(0, 160)) + ' · v' + VERSION, true)])); if (el.__tlHtml !== html) { el.innerHTML = html; el.__tlHtml = html; } } catch (_) { /* ignore */ }
+      try { const el = strip(panel); el.dataset.state = 'failed'; const html = rowHtml('pin', gridHtml([cellHtml('LADD unblocker', '<span class="tl-warn">script error</span>', esc(String((e && e.message) || e).slice(0, 160)) + ' · v' + VERSION, true)])); if (el.__tlHtml !== html) { morphHtml(el, html); el.__tlHtml = html; } } catch (_) { /* ignore */ }
     }
   }
   function syncPanel0() {
@@ -706,13 +706,13 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
         if (na(q(panel, SEL.arrIata)) || na(q(panel, SEL.depIata))) {
           const s = schedOf(pub.id), hx = store.getHex(pub.hex) || {};
           const why = s && s.d && s.o ? '' : noDestCraft(pub.type || hx.type, hx.cat) ? '' : 'waiting for FR24\'s flight data';
-          if (why) { const el = strip(panel); el.dataset.state = 'pending'; const html = rowHtml('pin', gridHtml([cellHtml('Destination' + tagHtml('Predicted', 'pred'), `<span class="tl-muted">${esc(why)}…</span>`, '', true)]) + `<div class="tl-links"><span class="tl-muted">v${VERSION}</span></div>${bridgeWarnHtml()}`); if (el.__tlHtml !== html) { el.innerHTML = html; el.__tlHtml = html; } return; }
+          if (why) { const el = strip(panel); el.dataset.state = 'pending'; const html = rowHtml('pin', gridHtml([cellHtml('Destination' + tagHtml('Predicted', 'pred'), `<span class="tl-muted">${esc(why)}…</span>`, '', true)]) + `<div class="tl-links"><span class="tl-muted">v${VERSION}</span></div>${bridgeWarnHtml()}`); if (el.__tlHtml !== html) { morphHtml(el, html); el.__tlHtml = html; } return; }
         }
       } else if ((e => e && isNA(e.dataset.tlVal ? e.dataset.tlOrig : textOf(e)))(q(panel, SEL.arrIata))) {
         // no record of this flight yet (its identity comes with FR24's first data)
         const el = strip(panel); el.dataset.state = 'pending';
         const html = rowHtml('pin', gridHtml([cellHtml('Destination' + tagHtml('Predicted', 'pred'), `<span class="tl-muted">waiting for the aircraft's identity${shown ? '' : ' (no ICAO address on screen)'}…</span>`, '', true)]) + `<div class="tl-links"><span class="tl-muted">v${VERSION}</span></div>`);
-        if (el.__tlHtml !== html) { el.innerHTML = html; el.__tlHtml = html; }
+        if (el.__tlHtml !== html) { morphHtml(el, html); el.__tlHtml = html; }
         return;
       }
       panel.querySelectorAll('.tl-strip').forEach(e => e.remove());

@@ -1,7 +1,7 @@
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '22.30.2';
+  const VERSION = '22.30.3';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
@@ -151,6 +151,28 @@
   const isDataPage = /^\/data\//i.test(location.pathname) && !isAircraftPage && !isFlightPage;
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const sleep = ms => new Promise(r => setTimeout(r, ms));
+  // A part of the page brought up to new HTML by changing only what differs, not drawn afresh: its elements stay, so a
+  // switch moves as it is turned (a new one would just appear turned), a spinner keeps turning, a field keeps what is
+  // being typed in it, and a tooltip being read stays up - the title of an element under the mouse is left as it is
+  // until the mouse leaves (the destination's reasons went every time the panel was updated, a few times a second).
+  function morphHtml(el, html) {
+    const t = document.createElement('template'); t.innerHTML = html;
+    morphKids(el, t.content);
+  }
+  function morphKids(a, b) {
+    const an = [...a.childNodes], bn = [...b.childNodes];
+    for (let i = 0; i < bn.length; i++) {
+      const x = an[i], y = bn[i];
+      if (!x) { a.appendChild(y); continue; }
+      if (x.nodeType !== y.nodeType || x.nodeName !== y.nodeName || (x.nodeType === 1 && x.id !== y.id)) { a.replaceChild(y, x); continue; }
+      if (x.nodeType !== 1) { if (x.data !== y.data) x.data = y.data; continue; }
+      let hover = false; try { hover = x.matches(':hover'); } catch (e) { /* no :hover here */ }
+      for (const n of x.getAttributeNames()) if (!y.hasAttribute(n) && !(hover && n === 'title')) x.removeAttribute(n);
+      for (const n of y.getAttributeNames()) { const v = y.getAttribute(n); if (x.getAttribute(n) !== v && !(hover && n === 'title')) x.setAttribute(n, v); }
+      morphKids(x, y);
+    }
+    for (let i = an.length - 1; i >= bn.length; i--) an[i].remove();
+  }
 
   // ---- staying out of the map's way ----------------------------------------------------------------------------------
   // Background work - routes for every identified aircraft, the boards' predictions, other aircraft's logs and tracks -

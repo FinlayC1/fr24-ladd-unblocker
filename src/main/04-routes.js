@@ -796,6 +796,39 @@
     } finally { naBusy = false; }
   }
   setInterval(() => { naTick().catch(e => log('na boards', e)); }, 20000);
+  // ---- a flight FR24 lists elsewhere with no destination (its Most tracked widget), anywhere in the world -----------------
+  // Asked for by the page; worked out the same way from FR24's own track of the flight, fetched in the background one at a
+  // time (the page's FollowFlight, its first frame). The answer goes to the page as the boards' N/A flights' do; FR24's
+  // next asking for the list has it. (One opened in the panel, or in view on the map, is worked out there already.)
+  const naWanted = new Map();   // fr24 id -> { cs, from, type, at, trailAt }
+  function onNeedNaRoutes(d) {
+    for (const x of (d && d.list) || []) {
+      const id = Number(x && x.id) || 0; if (!id || live.has(id) || pubRouted(id) || (naFeed.get(id) || {}).pub) continue;
+      const w = naWanted.get(id) || { trailAt: 0 };
+      naWanted.set(id, Object.assign(w, { cs: String(x.cs || ''), from: String(x.from || '').toUpperCase(), type: String(x.type || ''), at: now() }));
+    }
+    naWantedTick();
+  }
+  function naWantedTick() {
+    if (!naWanted.size || !airportsReady()) return;
+    let asked = false;
+    for (const [id, w] of naWanted) {
+      if (now() - w.at > 10 * 60000) { naWanted.delete(id); continue; }
+      const ft = fr24Trail.get(id);
+      if (ft && ft.pts && ft.pts.length >= 3 && (ft.at || 0) >= w.at - 60000) { naWanted.delete(id); try { naFromTrail(id, w, ft); } catch (e) { log('na route', e); } continue; }
+      if (!asked && now() - w.trailAt > 30000) { w.trailAt = now(); asked = true; postToPage('needTrail', { id }); }
+    }
+  }
+  setInterval(naWantedTick, 10000);
+  function naFromTrail(id, w, ft) {
+    const trail = [];
+    for (const p of ft.pts) { if (!fin(p.lat) || !fin(p.lon) || !fin(p.t)) continue; const last = trail[trail.length - 1]; if (!last || p.t - last.t >= 20) trail.push({ t: p.t, lat: p.lat, lon: p.lon, alt: p.alt, gs: p.gs, trk: p.trk, gnd: false }); }
+    const pos = trail[trail.length - 1]; if (!pos || nowS() - pos.t > 15 * 60) return null;
+    const f = { id, cs: w.cs, reg: '', type: w.type, hex: 0, from: w.from, lat: pos.lat, lon: pos.lon, alt: pos.alt, spd: pos.gs, trk: pos.trk, gnd: false };
+    const r = naRouteOf({ f, trail: trail.slice(-400), pub: null }); if (!r) return null;
+    postToPage('naBoard', { list: [{ id, rec: { cs: w.cs, reg: '', type: w.type, hex: '', cat: '', fcat: fr24Cat({ type: w.type }), mil: false, operatorId: operatorIdOf({}, w.cs) }, route: routeForPage(r), pos: { lat: pos.lat, lon: pos.lon, alt: pos.alt, gnd: false, at: pos.t * 1000 } }] });
+    return r;
+  }
   // ---- zero-network routes for every identified aircraft (airport boards, search, labels) ---------------------------
   // Never-routed aircraft first (just identified; those in view ahead of the world scan's), then the rest in rotation -
   // in view every 20 s, elsewhere every 2 min. All in idle slices: the newly identified in view as fast as idle time
