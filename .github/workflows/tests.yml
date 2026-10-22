@@ -22,7 +22,7 @@ jobs:
       - name: Offline tests
         run: |
           git config --global user.email "tests@example.invalid" && git config --global user.name "tests"
-          node test/run-suite.cjs --no-build --only unit_engine,unit_cases,unit_heading,unit_final,unit_legs,unit_monitor,unit_monitor2,unit_fr24,unit_store,unit_registry,unit_merge,unit_deploy,unit_installs,unit_dash,unit_names,unit_origin,unit_flightmsg,unit_monlive,unit_panel,unit_window,unit_hello,unit_vectoring,unit_boards,unit_padlocks,unit_public,unit_wx,unit_tracks,unit_waiting,unit_shared,unit_playback,unit_pbbuttons,unit_recent,unit_photos,unit_ksk16,unit_gioos,unit_n6012c,unit_logos,unit_window2,unit_mosttracked,unit_histgap,unit_photocache,unit_recentlist
+          node test/run-suite.cjs --no-build --only unit_engine,unit_cases,unit_heading,unit_final,unit_legs,unit_monitor,unit_monitor2,unit_fr24,unit_store,unit_registry,unit_merge,unit_deploy,unit_installs,unit_dash,unit_names,unit_origin,unit_flightmsg,unit_monlive,unit_panel,unit_window,unit_hello,unit_vectoring,unit_boards,unit_padlocks,unit_public,unit_wx,unit_tracks,unit_waiting,unit_shared,unit_playback,unit_pbbuttons,unit_recent,unit_photos,unit_ksk16,unit_gioos,unit_n6012c,unit_logos,unit_window2,unit_mosttracked,unit_histgap,unit_photocache,unit_recentlist,unit_recentfast,unit_photopage
   monitor-node18:
     runs-on: ubuntu-latest
     steps:

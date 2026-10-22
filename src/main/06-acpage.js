@@ -357,6 +357,14 @@
     }).catch(() => { const h = reg && store.byReg(clean(reg).toUpperCase()); return h && h.hex ? h.hex : ''; }));
     return fidHex.get(k);
   }
+  // (the days of a log a network did not answer for - refused, timed out: how many, and why - said under the log, not
+  // left as a silent gap; they are read again next time)
+  function logGaps(hex) {
+    const h = store.peekHist(hex); if (!h || !h.err) return '';
+    const ds = Object.keys(h.err).filter(d => !h.days[d] || h.days[d] === 'p'); if (!ds.length) return '';
+    const why = [...new Set(ds.map(d => h.err[d]))].slice(0, 2).join('; ');
+    return ` · ${ds.length} day${ds.length > 1 ? 's' : ''} not fully read yet (${esc(why)}) - read again next time`;
+  }
   const regOfRow = tr => { const a = tr && tr.querySelector('a[href*="/data/aircraft/"]'); return a ? decodeURIComponent(((a.getAttribute('href') || '').match(/\/data\/aircraft\/([^/?#]+)/i) || [])[1] || '').toUpperCase() : ''; };
   function flightPagePlayback(tbody, cs) {
     let cur = '';
@@ -513,7 +521,7 @@
               tail.insertAdjacentHTML('beforebegin', html); tail.dataset.html = html;
             }
             const busy = total > 0 && done < total;
-            tail.firstChild.innerHTML = `${busy ? '<span class="tl-spin"></span>&nbsp; ' : ''}${legs.length} earlier flight${legs.length === 1 ? '' : 's'} rebuilt from public ADS-B data (adsb.lol, <a href="https://globe.airplanes.live/?icao=${esc(hex0)}" target="_blank" rel="noopener noreferrer">airplanes.live</a>) · ${Math.round(OLDER_DAYS / 30)} months before FR24's week${busy ? ` · loading… (${done} of ${total} days)` : ''}`;
+            tail.firstChild.innerHTML = `${busy ? '<span class="tl-spin"></span>&nbsp; ' : ''}${legs.length} earlier flight${legs.length === 1 ? '' : 's'} rebuilt from public ADS-B data (adsb.lol, <a href="https://globe.airplanes.live/?icao=${esc(hex0)}" target="_blank" rel="noopener noreferrer">airplanes.live</a>) · ${Math.round(OLDER_DAYS / 30)} months before FR24's week${busy ? ` · loading… (${done} of ${total} days)` : ''}${busy ? '' : logGaps(hex0)}`;
           };
           renderOlder(null, 0, 1);
           histHook = Object.assign(h => { if (h === hex0) { fill(); renderOlder(null, 1, 1); } }, { hex: hex0 });
@@ -589,7 +597,7 @@
         const days = Object.keys((store.peekHist(hex) || {}).days || {}).length;
         const inferred = shown.filter(l => (l.from && l.from.conf === 'chain') || (l.to && l.to.conf === 'chain')).length;
         const other = pageHex && pageHex !== hex ? ` · FR24's register lists Mode S ${esc(pageHex.toUpperCase())} for ${esc(reg)}; the ${esc(reg)} seen flying uses ${esc(hex.toUpperCase())}` : '';
-        foot.firstChild.innerHTML = `Flight history rebuilt from public ADS-B data (adsb.lol, <a href="https://globe.airplanes.live/?icao=${esc(hex)}" target="_blank" rel="noopener noreferrer">airplanes.live</a>, Mode S ${esc(hex.toUpperCase())}) · ${shown.length + (liveState ? 1 : 0)} flights in the last ${Math.min(HISTORY_DAYS, days + 1)} days · times are local to each airport${inferred ? ` · ${inferred} airport${inferred > 1 ? 's' : ''} marked ? inferred where coverage was missing` : ''}${other}`;
+        foot.firstChild.innerHTML = `Flight history rebuilt from public ADS-B data (adsb.lol, <a href="https://globe.airplanes.live/?icao=${esc(hex)}" target="_blank" rel="noopener noreferrer">airplanes.live</a>, Mode S ${esc(hex.toUpperCase())}) · ${shown.length + (liveState ? 1 : 0)} flights in the last ${Math.min(HISTORY_DAYS, days + 1)} days · times are local to each airport${inferred ? ` · ${inferred} airport${inferred > 1 ? 's' : ''} marked ? inferred where coverage was missing` : ''}${other}${run.loaded ? logGaps(hex) : ''}`;
         // (done when every day is in - or when the load has finished and a source did not answer for some of them: they
         // are asked again next time, the spinner does not wait for them)
         if ((days >= HISTORY_DAYS - 1 || run.loaded) && (legs.length || liveState || run.last || run.loaded)) loading.remove();

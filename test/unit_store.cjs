@@ -44,11 +44,11 @@ const read = d => JSON.parse(fs.readFileSync(path.join(STORE, 'legs-' + d + '.js
   // learning rows: M-ARNZ's 7 Oct rebuilt - its flights as the userscript's learning rows, kept per day
   global.fetch = async url => { const m = /globe_history\/(\d{4})\/(\d\d)\/(\d\d)\/traces\/..\/trace_full_([0-9a-f]{6})\.json/.exec(url), f = m && path.join(__dirname, 'fixtures/legs', m[4], `${m[1]}-${m[2]}-${m[3]}_lol.json.gz`); return f && fs.existsSync(f) ? { status: 200, text: async () => zlib.gunzipSync(fs.readFileSync(f)).toString() } : { status: 404, text: async () => '' }; };
   M.markBlocked('424c60', null, Date.parse('2026-10-01') / 1000);
-  await M.histDay('424c60', '2026-10-07', JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(__dirname, 'fixtures/legs/424c60/2026-10-07_lol.json.gz'))).toString()));
+  await M.histDay('424c60', '2026-10-07', { state: 'ok', j: JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(__dirname, 'fixtures/legs/424c60/2026-10-07_lol.json.gz'))).toString()) }, { state: 'none' });
   const lr = M.learnSince('2026-10-06', Date.parse('2026-10-14T12:00:00Z') / 1000);
   const code = id => (E.byId(id) || {}).iata;
   check('/learn: M-ARNZ\'s 7 Oct flights as learning rows (from, to, times, class, type, squawk blocks, levels, flow cells)', lr.days.join() === '2026-10-07' && lr.rows.length === 4 && lr.rows.every(r => r.length === 12 && /^424c60\|\d+$/.test(r[0]) && r[6] === 'bizjet' && r[10] === 'PC24') && lr.rows.map(r => code(r[1]) + '-' + code(r[2])).join() === 'BWF-BRS,BRS-BWF,BWF-FAB,FAB-BWF', lr.rows.map(r => [code(r[1]), code(r[2]), r[4], r[5]]));
-  await M.histDay('424c60', '2026-10-07', JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(__dirname, 'fixtures/legs/424c60/2026-10-07_lol.json.gz'))).toString()));
+  await M.histDay('424c60', '2026-10-07', { state: 'ok', j: JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(__dirname, 'fixtures/legs/424c60/2026-10-07_lol.json.gz'))).toString()) }, { state: 'none' });
   check('... rebuilt again: no flight twice', M.learnSince('2026-10-06', Date.parse('2026-10-14T12:00:00Z') / 1000).rows.length === 4);
   check('... only the days asked for, two weeks back at most, not today', M.learnSince('2026-10-07', Date.parse('2026-10-14T12:00:00Z') / 1000).rows.length === 0 && M.learnSince('', Date.parse('2026-11-30T12:00:00Z') / 1000).rows.length === 0);
   // the names table: estimated arrival and departure time; positions of flights that only moved

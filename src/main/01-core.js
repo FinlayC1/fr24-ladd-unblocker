@@ -1,7 +1,7 @@
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '22.31.5';
+  const VERSION = '22.31.6';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
@@ -27,9 +27,8 @@
   const LIST_REFRESH_MS = 75000;        // global LADD / military list refresh
   const WORLD_SCAN_INTERVAL_MS = 180000; // background world scan for new callsign-less flights
   const TELEMETRY_MS = 2000;            // live ADS-B telemetry poll for the selected aircraft (each aggregator every 4 s)
-  const PHOTO_V = 9;                    // photo-pipeline version; a bump re-ranks photos cached by an older one (5: JetPhotos through FR24's own lookup)
-  const HIST_V = 5;                     // flight-log reconstruction version; a bump rebuilds cached logs (5: each flight's path, for matching its own routes)
-  const HIST_VM = 3;                    // ... a minor one re-reads only some days (1: an unended / unbegun flight - holes at one end, strips; 2, 3: the last 40 days without flights - adsb.lol's missing files, the monitor's days without flights)
+  const PHOTO_V = 10;                   // photo-pipeline version; a bump re-ranks photos cached by an older one (5: JetPhotos through FR24's own lookup; 10: FR24's aircraft page and JetPhotos itself where FR24's lookup holds none back)
+  const HIST_V = 6;                     // flight-log reconstruction version; a bump rebuilds cached logs from scratch (5: each flight's path, for matching its own routes; 6: every day from both networks, a day done only once each network asked has answered)
   const PRECOMPUTE_MAX = 8;
   // landing places learned away from FR24's airports (03-data): their ids, below the route engine's unlisted fields (1e7 on)
   const SITE_BASE = 9000000, isSiteId = id => id > SITE_BASE && id < 1e7;             // in-view aircraft whose full route (trace + plan) is prepared before a click

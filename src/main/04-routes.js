@@ -1097,7 +1097,12 @@
     // it when the first answer has nothing to list)
     const more = !store.peekHist(hex) || Object.keys((store.peekHist(hex) || {}).days || {}).length < 14;
     postToPage('hist', { reg, data: build(past()), partial: more });
-    if (more && !warm) loadHistory(hex, 21, null, { front: true }).then(() => postToPage('hist', { reg, data: build(past()) }), () => postToPage('hist', { reg, data: build(past()) }));
+    // (handed over the moment it has flights to list - the monitor's days come in one request, well before every day is
+    // read from the networks: FR24 draws the list once, from its first answer, and that answer waits nine seconds at most;
+    // a log read day by day took longer, and N1876T's and HB-IGO's lists said "No flights available")
+    let sent = 0;
+    const progress = () => { const d = build(past()); if (d.length > 1 && d.length !== sent) { sent = d.length; postToPage('hist', { reg, data: d, partial: true }); } };
+    if (more && !warm) loadHistory(hex, 21, progress, { front: true }).then(() => postToPage('hist', { reg, data: build(past()) }), () => postToPage('hist', { reg, data: build(past()) }));
   }
   // A flight still "on its way" whose positions stopped five minutes and more ago (a blocked jet FR24 no longer sends
   // once it is down, its transponder off at the stand): its ADS-B track of today read again - landed there, it says so

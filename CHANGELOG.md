@@ -2,6 +2,29 @@
 
 All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PATCH`. The userscript and the monitor are released together.
 
+## [22.31.6] - 2026-10-22
+
+### Fixed
+- **Panel photos: "Aircraft photo not available" for an aircraft JetPhotos has photos of** (HB-IGO: four on JetPhotos, two on its FR24 aircraft page). The lookup asks FR24's registration list first. For a blocked aircraft FR24 answers but holds the photos back, and that empty answer was taken for "JetPhotos has none"; JetPhotos itself was asked only when FR24's lookup failed outright. Now, when FR24's lookup has no photos:
+  - FR24's own page of the aircraft is read next. Its header shows the airframe's JetPhotos photos, with their photo pages and credits, for blocked aircraft too.
+  - Then JetPhotos itself, then Planespotters.
+  - JetPhotos is asked once per registration for both the photos and the serial number; it was asked twice.
+  - Every aircraft wrongly settled as having no photos is looked up again (photo pipeline version 10).
+- **"Recent <reg> flights" said "No flights available" for a blocked aircraft whose log has flights.** FR24 draws that list once, from its first answer, and the page holds that answer nine seconds at most. The list was handed over only once every day of the log had been read from the networks, which takes longer than that for an aircraft whose log is not kept yet. It is now handed over the moment it has flights to list; the monitor's days come in one request. A list read slowly from the networks reaches the page within two seconds, where it never arrived before.
+- **Flight logs: much more thorough, in the browser and on the monitor, and rebuilt from scratch.** HB-IGO's log jumped from 15 Jul to 17 Oct.
+  - **Both networks for every day.** adsb.lol's file (the last 40 days) and airplanes.live's are merged, so a whole flight one network never heard is in the log. Before, airplanes.live was asked only when adsb.lol had no file, or a take-off or landing was missing. In the browser this applies when the aircraft is looked at; the background still asks adsb.lol only.
+  - **A day is done only when every network asked has answered.** A network refusing or timing out is never taken for "no flights": the day is read again later, and the log page says how many days are not fully read yet and why.
+  - **Each day records where it came from.** A day read from adsb.lol alone, or with one network refusing, is read again with both the next time the aircraft is looked at.
+  - **The last three days are read again** if they were read before that day's files could be complete (six hours after it ended).
+  - **The monitor reads every day from both networks**, and builds an aircraft's whole 220-day log when someone looks at it, not just the last 40 days. A day it built while one network refused is passed to browsers marked as partial. A day it heard the aircraft fly with no file anywhere stays unknown.
+  - **Every log is discarded and rebuilt**, in the browser (log version 6) and on the monitor (once it is updated). Until a log is rebuilt, the panel's predictions keep using the aircraft's compact recent flights.
+
+### Tests
+- New `unit_photopage`: FR24's lookup holding the photos back, so they come from FR24's aircraft page (each with its own photo page and credit, large size). With none there either, JetPhotos itself. With photos in FR24's lookup, nothing else is asked.
+- New `unit_recentfast`: networks taking 20 s a file, the monitor holding the aircraft's flights. The list reaches the page in under two seconds and the full list follows. 22.31.5's code never delivers it in time.
+- `unit_histgap`: an older build's log is rebuilt from scratch, both networks. A day read from adsb.lol alone is read again with both once the aircraft is looked at. In the background, adsb.lol having no file is never taken for "no flights".
+- `unit_monitor2`: adsb.lol and airplanes.live both asked for a day. With airplanes.live refusing, adsb.lol's flights are kept and the day is marked partial; when it answers, the day is complete. An older build's log is not used. The fill covers 220 days. `unit_monlive` and `unit_store` use the new day builder.
+
 ## [22.31.5] - 2026-10-22
 
 ### Fixed
