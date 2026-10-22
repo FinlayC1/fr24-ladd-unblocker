@@ -65,14 +65,14 @@ const click = (win, el) => el.dispatchEvent(new win.MouseEvent('click', { bubble
   {
     const { win, doc, reqs } = makeWin({ latest: '99.1.0', seen: '22.20.0' });
     const btn = await until(() => doc.querySelector('.tl-ub-btn'), 4000);
-    check('after an update: a blue dot on the button before the window is opened', (await until(() => btn.querySelector('.tl-ub-dot'), 2000)) && btn.querySelector('.tl-ub-dot').dataset.k === 'new');
+    check('after an update, a newer one out: the button\'s tooltip says so before the window is opened - nothing drawn over its icon', (await until(() => /99\.1\.0 is out/.test(btn.getAttribute('title') || ''), 2000)) && !btn.querySelector('.tl-ub-dot'));
     click(win, btn); const w = await until(() => doc.querySelector('.tl-ub'), 4000);
     const note = w.querySelector('.tl-ub-new');
     check('... the window opens with "Updated to v' + VERSION + '" and this version\'s headlines (at most 3), a link to all of them', !!note && note.textContent.includes('Updated to v' + VERSION) && note.querySelectorAll('li').length >= 1 && note.querySelectorAll('li').length <= 3 && !!note.querySelector('a[href*="CHANGELOG"]'), note && note.textContent.replace(/\s+/g, ' ').slice(0, 300));
     await until(() => w.querySelector('.tl-ub-alert'), 3000);
     const alert = w.querySelector('.tl-ub-alert');
     check('a newer version out: a line in Updates says this one is out of date, with both versions', !!alert && alert.textContent.includes('99.1.0') && alert.textContent.includes(VERSION) && alert.closest('#tl-ub-upd'), alert && alert.textContent);
-    check('... and the dot on the button turns amber, its tooltip naming the new version', btn.querySelector('.tl-ub-dot') && btn.querySelector('.tl-ub-dot').dataset.k === 'upd' && /99\.1\.0/.test(btn.getAttribute('title')));
+    check('... and the button\'s tooltip names the new version (no dot on its icon)', !btn.querySelector('.tl-ub-dot') && /99\.1\.0/.test(btn.getAttribute('title')));
     click(win, w.querySelector('[data-ub-act="seenNew"]'));
     check('dismissing the note takes it away for good', !doc.querySelector('.tl-ub .tl-ub-new') && win.localStorage.getItem('tweeks.fr24.ladd.seenver') === VERSION);
     // ---- the monitor, public: its figures, no controls

@@ -331,6 +331,22 @@ check('ordinary aircraft: FR24 data kept (registration, callsign, photos)', str(
     check('... each slide the picture in FR24\'s three sizes (thumbnail, medium, large), one with "cb" in its address as its thumbnail only', sl.length === 2 && sl[0][1] === sl[0][0] && sl[0][2] === sl[0][0] && sl[1][0] === 'https://t.plnspttrs.net/72/1234567_9fcb21aa0e_280.jpg' && !sl[1][1] && !sl[1][2], sl);
     H.setFollowSt(null);
   }
+  // ---- FR24's stock picture of the type (a G550 that is not N50JE, "© Flightradar24", no JetPhotos page) in a blocked
+  // aircraft's block: not its photo - dropped, the JetPhotos ones put in its place, and never kept as the aircraft's
+  { const fid3 = 0x3a7a0001, st3 = { id: fid3 };
+    B.resolved.set(fid3, { cs: 'VLX013', reg: 'N50JE', hex: 'a63864', hexNum: 0xa63864, type: 'GLF5', photos: [{ link: 'https://www.jetphotos.com/photo/9001', credit: 'Dario Duque Gomez', large: 'https://cdn.jetphotos.com/640/5/9001_1.jpg', source: 'JetPhotos' }] });
+    const stockImg = H.fLen(11, cat([H.fStr(1, 'https://www.flightradar24.com/'), H.fStr(2, 'Flightradar24'), H.fStr(3, 'https://cdn.flightradar24.com/assets/aircraft/glf5_t.jpg'), H.fStr(4, 'https://cdn.flightradar24.com/assets/aircraft/glf5_m.jpg'), H.fStr(5, 'https://cdn.flightradar24.com/assets/aircraft/glf5_l.jpg')]));
+    const body3 = cat([H.fLen(1, cat([H.fStr(4, 'GLF5'), stockImg])), H.fLen(4, cat([H.fVar(1, fid3)]))]);
+    posted.length = 0;
+    const out3 = H.patchFlightMsg(body3, st3, H.DETAILS), sl3 = fields(one(out3, 1).val, 11).map(f => [str(f.val, 2), str(f.val, 5)]);
+    check('FR24\'s stock picture of the type ("© Flightradar24") in a blocked aircraft\'s block: dropped, its JetPhotos picture in its place', sl3.length === 1 && sl3[0][0] === 'Dario Duque Gomez' && /jetphotos/.test(sl3[0][1]), sl3);
+    check('... and not kept as the aircraft\'s own pictures', !posted.some(p => p && p.__tweeksLadd === 'photos' && p.hex === 'a63864'), posted.map(p => p && p.__tweeksLadd));
+    // (a real JetPhotos picture FR24 has of an airframe still counts as its own)
+    const realImgF = H.fLen(11, cat([H.fStr(1, 'https://www.jetphotos.com/photo/1234'), H.fStr(2, 'C. v. Grinsven'), H.fStr(3, 'https://cdn.jetphotos.com/200/5/1234_1.jpg'), H.fStr(4, 'https://cdn.jetphotos.com/400/5/1234_1.jpg'), H.fStr(5, 'https://cdn.jetphotos.com/640/5/1234_1.jpg')]));
+    const out4 = H.patchFlightMsg(cat([H.fLen(1, cat([H.fStr(4, 'GLF5'), realImgF])), H.fLen(4, cat([H.fVar(1, fid3 + 1)]))]), { id: fid3 + 1 }, H.DETAILS);
+    B.resolved.set(fid3 + 1, B.resolved.get(fid3));
+    const out5 = H.patchFlightMsg(cat([H.fLen(1, cat([H.fStr(4, 'GLF5'), realImgF])), H.fLen(4, cat([H.fVar(1, fid3 + 1)]))]), { id: fid3 + 1 }, H.DETAILS), sl5 = fields(one(out5, 1).val, 11).map(f => str(f.val, 2));
+    check('... FR24\'s real JetPhotos picture of an airframe still first, as its own', !!out4 && sl5[0] === 'C. v. Grinsven', sl5); }
   console.log(fails ? `\n${fails} FAILED` : '\nall passed');
   process.exit(fails ? 1 : 0);
 })();

@@ -594,12 +594,13 @@
     // never to the shared one, which would then ask FR24 under this browser's device id)
     const mine = (r => !!(r && r.token))(monRemote());
     const hdr = mine && feedHdr && !feedHdrSent ? feedHdr : null, own = [...ownersOut].slice(0, 500), pbIds = [...pbOut.values()].slice(0, 500);
-    const routes = [...routesOut.values()].slice(0, 300), learn = learnOutTake(300);
-    if (!flights.length && !ids.length && !hdr && !own.length && !pbIds.length && !routes.length && !learn.length) return;
-    const j = await monPost('/report', { hdr: hdr || undefined, ua: hdr ? navigator.userAgent : undefined, flights, ids, owners: own.length ? own : undefined, pbIds: pbIds.length ? pbIds : undefined, routes: routes.length ? routes : undefined, learn: learn.length ? learn.map(x => x.slice(0, 12)) : undefined }).catch(e => { log('report to monitor', String(e && e.message || e)); return null; });
+    const routes = [...routesOut.values()].slice(0, 300), learn = learnOutTake(300), pics = [...photosOut].slice(0, 100);
+    if (!flights.length && !ids.length && !hdr && !own.length && !pbIds.length && !routes.length && !learn.length && !pics.length) return;
+    const j = await monPost('/report', { hdr: hdr || undefined, ua: hdr ? navigator.userAgent : undefined, flights, ids, owners: own.length ? own : undefined, pbIds: pbIds.length ? pbIds : undefined, routes: routes.length ? routes : undefined, learn: learn.length ? learn.map(x => x.slice(0, 12)) : undefined, photos: pics.length ? pics : undefined }).catch(e => { log('report to monitor', String(e && e.message || e)); return null; });
     if (j && j.ok && hdr) feedHdrSent = true;
     if (j && j.ok) {
       for (const [h, o] of own) if (ownersOut.get(h) === o) ownersOut.delete(h); for (const r of pbIds) if (pbOut.get(r[0]) === r) pbOut.delete(r[0]);
+      for (const [h, l] of pics) if (photosOut.get(h) === l) photosOut.delete(h);
       for (const r of routes) { routesSent.set(r[0], r.slice(2, 7).join('|')); if (routesOut.get(r[0]) === r) routesOut.delete(r[0]); }
       if (routesSent.size > 3000) for (const k of [...routesSent.keys()].slice(0, 1000)) routesSent.delete(k);
       // (a monitor older than 22.25 learns none of them: none marked sent)
@@ -723,7 +724,7 @@
   const msgCount = {};   // page reports received, by kind (the strip of an ordinary flight shows them)
   let shownId = null;   // the flight id the open panel is showing (worked out from the aircraft on screen)
   let bridgeStats = null;   // (the page part's counters, as it last sent them - read by the health check)
-  let selectedId = null, bridgeReady = false, feedReady = false, sweepTimer = 0, sweepRunning = false, viewCenter = null;
+  let selectedId = null, selectedAt = 0, bridgeReady = false, feedReady = false, sweepTimer = 0, sweepRunning = false, viewCenter = null;
 
   function pageWindow() { try { return typeof unsafeWindow !== 'undefined' && unsafeWindow ? unsafeWindow : window; } catch (_) { return window; } }
   function postToPage(type, payload) { try { window.postMessage(Object.assign({ __tweeksLadd: type }, payload || {}), location.origin); } catch (_) { /* ignore */ } }

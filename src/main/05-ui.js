@@ -263,7 +263,9 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // those same elements: JNY5's and T7OKS's first slide, short, with two credits)
   const PHOTO_WAIT = 1500;
   const notPhoto = /sideview|blocked|jp-promo|airport-data|placeholder/i;
-  const fr24Photo = panel => [...panel.querySelectorAll('img[data-testid*="__image__"]:not([data-testid*="fallback"]):not([data-testid$="promo"])')].some(i => !i.closest('.tl-photo') && !notPhoto.test(i.getAttribute('src') || ''));
+  // (FR24's stock picture of the type, "© Flightradar24", is no picture of the aircraft: not one of FR24's own either)
+  const stockSlide = i => { const s = i.closest('li') || i.parentElement; return !!s && /©\s*flightradar\s*24\s*$/i.test(clean(s.textContent)); };
+  const fr24Photo = panel => [...panel.querySelectorAll('img[data-testid*="__image__"]:not([data-testid*="fallback"]):not([data-testid$="promo"])')].some(i => !i.closest('.tl-photo') && !stockSlide(i) && !notPhoto.test(i.getAttribute('src') || ''));
   // (where FR24 draws its picture: the panel's image box - else the block its fallback picture sits in)
   function photoSlot(panel) {
     const box = q(panel, SEL.image), fb = q(panel, SEL.fallbackImg);
@@ -627,7 +629,9 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   function syncPanel0() {
     tagSearchResults();
     const panel = document.querySelector(SEL.panel);
-    if (!panel) { shownId = null; if (observedPanel) { observer && observer.disconnect(); observedPanel = null; } if (idFromUrl() == null) selectedId = null; return; }
+    // (no panel: nothing selected any more - unless it was selected a moment ago and FR24 has not drawn its panel yet: the
+    // stream is asked for as the panel opens, and a look before it is drawn lost the flight, its strip never drawn)
+    if (!panel) { shownId = null; if (observedPanel) { observer && observer.disconnect(); observedPanel = null; } if (idFromUrl() == null && now() - selectedAt > 3000) selectedId = null; return; }
     if (observedPanel !== panel) {
       observer && observer.disconnect();
       observer = new MutationObserver(syncPanelSoon);

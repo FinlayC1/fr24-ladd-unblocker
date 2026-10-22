@@ -1,7 +1,7 @@
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '22.30.3';
+  const VERSION = '22.31.0';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
@@ -29,7 +29,7 @@
   const TELEMETRY_MS = 2000;            // live ADS-B telemetry poll for the selected aircraft (each aggregator every 4 s)
   const PHOTO_V = 9;                    // photo-pipeline version; a bump re-ranks photos cached by an older one (5: JetPhotos through FR24's own lookup)
   const HIST_V = 5;                     // flight-log reconstruction version; a bump rebuilds cached logs (5: each flight's path, for matching its own routes)
-  const HIST_VM = 1;                    // ... a minor one re-reads only the days with an unended / unbegun flight (1: holes at one end of a flight, strips)
+  const HIST_VM = 2;                    // ... a minor one re-reads only some days (1: an unended / unbegun flight - holes at one end, strips; 2: the last 40 days without flights, from adsb.lol's missing files)
   const PRECOMPUTE_MAX = 8;
   // landing places learned away from FR24's airports (03-data): their ids, below the route engine's unlisted fields (1e7 on)
   const SITE_BASE = 9000000, isSiteId = id => id > SITE_BASE && id < 1e7;             // in-view aircraft whose full route (trace + plan) is prepared before a click
@@ -64,7 +64,10 @@
   // clean photo - what FR24 itself shows (its code strips the "cb"), with the photographer credited as text instead.
   const noBar = u => typeof u === 'string' ? u.replace(/(\/\/cdn\.jetphotos\.com\/\d+)cb\//i, '$1/') : u;
   // airport-data.com pictures (what FR24 and other databases fall back to): never kept or shown, whatever they are labelled
-  const adPhoto = p => !!p && (/^(airport-data|hexdb\.io)$/.test(p.source || '') || [p.large, p.medium, p.thumb, p.link, p.credit].some(v => typeof v === 'string' && /airport-data/i.test(v)));
+  // (nor FR24's stock picture of the type, credited to Flightradar24 itself with no JetPhotos page - a picture of another
+  // aircraft; kept before as a blocked aircraft's own and shown, it is dropped wherever it was kept)
+  const adPhoto = p => !!p && (/^(airport-data|hexdb\.io)$/.test(p.source || '') || [p.large, p.medium, p.thumb, p.link, p.credit].some(v => typeof v === 'string' && /airport-data/i.test(v)) ||
+    (/^\W*flightradar\s*24\W*$/i.test(p.credit || '') && ![p.large, p.medium, p.thumb, p.link].some(v => typeof v === 'string' && /jetphotos/i.test(v))));
   // the same picture in another size or from another list: its file name without the size suffix
   const shotKey = p => String((p && (p.large || p.medium || p.thumb)) || '').split('/').pop().replace(/\?.*$/, '').replace(/\.[a-z]+$/i, '').replace(/_(?:t|tb|\d{3,4})$/i, '');
   const goodPhotos = l => (Array.isArray(l) ? l : []).filter(p => p && !adPhoto(p));

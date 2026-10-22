@@ -51,12 +51,28 @@ const walk = (d, pre = '') => fs.readdirSync(d, { withFileTypes: true }).flatMap
     await ctx.route('https://raw.githubusercontent.com/**', route => {
       const u = new URL(route.request().url()), p = u.pathname; gh.asked.push(p);
       if (p === '/FinlayC1/fr24-ladd-unblocker/main/package.json') return route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify({ version: NEWV }) });
+      if (p === '/FinlayC1/fr24-ladd-unblocker/main/CHANGELOG.md') return route.fulfill({ status: 200, headers: { 'access-control-allow-origin': '*' }, body: `# Changelog\n\n## [${NEWV}] - 2026-10-30\n\n### Fixed\n- **The newest fix.** More words.\n\n### Tests\n- **Not a headline.**\n\n## [${OLDV}] - 2026-10-21\n\n### Fixed\n- **What this one already has.**\n` });
+      if (p === '/FinlayC1/fr24-ladd-unblocker/v99.0.0/dist/fr24-ladd-unblocker-extension.zip') return route.fulfill({ status: 200, headers: { 'access-control-allow-origin': '*' }, body: fs.readFileSync(path.join(root, 'dist', 'fr24-ladd-unblocker-extension.zip')) });
       const m = p.match(/^\/FinlayC1\/fr24-ladd-unblocker\/v99\.0\.0\/dist\/extension\/(.+)$/), f = m && path.join(nu, m[1]);
       if (f && f.startsWith(nu + path.sep) && fs.existsSync(f)) return route.fulfill({ status: 200, headers: { 'access-control-allow-origin': '*' }, body: m[1] === gh.corrupt ? Buffer.from('not it') : fs.readFileSync(f) });
       return route.fulfill({ status: 404, headers: { 'access-control-allow-origin': '*' }, body: '' });
     });
     const loaded = await (await ctx.browser().newBrowserCDPSession()).send('Extensions.loadUnpacked', { path: ext }).catch(e => ({ err: String(e) }));
     check('the extension loads unpacked', !!loaded.id, loaded.err);
+    // ---- a browser that lets no extension write to its own folder (Brave as it comes): by hand, the very version's zip
+    { const mp = await ctx.newPage();
+      await mp.addInitScript(() => { delete window.showDirectoryPicker; try { Object.defineProperty(window, 'showDirectoryPicker', { value: undefined }); } catch (e) { /* gone */ } });
+      await mp.goto(`chrome-extension://${loaded.id}/update.html`);
+      await mp.waitForSelector('#manual:not([hidden])', { timeout: 10000 }).catch(() => null);
+      check('by hand: the steps, and a Download button (no folder asked for)', await mp.isVisible('#manual') && await mp.isVisible('#dl') && !await mp.isVisible('#go'));
+      const dl = mp.waitForEvent('download', { timeout: 10000 }).catch(() => null);
+      await mp.click('#dl');
+      const d = await dl, file = d ? await d.path().catch(() => '') : '';
+      check('... Download saves v99.0.0\'s own zip (at its tag), named for the version', !!d && d.suggestedFilename() === 'fr24-ladd-unblocker-extension-v99.0.0.zip' && !!file && fs.readFileSync(file).equals(fs.readFileSync(path.join(root, 'dist', 'fr24-ladd-unblocker-extension.zip'))), d && d.suggestedFilename());
+      await mp.waitForSelector('#news:not([hidden])', { timeout: 5000 }).catch(() => null);
+      const nl = await mp.$$eval('#newsList li', ls => ls.map(l => l.textContent));
+      check('... and what\'s new since this version: v99.0.0\'s headlines only (not its tests, not what this one has)', nl.join('|') === 'The newest fix', nl);
+      await mp.close(); }
     const page = await ctx.newPage(), errors = [];
     page.on('pageerror', e => errors.push(String(e)));
     // (the newest version, as the monitor's answer to the daily hello gives it - kept in FR24's storage, src/main/06-hello.js;
@@ -74,7 +90,7 @@ const walk = (d, pre = '') => fs.readdirSync(d, { withFileTypes: true }).flatMap
     if (!up) throw new Error('no update page');
     const upErr = []; up.on('pageerror', e => upErr.push(String(e)));
     await up.waitForSelector('#go:not([hidden])', { timeout: 10000 }).catch(() => null);
-    check('... it shows both versions, and asks for the folder the first time', (await up.textContent('#cur')) === 'v' + OLDV && (await up.textContent('#latest')) === 'v' + NEWV && /Choose the extension folder/.test(await up.textContent('#go')) && await up.isVisible('#first'), [await up.textContent('#cur'), await up.textContent('#latest'), await up.textContent('#go')]);
+    check('... it shows both versions, and asks for the folder the first time', (await up.textContent('#cur')) === 'v' + OLDV && (await up.textContent('#latest')).startsWith('v' + NEWV) && /Choose the extension folder/.test(await up.textContent('#go')) && await up.isVisible('#first'), [await up.textContent('#cur'), await up.textContent('#latest'), await up.textContent('#go')]);
     await page.waitForTimeout(300);
     check('... and the FR24 banner says to finish there', /Finish in the LADD Unblocker tab/.test(await page.textContent('[data-tl-bn="upd"]')));
 
@@ -116,7 +132,7 @@ const walk = (d, pre = '') => fs.readdirSync(d, { withFileTypes: true }).flatMap
     const want = walk(nu);
     check('... the folder holds every file of v99.0.0, byte for byte', want.every(n => got[n] && got[n].equals(fs.readFileSync(path.join(nu, n)))), want.filter(n => !(got[n] && got[n].equals(fs.readFileSync(path.join(nu, n))))));
     check('... the old version\'s file the new one has no more is deleted; the person\'s own file is kept', !('old-only.js' in got) && got['my-notes.txt'] && got['my-notes.txt'].toString() === 'mine\n', Object.keys(got).filter(n => !want.includes(n)));
-    check('... only this repository was asked, at the version\'s tag', gh.asked.every(p => p.startsWith('/FinlayC1/fr24-ladd-unblocker/main/package.json') || p.startsWith('/FinlayC1/fr24-ladd-unblocker/v99.0.')), gh.asked.filter(p => !/^\/FinlayC1\/fr24-ladd-unblocker\/(main\/package\.json|v99\.0\.)/.test(p)));
+    check('... only this repository was asked, at the version\'s tag', gh.asked.every(p => p.startsWith('/FinlayC1/fr24-ladd-unblocker/main/package.json') || p.startsWith('/FinlayC1/fr24-ladd-unblocker/main/CHANGELOG.md') || p.startsWith('/FinlayC1/fr24-ladd-unblocker/v99.0.')), gh.asked.filter(p => !/^\/FinlayC1\/fr24-ladd-unblocker\/(main\/package\.json|v99\.0\.)/.test(p)));
     await page.waitForTimeout(300);
     const bnNow = await page.textContent('[data-tl-bn="upd"]').catch(() => '');
     check('FR24\'s banner: v99.0.0 is installed, with Refresh page', /v99\.0\.0 is installed/.test(bnNow) && !!await page.$('[data-tl-bn="upd"] [data-bn-act="restart"]'), bnNow);

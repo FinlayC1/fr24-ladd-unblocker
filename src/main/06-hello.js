@@ -170,6 +170,9 @@
     }
     bnWrap.style.top = Math.round((y || 56) + 8) + 'px';
     bnWrap.style.zIndex = String(z > 0 ? z : 40);
-    const dlg = [...document.querySelectorAll('[aria-modal="true"],[role="dialog"],[role="alertdialog"]')].some(d => !d.closest('.tl-bn-wrap,.tl-ub,.tl-ub-c,[data-tl-ub-host]') && shownEl(d));
+    // (a modal one only - FR24's widget panels on the map and its bar's windows are dialogs too: the banner, hidden by them,
+    // came up only once the LADD Unblock window had put them away. Modal: so marked, or large and in the middle)
+    const vh = window.innerHeight || 800, modal = d => { if (d.getAttribute('aria-modal') === 'true') return true; const r = d.getBoundingClientRect(); return r.width >= vw * 0.3 && r.height >= vh * 0.25 && Math.abs(r.left + r.width / 2 - vw / 2) < vw * 0.15; };
+    const dlg = [...document.querySelectorAll('[aria-modal="true"],[role="dialog"],[role="alertdialog"]')].some(d => !d.closest('.tl-bn-wrap,.tl-ub,.tl-ub-c,[data-tl-ub-host]') && shownEl(d) && modal(d));
     bnWrap.classList.toggle('tl-bn-hid', dlg);
   }

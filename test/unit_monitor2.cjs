@@ -207,6 +207,34 @@ const rep = (hex, o) => Object.assign({ hex, lat: 53.4, lon: -2.3, alt_baro: 120
     apliveStatus = 404; delete M.pause['globe.airplanes.live'];
     await M.histDay(hex, d, JSON.parse(fx(hex, d)));
     check('... airplanes.live answering (no trace there either): the day stands as adsb.lol has it', M.histRead(hex).days['2026/10/02'] >= 1, M.histRead(hex).days); }
+  // ---- a day adsb.lol has no file of: no flights only when airplanes.live has none either -------------------------------
+  // (N527P: its last 40 days taken for days without flights - adsb.lol's files stopped coming - though airplanes.live has
+  // its flights)
+  { const hex = 'a6a434', d = '2026-09-25'; M.markBlocked(hex, null, dayS(d) - 86400); apliveStatus = 404; delete M.pause['globe.airplanes.live'];
+    M.histPend.add(hex + '|' + d); asked.length = 0;
+    await M.histOne({ hex, day: d, tries: 0, at: 0, fill: true });
+    check('a day asked for to fill a log, no file at adsb.lol: airplanes.live asked; none there either - a day without flights', asked.some(u => /globe\.airplanes\.live\/globe_history\/2026\/09\/25\/traces\/34\/trace_full_a6a434\.json/.test(u)) && M.histRead(hex).days['2026/09/25'] === 0 && M.histOf(hex).days['2026/09/25'] === 0, M.histRead(hex).days);
+    const d2 = '2026-09-26'; apliveStatus = 403; M.histPend.add(hex + '|' + d2);
+    await M.histOne({ hex, day: d2, tries: 0, at: 0, fill: true });
+    check('... airplanes.live refusing: the day not known (the userscript reads it), never one without flights', M.histRead(hex).days['2026/09/26'] === -1 && !('2026/09/26' in M.histOf(hex).days), M.histRead(hex).days);
+    apliveStatus = 404; delete M.pause['globe.airplanes.live'];
+    // (a log written before: its days without flights were adsb.lol's word alone - not known any more)
+    fs.writeFileSync(M.histFile('a6a435'), JSON.stringify({ hv: M.histRead('zzzzzz').hv, days: { '2026/09/20': 0, '2026/09/21': 2 }, legs: [{ day: '2026/09/21', tStart: 1 }, { day: '2026/09/21', tStart: 2 }] }));
+    check('a log written before this: its days without flights not known any more (read again); its flights kept', M.histRead('a6a435').days['2026/09/20'] === -1 && M.histRead('a6a435').days['2026/09/21'] === 2 && !('2026/09/20' in M.histOf('a6a435').days), M.histRead('a6a435').days);
+    // (someone looking at an aircraft: the finished days of its last 40 with no answer yet, queued once)
+    M.markBlocked('a6a436', null, Date.now() / 1000 - 30 * 86400); const was = M.closed; M.closed = new Date(Date.now() - 2 * 864e5).toISOString().slice(0, 10);
+    M.histQ.length = 0; M.fillAsked.clear();
+    M.answer(new URL('http://x/hist?hex=a6a436'), Date.now() / 1000);
+    const q1 = M.histQ.filter(j => j.hex === 'a6a436');
+    check('/hist: the aircraft\'s finished days of the last 40 with no answer queued to be built here (asked of both networks)', q1.length >= 38 && q1.length <= 40 && q1.every(j => j.fill && j.day <= M.closed), [q1.length, M.closed]);
+    M.answer(new URL('http://x/hist?hex=a6a436'), Date.now() / 1000);
+    check('... once: asked again at once, nothing more queued', M.histQ.filter(j => j.hex === 'a6a436').length === q1.length);
+    M.histQ.length = 0; for (const j of q1) M.histPend.delete(j.hex + '|' + j.day); M.closed = was; }
+  // ---- the pictures browsers found: kept, handed to every browser (photos.cjs) ----------------------------------------
+  { const ph = { link: 'https://www.jetphotos.com/photo/9', credit: 'X', large: 'https://cdn.jetphotos.com/640/5/9_1.jpg', source: 'JetPhotos' };
+    const r = M.report({ photos: [['a63864', [ph]], ['zz', [ph]]] }, Date.now(), { admin: false, ip: '192.0.2.7' });
+    const g = M.answer(new URL('http://x/photos?hex=a63864,a00000'), Date.now() / 1000, { admin: false, ip: '192.0.2.8' });
+    check('/report: a browser\'s pictures of a blocked aircraft taken; /photos: handed to any browser', r.ok && r.photos === 1 && g.list.length === 1 && g.list[0].hex === 'a63864' && g.list[0].photos[0].large === ph.large, { r, g }); }
   // ---- what is kept on disk ---------------------------------------------------------------------------------------
   { M.flew.set('2026-10-13', new Set(['c00001'])); M.histQ.push({ hex: 'c00001', day: '2026-10-12', tries: 1, at: 5 });
     M.saveState();

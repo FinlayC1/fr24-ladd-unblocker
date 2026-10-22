@@ -9,7 +9,7 @@
 // #tab=<id>   the Flightradar24 tab that opened this page: loaded again when the new version starts
 // #wrong      the last update was written to a folder Chrome does not load the extension from (the version did not change)
 const REPO = 'FinlayC1/fr24-ladd-unblocker', RAW = `https://raw.githubusercontent.com/${REPO}/`;
-const ZIP_URL = `https://github.com/${REPO}/releases/latest/download/fr24-ladd-unblocker-extension.zip`;
+const ZIP = 'dist/fr24-ladd-unblocker-extension.zip';
 const ME = chrome.runtime.getManifest();
 const hash = new URLSearchParams(location.hash.slice(1)), TAB = parseInt(hash.get('tab'), 10) || 0, WRONG = hash.has('wrong');
 const $ = id => document.getElementById(id);
@@ -119,20 +119,65 @@ async function install(dir, plan, progress) {
   return { written: order.length, deleted: gone };
 }
 
+// ---- by hand: the new version's zip, downloaded here ------------------------------------------------------------------
+// The zip of the very version offered - at its tag, else main's (built with it, and released from it a few minutes after)
+// - fetched and saved under its version's name. (The release's "latest" link lagged behind: it gave the version before
+// until the release was made, and a browser could keep handing back what it had downloaded already.)
+async function zipOf(version) {
+  for (const ref of [`v${version}`, 'main']) {
+    let r = null; try { r = await fetch(`${RAW}${ref}/${ZIP}?t=${Date.now()}`, { cache: 'no-store', credentials: 'omit' }); } catch (e) { continue; }
+    if (!r.ok) continue;
+    const buf = await r.arrayBuffer(), b = new Uint8Array(buf, 0, 2);
+    if (buf.byteLength > 1000 && b[0] === 0x50 && b[1] === 0x4b) return buf;
+  }
+  throw new Error('the zip could not be downloaded from GitHub');
+}
+async function download() {
+  const b = $('dl'); if (b.disabled) return;
+  b.disabled = true; say(`Downloading v${state.latest}…`);
+  try {
+    const buf = await zipOf(state.latest), url = URL.createObjectURL(new Blob([buf], { type: 'application/zip' }));
+    const a = Object.assign(document.createElement('a'), { href: url, download: `fr24-ladd-unblocker-extension-v${state.latest}.zip` });
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 60000);
+    say(`Downloaded v${state.latest}. Unzip it over the extension's folder, then click Reload extension in LADD Unblock.`, 'good');
+  } catch (e) { say(`The download didn't work (${e && e.message || e}). Check your connection and try again.`, 'bad'); }
+  finally { b.disabled = false; }
+}
+
+// ---- what's new: the headlines of every version newer than this one, from the changelog --------------------------------
+async function news(from, to) {
+  try {
+    const md = await (await fetchOk(RAW + 'main/CHANGELOG.md?t=' + Math.floor(Date.now() / 60000), 'the changelog')).text();
+    const items = [], vers = [];
+    for (const sec of md.split(/^## \[/m).slice(1)) {
+      const v = sec.slice(0, sec.indexOf(']'));
+      if (!/^\d+(\.\d+)+$/.test(v) || !newerThan(v, from) || newerThan(v, to)) continue;
+      vers.push(v);
+      for (const m of sec.split(/^### Tests/m)[0].matchAll(/^- \*\*(.+?)\*\*/gm)) items.push(m[1].replace(/\.$/, ''));
+      if (vers.length >= 3) break;
+    }
+    if (!items.length) return;
+    $('newsTitle').textContent = vers.length > 1 ? `What's new since v${from}` : `What's new in v${vers[0]}`;
+    for (const t of items.slice(0, 10)) $('newsList').appendChild(Object.assign(document.createElement('li'), { textContent: t }));
+    $('news').hidden = false;
+  } catch (e) { /* the page works without it */ }
+}
+
 // ---- the page ---------------------------------------------------------------------------------------------------------
 const state = { latest: '', dir: null, busy: false };
 function say(text, cls) { const m = $('msg'); m.textContent = text; m.className = cls || ''; }
-function showGo(label) { const b = $('go'); b.textContent = label; b.hidden = false; b.disabled = false; }
+function showGo(label) { const b = $('go'); b.textContent = label; b.hidden = false; b.disabled = false; $('goRow').hidden = false; }
 
 async function load() {
   $('cur').textContent = 'v' + ME.version;
-  $('zip').href = ZIP_URL;
   if (WRONG) { await kvDel('dir').catch(() => {}); say(`Last time the new files went to a folder Chrome doesn't load the extension from, so it is still v${ME.version}. Choose the extension's folder again.`, 'bad'); }
   else state.dir = await kvGet('dir').catch(() => null) || null;
   try { state.latest = await latestVersion(); } catch (e) { $('latest').textContent = "couldn't check"; say("Couldn't reach GitHub to see the newest version. Check your connection, then open this page again.", 'bad'); return; }
   if (!newerThan(state.latest, ME.version)) { $('latest').textContent = `v${state.latest} (you have it)`; if (!WRONG) say('You have the newest version.', 'good'); return; }
-  $('latest').innerHTML = ''; $('latest').appendChild(Object.assign(document.createElement('b'), { textContent: 'v' + state.latest }));
-  if (typeof window.showDirectoryPicker !== 'function') { $('manual').hidden = false; return; }
+  $('latest').textContent = 'v' + state.latest; $('latest').appendChild(Object.assign(document.createElement('span'), { className: 'tag', textContent: 'NEW' }));
+  $('latestBox').classList.add('new');
+  news(ME.version, state.latest);
+  if (typeof window.showDirectoryPicker !== 'function') { $('manual').hidden = false; $('brave').hidden = !(navigator.brave && typeof navigator.brave.isBrave === 'function'); return; }
   if (!state.dir) { $('first').hidden = false; showGo('Choose the extension folder and update'); }
   else showGo(`Update to v${state.latest}`);
 }
@@ -162,7 +207,7 @@ async function go() {
     if (TAB) { try { chrome.tabs.sendMessage(TAB, { tlUpdated: plan.version }, () => void chrome.runtime.lastError); } catch (e) { /* the tab is gone */ } }
     $('go').hidden = true;
     say(`Done: v${plan.version} is installed. Refresh the page to start using it.`, 'good');
-    $('restart').hidden = false; $('restart').focus();
+    $('goRow').hidden = false; $('restart').hidden = false; $('restart').focus();
   } catch (e) {
     if (e && e.name === 'AbortError') say('No folder chosen, so nothing changed.');
     else if (e && e.quiet) say(e.message, 'bad');
@@ -178,7 +223,8 @@ function restart() {
 }
 
 $('go').addEventListener('click', go);
+$('dl').addEventListener('click', download);
 $('restart').addEventListener('click', restart);
 // (for the tests: the steps without Chrome's folder picker, which nothing can click in a test)
-globalThis.__tlUpdate = { getPlan, install, checkFolder, ownFiles, latestVersion, kvGet, kvSet };
+globalThis.__tlUpdate = { getPlan, install, checkFolder, ownFiles, latestVersion, kvGet, kvSet, zipOf, news };
 load();

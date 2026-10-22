@@ -840,7 +840,8 @@
       const large = noBar(clean(l.src) || clean(m.src) || clean(t.src)); if (!/^https:\/\//.test(large)) continue;
       photos.push({ link: clean(l.link || m.link || t.link) || large, credit: clean(l.copyright || m.copyright || t.copyright), thumb: noBar(clean(t.src)) || large, medium: noBar(clean(m.src)) || large, large, source: 'JetPhotos', date: '' });
     }
-    return { photos, info: r.aircraftInfo || null };
+    // (nor its stock picture of the type, "Flightradar24" with no JetPhotos page - adPhoto)
+    return { photos: goodPhotos(photos), info: r.aircraftInfo || null };
   }
   async function fetchPhotos(rec, pri, early, fill) {
     const hex = rec.hex.toLowerCase(), errs = [];
@@ -987,8 +988,10 @@
     // photos for what can be looked at (in view, on a board, selected); far-away world-scan finds wait until they are
     const snap = pending.get(rec.id), onBoard = now() - (boardSeenAt.get(rec.id) || 0) < 15 * 60000;
     if (!isSelected && !onBoard && snap && snap.bg) return;
-    const hasPhotos = !!(rec.photos && rec.photos.length);
+    const hasPhotos = goodPhotos(rec.photos).length > 0;
     if (rec.photoV !== PHOTO_V) rec.photoLevel = 0;                // cached by an older pipeline: looked up again
+    // (FR24's stock picture of the type kept as its pictures by 22.30.3 and before: looked up again)
+    if ((rec.photos || []).some(adPhoto)) { rec.photos = goodPhotos(rec.photos); rec.photoLevel = 0; }
     // (pictures that are not JetPhotos are looked at again once a day: JetPhotos may have one by now)
     const jpRetry = rec.jpFailAt && now() - rec.jpFailAt > 600000 && !(rec.photos || []).some(isJp);
     if ((rec.photoLevel || 0) < 2 || jpRetry || (!hasPhotos && now() - (rec.photoAt || 0) > 1800000) || (hasPhotos && !rec.photos.some(isJp) && now() - (rec.photoAt || 0) > 864e5)) photoJob(rec, isSelected);
@@ -997,6 +1000,23 @@
   // until the lookup has an answer.
   // Returns a promise of the final pictures. A lookup already running in the background for an aircraft that is now
   // being looked at is overtaken by a front-of-queue one (the background one is dropped when it ends).
+  // ---- the pictures other browsers found of a blocked aircraft, kept by the monitor (photos.cjs): at once, the aircraft
+  // of the next 40 ms asked for together (50 at most); 1.5 s at most - then looked up here as before. And the pictures
+  // looked up here go to the monitor with the next report (02-resolver reportToMonitor), for every other browser.
+  const photoAsk = { q: new Map(), t: 0 }, photosOut = new Map();
+  const photoSig3 = l => (l || []).slice(0, 3).map(p => p.large || p.medium || p.thumb || '').join('|');
+  const blockedHex = hex => { const v = store.getHex(hex) || {}; return !!(v.ladd || v.fr24Blocked || v.pia); };
+  function monPhotos(hex) {
+    if (!monUp() || !blockedHex(hex)) return Promise.resolve(null);
+    return Promise.race([new Promise(res => { const l = photoAsk.q.get(hex) || []; l.push(res); photoAsk.q.set(hex, l); if (!photoAsk.t) photoAsk.t = setTimeout(flushMonPhotos, 40); }), sleep(1500).then(() => null)]);
+  }
+  function flushMonPhotos() {
+    photoAsk.t = 0; const all = [...photoAsk.q]; photoAsk.q.clear();
+    for (let i = 0; i < all.length; i += 50) {
+      const part = all.slice(i, i + 50), give = by => { for (const [h, rs] of part) for (const r of rs) r((by && by.get(h)) || null); };
+      monGet('/photos?hex=' + part.map(x => x[0]).join(',')).then(j => give(new Map((j && Array.isArray(j.list) ? j.list : []).filter(x => x && x.hex && Array.isArray(x.photos)).map(x => [x.hex, x]))), () => give(null));
+    }
+  }
   function photoJob(rec, pri) {
     if (!rec.hex) return Promise.resolve(rec.photos || []);
     const cur = photoInFlight.get(rec.hex);
@@ -1007,6 +1027,13 @@
       entry.run = async () => {
         entry.started = true;
         try {
+          // (the monitor's, at once; looked up again here only when they are more than two weeks old)
+          const mp = await monPhotos(rec.hex).catch(() => null), mph = mp ? goodPhotos(mp.photos).map(cleanPhoto) : [];
+          if (mph.length && photoInFlight.get(rec.hex) === entry) {
+            rec.photos = mph; rec.photoAt = now(); postToPage('photosDone', { hex: rec.hex, photos: mph });
+            if (now() - (mp.at || 0) < 14 * 864e5) { rec.photoLevel = 2; rec.photoV = PHOTO_V; rec.photosStale = false; persist(rec); res(mph); return; }
+            persist(rec);
+          }
           // (the early pictures cleaned as the final ones are: JetPhotos' "cb" sizes have the credit bar burnt in)
           const photos = await fetchPhotos(rec, entry.pri, ph => { if (!(rec.photos || []).some(isJp)) { rec.photos = goodPhotos(ph).map(cleanPhoto); rec.photoAt = now(); persist(rec); postToPage('photosDone', { hex: rec.hex, photos: rec.photos, early: true }); } },
             more => { rec.photos = more; rec.photoAt = now(); persist(rec); postToPage('photosDone', { hex: rec.hex, photos: goodPhotos(more).map(cleanPhoto) }); });
@@ -1014,6 +1041,8 @@
             rec.photoLevel = 2; rec.photoAt = now(); rec.photoV = PHOTO_V; rec.photosStale = false;
             if (photos.length) rec.photos = photos;
             persist(rec);
+            const out = goodPhotos(photos).map(cleanPhoto).slice(0, 3);
+            if (out.length && blockedHex(rec.hex) && photoSig3(out) !== photoSig3(mph)) { photosOut.set(rec.hex, out); if (photosOut.size > 300) photosOut.delete(photosOut.keys().next().value); }
           }
           res(photos.length ? photos : rec.photos || []);
         } catch (e) { res(rec.photos || []); throw e; } finally { if (photoInFlight.get(rec.hex) === entry) photoInFlight.delete(rec.hex); }
@@ -1118,16 +1147,24 @@
       if ((h.vm || 0) < HIST_VM) {
         const from = dayStr(now() - LOL_DAYS * 864e5), redo = new Set();
         for (const l of h.legs) if (l.day && l.day >= from && ((!l.to && (!l.ended || /^(gap|lost)/.test(l.how || ''))) || (!l.from && !l.startedOnGround))) redo.add(l.day);
+        // (2: a day adsb.lol had no file of was kept as a day without flights - and adsb.lol's files stopped coming: N527P's
+        // log empty from 11 Sep to 20 Oct, its last 40 days, though airplanes.live has its flights. Those days are read again)
+        if ((h.vm || 0) < 2) { const flown = new Set(h.legs.map(l => l.day)); for (const d of Object.keys(h.days)) if (d >= from && !flown.has(d)) redo.add(d); }
         for (const d of redo) delete h.days[d];
         h.vm = HIST_VM;
       }
+      // (a day adsb.lol has no file of, in the background: asked again later - a day after for the last three days, a week
+      // after for older ones - never taken for a day without flights. The background asks only adsb.lol; with the aircraft
+      // being looked at, airplanes.live is asked too, and both having none is a day without flights)
+      h.miss = h.miss && typeof h.miss === 'object' ? h.miss : {};
       const upTo = bgWork ? Math.min(maxDays, LOL_DAYS) : maxDays;
-      let todo = []; const backOf = {}; for (let back = 1; back <= upTo; back++) { const d = dayStr(now() - back * 864e5); if (!h.days[d]) { todo.push(d); backOf[d] = back; } }
+      let todo = []; const backOf = {}; for (let back = 1; back <= upTo; back++) { const d = dayStr(now() - back * 864e5); if (!h.days[d] && !(bgWork && now() - (h.miss[d] || 0) < (back <= 3 ? 1 : 7) * 864e5)) { todo.push(d); backOf[d] = back; } }
       let done = 0, dirty = false, monDays = 0;
       const flush = () => {
         if (!dirty) return; dirty = false;
         h.legs.sort((a, b) => b.tStart - a.tStart); h.legs = h.legs.slice(0, 1500);
         const oldest = dayStr(now() - (HISTORY_DAYS + 3) * 864e5); for (const k of Object.keys(h.days)) if (k < oldest) delete h.days[k];
+        for (const k of Object.keys(h.miss || {})) if (k < oldest || h.days[k]) delete h.miss[k];
         h.savedAt = now(); store.setHist(hex, h);
         const chained = ENGINE.chainLegs(ENGINE.stitchLegs(h.legs.slice().reverse()));
         store.mergeHex(hex, { recent: legsToCompact(chained) });
@@ -1163,19 +1200,24 @@
         for (let attempt = 0; attempt < 3; attempt++) {
           let pts = null;
           try {
-            const j = await fetchTrace(hex, day, { bg: bgWork && !st.front, back: backOf[day], priority: st.front }); answered = true;
-            pts = ENGINE.parseTrace(j);
+            const j = await fetchTrace(hex, day, { bg: bgWork && !st.front, back: backOf[day], priority: st.front });
+            pts = ENGINE.parseTrace(j); answered = pts.length > 0;
           }
-          catch (e) { if (/HTTP 404/.test(String(e))) { answered = true; pts = []; } else if (/HTTP 429/.test(String(e))) { await sleep(4000); continue; } else { log('trace history', hex, day, String(e.message || e)); break; } }
+          catch (e) { if (/HTTP 404/.test(String(e))) { pts = []; } else if (/HTTP 429/.test(String(e))) { await sleep(4000); continue; } else { log('trace history', hex, day, String(e.message || e)); break; } }
+          // (nothing from the first network asked: a day without flights only once the other has none either - a day older
+          // than adsb.lol keeps was asked of airplanes.live already)
+          if (!pts.length && backOf[day] > LOL_DAYS) answered = true;
           let raws = legsOf(pts, day);
           legs = summarize(raws, hex);
-          if (backOf[day] <= LOL_DAYS && (pts.length ? incomplete(legs, day) : st.front)) {
+          if (backOf[day] <= LOL_DAYS && (pts.length ? incomplete(legs, day) : !bgWork || st.front)) {
             try {
               const j2 = await gmRequest(`https://globe.airplanes.live/globe_history/${day}/traces/${hex.slice(-2)}/trace_full_${hex}.json`, { timeout: 20000, priority: st.front, bg: bgWork && !st.front });
               const both = ENGINE.mergePoints(pts, ENGINE.parseTrace(j2));
               if (both.length > pts.length) { pts = both; raws = legsOf(pts, day); legs = summarize(raws, hex); }
-            } catch (e) { /* the one network's day stands */ }
+              answered = true;
+            } catch (e) { if (/HTTP 404/.test(String(e))) answered = true; /* else: the one network's day stands, or none */ }
           }
+          if (!answered) { h.miss[day] = now(); dirty = true; }
           legs = legs.map(l => Object.assign(l, { day }));
           raws.forEach((r, i) => learnFromLeg(hex, r, legs[i], cls0, ac0.mil));
           break;
@@ -1183,7 +1225,7 @@
         // (a day that could not be had - a refused or failed request - is asked again next time, not marked as empty)
         done++;
         if (!answered) return;
-        h.days[day] = true; h.legs = h.legs.filter(l => l.day !== day).concat(legs); dirty = true;
+        h.days[day] = true; delete h.miss[day]; h.legs = h.legs.filter(l => l.day !== day).concat(legs); dirty = true;
       };
       // newest days first, a few at a time; progress is flushed after every batch
       // (a background log's bookkeeping - joining legs, the copy kept on disk - waits for an idle moment too)

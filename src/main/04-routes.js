@@ -1097,7 +1097,7 @@
     // it when the first answer has nothing to list)
     const more = !store.peekHist(hex) || Object.keys((store.peekHist(hex) || {}).days || {}).length < 14;
     postToPage('hist', { reg, data: build(past()), partial: more });
-    if (more && !warm) loadHistory(hex, 21, null).then(() => postToPage('hist', { reg, data: build(past()) }), () => postToPage('hist', { reg, data: build(past()) }));
+    if (more && !warm) loadHistory(hex, 21, null, { front: true }).then(() => postToPage('hist', { reg, data: build(past()) }), () => postToPage('hist', { reg, data: build(past()) }));
   }
   // A flight still "on its way" whose positions stopped five minutes and more ago (a blocked jet FR24 no longer sends
   // once it is down, its transponder off at the stand): its ADS-B track of today read again - landed there, it says so

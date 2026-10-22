@@ -90,7 +90,7 @@ const text = el => (el ? el.textContent.replace(/\s+/g, ' ').trim() : '');
     check('... "Update" and "Later" buttons - real buttons, reached with the keyboard', !!ub && !!lb && ub.tagName === 'BUTTON' && lb.tagName === 'BUTTON' && text(ub) === 'Update' && text(lb) === 'Later' && ub.tabIndex === 0);
     check('... one of each, no more', doc.querySelectorAll('.tl-bn-wrap [data-tl-bn="upd"]').length === 1 && doc.querySelectorAll('.tl-bn-wrap').length === 1);
     const btn = doc.querySelector('.tl-ub-btn');
-    check('... and the dot on the bar\'s button, amber, naming the version', !!btn && !!btn.querySelector('.tl-ub-dot') && btn.querySelector('.tl-ub-dot').dataset.k === 'upd' && /99\.2\.0/.test(btn.getAttribute('title')));
+    check('... and the bar\'s button\'s tooltip naming the version - nothing drawn over its icon', !!btn && !btn.querySelector('.tl-ub-dot') && /99\.2\.0/.test(btn.getAttribute('title')));
     // ---- FR24's dialog up: out of sight
     doc.body.insertAdjacentHTML('beforeend', '<div id="fr24dlg" role="dialog" aria-modal="true">Sign in</div>'); T().ubBanners();
     check('FR24 showing a dialog: the banners are out of sight (never over FR24\'s pop-ups)', wrap.classList.contains('tl-bn-hid'));
@@ -121,7 +121,7 @@ const text = el => (el ? el.textContent.replace(/\s+/g, ' ').trim() : '');
     const later = JSON.parse(win.localStorage.getItem(KEYS.later) || 'null');
     check('Later: the banner is taken out of the page, hidden for 24 hours (kept)', !banner(doc, 'upd') && !!later && later.v === '99.2.0' && Math.abs(later.until - Date.now() - 24 * H) < 60000, later);
     T().ubBanners();
-    check('... still hidden at the next look - the dot on the button stays', !banner(doc, 'upd') && !!btn.querySelector('.tl-ub-dot'));
+    check('... still hidden at the next look - the button\'s tooltip still says it', !banner(doc, 'upd') && /99\.2\.0/.test(btn.getAttribute('title')));
     win.localStorage.setItem(KEYS.later, JSON.stringify({ v: '99.2.0', until: Date.now() - 1000 })); T().ubBanners();
     check('... back once the 24 hours are over', !!banner(doc, 'upd'));
     // ---- the switch in the window
@@ -179,10 +179,9 @@ const text = el => (el ? el.textContent.replace(/\s+/g, ' ').trim() : '');
   {
     const E = makeWin({ ls: { [KEYS.opts]: { count: false } }, latest: '99.1.0' });
     await until(() => E.doc.querySelector('.tl-ub-btn'), 4000);
-    check('(nothing from the monitor: no banner yet)', !banner(E.doc, 'upd'));
-    await E.T().checkLatest(true);
+    // (asked as FR24 opens - nothing called here: the banner is up the moment the answer is in)
     const upd = await until(() => banner(E.doc, 'upd'), 3000);
-    check('GitHub\'s version check alone (counting off) puts the update banner up too', !!upd && text(upd).includes(`LADD Unblocker v99.1.0 is out (you have v${VERSION})`) && E.hellos().length === 0, text(upd));
+    check('GitHub\'s version check alone (counting off), made as FR24 opens, puts the update banner up at once', !!upd && text(upd).includes(`LADD Unblocker v99.1.0 is out (you have v${VERSION})`) && E.hellos().length === 0, text(upd));
     E.win.close();
   }
   // ---- LADD Unblock switched off: no banner, no hello

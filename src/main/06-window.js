@@ -5,7 +5,8 @@
   const UB_REPO = 'FinlayC1/fr24-ladd-unblocker';
   const UB_LATEST_URL = `https://raw.githubusercontent.com/${UB_REPO}/main/package.json`;
   const UB_USERSCRIPT_URL = `https://raw.githubusercontent.com/${UB_REPO}/main/dist/fr24-ladd-unblocker.user.js`;
-  const UB_ZIP_URL = `https://github.com/${UB_REPO}/releases/latest/download/fr24-ladd-unblocker-extension.zip`;
+  // (main's own zip - built with the version in main's package.json, the one offered; the release's "latest" lags behind it)
+  const UB_ZIP_URL = `https://raw.githubusercontent.com/${UB_REPO}/main/dist/fr24-ladd-unblocker-extension.zip`;
   const UB_CHANGES_URL = `https://github.com/${UB_REPO}/blob/main/CHANGELOG.md`;
   const UB_LABELS = ['Settings', 'Weather', 'Filters', 'Widgets', 'Playback'];
   // (the version whose "what's new" was put away, and the one whose dot on the button the window was opened for)
@@ -65,8 +66,6 @@
 .tl-ub-btn-on,.tl-ub-btn-on *{color:#f8c023!important}
 .tl-ub-btn{position:relative}
 .tl-ub-btn [data-tl-ub-label]{white-space:nowrap}
-.tl-ub-dot{position:absolute;top:3px;left:calc(50% + 6px);width:7px;height:7px;border-radius:50%;background:#f8c023;box-shadow:0 0 0 1.5px rgba(0,0,0,.55);pointer-events:none}
-.tl-ub-dot[data-k="new"]{background:#4ea1e8}
 .tl-ub-c .tl-ub-new{position:relative;margin:8px 8px 2px;padding:6px 24px 6px 8px;background:#e8f1fa;border-radius:6px;font-size:calc(var(--tl-f)*13px);line-height:1.4;color:#393939}
 .tl-ub-c .tl-ub-new ul{margin:3px 0 2px;padding-left:16px}
 .tl-ub-c .tl-ub-new li{margin:1px 0}
@@ -122,12 +121,16 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     let h = ''; try { h = typeof GM_info !== 'undefined' && GM_info && GM_info.scriptHandler ? String(GM_info.scriptHandler) : ''; } catch (e) { /* none */ }
     return { kind: 'us', name: h ? h + ' userscript' : 'Userscript' };
   }
-  // (main's package.json: a version merged to main is released as soon as its tests pass)
+  // (main's package.json: a version merged to main is released as soon as its tests pass. The answer is kept across page
+  // loads - the map's banner says a new version is out from the moment the page opens, not only once this window has
+  // asked again - and asked for again every half hour)
+  const UB_LATEST_KEY = 'tweeks.fr24.ladd.latest';
+  try { const L = JSON.parse(lsGet(UB_LATEST_KEY) || 'null'); if (L && /^\d+(\.\d+)*$/.test(L.v) && now() - L.at < 12 * 3600e3) ubLatest = { v: L.v, at: L.at }; } catch (e) { /* none kept */ }
   function checkLatest(force) {
     if (ubAsking) return ubAsking;
     if (!force && ubLatest && now() - ubLatest.at < 30 * 60000) return Promise.resolve(ubLatest);
     ubAsking = gmRequest(UB_LATEST_URL + '?t=' + Math.floor(now() / 60000), { timeout: 15000 })
-      .then(j => { const v = j && typeof j.version === 'string' && /^\d+(\.\d+)*$/.test(j.version) ? j.version : ''; ubLatest = v ? { v, at: now() } : { err: 'no version in the answer', at: now() }; })
+      .then(j => { const v = j && typeof j.version === 'string' && /^\d+(\.\d+)*$/.test(j.version) ? j.version : ''; ubLatest = v ? { v, at: now() } : { err: 'no version in the answer', at: now() }; if (v) lsSet(UB_LATEST_KEY, JSON.stringify(ubLatest)); })
       .catch(e => { ubLatest = { err: String(e && e.message || e), at: now() }; })
       .then(() => { ubAsking = null; renderUnblockWindow(); ubBadge(); ubBanners(); return ubLatest; });
     renderUnblockWindow();
@@ -191,15 +194,13 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     return `<div class="tl-ub-new"><b>Updated to v${esc(VERSION)}</b>${items.length ? '<ul>' + items.map(t => `<li>${esc(t)}</li>`).join('') + '</ul>' : ' '}<a href="${UB_CHANGES_URL}" target="_blank" rel="noopener">What's new</a>
       <button type="button" class="tl-ub-x" data-ub-act="seenNew" aria-label="Dismiss" title="Dismiss">${UB_X}</button></div>`;
   }
-  // ---- the dot on the bar's button: amber when a newer version is out, blue after an update until the window is opened --
+  // ---- the bar's button says, in its tooltip, when a newer version is out, and after an update until the window is opened.
+  // Its icon is never drawn over: a dot on it (amber, blue) looked like a new icon - the map's banner says it instead.
   function ubBadge() {
     if (!ubBtn) return;
     const O = ubOffer(), k = O.v ? 'upd' : whatsNewDue() && lsGet(UB_DOT_KEY) !== VERSION ? 'new' : '';
-    let d = ubBtn.querySelector('.tl-ub-dot');
-    if (!k) { if (d) d.remove(); ubBtn.removeAttribute('title'); ubBtn.setAttribute('title', 'LADD Unblock'); return; }
-    if (!d) { d = document.createElement('span'); d.className = 'tl-ub-dot'; ubBtn.appendChild(d); }
-    d.dataset.k = k;
-    ubBtn.setAttribute('title', k === 'upd' ? `LADD Unblock - v${O.v} is out (you have v${VERSION})` : `LADD Unblock - updated to v${VERSION}`);
+    for (const d of ubBtn.querySelectorAll('.tl-ub-dot')) d.remove();
+    ubBtn.setAttribute('title', k === 'upd' ? `LADD Unblock - v${O.v} is out (you have v${VERSION})` : k === 'new' ? `LADD Unblock - updated to v${VERSION}` : 'LADD Unblock');
   }
 
   // ---- the monitor: what it is doing, and the owner's controls (update, restart, its log) in place of a terminal --------
@@ -777,16 +778,19 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     const was = ubLook[state]; if (was && was.col === L.col && was.sw === L.sw) return;
     ubLook[state] = L; lsSet(UB_LOOK_KEY, JSON.stringify(ubLook)); ubIconStyle();
   }
-  // (FR24's look not yet seen: a little thicker under the mouse and open, and FR24's yellow when open)
+  // (the lines clearly thicker under the mouse and open - at least half as thick again, more where FR24's own grow more:
+  // read off FR24's, the change was too slight to see, and none at all where FR24 draws it by swapping its icon; FR24's
+  // yellow when open where its look has not been seen)
+  const UB_W = { rest: 1.5, hover: 2.3, open: 2.6 };
   function ubIconStyle() {
     let el = document.getElementById('tl-ub-icon-style');
     if (!el) { el = document.createElement('style'); el.id = 'tl-ub-icon-style'; (document.head || document.documentElement).appendChild(el); }
     const base = (ubLook.rest && ubLook.rest.sw) || 0;
-    const w = st => { const L = ubLook[st]; return base && L && L.sw ? +(1.5 * L.sw / base).toFixed(2) : st === 'rest' ? 1.5 : 2; };
+    const w = st => { const L = ubLook[st], k = base && L && L.sw ? 1.5 * L.sw / base : 0; return st === 'rest' ? UB_W.rest : +Math.max(UB_W[st], k).toFixed(2); };
     const col = st => (ubLook[st] && ubLook[st].col) || (st === 'open' ? '#f8c023' : 'currentColor');
     const I = 'svg[data-tl-ub-icon] *';
     const css = `.tl-ub-btn ${I}{stroke:${col('rest')};stroke-width:${w('rest')};transition:stroke .15s,stroke-width .15s}
-.tl-ub-btn:hover ${I}{stroke:${col('hover')};stroke-width:${w('hover')}}
+.tl-ub-btn:hover ${I},.tl-ub-btn:focus-visible ${I}{stroke:${col('hover')};stroke-width:${w('hover')}}
 .tl-ub-btn[data-tl-ub-open] ${I},.tl-ub-btn.tl-ub-btn-on ${I}{stroke:${col('open')}!important;stroke-width:${w('open')}}`;
     if (el.textContent !== css) el.textContent = css;
   }
@@ -978,8 +982,10 @@ html.tl-no-strip .tl-strip{display:none!important}`;
         setTimeout(tick, ubMiss > 60 ? 5000 : 1000);
       };
       tick();
-      // (the newest version looked up a little after FR24 opens and every 6 hours: a dot on the button when one is out)
-      setTimeout(() => { checkLatest(false); setInterval(() => checkLatest(false), 6 * 3600000); }, 20000);
+      // (the newest version: the banner from the last answer the moment FR24 opens, the newest looked up at once - every
+      // time FR24 is opened - and every half hour after)
+      ubBanners();
+      checkLatest(true); setInterval(() => checkLatest(false), 30 * 60000);
       startHello();
       // (Later, a closed notice or a newer answer in another FR24 tab: the same here)
       window.addEventListener('storage', ev => { if ([UB_LATER_KEY, UB_NOTICE_KEY, HELLO_KEY].includes(ev.key)) ubBanners(); });

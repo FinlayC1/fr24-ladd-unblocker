@@ -33,14 +33,14 @@ window.GM_xmlhttpRequest = o => { setTimeout(() => o.onload && o.onload({ status
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 860 } });
   const page = await ctx.newPage();
   const errors = []; page.on('pageerror', e => errors.push(String(e)));
-  await page.route('**/*', route => {
+  await ctx.route('**/*', route => {
     const u = route.request().url();
     if (u.includes('/__vue.js')) return route.fulfill({ status: 200, contentType: 'text/javascript', body: VUE });
     if (/^https:\/\/www\.flightradar24\.com\/[0-9.,-]+\/\d+/.test(u)) return route.fulfill({ status: 200, contentType: 'text/html', body: MOCK });
     return route.fulfill({ status: 404, body: '' });
   });
-  await page.addInitScript(src => { window.__SRC = src; }, SRC);
-  await page.addInitScript({ content: STUBS + '\n;(function (go) { if (document.documentElement) return go(); const mo = new MutationObserver(() => { if (document.documentElement) { mo.disconnect(); go(); } }); mo.observe(document, { childList: true }); })(function () { (0, eval)(window.__SRC); });' });
+  await ctx.addInitScript(src => { window.__SRC = src; }, SRC);
+  await ctx.addInitScript({ content: STUBS + '\n;(function (go) { if (document.documentElement) return go(); const mo = new MutationObserver(() => { if (document.documentElement) { mo.disconnect(); go(); } }); mo.observe(document, { childList: true }); })(function () { (0, eval)(window.__SRC); });' });
   try {
     await page.goto('https://www.flightradar24.com/53.40,-2.60/9?mode=keyed&gm=1&look=1');
     await page.waitForSelector('nav.bar .tl-ub-btn', { timeout: 15000 });
@@ -98,7 +98,7 @@ window.GM_xmlhttpRequest = o => { setTimeout(() => o.onload && o.onload({ status
     await page.click(ours); await sleep(900);
     await page.mouse.move(640, 40); await sleep(400);
     const open = await ico();
-    check('... open: thicker and yellow, as FR24\'s open button\'s icon', open.w === '2.5px' && open.c === 'rgb(248, 192, 35)', open);
+    check('... open: clearly thicker (2.6, more than FR24\'s 2.5 here) and yellow, as FR24\'s open button\'s icon', open.w === '2.6px' && open.c === 'rgb(248, 192, 35)', open);
     await page.mouse.click(...MAP); await sleep(900);
     check('... put away: at rest again', (await ico()).w === '1.5px');
 
@@ -110,6 +110,17 @@ window.GM_xmlhttpRequest = o => { setTimeout(() => o.onload && o.onload({ status
     await page.mouse.move(640, 40); await sleep(100);
     const after = await page.evaluate(() => { window.__tweeksLadd.morphHtml(document.getElementById('tiphost'), '<span id="t1" title="63% - reasons C" style="display:block;height:40px">GSP</span>'); return document.getElementById('t1').title; });
     check('... the mouse gone: brought up to date', after === '63% - reasons C', after);
+    // ---- an FR24 whose icons do not grow under the mouse (or are swapped for another drawing): still clearly thicker
+    { const p2 = await ctx.newPage();
+      await p2.goto('https://www.flightradar24.com/53.40,-2.60/9?mode=keyed&gm=1');
+      await p2.waitForSelector('nav.bar .tl-ub-btn', { timeout: 15000 });
+      await p2.evaluate(() => localStorage.removeItem('tweeks.fr24.ladd.barlook')); await p2.reload(); await p2.waitForSelector('nav.bar .tl-ub-btn', { timeout: 15000 });
+      await p2.hover('nav.bar [data-testid="map-bar__filters"]'); await sleep(700);
+      const w0 = await p2.evaluate(() => getComputedStyle(document.querySelector('nav.bar .tl-ub-btn svg[data-tl-ub-icon] path')).strokeWidth);
+      await p2.hover('nav.bar .tl-ub-btn'); await sleep(400);
+      const w1 = await p2.evaluate(() => getComputedStyle(document.querySelector('nav.bar .tl-ub-btn svg[data-tl-ub-icon] path')).strokeWidth);
+      check('FR24\'s icons not growing under the mouse: this one still clearly thicker when pointed at (1.5 to 2.3)', w0 === '1.5px' && w1 === '2.3px', [w0, w1]);
+      await p2.close(); }
     check('no page errors', errors.length === 0, errors);
   } catch (e) { fails++; console.log('FAIL  CRASH ' + (e && e.stack || e)); }
   await browser.close();

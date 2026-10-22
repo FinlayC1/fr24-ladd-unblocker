@@ -32,8 +32,9 @@ window.__tlTestHook = h => { window.__H = h; };
 `;
 const MAP = 'https://www.flightradar24.com/40.70,-73.90/9?mode=keyed&pb=1';
 const ymd = t => new Date(t * 1000).toISOString().slice(0, 10), hm = t => new Date(t * 1000).toISOString().slice(11, 16);
-// (airplanes.live's track address: five minutes before t0 to five minutes after t1, ten minutes at least; the end minute may be a minute out)
-const okT = (u, hex, t0, t1) => { try { const x = new URL(u), q = x.searchParams, from = t0 - 300, to = Math.max(t1, t0 + 600) + 300; return x.host === 'globe.airplanes.live' && q.get('icao') === hex && q.get('showTrace') === ymd(from) && q.get('startTime') === hm(from) && [0, -60, 60].some(d => q.get('endTime') === hm(to + d) || (ymd(to + d) !== ymd(from) && q.get('endTime') === '23:59')); } catch (e) { return false; } };
+// (airplanes.live's track address: the day of t0, whole - no startTime / endTime / timestamp, which airplanes.live keeps
+// for every other day it is moved to)
+const okT = (u, hex, t0) => { try { const x = new URL(u), q = x.searchParams; return x.host === 'globe.airplanes.live' && q.get('icao') === hex && q.get('showTrace') === ymd(t0) && !q.has('startTime') && !q.has('endTime') && !q.has('timestamp') && [...q.keys()].length === 2; } catch (e) { return false; } };
 
 (async () => {
   const browser = await chromium.launch({ executablePath: exe || undefined, headless: true });
