@@ -1,4 +1,4 @@
-// FR24 LADD Unblocker 22.31.7 - the page-world part (see src/page.js)
+// FR24 LADD Unblocker 22.31.9 - the page-world part (see src/page.js)
 (function () {
   'use strict';
   // ------------------------------------------------------------------------------------------------------------
@@ -7,7 +7,7 @@
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "22.31.7";
+    var BRIDGE_V = "22.31.9";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed
@@ -40,7 +40,27 @@
     var reqLog = [];
     function noteReq(how, method, url) {
       try { url = String(url || ''); if (!/flightradar24\.com|fr24\./i.test(url) || /\.(png|jpe?g|svg|webp|woff2?|css|js|mjs|map|ico)(\?|$)/i.test(url) || /\/tiles?\//i.test(url)) return;
-        reqLog.push((new Date().toISOString().slice(11, 19)) + ' ' + how + ' ' + (method || 'GET') + ' ' + url.replace(/^https?:\/\//, '').slice(0, 200)); if (reqLog.length > 60) reqLog.shift(); } catch (e) { /* ignore */ }
+        // (FR24's session token blanked out: the log is pasted into bug reports)
+        reqLog.push((new Date().toISOString().slice(11, 19)) + ' ' + how + ' ' + (method || 'GET') + ' ' + url.replace(/^https?:\/\//, '').replace(/([?&]token=)[^&#]*/gi, '$1…').slice(0, 200)); if (reqLog.length > 60) reqLog.shift(); } catch (e) { /* ignore */ }
+    }
+    // FR24's list of an aircraft's flights ("Recent <reg> flights"): asked of api.flightradar24.com/common/v1 before, of
+    // www.flightradar24.com/common/v2 now (with the session's token) - any FR24 host, any version, by registration
+    var REGLIST_RE = /(?:^|flightradar24\.com)\/common\/v\d+\/flight\/list\.json\?/i;
+    // (its answer's list: { result: { response: { data, item, page, aircraftInfo } } } - and, should the new version
+    // answer without the wrapping, the same object at the top or under `response`)
+    function listRespOf(j) {
+      if (!j || typeof j !== 'object') return null;
+      if (j.result && j.result.response && typeof j.result.response === 'object') return j.result.response;
+      if (j.response && typeof j.response === 'object' && ('data' in j.response || 'aircraftInfo' in j.response)) return j.response;
+      if ('data' in j && ('aircraftInfo' in j || 'item' in j || 'page' in j)) return j;
+      return null;
+    }
+    // (what an answer is made of - its keys, three deep, no values: readable in stats.lastList when it is in no shape known)
+    function shapeOf(v, d) {
+      if (Array.isArray(v)) return v.length ? [shapeOf(v[0], d)] : [];
+      if (!v || typeof v !== 'object') return v === null ? null : typeof v;
+      if (d >= 3) return '{…}';
+      var o = {}; Object.keys(v).slice(0, 25).forEach(function (k) { o[k] = shapeOf(v[k], d + 1); }); return o;
     }
     var stats = { reqLog: reqLog, liveFeed: 0, follow: 0, patched: 0, errors: 0, lastError: '', maskPatched: 0, maskDisabled: false, scans: 0, searchHits: 0, boardHits: 0, details: 0, lists: 0, flightDetails: 0, boardRefreshes: 0, unlocked: 0 };
     var feedHeaders = null;       // request headers of FR24's own LiveFeed requests (device id, platform, ...)
@@ -799,10 +819,10 @@
         if (cache.src === raw && cache.out != null) return cache.out;
         var out = raw;
         try {
-          var j = typeof raw === 'string' ? (raw ? JSON.parse(raw) : null) : raw, resp = j && j.result && j.result.response, h = hist.get(reg);
-          stats.lastList = { reg: reg, at: Date.now(), via: 'xhr', status: xhr.status, fr24: resp ? (Array.isArray(resp.data) ? resp.data.length : 0) : -1, ours: h && h.data ? h.data.length : 0 };
+          var j = typeof raw === 'string' ? (raw ? JSON.parse(raw) : null) : raw, resp = listRespOf(j), h = hist.get(reg);
+          stats.lastList = { reg: reg, at: Date.now(), via: 'xhr', url: listUrlOf(url), status: xhr.status, fr24: resp ? (Array.isArray(resp.data) ? resp.data.length : 0) : -1, ours: h && h.data ? h.data.length : 0, shape: resp ? null : shapeOf(j, 0) };
           if (!(resp && Array.isArray(resp.data) && resp.data.length > 1) && h && h.data && h.data.length > 1) {
-            var o = resp ? j : listShell(reg, url); fillList(o.result.response, h);
+            var o = resp ? j : listShell(reg, url); fillList(resp || o.result.response, h);
             out = typeof raw === 'string' ? JSON.stringify(o) : o;
           }
         } catch (e) { out = raw; }
@@ -852,7 +872,7 @@
           var ppr = pst.id ? resolved.get(pst.id) : null, pphWait = !!(ppr && ppr.hex && !hasPhotos(ppr) && !((photoCache.get(String(ppr.hex).toUpperCase()) || {}).final));
           if (ppr && ppr.hex && !((photoCache.get(String(ppr.hex).toUpperCase()) || {}).final)) photosFor(ppr, true);
           if (pst.id && (!pbReady(pst.id) || pphWait)) { var xpb = this, bpb = sendBody; Promise.all([whenPbReady(pst.id, 1500), pphWait ? photosWithin(ppr, 2500) : null]).then(function () { try { oSend.call(xpb, bpb); } catch (e) { /* aborted meanwhile */ } }); return; }
-        } else if (!this.__tlOwn && /api\.flightradar24\.com\/common\/v1\/flight\/list\.json\?/.test(url) && /fetchBy=reg/.test(url)) {
+        } else if (!this.__tlOwn && REGLIST_RE.test(url) && /[?&]fetchBy=reg\b/.test(url)) {
           // (the registration list asked for with XHR: the log asked for as it goes - FR24's own list never waits for it -
           // and put in FR24's answer when that has no flights)
           var lq = (url.match(/[?&]query=([^&]*)/) || [])[1], lreg = lq ? decodeURIComponent(lq).toUpperCase() : '';
@@ -2128,6 +2148,8 @@
       resp.page = Object.assign({ current: 1 }, resp.page, { more: h.data.length > resp.data.length });
       stats.lists++;
     }
+    // (the address, its token blanked out)
+    function listUrlOf(url) { return String(url || '').replace(/^https?:\/\//, '').replace(/([?&]token=)[^&#]*/gi, '$1…').slice(0, 160); }
     // (FR24's answer had no list at all: one in its shape)
     function listShell(reg, url) {
       var lim = Number((String(url).match(/[?&]limit=(\d+)/) || [])[1]) || 5, now = Math.floor(Date.now() / 1000);
@@ -2373,20 +2395,20 @@
             }, function () { return res; });
           });
         }
-        if ((m = url.match(/api\.flightradar24\.com\/common\/v1\/flight\/list\.json\?(.*)$/)) && /fetchBy=reg/.test(url)) {
-          var qr = (m[1].match(/(?:^|&)query=([^&]*)/) || [])[1]; var reg = qr ? decodeURIComponent(qr).toUpperCase() : '';
+        if (REGLIST_RE.test(url) && /[?&]fetchBy=reg\b/.test(url)) {
+          var qr = (url.match(/[?&]query=([^&#]*)/) || [])[1]; var reg = qr ? decodeURIComponent(qr.replace(/\+/g, ' ')).trim().toUpperCase() : '';
           if (!reg) return p;
           stats.listAsked = (stats.listAsked || 0) + 1;
           return p.then(function (res) {
             return res.clone().json().then(function (j) { return j; }, function () { return null; }).then(function (j) {
-              var resp = j && j.result && j.result.response;
+              var resp = listRespOf(j);
               // (FR24's own rows of flights that never took off have no flight id, and its dropdown keeps a row open by
               // that id: every such row opened and closed together, stuck open - ZZ504's two "Estimated dep" SCARB54s.
               // Each gets one of its own)
               var noId = resp && Array.isArray(resp.data) ? resp.data.filter(function (x) { return x && x.identification && !x.identification.id; }) : [];
               if (noId.length > 1) noId.forEach(function (x, i) { x.identification.id = 'f' + ((Number(x.identification.row) || i + 1) % 0xfffffff).toString(16); });
               var fr24n = resp ? (Array.isArray(resp.data) ? resp.data.length : 0) : -1;   // (-1: no list in FR24's answer at all)
-              stats.lastList = { reg: reg, at: Date.now(), via: 'fetch', status: res.status, fr24: fr24n, ours: null };
+              stats.lastList = { reg: reg, at: Date.now(), via: 'fetch', url: listUrlOf(url), status: res.status, fr24: fr24n, ours: null, shape: resp ? null : shapeOf(j, 0) };
               if (resp && Array.isArray(resp.data) && resp.data.length > 1) return noId.length > 1 ? jsonResponse(res, j) : res;
               // (FR24 listing nothing - a blocked aircraft, a military or N/A one it shows without a past: FAMUS62, 06-6165 -
               // the log kept here, for any aircraft; one it knows nothing of is answered at once. Whatever FR24 answered -
@@ -2396,7 +2418,7 @@
                 stats.lastList.ours = h && h.data ? h.data.length : 0;
                 if (!h || !h.data || h.data.length < 2) return res;
                 var out = resp ? j : listShell(reg, url);
-                fillList(out.result.response, h);
+                fillList(resp || out.result.response, h);
                 return jsonResponse(res.ok ? res : null, out);
               });
             });

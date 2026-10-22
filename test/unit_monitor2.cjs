@@ -185,12 +185,14 @@ const rep = (hex, o) => Object.assign({ hex, lat: 53.4, lon: -2.3, alt_baro: 120
     check('... with what the userscript learns from each flight (squawk blocks, FMS levels, where it flew)', d7.filter(l => l.from && l.to).every(l => Array.isArray(l.lx) && l.lx.length === 3 && typeof l.lx[2] === 'string'), d7.map(l => l.lx));
     check('... both days, counted', h.days['2026/10/06'] === 4 && h.days['2026/10/07'] === 4, h.days);
     const two = M.answer(new URL('http://x/hist?hex=424c60,c00001,zz,000000'), Date.now() / 1000);
-    check('/hist answers several aircraft at once (bad addresses dropped)', two.hv === 6 && two.list.length === 3 && two.list[0].hex === '424c60' && two.list[1].hex === 'c00001', two.list.map(x => x.hex));
+    check('/hist answers several aircraft at once (bad addresses dropped)', two.hv === M.HIST_V && two.list.length === 3 && two.list[0].hex === '424c60' && two.list[1].hex === 'c00001', two.list.map(x => x.hex));
     // (c00001's 7 Oct was "without flights" only because it was watched all day and not heard: adsb.lol can miss what
     // airplanes.live heard, so asking for it has that day built from the traces - and not served as a day without flights meanwhile)
     check('... a day without flights only from watching: built from the traces when asked for, not served as one without flights meanwhile', !('2026/10/07' in two.list[1].days) && M.histPend.has('c00001|2026-10-07'), { days: two.list[1].days, pend: [...M.histPend].filter(k => k.startsWith('c00001')) });
     M.histQ.length = 0; M.histPend.clear(); }
   // ---- a day adsb.lol has not published yet; a day long gone with no file -----------------------------------------
+  // (asked of adsb.lol's site itself: with the archives off - with them on, such a day waits for its archive: unit_archive)
+  const archWas = M.CFG.archiveDays; M.CFG.archiveDays = 0;
   { const hex = 'd00001', y = new Date(Date.now() - 86400e3).toISOString().slice(0, 10); M.markBlocked(hex, null, dayS(y) - 86400);
     const job = { hex, day: y, tries: 0, at: 0 }; M.histPend.add(hex + '|' + y);
     await M.histOne(job);
@@ -199,7 +201,8 @@ const rep = (hex, o) => Object.assign({ hex, lat: 53.4, lon: -2.3, alt_baro: 120
     M.histQ.length = 0;
     const old = { hex, day: '2026-09-20', tries: 0, at: 0 }; M.histPend.add(hex + '|2026-09-20');
     await M.histOne(old);
-    check('... long after: given up - left to the userscript (no day claimed)', !M.histQ.length && !M.histPend.has(hex + '|2026-09-20') && !('2026/09/20' in M.histOf(hex).days)); }
+    check('... long after: given up - left to the userscript (no day claimed)', !M.histQ.length && !M.histPend.has(hex + '|2026-09-20') && !('2026/09/20' in M.histOf(hex).days));
+    M.CFG.archiveDays = archWas; }
   // ---- every day from both networks: airplanes.live asked as well as adsb.lol; refusing - the day kept from adsb.lol,
   // marked part of it (a browser looking at the aircraft reads it again, both networks)
   { const hex = '3cdf15', d = '2026-10-02'; M.markBlocked(hex, null, dayS(d) - 86400); apliveStatus = 403; delete M.pause['globe.airplanes.live'];
@@ -226,7 +229,7 @@ const rep = (hex, o) => Object.assign({ hex, lat: 53.4, lon: -2.3, alt_baro: 120
     apliveStatus = 404; delete M.pause['globe.airplanes.live'];
     // (a log kept by an older build - from adsb.lol alone: not used; built again, both networks)
     fs.writeFileSync(M.histFile('a6a435'), JSON.stringify({ hv: 5, days: { '2026/09/20': 0, '2026/09/21': 2 }, legs: [{ day: '2026/09/21', tStart: 1 }, { day: '2026/09/21', tStart: 2 }] }));
-    check('a log kept by an older build: not used - none of its days served, built again', M.histRead('a6a435').hv === 6 && !Object.keys(M.histRead('a6a435').days).length && !Object.keys(M.histOf('a6a435').days).length, M.histRead('a6a435'));
+    check('a log kept by an older build: not used - none of its days served, built again', M.histRead('a6a435').hv === M.HIST_V && !Object.keys(M.histRead('a6a435').days).length && !Object.keys(M.histOf('a6a435').days).length, M.histRead('a6a435'));
     // (someone looking at an aircraft: the finished days of its last 40 with no answer yet, queued once)
     M.markBlocked('a6a436', null, Date.now() / 1000 - 30 * 86400); const was = M.closed; M.closed = new Date(Date.now() - 2 * 864e5).toISOString().slice(0, 10);
     M.histQ.length = 0; M.fillAsked.clear();

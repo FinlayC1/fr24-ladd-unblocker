@@ -360,6 +360,12 @@
   // (the days of a log a network did not answer for - refused, timed out: how many, and why - said under the log, not
   // left as a silent gap; they are read again next time)
   function logGaps(hex) {
+    // (a network putting a verification page in front of this browser: said first, with the way through)
+    const walls = Object.keys(netState).filter(id => netState[id].wallAt && now() - netState[id].wallAt < 30 * 60000);
+    const wall = walls.map(id => ` · <b>${esc(NETS[id].name)} is showing this browser a verification page</b> - <a href="${NETS[id].site}" target="_blank" rel="noopener">open ${esc(NETS[id].name)}</a> once in a tab, then reload this page`).join('');
+    return wall + logGapsOf(hex);
+  }
+  function logGapsOf(hex) {
     const h = store.peekHist(hex); if (!h || !h.err) return '';
     const ds = Object.keys(h.err).filter(d => !h.days[d] || h.days[d] === 'p'); if (!ds.length) return '';
     const why = [...new Set(ds.map(d => h.err[d]))].slice(0, 2).join('; ');
@@ -430,7 +436,7 @@
   async function pageLiveState(hex, reg) {
     let cur = null;
     for (const s of liveSources().filter(x => x.hex).slice(0, 2)) { try { cur = await s.hex(hex); if (cur) break; } catch (e) { /* next */ } }
-    let td = null; try { td = await loadToday(hex, 60000); } catch (e) { /* no trace */ }
+    let td = null; try { td = await loadToday(hex, 60000, { priority: true }); } catch (e) { /* no trace */ }
     const lastPt = td ? (td.lastPt || (td.pts && td.pts.length ? td.pts[td.pts.length - 1] : null)) : null;
     const pos = cur && now() - cur.receivedAt + cur.ageS * 1000 < 10 * 60000 ? { t: Math.floor((cur.receivedAt - cur.ageS * 1000) / 1000), lat: cur.lat, lon: cur.lon, alt: cur.gnd ? 0 : cur.alt, gnd: cur.gnd, gs: cur.gs, trk: cur.trk, vr: cur.vs, mcp: cur.mcp, sq: cur.sq }
       : lastPt && nowS() - lastPt.t < 10 * 60 ? { t: lastPt.t, lat: lastPt.lat, lon: lastPt.lon, alt: lastPt.alt, gnd: lastPt.gnd0 || lastPt.gnd, gs: lastPt.gs, trk: lastPt.trk, vr: lastPt.vr, mcp: lastPt.mcp, sq: lastPt.sq } : null;

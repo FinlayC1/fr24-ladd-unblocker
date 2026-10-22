@@ -5,6 +5,8 @@
 //   - no list in FR24's answer at all, an error status, an answer that is not JSON: an answer in FR24's shape, filled
 //   - FR24's own list of an ordinary aircraft (several flights): left exactly as it is
 //   - nothing known of the aircraft: FR24's answer as it is
+//   - FR24's address now (22.31.9): www.flightradar24.com/common/v2/flight/list.json with the session's token - filled the
+//     same, with fetch and XHR; the token never in what is kept for diagnosis
 // usage: node test/unit_recentlist.cjs <node_modules dir>
 const fs = require('fs'), path = require('path');
 const NM = process.argv[2] || path.join(__dirname, '..', 'node_modules');
@@ -26,6 +28,7 @@ const FR24 = {
 };
 const regOf = u => decodeURIComponent((u.match(/[?&]query=([^&]*)/) || [])[1] || '').toUpperCase().replace(/-/g, '');
 const LIST = reg => `https://api.flightradar24.com/common/v1/flight/list.json?query=${reg}&fetchBy=reg&filterBy=historic&limit=5&page=1&timestamp=${Math.floor(Date.now() / 1000)}`;
+const LIST2 = reg => `https://www.flightradar24.com/common/v2/flight/list.json?query=${reg}&fetchBy=reg&filterBy=historic&limit=5&page=1&timestamp=${Math.floor(Date.now() / 1000)}&token=SECRETtok_123`;
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'https://www.flightradar24.com/', runScripts: 'dangerously' });
 const w = dom.window;
@@ -79,6 +82,23 @@ for (const r of ['N1876T', 'TCACN', 'MPORT', 'N50JE', 'EIDPR']) give(r, 4);
   jx = JSON.parse(x.responseText);
   check('XHR, FR24\'s own list: left as it is', (data(jx) || []).length === 3 && data(jx).every(r => !r.__tl));
   check('... and the log asked of the userscript as the request went (FR24\'s list never waits for it)', posted.some(d => d && d.__tweeksLadd === 'needHist'));
+  // (FR24's address now: the www host, v2, a token)
+  const viaFetch2 = async reg => { const r = await w.fetch(LIST2(reg)); let j = null; try { j = await r.json(); } catch (e) { /* not JSON */ } return { st: r.status, j }; };
+  a = await viaFetch2('N1876T');
+  check('v2 (www host, token), fetch, FR24\'s answer with no flights: the log\'s flights in it', (data(a.j) || []).length === 4 && data(a.j)[0].__tl && a.j.result.response.aircraftInfo.model.text === 'Gulfstream G600', data(a.j) && data(a.j).length);
+  check('... noted for diagnosis with its address - the token blanked out', !!B.stats.lastList && /common\/v2\/flight\/list\.json/.test(B.stats.lastList.url) && !/SECRETtok/.test(JSON.stringify(B.stats)), B.stats.lastList);
+  a = await viaFetch2('TCACN');
+  check('v2, fetch, no list in FR24\'s answer: one in FR24\'s shape, filled', (data(a.j) || []).length === 4 && a.st === 200, a.st);
+  a = await viaFetch2('EIDPR');
+  check('v2, fetch, FR24\'s own list of an ordinary aircraft: left as it is', (data(a.j) || []).length === 3 && data(a.j).every(r => !r.__tl));
+  const viaXhr2 = reg => new Promise(res => { const x = new w.XMLHttpRequest(); x.open('GET', LIST2(reg)); x.onload = () => res(x); x.send(); });
+  x = await viaXhr2('N1876T'); jx = JSON.parse(x.responseText);
+  check('v2, XHR, FR24\'s answer with no flights: the log\'s flights in it', (data(jx) || []).length === 4 && data(jx)[0].__tl);
+  a = await (async () => { const r = await w.fetch('/common/v2/flight/list.json?query=N1876T&fetchBy=reg&limit=5&page=1'); return { j: await r.json().catch(() => null) }; })();
+  check('v2, asked with a relative address: filled too', (data(a.j) || []).length === 4);
+  a = await (async () => { const r = await w.fetch('https://www.flightradar24.com/common/v2/flight/list.json?query=SQ212&fetchBy=flight&limit=5&page=1'); return { j: await r.json().catch(() => null) }; })();
+  check('a flight number\'s list (fetchBy=flight): left alone', !a.j || !data(a.j) || !(data(a.j) || []).some(r => r.__tl));
+  check('the requests log: the token blanked out', B.stats.reqLog.some(l => /common\/v2\/flight\/list\.json/.test(l) && /token=…/.test(l)) && !B.stats.reqLog.some(l => /SECRETtok/.test(l)), B.stats.reqLog.slice(-3));
   console.log(fails ? `\n${fails} failed` : '\nall passed');
   process.exit(fails ? 1 : 0);
 })().catch(e => { console.log('FAIL  CRASH ' + (e && e.stack || e)); process.exit(1); });

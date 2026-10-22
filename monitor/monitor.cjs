@@ -56,7 +56,7 @@ const limited = ip => { if (!RATE) return false; const t = Math.floor(Date.now()
 // (all of them together); liveMaxAge: seconds an aircraft stays in /live after its last position; closeDelayH: hours after
 // a day ends before its flights are rebuilt from adsb.lol's day traces (published with some delay); fullGap: the longest
 // silence (s) of the lists in a day for it to count as watched throughout
-const CFG = Object.assign({ areas: [[53.8, -2.6, 250]], laddEvery: 10, milEvery: 30, piaEvery: 120, areaEvery: 120, hexEvery: 30, coldEvery: 600, hotWindow: 2700, hexBatch: 100, backWorkers: 3, userAreas: 8, apiPerMin: 20, liveMaxAge: 300, closeDelayH: 3, fullGap: 200, apiWindowMs: 60000, openskyEvery: 900, adsbxDaily: 150, adsbxKey: process.env.MON_ADSBX_KEY || '', fr24Scan: true, fr24Every: 120, fr24Gap: 400, lookupRadius: 220, ident: {}, dest: {}, public: true, rate: 300, crowdNeed: 2, nearPerMin: 30, telMax: 30000, trackDays: 90, learnDays: 90, lolKeepDays: 40 }, (() => { try { return JSON.parse(fs.readFileSync(path.join(DIR, 'monitor.json'), 'utf8')); } catch (e) { return {}; } })());
+const CFG = Object.assign({ areas: [[53.8, -2.6, 250]], laddEvery: 10, milEvery: 30, piaEvery: 120, areaEvery: 120, hexEvery: 30, coldEvery: 600, hotWindow: 2700, hexBatch: 100, backWorkers: 3, userAreas: 8, apiPerMin: 20, liveMaxAge: 300, closeDelayH: 3, fullGap: 200, apiWindowMs: 60000, openskyEvery: 900, adsbxDaily: 150, adsbxKey: process.env.MON_ADSBX_KEY || '', fr24Scan: true, fr24Every: 120, fr24Gap: 400, lookupRadius: 220, ident: {}, dest: {}, public: true, rate: 300, crowdNeed: 2, nearPerMin: 30, telMax: 30000, trackDays: 90, learnDays: 90, lolKeepDays: 40, archiveDays: 40 }, (() => { try { return JSON.parse(fs.readFileSync(path.join(DIR, 'monitor.json'), 'utf8')); } catch (e) { return {}; } })());
 // (PUBLIC0 / RATE_ENV: as started; PUBLIC / RATE: as now - the owner's options (/admin/options, applyOptions) may change
 // both while it runs, and every use reads them as they are at the time)
 const PUBLIC0 = process.env.MON_PUBLIC ? process.env.MON_PUBLIC !== '0' : CFG.public !== false, RATE_ENV = +(process.env.MON_RATE || 0) || 0;
@@ -69,6 +69,7 @@ const { createAirportInfo } = require('./airport.cjs'), APT = createAirportInfo(
 const { createNames } = require('./names.cjs');
 const { createTel } = require('./tel.cjs');
 const { createTracks } = require('./tracks.cjs');
+const ARCH = require('./archive.cjs');
 const { createWaiting } = require('./waiting.cjs');
 const { createPhotos } = require('./photos.cjs'), photos = createPhotos();
 // (the newest report of every aircraft heard - for the figures FR24 padlocks, any aircraft: tel.cjs)
@@ -242,23 +243,24 @@ function buildLegs(hex, nowS) {
 // earlier flights say of its home. Each hears what the other's receivers miss - a whole flight one of them never heard
 // (TC-ACN's London - Istanbul of 13 Sep, on airplanes.live only). One file per aircraft, kept for good; read when asked,
 // never all held in memory.
-const HIST_V = 6;            // (the userscript's HIST_V: the same leg reconstruction, or its days are not used - 6: from both networks; every log kept by 5 is rebuilt)
+const HIST_V = 7;            // (the userscript's HIST_V: the same leg reconstruction, or its days are not used - 7: the networks' answers read anew, adsb.lol's days from its archives; every log kept before is rebuilt)
 const HIST_DIR = path.join(STORE, 'hist');
 const histFile = hex => path.join(HIST_DIR, hex + '.json');
-const histStats = { built: 0, empty: 0, merged: 0, part: 0, fails: 0 };
+const histStats = { built: 0, empty: 0, merged: 0, part: 0, fails: 0, fromArchive: 0 };
 // (a log kept by an older build: none - it is built again from both networks. part: the days built with one network only,
-// the other refusing - a browser looking at the aircraft reads them again, both networks)
+// the other refusing - a browser looking at the aircraft reads them again, both networks; lo: the days built from adsb.lol's
+// archive alone - airplanes.live not asked for them here (thousands of aircraft a day): a browser looking adds it)
 function histRead(hex) {
   try {
     const h = JSON.parse(fs.readFileSync(histFile(hex), 'utf8'));
-    if (h && h.hv === HIST_V && h.days && Array.isArray(h.legs)) { h.part = h.part && typeof h.part === 'object' ? h.part : {}; return h; }
+    if (h && h.hv === HIST_V && h.days && Array.isArray(h.legs)) { h.part = h.part && typeof h.part === 'object' ? h.part : {}; h.lo = h.lo && typeof h.lo === 'object' ? h.lo : {}; return h; }
   } catch (e) { /* none yet */ }
-  return { hv: HIST_V, days: {}, legs: [], part: {} };
+  return { hv: HIST_V, days: {}, legs: [], part: {}, lo: {} };
 }
 // Every saved flight log deleted, once, the first time a monitor with this reset id starts (and when the owner asks): the
 // files of STORE/hist - nothing else; what the monitor learned (learn/, learn-crowd/), its tracks and its names are kept.
 // They are built again from both networks as aircraft are looked at.
-const HIST_RESET = '22.31.7';
+const HIST_RESET = '22.31.9';
 const histResetMark = path.join(STORE, 'hist-reset.txt');
 function resetHistLogs() {
   let n = 0;
@@ -282,17 +284,54 @@ function learnOf(raw, s) {
   for (const p of raw.pts) { if (p.alt > 1500 && p.sq && /^[0-7]{4}$/.test(p.sq) && !E.SQ_NOINFO.test(p.sq)) sq.add(p.sq.slice(0, 2)); if (p.fms > 5000 && !(p.vr < -500)) fm.add(Math.round(p.fms / 2000)); }
   return [[...sq].join(','), [...fm].join(','), E.flowKeysOf(raw.pts, E.byId(s.to.id)).slice(0, 16).join('|')];
 }
+// ---- the networks' trace files, read for what each answer is (as the userscript reads them: 03-data classifyTrace) - the
+// file, no file (404: a day the network heard nothing of the aircraft), a verification page (adsb.lol's proof-of-work
+// "Verifying connection", Cloudflare's "Just a moment": shown to servers now - the host is left alone an hour; adsb.lol's
+// days come from its archives), a refusal to slow down (two minutes), a failure. Only the file and no file are answers.
+const WALL_RE = /verif(?:y|ying|ication)|challenge|just a moment|attention required|cf-chl|captcha|are you (?:a )?(?:human|robot)/i;
+const netSt = {};      // host -> { ok, none, wall, rate, err, last, lastAt, wallAt }
+const pauseWhy = {};   // host -> 'wall' | 'rate'
+function classifyTrace(hex, status, text) {
+  const body = String(text || ''), head = body.slice(0, 4000).replace(/^\uFEFF/, '').trimStart();
+  if (status === 404) return { state: 'none' };
+  if (status >= 200 && status < 300) {
+    if (head[0] === '{') {
+      let j; try { j = JSON.parse(body); } catch (e) { return { state: 'err', err: 'file cut short' }; }
+      if (!j || !Array.isArray(j.trace)) return { state: 'err', err: 'not a trace file' };
+      const ic = String(j.icao || '').toLowerCase().replace(/^~/, '');
+      if (hex && ic && ic !== hex) return { state: 'err', err: 'another aircraft\'s file' };
+      return { state: 'ok', j };
+    }
+    if (head[0] === '<' && WALL_RE.test(head)) return { state: 'wall', err: 'verification page' };
+    return { state: 'err', err: head ? 'not a trace file' : 'empty answer' };
+  }
+  if (status === 429) return { state: 'rate', err: 'HTTP 429' };
+  if (status >= 400 && WALL_RE.test(body.slice(0, 30000))) return { state: 'wall', err: 'verification page (HTTP ' + status + ')' };
+  return { state: 'err', err: status ? 'HTTP ' + status : 'no answer' };
+}
+// -> { state: 'ok' (j) | 'none' | 'wall' | 'rate' | 'paused' (the host left alone: why in pauseWhy) | 'err', err }
+async function traceGet(url, hex) {
+  const host = hostOf(url), S = netSt[host] || (netSt[host] = { ok: 0, none: 0, wall: 0, rate: 0, err: 0, last: '', lastAt: 0, wallAt: 0 });
+  if (Date.now() < (pause[host] || 0)) return { state: 'paused', why: pauseWhy[host] || 'rate', err: (pauseWhy[host] === 'wall' ? 'verification page' : 'rate-limited') + ' - paused' };
+  let c;
+  try { const r = await fetch(url, { headers: UA, signal: AbortSignal.timeout(20000) }); c = classifyTrace(hex, r.status, await r.text()); }
+  catch (e) { c = { state: 'err', err: String(e && e.message || e).slice(0, 60) }; }
+  S[c.state]++; S.last = c.state === 'err' ? c.err : c.state; S.lastAt = Date.now();
+  if (c.state === 'wall') { if (!(pause[host] > Date.now())) log(host + ': verification page in front of its trace files - left alone an hour' + (host === 'adsb.lol' ? ' (its days come from its archives)' : '')); pause[host] = Date.now() + 3600e3; pauseWhy[host] = 'wall'; S.wallAt = Date.now(); }
+  if (c.state === 'rate') { pause[host] = Date.now() + 120000; pauseWhy[host] = 'rate'; }
+  return c;
+}
 let apliveLast = 0;          // (airplanes.live's history files: one at a time, two seconds apart)
+// (-> { state: 'ok', j } | 'none' | 'err' - a refusal or a verification page leaves it alone a while; the userscript reads
+// those days itself)
 async function apliveTrace(hex, day) {
   const host = 'globe.airplanes.live';
-  if (Date.now() < (pause[host] || 0)) throw new Error('paused');
+  if (Date.now() < (pause[host] || 0)) return { state: 'err' };
   const wait = apliveLast + 2000 - Date.now(); apliveLast = Math.max(Date.now(), apliveLast + 2000); if (wait > 0) await sleep(wait);
-  const r = await fetch(`https://${host}/globe_history/${slashDay(day)}/traces/${hex.slice(-2)}/trace_full_${hex}.json`, { headers: UA, signal: AbortSignal.timeout(20000) });
-  if (r.status === 404) return null;
-  // (refused - it asks scripts to keep to its globe now and then: left alone six hours; the userscript reads those days itself)
-  if (r.status === 403 || r.status === 429) { pause[host] = Date.now() + 6 * 3600e3; throw new Error('HTTP ' + r.status); }
-  if (r.status !== 200) throw new Error('HTTP ' + r.status);
-  return JSON.parse(await r.text());
+  const r = await traceGet(`https://${host}/globe_history/${slashDay(day)}/traces/${hex.slice(-2)}/trace_full_${hex}.json`, hex);
+  // (refused - it asks scripts to keep to its globe now and then: left alone six hours)
+  if (r.state === 'err' && /HTTP 403/.test(r.err)) { pause[host] = Date.now() + 6 * 3600e3; pauseWhy[host] = 'rate'; }
+  return r.state === 'ok' ? { state: 'ok', j: r.j } : r.state === 'none' ? { state: 'none' } : { state: 'err' };
 }
 // (a day that could not be rebuilt - its file never came, or would not read: marked so - never taken for a day without
 // flights; the userscript reads it itself)
@@ -305,7 +344,7 @@ function histUnknown(hex, day) {
 // heard nothing of the aircraft), 'skip' not asked (adsb.lol, older than it keeps), 'err' refused or failed. The day's
 // flights from all the files had, merged. A day with no file anywhere is one without flights only when every network asked
 // answered; with one refusing, the day is not known (-1) - unless the other had flights: kept, marked part of it.
-async function histDay(hex, day, lol, apl) {
+async function histDay(hex, day, lol, apl, batch) {
   if (E.airports.length < 1000) throw new Error('airports not loaded');   // (never a log with no airports in it)
   const ptsL = lol.state === 'ok' ? E.parseTrace(lol.j) : [], ptsA = apl.state === 'ok' ? E.parseTrace(apl.j) : [];
   const pts = ptsL.length && ptsA.length ? E.mergePoints(ptsL, ptsA) : ptsL.length ? ptsL : ptsA;
@@ -328,8 +367,11 @@ async function histDay(hex, day, lol, apl) {
   h2.legs = h2.legs.filter(l => l.day !== hd).concat(sums.map((s, i) => Object.assign(s, { day: hd, lx: learnOf(raws[i], s) })));
   h2.days[hd] = sums.length;
   if (complete) delete h2.part[hd]; else { h2.part[hd] = 1; histStats.part++; }
+  if (apl.state === 'later') h2.lo[hd] = 1; else delete h2.lo[hd];
   histWrite(hex, h2);
-  learnWrite(hd, sums.map(s => learnRow(hex, s, h2.legs.find(l => l.day === hd && l.tStart === s.tStart), cls, info)).filter(Boolean));
+  const lrows = sums.map(s => learnRow(hex, s, h2.legs.find(l => l.day === hd && l.tStart === s.tStart), cls, info)).filter(Boolean);
+  // (a whole day's archive: its rows written once at the end - one file rewritten per aircraft would be thousands)
+  if (batch) batch.push(...lrows); else learnWrite(hd, lrows);
   if (sums.length) histStats.built++; else histStats.empty++;
   return sums.length;
 }
@@ -447,33 +489,88 @@ function closeDays(nowS) {
   const c = dayOf(nowS - 86400 - CFG.closeDelayH * 3600); if (c > closed) { closed = c; stateDirty = true; }
 }
 async function histOne(job) {
-  const { hex, day } = job, key = hex + '|' + day, url = `https://adsb.lol/globe_history/${slashDay(day)}/traces/${hex.slice(-2)}/trace_full_${hex}.json`;
+  const { hex, day } = job, key = hex + '|' + day, hd = slashDay(day), nowS = Date.now() / 1000, endS = dayStart(day) + 86400;
   const again = (ms, count) => { job.at = Date.now() + ms; if (count) job.tries++; histQ.push(job); };
-  // adsb.lol's file - not asked for a day older than it keeps
+  // adsb.lol's side of the day: from its archive when the day is one the archives cover (every blocked aircraft of the day
+  // at once - archiveLoop); a day whose archive is not out yet waits for it, a day and a half at most. Else its file.
   let lol = { state: 'skip' };
-  if (dayStart(day) >= Date.now() / 1000 - (+CFG.lolKeepDays || 40) * 86400) {   // (adsb.lol's globe history: the last 40 days)
-    try { lol = { state: 'ok', j: await getJson(url) }; }
-    catch (e) {
-      const s = String(e && e.message || e);
-      if (/429|paused/.test(s)) return again(120000, false);
-      if (/HTTP 404/.test(s)) {
-        // (heard flying, no file: not published yet - asked again every two hours for a day and a half; a day asked for
-        // to fill a log, or still none then: adsb.lol has none of it)
-        if (!job.fill && Date.now() / 1000 < dayStart(day) + 86400 + 36 * 3600) return again(2 * 3600e3, true);
-        lol = { state: 'none' };
-      } else if (job.tries < 6) return again(10 * 60000, true);
-      else lol = { state: 'err' };
-    }
+  const arch = archiveState(day, nowS);
+  if (arch === 'done') {
+    const h = histRead(hex);
+    if (hd in h.days && h.days[hd] >= 0 && !h.part[hd]) { histPend.delete(key); return; }   // (built from it)
+    lol = { state: 'none' };   // (not in it: adsb.lol heard nothing of the aircraft that day)
+  } else if (arch === 'wait') return again(3600e3, false);
+  else if (dayStart(day) >= nowS - (+CFG.lolKeepDays || 40) * 86400) {   // (adsb.lol's globe history: the last 40 days)
+    const r = await traceGet(`https://adsb.lol/globe_history/${hd}/traces/${hex.slice(-2)}/trace_full_${hex}.json`, hex);
+    if (r.state === 'rate' || (r.state === 'paused' && r.why === 'rate')) return again(120000, false);
+    if (r.state === 'ok') lol = { state: 'ok', j: r.j };
+    else if (r.state === 'none') {
+      // (heard flying, no file: not published yet - asked again every two hours for a day and a half; a day asked for
+      // to fill a log, or still none then: adsb.lol has none of it)
+      if (!job.fill && nowS < endS + 36 * 3600) return again(2 * 3600e3, true);
+      lol = { state: 'none' };
+    } else if (r.state === 'err' && job.tries < 6) return again(10 * 60000, true);
+    else lol = { state: 'err' };   // (a verification page, or failing still: not known from adsb.lol)
   }
   histPend.delete(key);
-  if (lol.state === 'ok' && !(lol.j && Array.isArray(lol.j.trace))) lol = { state: 'err' };
-  // and airplanes.live's, every day (one at a time, two seconds apart; left alone six hours when it refuses)
-  let apl;
-  try { const j2 = await apliveTrace(hex, day); apl = j2 && Array.isArray(j2.trace) ? { state: 'ok', j: j2 } : { state: 'none' }; } catch (e) { apl = { state: 'err' }; }
+  // and airplanes.live's, every day (one at a time, two seconds apart; left alone a while when it refuses)
+  const apl = await apliveTrace(hex, day);
   // (a day it was heard flying with no file of it anywhere: not known - never a day without flights, it flew; the
   // browsers read it themselves)
   if (!job.fill && lol.state !== 'ok' && apl.state !== 'ok') { histUnknown(hex, day); return; }
   await histDay(hex, day, lol, apl);
+}
+// ---- adsb.lol's day archives (archive.cjs): each finished day of the last CFG.archiveDays, newest first, one at a time -
+// every blocked aircraft's whole day (and every aircraft the archive flags LADD) built from it. A day not published yet is
+// asked again an hour later. Kept: STORE/archive/<day>.json, what was read.
+const ARCH_DIR = path.join(STORE, 'archive');
+const archMark = d => path.join(ARCH_DIR, d + '.json');
+const archTried = new Map();   // day -> when it was last found not published
+const AR = { running: '', days: 0, taken: 0, last: null, err: '', errAt: 0 };
+const archRead = d => { try { return JSON.parse(fs.readFileSync(archMark(d), 'utf8')); } catch (e) { return null; } };
+// 'off' (not covered), 'done', 'wait' (to come)
+function archiveState(day, nowS) {
+  const n = +CFG.archiveDays || 0, endS = dayStart(day) + 86400;
+  if (!n || dayStart(day) < nowS - (n + 1) * 86400) return 'off';
+  const m = archRead(day); if (m) return m.published === false ? 'off' : 'done';
+  return nowS < endS + 36 * 3600 || AR.running === day ? 'wait' : 'off';
+}
+function archiveNext(nowS) {
+  const n = +CFG.archiveDays || 0;
+  for (let k = 1; k <= n; k++) {
+    const d = dayOf(nowS - k * 86400);
+    if (dayStart(d) + 86400 + 1800 > nowS || fs.existsSync(archMark(d)) || Date.now() - (archTried.get(d) || 0) < 3600e3) continue;
+    return d;
+  }
+  return null;
+}
+async function archiveDay(d, io) {
+  AR.running = d; const nowS = Date.now() / 1000, rows = [];
+  try {
+    const st = await ARCH.importDay(d, (hex, hd) => blocked.has(hex) || (hd.flags & 8) !== 0, async (hex, j) => {
+      // (an aircraft the archive flags LADD that the monitor did not know: blocked from now on - its days come from here)
+      if (!blocked.has(hex)) backDone.add(hex);
+      markBlocked(hex, { reg: j.r || '', type: j.t || '' }, nowS);
+      try { await histDay(hex, d, { state: 'ok', j }, { state: 'later' }, rows); histStats.fromArchive++; AR.taken++; } catch (e) { log('archive day', hex, d, String(e)); }
+      await new Promise(r => setImmediate(r));   // (the server answers meanwhile)
+    }, io || { get: ARCH.netGet, open: ARCH.netOpen });
+    // (not out a week after the day: none of it will be - noted, and the day read the old way)
+    if (!st.published) { archTried.set(d, Date.now()); if (nowS > dayStart(d) + 8 * 86400) { fs.mkdirSync(ARCH_DIR, { recursive: true }); fs.writeFileSync(archMark(d), JSON.stringify({ at: Date.now(), published: false })); } return st; }
+    if (rows.length) learnWrite(slashDay(d), rows);
+    // (its tracks written and let go - forty days read one after another would otherwise sit in memory ten at a time)
+    try { tracks.save(); tracks.release(d); } catch (e) { log('archive tracks', d, String(e)); }
+    fs.mkdirSync(ARCH_DIR, { recursive: true }); fs.writeFileSync(archMark(d), JSON.stringify(Object.assign({ at: Date.now() }, st)));
+    AR.days++; AR.last = Object.assign({ day: d }, st);
+    log('archive', d, '-', st.taken, 'blocked aircraft of', st.traces, 'traces,', Math.round(st.ms / 1000), 's');
+    return st;
+  } finally { AR.running = ''; }
+}
+async function archiveLoop() {
+  for (;;) {
+    const d = archiveNext(Date.now() / 1000);
+    if (d) { try { await archiveDay(d); } catch (e) { AR.err = String(e && e.message || e).slice(0, 120); AR.errAt = Date.now(); archTried.set(d, Date.now()); log('archive', d, AR.err); } }
+    await sleep(d ? 5000 : 10 * 60000);
+  }
 }
 const nextHist = () => { const n = Date.now(), i = histQ.findIndex(j => j.at <= n); return i < 0 ? null : histQ.splice(i, 1)[0]; };
 // What the userscript gets for an aircraft: the days rebuilt here, and the days it was watched throughout and not heard
@@ -489,7 +586,7 @@ function histOf(hex) {
     if (histPend.has(hex + '|' + d) || (flew.get(d) && flew.get(d).has(hex))) continue;
     if (b.faa ? (b.lad || 0) >= dayStart(d) - LAD_SPAN && watchedAll(d, 'ladd') : watchedAll(d, 'hex')) days[hd] = 0;
   }
-  return { hex, days, legs: h.legs.filter(l => days[l.day] > 0), part: Object.keys(h.part || {}).filter(d => days[d] > 0) };
+  return { hex, days, legs: h.legs.filter(l => days[l.day] > 0), part: [...new Set(Object.keys(h.part || {}).concat(Object.keys(h.lo || {})))].filter(d => days[d] > 0) };
 }
 
 // ---- what a blocked aircraft flew while the monitor did not hear it: adsb.lol's traces of those days - today's for a
@@ -528,8 +625,10 @@ async function backfillOne({ hex, days }) {
   const rows = [], today = dayOf(Date.now() / 1000);
   for (const d of days) {
     const url = `https://adsb.lol/${d === today ? 'data' : 'globe_history/' + slashDay(d)}/traces/${hex.slice(-2)}/trace_full_${hex}.json`;
-    let j = null, none = false;
-    try { j = await getJson(url); } catch (e) { if (/429|paused/.test(String(e))) { backQ.unshift({ hex, days: days.slice(days.indexOf(d)) }); await sleep(60000); return; } none = /HTTP 404/.test(String(e)); }
+    // (a verification page: nothing of adsb.lol's for now - its finished days come from the archives)
+    const r = await traceGet(url, hex);
+    if (r.state === 'rate' || (r.state === 'paused' && r.why === 'rate')) { backQ.unshift({ hex, days: days.slice(days.indexOf(d)) }); await sleep(60000); return; }
+    const j = r.state === 'ok' ? r.j : null, none = r.state === 'none';
     if (j && Array.isArray(j.trace)) {
       for (const p of j.trace) rows.push([j.timestamp + p[0]].concat(p.slice(1, 11)));
       if (j.dbFlags & 8 || isBlocked(hex)) markBlocked(hex, { reg: j.r, type: j.t }, Date.now() / 1000);
@@ -540,7 +639,7 @@ async function backfillOne({ hex, days }) {
     // day is over)
     if (isBlocked(hex)) {
       if (d !== today && ((j && Array.isArray(j.trace)) || (none && Date.now() / 1000 > dayStart(d) + 86400 + 6 * 3600))) {
-        let apl; try { const j2 = await apliveTrace(hex, d); apl = j2 && Array.isArray(j2.trace) ? { state: 'ok', j: j2 } : { state: 'none' }; } catch (e) { apl = { state: 'err' }; }
+        const apl = await apliveTrace(hex, d);
         try { await histDay(hex, d, j && Array.isArray(j.trace) ? { state: 'ok', j } : { state: 'none' }, apl); } catch (e) { log('history day', hex, d, String(e)); }
       }
       else if (d === today && j && Array.isArray(j.trace) && j.trace.some(p => p[3] !== 'ground' && p[3] != null)) flewAdd(hex, d);
@@ -1293,6 +1392,7 @@ function monStatus() {
   return { polls: stats.polls, hexPolls: stats.hexPolls, fails: stats.fails, lastErr: stats.lastErr, laddAt: lastLadd.at, aircraft: ac.size, blocked: blocked.size, withLegs: legs.size, legs: [...legs.values()].reduce((n, m) => n + m.size, 0), backfillQueue: backQ.length,
     live: live.size, listAge: { ladd: age('ladd'), mil: age('mil'), fi: age('fi'), pia: age('pia'), hex: age('hex'), area: age('area'), fiArea: age('fiArea'), adsbx: age('adsbx'), osky: age('osky') }, listPolls: stats.listPolls, adsbx: { key: !!CFG.adsbxKey, today: adsbxUse.n, cap: CFG.adsbxDaily }, apiLastMin: gate.sent.filter(t => now - t < 60000).length,
     hist: Object.assign({ queue: histQ.length, closed }, histStats),
+    nets: netSt, archive: Object.assign({ on: +CFG.archiveDays || 0 }, AR),
     tracks: Object.assign({ days: tracks.days }, tracks.stats), playback: PB,
     waiting: { flights: waiting.size, playback: waiting.count('pb'), live: waiting.count('live'), named: waiting.stats.named, tries: waiting.stats.tries, expired: waiting.stats.expired, rounds: WAIT.rounds, lastMs: WAIT.lastMs },
     learned: learnedOut ? { ver: learnedOut.ver, from: learnedOut.from, asOf: learnedOut.asOf, days: learnedOut.days, flights: learnedOut.flights, fromBrowsers: learnedOut.crowd || 0, ops: learnedOut.ops, mb: Math.round(learnedOut.json.length / 1e5) / 10 } : null, backfillWaits: backWaits.n,
@@ -1588,11 +1688,12 @@ if (require.main === module) {
   process.on('unhandledRejection', e => log('error', e && e.stack || e));
   loop();
   for (let i = 0; i < CFG.backWorkers; i++) backfillLoop();
+  if (+CFG.archiveDays > 0) archiveLoop();
   fr24Loop(); identLoop(); trailLoop(); waitLoop();
   // (every blocked aircraft's owner not known yet: looked up, fifteen a minute at most, those flying now first)
   for (const [hex, b] of blocked) owners.want(hex, b.reg);
   ownersLoop();
   setInterval(() => { wx.pump().catch(e => log('wx', String(e))); }, 2000);
 }
-module.exports = { HIST_V, HIST_RESET, resetHistLogs, histResetMark, get histResetN() { return histResetN; }, adminAnswer, ctl, logRing, log, MON_VER, learnCheck, learnFromCrowd, crowdLearnSave, crowdRows, LC, tracks, waiting, waitRound, waitLive, waitNamed, waitClaims, WAIT, saveWaiting, loadWaiting, pbMatch, learnedBuild, learnedDue, learnedLoad, learnedRef: () => learnedOut, liveBusy, backWaits, E, CFG, loadEngine, ingest, buildLegs, fr24Legs, fr24Leg, F24ref: () => F24, owners, ownersLoop, APT, legRunways, names, nearAnswer, telAnswer, tel, wx, pbNames, get PUBLIC() { return PUBLIC; }, get RATE() { return RATE; }, limited, tokenOk, installs, opts, optionsSet, optionsLoad, latestCheck, latestVer, helloAnswer, badge, wakeQuiet, parkedAt, boardLegs, flightsOfCs, lastHeard, legs, ac, backfillOne, backQ, blocked, markBlocked, seed, gapFill, addArea, userAreas,
+module.exports = { classifyTrace, traceGet, netSt, archiveDay, archiveState, archiveNext, archMark, archTried, AR, apliveTrace, HIST_V, HIST_RESET, resetHistLogs, histResetMark, get histResetN() { return histResetN; }, adminAnswer, ctl, logRing, log, MON_VER, learnCheck, learnFromCrowd, crowdLearnSave, crowdRows, LC, tracks, waiting, waitRound, waitLive, waitNamed, waitClaims, WAIT, saveWaiting, loadWaiting, pbMatch, learnedBuild, learnedDue, learnedLoad, learnedRef: () => learnedOut, liveBusy, backWaits, E, CFG, loadEngine, ingest, buildLegs, fr24Legs, fr24Leg, F24ref: () => F24, owners, ownersLoop, APT, legRunways, names, nearAnswer, telAnswer, tel, wx, pbNames, get PUBLIC() { return PUBLIC; }, get RATE() { return RATE; }, limited, tokenOk, installs, opts, optionsSet, optionsLoad, latestCheck, latestVer, helloAnswer, badge, wakeQuiet, parkedAt, boardLegs, flightsOfCs, lastHeard, legs, ac, backfillOne, backQ, blocked, markBlocked, seed, gapFill, addArea, userAreas,
   serve, fr24, ident, dest, F24, report, identRound, fr24Round, saveIdent, loadIdent, histUnknown, learnSince, learnWrite, diskLegs, KEEP_LADD, save, loadStore, dirtyDays, pollOpenSky, adsbxUse, live, liveList, answer, step, P, piaState, apiGet, gate, stats, lastOk, noteWatch, watch, watchedAll, flew, closeDays, histQ, histPend, histOne, histDay, histOf, histRead, histWrite, histFile, fillHist, fillAsked, queueHist, photos, nextHist, saveState, loadState, lastW, get closed() { return closed; }, set closed(v) { closed = v; }, pause };

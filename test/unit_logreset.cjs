@@ -58,7 +58,7 @@ const lsSave = win => { for (let i = 0; i < win.localStorage.length; i++) { cons
   check('... what was learned (x:) and the boards (b:) kept', hist.includes('x:learn') && hist.includes('b:123') && hist.includes('b:sites1'), hist);
   const rec = (hexes.find(x => x[0] === '4b15ca') || [])[1] || {};
   check('... the aircraft\'s compact recent flights emptied, the rest of its record kept', Array.isArray(rec.recent) && rec.recent.length === 0 && rec.reg === 'HB-IGO' && rec.ladd === true, rec);
-  check('... the reset noted so it is not done again', LS.get('tweeks.fr24.ladd.logreset') === '22.31.7', LS.get('tweeks.fr24.ladd.logreset'));
+  check('... the reset noted so it is not done again', LS.get('tweeks.fr24.ladd.logreset') === '22.31.9', LS.get('tweeks.fr24.ladd.logreset'));
   check('... and nothing of the old log in memory either', !L.store.peekHist('4b15ca') && !((L.store.getHex('4b15ca') || {}).recent || []).length);
   db.close(); w.close();
 

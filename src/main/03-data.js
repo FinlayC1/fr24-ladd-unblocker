@@ -1095,24 +1095,97 @@
     }
   }
 
-  // ---- flight logs: adsb.lol traces -> legs ---------------------------------------------------------------------------
-  // (v21 asked globe.adsb.lol, which now redirects to adsb.lol - a host the script was not allowed to connect to, so
-  // every history request failed silently and the destination model ran with no history at all.)
-  const traceUrl = (hex, day, back) => day && back > LOL_DAYS ? `https://globe.airplanes.live/globe_history/${day}/traces/${hex.slice(-2)}/trace_full_${hex}.json` : `https://adsb.lol/${day ? `globe_history/${day}` : 'data'}/traces/${hex.slice(-2)}/trace_full_${hex}.json`;
-  const traceMeta = new Map();   // hex -> { r, t, desc, ownOp, year, at }
-  async function fetchTrace(hex, day, opts) {
-    const j = await gmRequest(traceUrl(hex, day, opts && opts.back), { timeout: 20000, priority: !!(opts && opts.priority), bg: !!(opts && opts.bg), idle: !!(opts && opts.idle) });
-    if (j && (j.r || j.t || j.year || j.ownOp || j.dbFlags)) {
-      const m = { r: clean(j.r).toUpperCase(), t: clean(j.t).toUpperCase(), desc: clean(j.desc), ownOp: clean(j.ownOp), year: Number(j.year) || 0, flags: Number(j.dbFlags) || 0, at: now() };
-      traceMeta.set(hex, m);
-      const hx = store.getHex(hex) || {};
-      const upd = {}; if (m.year && !hx.year) upd.year = m.year; if (m.r && !hx.reg) upd.reg = m.r; if (m.t && !hx.type) upd.type = m.t; if (m.desc && !hx.desc) upd.desc = m.desc; if (m.ownOp && !hx.owner) upd.owner = m.ownOp;
-      // readsb database flags: 1 military, 4 PIA, 8 LADD
-      if (m.flags & 8 && !hx.ladd) upd.ladd = true; if (m.flags & 4 && !hx.pia) upd.pia = true; if (m.flags & 1 && !hx.mil) upd.mil = true;
-      if (Object.keys(upd).length) { store.mergeHex(hex, upd); if (upd.ladd || upd.pia || upd.mil) flagsLearned(hex); }
+  // ---- flight logs: the two networks' trace files (22.31.9: read anew) ---------------------------------------------------
+  // adsb.lol and airplanes.live each keep a file of every aircraft's day (globe_history/<day>/traces; today's under data/).
+  // Each answer is read for what it is, and only two are answers about the day: the file, and no file (404 - the network
+  // heard nothing of the aircraft that day). A verification page (adsb.lol's proof-of-work "Verifying connection",
+  // Cloudflare's "Just a moment" on airplanes.live: put in front of browsers that ask too much, too fast), a refusal, a
+  // request cut off, a file that does not read or is another aircraft's: never taken for a day without flights - asked
+  // again later, the reason kept for the log page to say.
+  const NETS = {
+    lol: { name: 'adsb.lol', site: 'https://adsb.lol/', url: (hex, day) => `https://adsb.lol/${day ? 'globe_history/' + day : 'data'}/traces/${hex.slice(-2)}/trace_full_${hex}.json` },
+    apl: { name: 'airplanes.live', site: 'https://globe.airplanes.live/', url: (hex, day) => `https://globe.airplanes.live/${day ? 'globe_history/' + day : 'data'}/traces/${hex.slice(-2)}/trace_full_${hex}.json` }
+  };
+  // (how each answered lately: the window's sources and the log page say it - a verification page above all)
+  const netState = { lol: { ok: 0, none: 0, wall: 0, err: 0, wallUntil: 0, wallAt: 0, okAt: 0, last: '', lastAt: 0, probe: null }, apl: { ok: 0, none: 0, wall: 0, err: 0, wallUntil: 0, wallAt: 0, okAt: 0, last: '', lastAt: 0, probe: null } };
+  const WALL_RE = /verif(?:y|ying|ication)|challenge|just a moment|attention required|cf-chl|captcha|are you (?:a )?(?:human|robot)/i;
+  const wallText = id => `verification page (open ${NETS[id].site} once in a tab, then reload FR24)`;
+  // (one answer: { state: 'ok', j } | 'none' | 'wall' | 'rate' | 'err', err)
+  function classifyTrace(hex, status, text) {
+    const body = String(text || ''), head = body.slice(0, 4000).replace(/^\uFEFF/, '').trimStart();
+    if (status === 404) return { state: 'none' };
+    if (status >= 200 && status < 300) {
+      if (head[0] === '{') {
+        let j; try { j = JSON.parse(body); } catch (e) { return { state: 'err', err: 'file cut short' }; }
+        if (!j || !Array.isArray(j.trace)) return { state: 'err', err: 'not a trace file' };
+        const ic = String(j.icao || '').toLowerCase().replace(/^~/, '');
+        if (ic && ic !== hex) return { state: 'err', err: 'another aircraft\'s file' };
+        return { state: 'ok', j };
+      }
+      if (head[0] === '<' && WALL_RE.test(head)) return { state: 'wall', err: 'verification page' };
+      return { state: 'err', err: head ? 'not a trace file' : 'empty answer' };
     }
-    return j;
+    if (status === 429) return { state: 'rate', err: 'HTTP 429' };
+    if (status >= 400 && status !== 404 && WALL_RE.test(body.slice(0, 30000))) return { state: 'wall', err: 'verification page (HTTP ' + status + ')' };
+    return { state: 'err', err: status ? 'HTTP ' + status : 'no answer' };
   }
+  const traceMeta = new Map();   // hex -> { r, t, desc, ownOp, year, at }
+  function learnTraceMeta(hex, j) {
+    if (!(j && (j.r || j.t || j.year || j.ownOp || j.dbFlags))) return;
+    const m = { r: clean(j.r).toUpperCase(), t: clean(j.t).toUpperCase(), desc: clean(j.desc), ownOp: clean(j.ownOp), year: Number(j.year) || 0, flags: Number(j.dbFlags) || 0, at: now() };
+    traceMeta.set(hex, m);
+    const hx = store.getHex(hex) || {};
+    const upd = {}; if (m.year && !hx.year) upd.year = m.year; if (m.r && !hx.reg) upd.reg = m.r; if (m.t && !hx.type) upd.type = m.t; if (m.desc && !hx.desc) upd.desc = m.desc; if (m.ownOp && !hx.owner) upd.owner = m.ownOp;
+    // readsb database flags: 1 military, 4 PIA, 8 LADD
+    if (m.flags & 8 && !hx.ladd) upd.ladd = true; if (m.flags & 4 && !hx.pia) upd.pia = true; if (m.flags & 1 && !hx.mil) upd.mil = true;
+    if (Object.keys(upd).length) { store.mergeHex(hex, upd); if (upd.ladd || upd.pia || upd.mil) flagsLearned(hex); }
+  }
+  // One network's file of an aircraft's day ('' today): { net, id, state: 'ok' | 'none' | 'wall' | 'err', pts, j, err }.
+  // A network showing a verification page is not asked again for ten minutes (every request would meet it, and keep it
+  // up); a refusal to slow down is waited out, twice; a request that got no answer is made once more. While a network has
+  // not answered well lately (nothing yet, or a failure since), one request goes first and the others wait for its
+  // answer - eight days asked at once would all meet the same page.
+  async function readTrace(id, hex, day, opts) {
+    const S = netState[id];
+    if (S.wallUntil <= now() && S.probe && !(S.okAt > S.lastBadAt)) await S.probe.catch(() => null);
+    if (S.wallUntil <= now() && !S.probe && !(S.okAt > (S.lastBadAt || 0) && S.okAt > 0)) {
+      const p = readTrace1(id, hex, day, opts); S.probe = p;
+      try { return await p; } finally { if (S.probe === p) S.probe = null; }
+    }
+    return readTrace1(id, hex, day, opts);
+  }
+  async function readTrace1(id, hex, day, opts) {
+    const N = NETS[id], S = netState[id], o = opts || {};
+    const out = (state, x) => { S[state] = (S[state] || 0) + 1; S.last = state === 'err' ? x.err : state; S.lastAt = now(); if (state === 'ok' || state === 'none') S.okAt = now(); else if (!x.cached) S.lastBadAt = now(); return Object.assign({ net: N.name, id, state, pts: [], j: null, err: '' }, x); };
+    if (S.wallUntil > now()) return out('wall', { err: wallText(id), cached: true });
+    for (let attempt = 0; ; attempt++) {
+      let r;
+      // (a verification page met by another request while this one waited its turn: not sent)
+      try { r = await gmRequest(N.url(hex, day), { raw: true, timeout: 20000, priority: !!o.priority, bg: !!o.bg, idle: !!o.idle, skip: () => S.wallUntil > now() }); }
+      catch (e) {
+        const m = String(e && e.message || e).replace(/^Error:\s*/, '').slice(0, 60);
+        if (m === 'skipped') return out('wall', { err: wallText(id), cached: true });
+        if (attempt < 1 && !/aborted|unavailable/.test(m)) { await sleep(o.priority ? 1500 : 6000); continue; }
+        return out('err', { err: m });
+      }
+      const c = classifyTrace(hex, r.status, r.text);
+      if (c.state === 'rate' && attempt < 2) { await sleep(4000 * (attempt + 1)); continue; }
+      if (c.state === 'wall') { S.wallUntil = now() + 10 * 60000; S.wallAt = now(); log(N.name + ': verification page - not asked again for 10 min'); return out('wall', { err: wallText(id) }); }
+      if (c.state === 'ok') { learnTraceMeta(hex, c.j); return out('ok', { j: c.j, pts: ENGINE.parseTrace(c.j) }); }
+      if (c.state === 'none') return out('none', {});
+      return out('err', { err: c.err });
+    }
+  }
+  // (the file alone, as the rest of the script asks for it: adsb.lol's, airplanes.live's for a day older than adsb.lol
+  // keeps; 'HTTP 404' when there is none)
+  async function fetchTrace(hex, day, opts) {
+    const r = await readTrace(day && opts && opts.back > LOL_DAYS ? 'apl' : 'lol', hex, day, opts);
+    if (r.state === 'ok') return r.j;
+    throw new Error(r.state === 'none' ? 'HTTP 404' : r.err || r.state);
+  }
+  // (both networks' points of a day, merged - each hears what the other's receivers miss: D-CRUX at Palma, adsb.lol lost
+  // it at 1,650 ft, airplanes.live heard it to 250 ft; a whole flight one of them never heard)
+  function mergeNets(res) { let pts = []; for (const r of res) if (r.pts.length) pts = pts.length ? ENGINE.mergePoints(pts, r.pts) : r.pts; return pts; }
   function acOfHex(hex) {
     const hx = store.getHex(hex) || {}, c = countryOfHex(hex), g = globalList.byHex.get(hex);
     return { hex, type: hx.type || (g && g.type) || '', reg: hx.reg || (g && g.reg) || '', mil: !!(hx.mil || (g && g.mil)), cat: hx.cat || (g && g.cat) || '', country: c ? c.name : '' };
@@ -1195,7 +1268,9 @@
         const v = h.days[d];
         if (!v) return !(bgWork && now() - (h.miss[d] || 0) < (back <= 3 ? 1 : 7) * 864e5);
         if (back <= 3 && (h.rd[d] || 0) < (dayEndS(d) + 6 * 3600) * 1000) return looked || now() - (h.rd[d] || 0) > 3 * 3600e3;
-        return looked && back <= LOL_DAYS && (v === 'l' || v === 'p');
+        // (a day read with one network, or one not answering: read again with both when looked at - not more than every
+        // half hour, a verification page in front of one of them taking a while to clear)
+        return looked && back <= LOL_DAYS && (v === 'l' || v === 'p') && now() - (h.rd[d] || 0) > 30 * 60000;
       };
       let todo = []; const backOf = {}; for (let back = 1; back <= upTo; back++) { const d = dayStr(now() - back * 864e5); if (want(d, back)) { todo.push(d); backOf[d] = back; } }
       let done = 0, dirty = false, monDays = 0;
@@ -1229,35 +1304,16 @@
         }
       }
       const legsOf = (pts, day) => ENGINE.legsFromPoints(pts, { heli, patrol, cls: cls0, type: ac0.type, rangeKm: ENGINE.typeRangeKm(ac0), dataEnd: dayEndS(day) });
-      const aplUrl = day => `https://globe.airplanes.live/globe_history/${day}/traces/${hex.slice(-2)}/trace_full_${hex}.json`;
-      // (one network's file of the day: its points, 'none' - no file, a day it heard nothing of the aircraft - or the
-      // reason it could not be had; a refusal to slow down is waited out, twice)
-      const readNet = async (net, get) => {
-        for (let attempt = 0; attempt < 3; attempt++) {
-          try { return { net, state: 'ok', pts: ENGINE.parseTrace(await get()) }; }
-          catch (e) {
-            const m = String(e && e.message || e);
-            if (/HTTP 404/.test(m)) return { net, state: 'none', pts: [] };
-            if (/HTTP 429/.test(m) && attempt < 2) { await sleep(4000 * (attempt + 1)); continue; }
-            return { net, state: 'err', pts: [], err: m.replace(/^Error:\s*/, '').slice(0, 80) };
-          }
-        }
-        return { net, state: 'err', pts: [], err: 'HTTP 429' };
-      };
-      // Each day: adsb.lol's file (the last 40 days) and airplanes.live's (the aircraft looked at, or older than adsb.lol
-      // keeps), merged - each hears what the other's receivers miss (D-CRUX at Palma: adsb.lol lost it at 1,650 ft,
-      // airplanes.live heard it to 250 ft; a whole flight one of them never heard)
+      // Each day: adsb.lol's file (the last 40 days) and airplanes.live's (the aircraft looked at - also when it is looked at
+      // while this load runs - or older than adsb.lol keeps), merged
       const one = async day => {
-        const back = backOf[day], old = back > LOL_DAYS, nets = [];
-        const bgReq = bgWork && !st.front;
-        if (!old) nets.push(readNet('adsb.lol', () => fetchTrace(hex, day, { bg: bgReq, back, priority: st.front })));
-        if (old) nets.push(readNet('airplanes.live', () => fetchTrace(hex, day, { bg: bgReq, back, priority: st.front })));
-        else if (looked) nets.push(readNet('airplanes.live', () => gmRequest(aplUrl(day), { timeout: 20000, priority: st.front, bg: bgReq })));
-        const res = await Promise.all(nets);
+        const back = backOf[day], old = back > LOL_DAYS, lookedNow = looked || st.front;
+        const o = { bg: bgWork && !st.front, priority: st.front, back };
+        const ids = old ? ['apl'] : lookedNow ? ['lol', 'apl'] : ['lol'];
+        const res = await Promise.all(ids.map(id => readTrace(id, hex, day, o)));
         done++;
-        let pts = []; for (const r of res) if (r.pts.length) pts = pts.length ? ENGINE.mergePoints(pts, r.pts) : r.pts;
-        const complete = res.every(r => r.state !== 'err');
-        if (!complete) { h.err[day] = res.filter(r => r.state === 'err').map(r => r.net + ': ' + r.err).join('; '); dirty = true; }
+        const pts = mergeNets(res), bad = res.filter(r => r.state !== 'ok' && r.state !== 'none'), complete = !bad.length;
+        if (!complete) { h.err[day] = bad.map(r => r.net + ': ' + r.err).join('; '); dirty = true; }
         // (nothing had, and a network not answering - or not asked: the background asks adsb.lol alone, and airplanes.live
         // can have what adsb.lol has no file of: not known - asked again later, the day's flights as they were kept)
         if (!pts.length && (!complete || (!old && res.length < 2))) { h.miss[day] = now(); dirty = true; return; }
@@ -1297,9 +1353,10 @@
   const logWipeDone = (async () => {
     let was = ''; try { was = localStorage.getItem(LOG_RESET_KEY) || ''; } catch (e) { /* none */ }
     if (was === LOG_RESET) return;
-    try { localStorage.setItem(LOG_RESET_KEY, LOG_RESET); } catch (e) { /* the next start does it again */ }
-    try { const n = await resetLogsNow(); log('flight logs: every saved log deleted (reset ' + LOG_RESET + '):', n); }
-    catch (e) { log('log reset', e); try { localStorage.removeItem(LOG_RESET_KEY); } catch (_) { /* none */ } }
+    // (noted when it is done - not before: a tab closed half way leaves the logs, and the next start deletes them; a second
+    // tab opened meanwhile may delete them again, which loses only what was built in those first seconds)
+    try { const n = await resetLogsNow(); try { localStorage.setItem(LOG_RESET_KEY, LOG_RESET); } catch (e) { /* the next start does it again */ } log('flight logs: every saved log deleted (reset ' + LOG_RESET + '):', n); }
+    catch (e) { log('log reset', e); }
   })();
   const thinPts = (pts, gap) => { const o = []; for (const p of pts || []) if (!o.length || p.t - o[o.length - 1].t >= gap) o.push(p); const last = pts && pts[pts.length - 1]; if (last && o[o.length - 1] !== last) o.push(last); return o; };
   function saveToday(hex, out) {
@@ -1322,24 +1379,34 @@
     opts = opts || {};
     if (!todayCache.has(hex) && !todayWarmed.has(hex)) await warmToday([hex]);
     const c = todayCache.get(hex);
-    if (c && !c.loading && c.legs && now() - c.at < (maxAgeMs || 60000)) return c;
-    if (c && c.loading) return c.loading;
+    // (one read from adsb.lol alone does not do for the aircraft looked at: both networks' are read for it)
+    if (c && !c.loading && c.legs && now() - c.at < (maxAgeMs || 60000) && (c.both || !opts.priority)) return c;
+    if (c && c.loading && (c.loadingBoth || !opts.priority)) return c.loading;
     if (c && c.failAt && now() - c.failAt < (opts.priority ? 6000 : 45000)) return c;
     const job = (async () => {
       await loadAirports();
-      const [j] = await Promise.all([fetchTrace(hex, '', opts), Promise.race([loadSites(), sleep(3000)])]);   // (unlisted fields known)
-      const pts = ENGINE.parseTrace(j);
+      const [res] = await Promise.all([todayFiles(hex, opts), Promise.race([loadSites(), sleep(3000)])]);   // (unlisted fields known)
+      // (neither network answering - a verification page, a refusal: the last good copy stays in use)
+      if (!res.some(r => r.state === 'ok' || r.state === 'none')) throw new Error(res.map(r => r.net + ': ' + r.err).join('; '));
+      const pts = mergeNets(res);
       const cls0 = ENGINE.classify(acOfHex(hex)), heli = cls0 === 'heli', patrol = cls0 === 'fighter' || cls0 === 'milheavy';
       const ac0 = acOfHex(hex), legs = ENGINE.legsFromPoints(pts, { heli, patrol, cls: cls0, type: ac0.type, rangeKm: ENGINE.typeRangeKm(ac0) });   // (no dataEnd: today's file is rewritten now and then - it can end where the aircraft is still flying: HLE81 "landed at Gloucester" passing over it)
-      const out = { at: now(), pts, lastPt: pts.length ? pts[pts.length - 1] : null, legs, sums: summarize(legs, hex).map(l => Object.assign(l, { day: dayStr(now()) })) };
+      const out = { at: now(), pts, lastPt: pts.length ? pts[pts.length - 1] : null, legs, sums: summarize(legs, hex).map(l => Object.assign(l, { day: dayStr(now()) })), both: res.length > 1, nets: res.map(r => r.net + ': ' + (r.state === 'err' || r.state === 'wall' ? r.err : r.state)) };
       todayCache.set(hex, out); saveToday(hex, out);
       try { boardNoteLegs(hex, out.sums); } catch (e) { log('board legs', e); }
       if (todayCache.size > 400) todayCache.delete(todayCache.keys().next().value);
       return out;
     })();
-    todayCache.set(hex, Object.assign({}, c || { at: 0 }, { loading: job }));
+    todayCache.set(hex, Object.assign({}, c || { at: 0 }, { loading: job, loadingBoth: !!opts.priority }));
     // on failure the last good copy stays in use; a retry waits a little (the selected aircraft only seconds)
-    try { return await job; } catch (e) { todayCache.set(hex, Object.assign({ pts: [], legs: [], sums: [] }, c || { at: 0 }, { loading: null, failAt: now() })); throw e; }
+    try { return await job; } catch (e) { todayCache.set(hex, Object.assign({ pts: [], legs: [], sums: [] }, c || { at: 0 }, { loading: null, loadingBoth: false, failAt: now(), failErr: String(e && e.message || e) })); throw e; }
+  }
+  // Today's files: both networks' for the aircraft looked at (airplanes.live had N73VR's night crossing to Luton - the
+  // flight before the one on screen - when adsb.lol's file did not come); adsb.lol's alone for the rest - every aircraft
+  // on the map whose take-off is worked out, the boards: airplanes.live is asked only for what the user opens
+  async function todayFiles(hex, opts) {
+    const o = { priority: !!opts.priority, bg: !!opts.bg, idle: !!opts.idle };
+    return Promise.all((opts.priority ? ['lol', 'apl'] : ['lol']).map(id => readTrace(id, hex, '', o)));
   }
   // Parked since `since` (a landing): five minutes at a standstill, or a quarter of an hour unheard, on the ground after
   // it - in today's trace (taxiing in does neither)
