@@ -70,6 +70,10 @@ const GM = Q.get('gm') === '1', LOOK = Q.get('look') === '1';
 // and the bar draws its button open or at rest a while after the window comes or goes - its button pressed in between
 // opens the window again; ?pbl=1: Playback's button drawn open while its playback window is up
 const MC = Q.get('mapclose') === '1', PBL = Q.get('pbl') === '1';
+// ?xt=1: the window's X opens what it closes (a toggle, as the bar's button is); ?xd=1: the X a picture with a click on it,
+// not a button, named nothing; ?xn=1: a close button that says "Done" (not known for an X); ?trap=1: a picture-only button
+// of the page's own at the height of the windows' titles, beside them - it opens Widgets
+const XT = Q.get('xt') === '1', XD = Q.get('xd') === '1', XN = Q.get('xn') === '1', TRAP = Q.get('trap') === '1';
 if (LOOK) document.head.insertAdjacentHTML('beforeend', '<style>.bar-btn svg circle{stroke-width:1.5}.bar-btn:hover svg circle{stroke-width:2.5;stroke:#dddddd}.bar-btn.is-on svg circle{stroke-width:2.5;stroke:#f8c023}</style>');
 const { createApp, reactive, defineAsyncComponent, watch } = Vue;
 const saved = (() => { try { return JSON.parse(localStorage.getItem('mock.widgets') || 'null'); } catch (e) { return null; } })();
@@ -84,7 +88,8 @@ const S = reactive({ rk: 0, open: null, lit: null, flight: false, enabled: true,
 window.__S = S;
 const save = () => localStorage.setItem('mock.widgets', JSON.stringify(S.widgets));
 const BARS = ['Settings', 'Weather', 'Filters', 'Widgets', 'Playback'];
-const Win = { props: ['title'], emits: ['close'], template: `<div class="win" :data-win="title"><div class="win-head"><span class="win-title">{{ title }}</span><button class="win-x" @click="$emit('close')">×</button></div><div class="win-body"><slot/></div></div>` };
+const Win = { props: ['title'], emits: ['close'], setup(p, { emit }) { return { xClick() { if (XT) S.open = S.open === p.title ? null : p.title; else emit('close'); } }; },
+  template: `<div class="win" :data-win="title"><div class="win-head"><span class="win-title">{{ title }}</span>` + (XD ? `<div class="hdr-ic" style="position:absolute;right:8px;top:8px;width:24px;height:24px;cursor:pointer" @click="xClick()"><svg width="24" height="24" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" stroke="#fff"/></svg></div>` : XN ? `<button class="win-x" style="width:auto" @click="xClick()">Done</button>` : `<button class="win-x" @click="xClick()">×</button>`) + `</div><div class="win-body"><slot/></div></div>` };
 const WidgetsList = { setup() { return { S, toggle(w) { w.on = !w.on; save(); } }; }, template: `<div><div class="row"><span>Enable widgets</span><button class="tg" @click="S.enabled=!S.enabled">{{ S.enabled ? 'yes' : 'no' }}</button></div><p class="info">Drag and drop the widget panels to choose the order in which they appear on the map</p><div v-for="w in S.widgets" :key="w.k" class="wrow"><div class="wt">{{ w.title }}</div><div class="pic" @click="toggle(w)"><span class="lbl" :class="{off: !w.on}">{{ w.on ? 'On' : 'Off' }}</span></div><p>{{ w.desc }}</p></div></div>` };
 const WidgetsLazy = defineAsyncComponent(() => new Promise(r => setTimeout(() => r(WidgetsList), 400)));
 const Other = { props: ['name'], template: `<div style="padding:8px"><p v-for="i in 70" :key="i">{{ name }} option {{ i }}</p></div>` };
@@ -114,7 +119,7 @@ const app = createApp({
   components: { Win, WidgetsList, Other, WinLazy, AcPhoto },
   setup() {
     if (MC) watch(() => S.open, () => setTimeout(() => { S.lit = S.open; }, 450));
-    return { S, BARS, IND, LI, PB, PANEL, GM,
+    return { S, BARS, IND, LI, PB, PANEL, GM, TRAP,
       mapClick() { if (MC) setTimeout(() => { S.open = null; }, 150); },
       isOn(b) { return (b === 'Playback' ? PBL && S.pbw : (MC ? S.lit : S.open) === b) ? 'is-on' : ''; },
       toggle(b) { if (b === 'Playback') { S.pbw = !S.pbw; return; } S.flight = false; S.open = S.open === b ? null : b; },
@@ -123,6 +128,7 @@ const app = createApp({
   template: `<div class="map">
     <div v-if="GM" class="gm-style" style="position:absolute;inset:0" @click="mapClick()"></div>
     <div class="left">
+      <button v-if="TRAP" type="button" class="trap" style="position:absolute;top:8px;right:-60px;width:24px;height:24px" @click="S.open='Widgets'"><svg width="20" height="20" viewBox="0 0 20 20"><circle cx="10" cy="10" r="6" stroke="#fff" fill="none"/></svg></button>
       ${tpl}
       <Transition name="col"><div v-if="!S.open && !S.flight && S.enabled" class="col"><template v-for="w in S.widgets" :key="w.k"><div v-if="w.on" class="card" :data-card="w.k"><h3>{{ w.title }}</h3><p>...</p></div></template></div></Transition>
       <AcPhoto v-if="PANEL"/>

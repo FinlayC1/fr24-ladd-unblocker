@@ -4,7 +4,9 @@
 //   - a click on the map puts away the window open - FR24's own (Weather, Playback) and LADD Unblock - by its X; a drag
 //     of the map, a click in the window, and a click picking a flight in playback do not
 //   - an FR24 that puts its window away itself on the map's click, and draws its button at rest only a while after
-//     (?mapclose=1): the window stays away - its button is not pressed again (that opened it again)
+//     (?mapclose=1), its X a button, a picture (?xd=1) or a toggle (?xt=1): the window stays away, click after click, and
+//     nothing else opens - not its button, not a picture-only button of the page's beside it (?trap=1: it opens Widgets);
+//     an FR24 leaving it open: its X pressed; a close button not known for one (?xn=1): nothing
 //   - LADD Unblock's switches slide across as they are turned (the same element, part-way across mid-turn)
 //   - its icon drawn as FR24's: lighter under the mouse - its line as at rest - and thicker (2.3) and yellow open
 //   - a tooltip being read stays up while the part of the page it is in is updated
@@ -54,7 +56,7 @@ window.GM_xmlhttpRequest = o => { setTimeout(() => o.onload && o.onload({ status
 
     // ---- a click on the map
     await page.click(bar('Weather')); await sleep(500);
-    await page.mouse.click(...MAP); await sleep(800);
+    await page.mouse.click(...MAP); await sleep(1500);
     check('FR24\'s Weather open, a click on the map: put away, as its X does', (await st()).open === null, await st());
     await page.click(bar('Weather')); await sleep(500);
     await page.mouse.move(...MAP); await page.mouse.down(); await page.mouse.move(MAP[0] + 80, MAP[1] + 50, { steps: 6 }); await page.mouse.up(); await sleep(800);
@@ -63,13 +65,13 @@ window.GM_xmlhttpRequest = o => { setTimeout(() => o.onload && o.onload({ status
     check('... a click in the window: left open', (await st()).open === 'Weather');
     await page.click(ours); await sleep(900);
     check('(LADD Unblock open, in FR24\'s window)', await oursUp() && (await st()).open === 'Widgets');
-    await page.mouse.click(...MAP); await sleep(900);
+    await page.mouse.click(...MAP); await sleep(1500);
     check('LADD Unblock open, a click on the map: put away as its X does - FR24\'s window gone, the button back at rest', !(await oursUp()) && (await st()).open === null && !(await page.evaluate(s => document.querySelector(s).hasAttribute('data-tl-ub-open'), ours)), await st());
     await page.click(bar('Playback')); await sleep(400);
     await page.mouse.click(...MAP); await page.evaluate(() => { __S.flight = true; }); await sleep(800);
     check('FR24\'s playback open, a click on the map picking a flight in it: left open', (await st()).pbw === true);
     await page.evaluate(() => { __S.flight = false; }); await sleep(400);
-    await page.mouse.click(...MAP); await sleep(800);
+    await page.mouse.click(...MAP); await sleep(1500);
     check('... a click on the map otherwise: put away by its X', (await st()).pbw === false, await st());
 
     // ---- the switches slide
@@ -84,7 +86,7 @@ window.GM_xmlhttpRequest = o => { setTimeout(() => o.onload && o.onload({ status
     check('a switch turned off: the same switch slides across - part-way in between, not jumping', s1.same && s1.x0 === 20 && s1.xs[s1.xs.length - 1] === 0 && s1.xs.some(x => x > 1 && x < 19) && s1.on === 'false', s1);
     s1 = await slide();
     check('... and back on, the same way', s1.same && s1.x0 === 0 && s1.xs[s1.xs.length - 1] === 20 && s1.xs.some(x => x > 1 && x < 19) && s1.on === 'true', s1);
-    await page.mouse.click(...MAP); await sleep(900);
+    await page.mouse.click(...MAP); await sleep(1500);
 
     // ---- the icon
     const ico = () => page.evaluate(s => { const p = document.querySelector(s + ' svg[data-tl-ub-icon] path'), cs = getComputedStyle(p); return { w: cs.strokeWidth, c: cs.stroke }; }, ours);
@@ -105,7 +107,7 @@ window.GM_xmlhttpRequest = o => { setTimeout(() => o.onload && o.onload({ status
     check('... open: clearly thicker (2.3) and yellow, as FR24\'s open button\'s icon', open.w === '2.3px' && open.c === 'rgb(248, 192, 35)', open);
     await page.hover(ours); await sleep(400);
     check('... open and pointed at: the same', (await ico()).w === '2.3px', await ico());
-    await page.mouse.click(...MAP); await sleep(900);
+    await page.mouse.click(...MAP); await sleep(1500);
     check('... put away: at rest again', (await ico()).w === '1.5px');
 
     // ---- a tooltip being read
@@ -116,21 +118,51 @@ window.GM_xmlhttpRequest = o => { setTimeout(() => o.onload && o.onload({ status
     await page.mouse.move(640, 40); await sleep(100);
     const after = await page.evaluate(() => { window.__tweeksLadd.morphHtml(document.getElementById('tiphost'), '<span id="t1" title="63% - reasons C" style="display:block;height:40px">GSP</span>'); return document.getElementById('t1').title; });
     check('... the mouse gone: brought up to date', after === '63% - reasons C', after);
-    // ---- an FR24 that puts its window away itself on the map's click, its button drawn at rest a while after
-    { const p3 = await ctx.newPage();
-      await p3.goto('https://www.flightradar24.com/53.40,-2.60/9?mode=keyed&gm=1&mapclose=1');
+    // ---- an FR24 that puts its window away itself on the map's click, its button drawn at rest a while after - its X a
+    // button, one that opens what it closes, a picture: never opened again, nor anything else, click after click
+    const opener = pg => pg.evaluate(() => { window.__opens = []; Vue.watch(() => __S.open, v => { if (v) window.__opens.push(v); }); });
+    for (const q of ['', '&xt=1', '&xd=1', '&xt=1&xd=1']) {
+      const p3 = await ctx.newPage();
+      await p3.goto('https://www.flightradar24.com/53.40,-2.60/9?mode=keyed&gm=1&mapclose=1&trap=1' + q);
       await p3.waitForSelector('nav.bar .tl-ub-btn', { timeout: 15000 });
-      const st3 = () => p3.evaluate(() => ({ open: __S.open, lit: __S.lit }));
-      await p3.click(bar('Weather')); await sleep(700);
-      await p3.mouse.click(...MAP); await sleep(400);
-      const mid = await st3(); await sleep(1600);
-      check('FR24 putting its window away on the map\'s click, its button still drawn open: the window stays away - not opened again', (await st3()).open === null && mid.open === null, { mid, end: await st3() });
+      await opener(p3);
+      const st3 = () => p3.evaluate(() => ({ open: __S.open, lit: __S.lit, opens: __opens.slice() }));
+      let bad = null;
+      for (const b of ['Weather', 'Filters', 'Settings']) {
+        await p3.click(bar(b)); await sleep(700);
+        const o0 = (await st3()).opens.length;
+        await p3.mouse.click(...MAP); await sleep(2400);
+        const s = await st3(); if (s.open !== null || s.opens.length !== o0) { bad = { b, s }; break; }
+      }
+      check(`FR24 putting its window away itself on the map's click${q ? ' (' + q.slice(1) + ')' : ''}: away, and nothing opened again - three windows`, !bad, bad);
       await p3.click(ours); await sleep(1400);
       const up = await p3.evaluate(() => [...document.querySelectorAll('.tl-ub-c')].some(e => e.getBoundingClientRect().height > 0));
-      await p3.mouse.click(...MAP); await sleep(2000);
+      const o1 = (await st3()).opens.length;
+      await p3.mouse.click(...MAP); await sleep(2600);
       const gone = await p3.evaluate(() => ![...document.querySelectorAll('.tl-ub-c')].some(e => e.getBoundingClientRect().height > 0 && getComputedStyle(e).display !== 'none'));
-      check('... LADD Unblock the same: put away and not opened again', up && gone && (await st3()).open === null, { up, gone, s: await st3() });
-      await p3.close(); }
+      const s2 = await st3();
+      check('... LADD Unblock the same: away, nothing opened again', up && gone && s2.open === null && s2.opens.length === o1, { up, gone, s2 });
+      await p3.close();
+    }
+    // ---- an FR24 that leaves its window open on the map's click: its X pressed - a picture, a toggle; not known: nothing
+    for (const q of ['&xd=1', '&xt=1', '&xn=1']) {
+      const p4 = await ctx.newPage();
+      await p4.goto('https://www.flightradar24.com/53.40,-2.60/9?mode=keyed&gm=1&trap=1' + q);
+      await p4.waitForSelector('nav.bar .tl-ub-btn', { timeout: 15000 });
+      await opener(p4);
+      await p4.click(bar('Filters')); await sleep(700);
+      await p4.mouse.click(...MAP); await sleep(1500);
+      const s4 = await p4.evaluate(() => ({ open: __S.open, opens: __opens.slice() }));
+      if (q === '&xn=1') check('FR24 leaving its window open, its close button not known for one: nothing pressed - not its button, not another of the page\'s (Widgets not opened)', s4.open === 'Filters' && s4.opens.join() === 'Filters', s4);
+      else {
+        await p4.click(ours); await sleep(1400);
+        await p4.mouse.click(...MAP); await sleep(1500);
+        const gone = await p4.evaluate(() => ![...document.querySelectorAll('.tl-ub-c')].some(e => e.getBoundingClientRect().height > 0 && getComputedStyle(e).display !== 'none'));
+        const s5 = await p4.evaluate(() => ({ open: __S.open, opens: __opens.slice() }));
+        check(`FR24 leaving its window open (${q.slice(1)}): put away by its X - Filters, then LADD Unblock; nothing else opened`, s4.open === null && gone && s5.open === null && s5.opens.join() === 'Filters,Widgets', { s4, gone, s5 });
+      }
+      await p4.close();
+    }
     // ---- an FR24 whose icons do not grow under the mouse (or are swapped for another drawing): the same
     { const p2 = await ctx.newPage();
       await p2.goto('https://www.flightradar24.com/53.40,-2.60/9?mode=keyed&gm=1');

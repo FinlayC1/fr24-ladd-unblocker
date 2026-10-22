@@ -10151,14 +10151,17 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   const linksHtml = rec => { const hx = withStored(rec), a = aircraftLinks(hx); return `${a ? `<div class="tl-links">${a}</div>` : ''}<div class="tl-links">${toolLinks(rec)}</div>`; };
   // An aircraft's pictures are FR24's own slideshow's: the page puts them into FR24's panel stream (page.js, the aircraft
   // block), so they are drawn exactly as FR24 draws its own - its size and crop, its credit, its dots. Only while FR24
-  // still draws no picture of the aircraft (its fallback: the "blocked" drawing, a sideview) are they drawn here, and
-  // only once the page has had a moment to hand them over: a frame of FR24's own photo size (the panel's width, 16:9)
-  // in place of FR24's fallback, which is hidden meanwhile (a stylesheet rule on the element after ours - nothing of
-  // FR24's own is changed), the credit at its bottom left as FR24's, dots for more than one. It goes the moment FR24
-  // draws a picture itself. (The picture used to be written into FR24's fallback picture: a sideview's frame, wide and
-  // short - 270 x 110 - with a second credit of ours at its bottom right, beside FR24's own, and FR24 kept drawing into
-  // those same elements: JNY5's and T7OKS's first slide, short, with two credits)
-  const PHOTO_WAIT = 1500;
+  // still draws no picture of the aircraft (its fallback: the "blocked" drawing, a sideview, or its stock picture of the
+  // type) are they drawn here - at once: a frame of FR24's own photo size (the panel's width, 16:9) in place of FR24's,
+  // which is hidden meanwhile (a stylesheet rule on the element after ours - nothing of FR24's own is changed), the
+  // credit at its bottom left as FR24's, dots for more than one. It goes the moment FR24 draws a picture itself. While
+  // its pictures are still being looked up (JetPhotos, Planespotters, the monitor's), the same frame, empty: FR24's thin
+  // stock picture is shown only once they are known to have none. (They were drawn here only after a second and a half,
+  // FR24's stock picture showing until then - a thin strip, then the photo; and earlier written into FR24's fallback
+  // picture itself: a sideview's frame, wide and short, with two credits - JNY5's and T7OKS's first slide)
+  const PHOTO_PEND_MAX = 10000;
+  // (its pictures still being looked up: a lookup running for it, or none answered yet - not for ever)
+  const photoPending = hx => !!hx && !!hx.hex && (photoInFlight.has(hx.hex) || ((hx.photoLevel || 0) < 2 && !(hx.photos || []).length));
   const notPhoto = /sideview|blocked|jp-promo|airport-data|placeholder/i;
   // (FR24's stock picture of the type, "© Flightradar24", is no picture of the aircraft: not one of FR24's own either)
   const stockSlide = i => { const s = i.closest('li') || i.parentElement; return !!s && /©\s*flightradar\s*24\s*$/i.test(clean(s.textContent)); };
@@ -10178,19 +10181,24 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   function applyPhoto(panel, rec) {
     const list = goodPhotos(rec.photos).filter(p => p.large || p.medium || p.thumb).slice(0, 3);
     // (FR24 draws a picture itself - ours, handed over, or its own: nothing of ours beside it)
-    if (!list.length || fr24Photo(panel)) { panel.__tlPhWait = null; return dropPhoto(panel); }
-    const key = (rec.hex || '') + '|' + list.map(p => noBar(p.large || p.medium || p.thumb)).join('|');
+    if (fr24Photo(panel)) { panel.__tlPhPend = null; return dropPhoto(panel); }
+    let key;
+    if (list.length) { panel.__tlPhPend = null; key = (rec.hex || '') + '|' + list.map(p => noBar(p.large || p.medium || p.thumb)).join('|'); }
+    else {
+      // (none yet: an empty frame while they are being looked up - ten seconds at most - then FR24's own)
+      const pend = panel.__tlPhPend && panel.__tlPhPend.hex === rec.hex ? panel.__tlPhPend : (panel.__tlPhPend = { hex: rec.hex, at: now() });
+      if (!photoPending(rec) || now() - pend.at > PHOTO_PEND_MAX) return dropPhoto(panel);
+      setTimeout(syncPanelSoon, 1000);
+      key = (rec.hex || '') + '|wait';
+    }
     let el = panel.querySelector('.tl-photo');
     if (!el || el.dataset.key !== key) {
-      // (the page hands the pictures to FR24 within a moment of their coming: FR24's own slideshow then, not this)
-      const w = panel.__tlPhWait;
-      if (!el && (!w || w.key !== rec.hex)) { panel.__tlPhWait = { key: rec.hex, at: now() }; setTimeout(syncPanelSoon, PHOTO_WAIT + 50); return; }
-      if (!el && now() - w.at < PHOTO_WAIT) return;
       if (!el) {
         el = document.createElement('div'); el.className = 'tl-photo';
-        el.addEventListener('click', e => { const b = e.target.closest('button[data-n]'); if (!b) return; e.preventDefault(); e.stopPropagation(); el.innerHTML = photoHtml(el.__tlList, Number(b.dataset.n)); });
+        el.addEventListener('click', e => { const b = e.target.closest('button[data-n]'); if (!b || !el.__tlList) return; e.preventDefault(); e.stopPropagation(); el.innerHTML = photoHtml(el.__tlList, Number(b.dataset.n)); });
       }
-      el.__tlList = list; el.dataset.key = key; el.innerHTML = photoHtml(list, 0);
+      el.__tlList = list.length ? list : null; el.dataset.key = key; el.innerHTML = list.length ? photoHtml(list, 0) : '';
+      el.classList.toggle('tl-photo-wait', !list.length);
     }
     // (right before FR24's frame - the stylesheet hides the element after ours - wherever FR24 has put it now)
     const slot = photoSlot(panel); if (!slot || !slot.parentElement) return dropPhoto(panel);
@@ -13074,7 +13082,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // (the version whose "what's new" was put away, and the one whose dot on the button the window was opened for)
   const UB_SEEN_KEY = 'tweeks.fr24.ladd.seenver', UB_DOT_KEY = 'tweeks.fr24.ladd.dotver';
   // (the newest CHANGELOG section's headlines, written in by build.mjs: { v, items })
-  const UB_WHATS_NEW = {"v":"22.31.2","items":["An FR24 tab already open did not see a new version for up to half an hour."]};
+  const UB_WHATS_NEW = {"v":"22.31.2","items":["A click on the map closed a bottom-bar window and opened it again, over and over, and could open Widgets from another window.","Photos: a thin stock picture first, the carousel later.","An FR24 tab already open did not see a new version for up to half an hour."]};
   // (an aircraft with an open padlock: FR24's outline style - 24 grid, 1.5 stroke in the text colour)
   const UB_ICON = '<svg data-tl-ub-icon="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
   const UB_X = '<svg viewBox="0 0 14 14" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5l11 11M12.5 1.5l-11 11"/></svg>';
@@ -13873,59 +13881,76 @@ html.tl-no-strip .tl-strip{display:none!important}`;
 
   // ---- a click on the map puts the bar's open window away, as its X does ----------------------------------------------
   // A click - pressed and let go within a few pixels, not a drag of the map - on the map itself (FR24's map, or a canvas
-  // over most of the page), never in a window, on the bar or in a panel. LADD Unblock's window, or that of FR24's own
-  // Settings, Weather, Filters, Widgets or Playback: its own X pressed, a moment after - an X only ever closes, so a window
-  // FR24 is putting away itself (opening a flight, or on the map's click) is left to go. (Its button was pressed: FR24
-  // draws the button open a while after its window has gone, and the press opened it again.) Where no X is found, the
-  // button is pressed - only while nothing is being put away, and never Playback's. Back again a moment later with nothing
-  // pressed on the bar: its X pressed once more. Playback is left open where the click picked a flight on its map.
+  // over most of the page), never in a window, on the bar or in a panel: the window open - LADD Unblock's, or that of FR24's
+  // own Settings, Weather, Filters, Widgets or Playback - put away by its own X. Only where FR24 leaves it as it was: the
+  // window and its button watched from the press - FR24 putting it away itself (on the map's click, or opening a flight
+  // picked on the map), drawing it or its button otherwise, it is left to FR24. Its button is never pressed: FR24 puts its
+  // window away on the map's click itself, and a press after that opened it again - over and over. (FR24's X may open
+  // what it closes as well: it is pressed only on a window that has stayed as it was.)
   const UB_MAP_SEL = '.gm-style,.maplibregl-map,.mapboxgl-map,.leaflet-container,.ol-viewport';
   const UB_PANEL_SEL = '[data-testid^="aircraft-panel"],[data-testid="airport-panel"]';
-  let ubDown = null, ubBarAt = -1e9;
-  // (a window's close button: in its title's band, named so or drawn as an X - or the one button there that is only a picture)
+  let ubDown = null;
+  // (a window's close button, in its title band: named so - its label, title, class or test id - or drawn as an X; or the
+  // one thing there that is only a picture, as small as a button - the rightmost where there are more. Not a button only:
+  // FR24 may draw its X as a picture with a click on it. None of these: nothing)
   function closeBtnIn(box, title) {
     if (!box || !box.isConnected) return null;
     const tr = title && title.isConnected ? title.getBoundingClientRect() : null;
-    const band = b => { if (!tr || !tr.height) return true; const r = b.getBoundingClientRect(); return !r.height || (r.top < tr.bottom + 12 && r.bottom > tr.top - 12); };
-    const bs = [...box.querySelectorAll('button,[role="button"],a')].filter(b => !b.closest('.tl-ub-c,.tl-ub,' + UB_PANEL_SEL) && !(title && b.contains(title)) && shownEl(b) && band(b));
-    const named = bs.find(b => /\b(close|dismiss)\b/i.test((b.getAttribute('aria-label') || '') + ' ' + (b.getAttribute('title') || '')) || /^[×✕✖xX]$/.test(b.textContent.trim()));
-    if (named) return named;
-    const pics = bs.filter(b => !b.textContent.trim() && b.querySelector('svg,img'));
-    return pics.length === 1 ? pics[0] : null;
+    const band = r => !tr || !tr.height || !r.height || (r.top < tr.bottom + 12 && r.bottom > tr.top - 12);
+    const els = [...box.querySelectorAll('*')].filter(e => !e.closest('.tl-ub-c,.tl-ub,' + UB_PANEL_SEL) && !(title && (e.contains(title) || title.contains(e))));
+    const ok = e => { const r = e.getBoundingClientRect(); return band(r) && r.width <= 64 && r.height <= 64 && shownEl(e); };
+    const outer = list => list.filter(e => !list.some(o => o !== e && o.contains(e)));
+    const named = outer(els.filter(e => /\b(close|dismiss)\b/i.test((e.getAttribute('aria-label') || '') + ' ' + (e.getAttribute('title') || '')) || /(^|[\s_-])(close|dismiss)([\s_-]|$)/i.test((e.getAttribute('data-testid') || '') + ' ' + (typeof e.className === 'string' ? e.className : '')) || (!e.children.length && /^[×✕✖xX]$/.test(e.textContent.trim())))).filter(ok);
+    if (named.length) return named[0];
+    const pics = outer(els.filter(e => !e.textContent.trim() && (e.matches('svg,img') || e.querySelector('svg,img')) && !e.closest('svg') && ok(e)));
+    if (!pics.length) return null;
+    return pics.reduce((m, e) => (e.getBoundingClientRect().right > m.getBoundingClientRect().right ? e : m));
   }
-  // (the window of one of the bar's buttons, open: the box round its title - not the bar's, a panel's or a button's words - in
-  // which its close button is; LADD Unblock's: FR24's window lent to it)
-  function barWindow(label) {
-    if (label === 'LADD Unblock') return HJ.st === 'on' && HJ.host && HJ.host.isConnected ? { box: HJ.host, title: HJ.title } : null;
-    for (const t of titleLeaves(label)) {
-      if (t.closest(UB_PANEL_SEL + ',.tl-pop,.tl-strip,button,[role="button"],a')) continue;
-      for (let a = t.parentElement, d = 0; a && a !== document.body && d < 8; a = a.parentElement, d++) {
-        if (ubBar && a.contains(ubBar)) break;
-        if (closeBtnIn(a, t)) return { box: a, title: t };
-      }
+  // (the window of one of the bar's buttons, open: its title - not the bar's, a panel's or a button's words - and its title
+  // band, where its close button is: the highest box round the title no taller than a title band and no wider than a
+  // window. Nothing beyond it is looked at: a picture-only button of FR24's elsewhere at that height - its header's - was
+  // taken for the X, and pressed, opened Widgets)
+  const barTitles = label => (label === 'LADD Unblock' ? (HJ.st === 'on' && HJ.title && HJ.title.isConnected ? [HJ.title] : []) : titleLeaves(label).filter(t => !t.closest(UB_PANEL_SEL + ',.tl-pop,.tl-strip,button,[role="button"],a')));
+  function titleBand(t) {
+    let head = t.parentElement;
+    for (let a = t.parentElement, d = 0; a && a !== document.body && d < 8; a = a.parentElement, d++) {
+      if (ubBar && a.contains(ubBar)) break;
+      const r = a.getBoundingClientRect(); if (r.height > 96 || r.width > 720) break;
+      head = a;
     }
+    return head;
+  }
+  function barWindow(label) {
+    for (const t of barTitles(label)) { const box = titleBand(t); if (box && closeBtnIn(box, t)) return { box, title: t }; }
     return null;
   }
-  // (FR24 putting something away now: Vue's leaving classes on it)
-  const leavingNow = () => { try { return !!document.querySelector('[class*="-leave-active"]:not(.tl-ub-c)'); } catch (e) { return false; } };
+  // (a click "pressed" on an element as the mouse presses it: FR24's X may answer to the press, not only to the click)
+  function pressEl(el) {
+    const r = el.getBoundingClientRect(), o = { bubbles: true, cancelable: true, view: window, button: 0, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 };
+    ubProg++;
+    try {
+      const P = typeof PointerEvent === 'function' ? PointerEvent : MouseEvent;
+      el.dispatchEvent(new P('pointerdown', Object.assign({ pointerId: 1, isPrimary: true }, o))); el.dispatchEvent(new MouseEvent('mousedown', o));
+      el.dispatchEvent(new P('pointerup', Object.assign({ pointerId: 1, isPrimary: true }, o))); el.dispatchEvent(new MouseEvent('mouseup', o));
+      el.dispatchEvent(new MouseEvent('click', o));
+    } finally { ubProg--; }
+  }
+  // (the window open now, and how it and its button are drawn - its title in the page and shown, the classes and styles of
+  // the title and of every box round it, and of its button: anything FR24 does to put it away changes one of them)
+  function openWindowNow() {
+    if (unblockWindowOpen()) return ubFloat ? { label: 'LADD Unblock', float: true } : { label: 'LADD Unblock', item: HJ.item };
+    if (HJ.st !== 'off') return null;
+    const it = [...ubItems.entries()].find(([, x]) => openItems().includes(x));
+    return it ? { label: it[0], item: it[1] } : null;
+  }
+  function drawnSig(w) {
+    if (w.float) return 'float|' + (ubFloat ? 1 : 0);
+    const t = barTitles(w.label)[0], out = [];
+    if (!t) return 'none';
+    for (let a = t; a && a.nodeType === 1; a = a.parentElement) out.push((a.getAttribute('class') || '') + '/' + (a.getAttribute('style') || ''));
+    return [shownEl(t) ? 1 : 0, w.item && w.item.isConnected ? sigOf(lookOf(w.item)) : '', HJ.st, ...out].join('|');
+  }
   const pickSig = () => { const ps = document.querySelectorAll(UB_PANEL_SEL), cs = document.querySelector('[data-testid="aircraft-panel__header__callsign"]'); return ps.length + '|' + (cs ? cs.textContent.trim() : '') + '|' + location.href; };
-  function isOpenNow(label, item) {
-    if (label === 'LADD Unblock') return unblockWindowOpen();
-    return !!item && item.isConnected && openItems().includes(item);
-  }
-  // (put away as its X does: true where its X was pressed, or its button)
-  function mapShut(label, item, again) {
-    if (label === 'LADD Unblock' && ubFloat) { closeStandIn(); return true; }
-    const w = barWindow(label), x = w && closeBtnIn(w.box, w.title);
-    if (x) { progClick(x); return true; }
-    if (again || leavingNow()) return false;
-    if (label === 'LADD Unblock') {
-      if (HJ.st === 'on' && HJ.item && HJ.item.isConnected && HJ.rest && sigOf(lookOf(HJ.item)) !== HJ.rest && HJ.host && shownEl(HJ.host)) { closeUnblockWindow(); return true; }
-      return false;
-    }
-    if (label !== 'Playback' && isOpenNow(label, item)) { progClick(item); return true; }
-    return false;
-  }
   function onTheMap(t) {
     if (!t || t.nodeType !== 1 || !t.isConnected) return false;
     if (t.closest('.tl-ub,.tl-ub-c,.tl-ub-btn,.tl-ub-face,.tl-pop,.tl-strip,[data-tl-ub-host],[role="dialog"]') || (ubBar && ubBar.contains(t))) return false;
@@ -13935,28 +13960,33 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     return r.width * r.height >= 0.5 * W * H;
   }
   function onMapDown(ev) {
-    const t = ev.target;
-    if (t && t.nodeType === 1 && ((ubBar && ubBar.contains(t)) || t.closest('.tl-ub-btn,.tl-ub-face'))) ubBarAt = clock();
-    ubDown = ev.button === 0 && ev.isPrimary !== false ? { x: ev.clientX, y: ev.clientY, t: clock(), el: t, pick: pickSig() } : null;
+    ubDown = null;
+    if (ubProg || ev.button !== 0 || ev.isPrimary === false || !onTheMap(ev.target)) return;
+    // (as it is drawn the moment the map is pressed - before FR24 hears of the press)
+    const w = openWindowNow(); if (!w) return;
+    ubDown = { x: ev.clientX, y: ev.clientY, t: clock(), w, sig: drawnSig(w), pick: pickSig() };
   }
   function onMapUp(ev) {
     const d = ubDown; ubDown = null;
-    if (!d || ev.button !== 0 || clock() - d.t > 800 || Math.abs(ev.clientX - d.x) > 6 || Math.abs(ev.clientY - d.y) > 6) return;
-    if (!onTheMap(d.el) || !onTheMap(ev.target)) return;
-    const body = unblockWindowOpen() ? ubBody : null;
-    const it = body || HJ.st !== 'off' ? null : [...ubItems.entries()].find(([, x]) => openItems().includes(x));
-    if (!body && !it) return;
-    const label = body ? 'LADD Unblock' : it[0], item = body ? null : it[1];
+    if (!d || ubProg || ev.button !== 0 || clock() - d.t > 800 || Math.abs(ev.clientX - d.x) > 6 || Math.abs(ev.clientY - d.y) > 6 || !onTheMap(ev.target)) return;
+    const w = d.w;
+    // (looked at once FR24 has had the click - Google's map tells of it a moment after - and has begun putting its window
+    // away if it does; and, where something about it changed, once more a second on: still there, drawn as then - FR24 is
+    // not putting it away)
+    const shut = () => {
+      if (w.float) { if (ubFloat) closeStandIn(); return; }
+      const bw = barWindow(w.label), x = bw && closeBtnIn(bw.box, bw.title);
+      if (x) pressEl(x);
+    };
+    const still = () => { const o = openWindowNow(); return !!o && o.label === w.label && (w.float || o.item === w.item); };
     setTimeout(() => {
       try {
-        if (body ? !(unblockWindowOpen() && ubBody === body) : !(HJ.st === 'off' && isOpenNow(label, item))) return;
-        if (label === 'Playback' && pickSig() !== d.pick) return;
-        const at = clock();
-        if (!mapShut(label, item, false)) return;
-        // (back again with nothing pressed on the bar: put away once more - by its X only)
-        setTimeout(() => { try { if (ubBarAt < at && isOpenNow(label, item)) mapShut(label, item, true); } catch (e) { log('LADD Unblock window', e); } }, 900);
+        if (!still() || (w.label === 'Playback' && pickSig() !== d.pick)) return;
+        const s1 = drawnSig(w);
+        if (s1 === d.sig) return shut();
+        setTimeout(() => { try { if (still() && drawnSig(w) === s1 && !(w.label === 'Playback' && pickSig() !== d.pick)) shut(); } catch (e) { log('LADD Unblock window', e); } }, 1000);
       } catch (e) { log('LADD Unblock window', e); }
-    }, 300);
+    }, 600);
   }
 
   // ---- the button on FR24's bar ---------------------------------------------------------------------------------------

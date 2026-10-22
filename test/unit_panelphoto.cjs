@@ -7,7 +7,10 @@
 //   - the pictures drawn by the userscript while FR24 still shows its fallback: FR24's photo size exactly, one credit, its
 //     dots working, FR24's fallback hidden; nothing of FR24's own elements changed
 //   - the pictures then handed to FR24 (its slideshow): ours gone, FR24's alone - its size, one credit, its dots
-//   - FR24's slideshow coming within a moment of the pictures, or before them: nothing of ours drawn, not for one frame
+//   - the pictures known as the panel opens: drawn at once - FR24's thin fallback not shown, not for a moment - and FR24's
+//     slideshow coming a moment later takes their place; FR24's own pictures in its first answer: nothing of ours
+//   - the pictures still being looked up: an empty frame of FR24's photo size, never FR24's fallback; then the pictures.
+//     Looked up and none found: FR24's fallback
 //   - in no frame a picture shorter than FR24's own, or two credits
 // Needs Playwright and Vue 3's browser build (skipped without): PLAYWRIGHT_PATH=<its module dir> CHROMIUM=<binary>
 // VUE_PATH=<vue.global.js>. SHOTS=<dir> keeps screenshots.
@@ -41,7 +44,8 @@ const NATIVE = PHOTOS.map(p => ({ src: p.large, url: p.link, copyright: p.credit
 const STUBS = `
 window.GM_info = { scriptHandler: 'Tampermonkey', version: '5.3' };
 window.unsafeWindow = window; window.GM_notification = () => {};
-window.GM_xmlhttpRequest = o => { setTimeout(() => o.onload && o.onload({ status: 404, responseText: '', response: '' }), 2); return { abort() {} }; };
+// (JetPhotos and Planespotters never answering: a lookup still running stays so)
+window.GM_xmlhttpRequest = o => { if (/jetphotos|planespotters|plnspttrs/.test(o.url)) return { abort() {} }; setTimeout(() => o.onload && o.onload({ status: 404, responseText: '', response: '' }), 2); return { abort() {} }; };
 // (each frame: the picture drawn in the panel - its height - and the credits drawn)
 window.__F = null;
 (function probe() {
@@ -81,10 +85,10 @@ window.__F = null;
     const look = () => page.evaluate(() => window.__look());
     const rec = async (act, ms) => { await page.evaluate(() => { window.__F = []; }); await act(); await sleep(ms); return page.evaluate(() => { const f = window.__F; window.__F = null; return f; }); };
     // a LADD flight opened: the userscript's record of it (named, its pictures in), FR24's stream naming the flight
-    const open = (id, hex, cs) => page.evaluate(([id, hex, cs, photos]) => {
-      window.__tweeksLadd.live.set(id, { id, hex, cs, reg: '', type: 'GLF5', ladd: true, photos, photoV: 99, photoLevel: 2, photoAt: Date.now() });
+    const open = (id, hex, cs, photos, level, reg) => page.evaluate(([id, hex, cs, photos, level, reg]) => {
+      window.__tweeksLadd.live.set(id, { id, hex, cs, reg, type: 'GLF5', ladd: true, photos, photoV: 99, photoLevel: level, photoAt: Date.now() });
       window.postMessage({ __tweeksLadd: 'follow', id }, '*');
-    }, [id, hex, cs, PHOTOS]);
+    }, [id, hex, cs, photos || PHOTOS, level == null ? 2 : level, reg || '']);
 
     // ---- an ordinary aircraft's picture as FR24 draws it: the size every picture must have
     await page.evaluate(([n]) => { window.__P.images = [n[0]]; window.__P.hex = '4CA7B1'; window.__P.cs = 'RYR8SF'; }, [NATIVE]);
@@ -123,12 +127,27 @@ window.__F = null;
     check('... its dots working: the second picture, same size, one credit', !!L.photo && L.photo.src === PS && Math.abs(L.photo.h - H0) <= 1 && L.credits.length === 1 && L.ours === 0, L);
     await shot(page, 'ladd-fr24');
 
-    // ---- T7OKS: FR24's slideshow with the pictures a moment after the record (the page handing them over): nothing of ours
+    // ---- T7OKS: its pictures known as it opens - drawn at once; FR24's slideshow with them a moment after takes their place
     await page.evaluate(() => { window.__P.images = []; window.__P.n = 0; });
     f = await rec(async () => { await open(0x3c7b0002, '50049c', 'T7OKS'); await sleep(400); await page.evaluate(([n]) => { window.__P.images = n.slice().reverse(); }, [NATIVE]); }, 2500);
     L = await look();
-    check('T7OKS: FR24\'s slideshow a moment after the pictures - nothing of ours drawn, not for one frame', f.every(x => x.ours === 0) && !!L.photo && !L.photo.ours && L.photo.src === PS, { ours: Math.max(...f.map(x => x.ours)), L });
-    check('... its first slide at FR24\'s size, one credit: "© yh0403_WSSS"', f.filter(x => x.photo).every(x => Math.abs(x.photo.h - H0) <= 1) && L.credits.length === 1 && L.credits[0] === '© yh0403_WSSS', L);
+    const fbAt = f.findIndex(x => x.fb), ourAt = f.findIndex(x => x.ours);
+    check('T7OKS, its pictures known: drawn at once - FR24\'s thin fallback gone within a frame or two of the panel being ours, never back', ourAt >= 0 && ourAt <= 3 && !f.slice(ourAt).some(x => x.fb), { fbAt, ourAt, fb: f.filter(x => x.fb).length });
+    check('... then FR24\'s slideshow with them: ours gone, FR24\'s alone - its first slide at FR24\'s size, one credit: "© yh0403_WSSS"', !!L.photo && !L.photo.ours && L.ours === 0 && L.photo.src === PS && f.filter(x => x.photo).every(x => Math.abs(x.photo.h - H0) <= 1) && f.every(x => x.credits.length <= 1) && L.credits.length === 1 && L.credits[0] === '© yh0403_WSSS', L);
+
+    // ---- N50JE: its pictures still being looked up as it opens - an empty frame of FR24's photo size, never FR24's fallback
+    await page.evaluate(() => { window.__P.images = []; window.__P.n = 0; });
+    f = await rec(() => open(0x3c7b0004, 'a65f2c', 'N50JE', [], 0, 'N50JE'), 1200);
+    const wait = await page.evaluate(() => { const w = document.querySelector('.tl-photo.tl-photo-wait'), r = w && w.getBoundingClientRect(); return w ? { h: Math.round(r.height * 10) / 10, w: Math.round(r.width) } : null; });
+    const fb0 = f.findIndex(x => x.fb), w0 = f.findIndex(x => x.ours);
+    check('N50JE, its pictures being looked up: an empty frame at FR24\'s photo size in place of FR24\'s fallback - the fallback not shown after it', !!wait && Math.abs(wait.h - H0) <= 1 && w0 >= 0 && w0 <= 3 && !f.slice(w0).some(x => x.fb || x.photo), { wait, H0, fb0, w0 });
+    f = await rec(() => page.evaluate(([photos]) => { const r = window.__tweeksLadd.live.get(0x3c7b0004); r.photos = photos; r.photoLevel = 2; }, [PHOTOS]), 1600);
+    L = await look();
+    check('... the pictures in: drawn in the frame, at FR24\'s size, one credit - no fallback in between', !!L.photo && L.photo.ours && L.photo.src === JP && Math.abs(L.photo.h - H0) <= 1 && L.credits.length === 1 && !f.some(x => x.fb), L);
+    await page.evaluate(() => { window.__P.images = []; window.__P.n = 0; });
+    f = await rec(() => open(0x3c7b0005, 'a65f2d', 'N51JE', [], 2), 1200);
+    L = await look();
+    check('looked up and none found: FR24\'s fallback, nothing of ours', L.fb && L.ours === 0 && !L.photo, L);
 
     // ---- FR24's slideshow before the record (FR24's own pictures in its first answer): nothing of ours
     await page.evaluate(([src]) => { window.__P.images = [{ src, url: 'https://www.jetphotos.com/photo/70', copyright: 'FR24 own' }]; window.__P.n = 0; }, [JP0]);
