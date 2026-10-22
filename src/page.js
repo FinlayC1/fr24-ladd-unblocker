@@ -2769,6 +2769,8 @@
       // (OpenStreetMap's Overpass answers a browser's own request; the userscript asks it through here)
       else if (d.__tweeksLadd === 'osmReq') { if (d.key && /^https:\/\/overpass-api\.de\/api\/interpreter\?data=/.test(String(d.url || ''))) oFetch.call(window, d.url).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) { post('osmRes', { key: d.key, j: j }); }, function () { post('osmRes', { key: d.key, j: null }); }); }
       else if (d.__tweeksLadd === 'photosDone') acceptPhotosDone(d);
+      // (what the two networks' trace files answered this browser lately - __tweeksLaddBridge.stats.net in the console)
+      else if (d.__tweeksLadd === 'netDiag') { if (d.net && typeof d.net === 'object') stats.net = d.net; }
       else if (d.__tweeksLadd === 'scan') runScan(d.regions || [], d.opts || {});
       // (the health check's figures - the extension's script runs in its own world and cannot read this one's objects)
       else if (d.__tweeksLadd === 'stats?') post('stats', { stats: stats });

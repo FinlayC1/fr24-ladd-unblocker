@@ -1107,9 +1107,20 @@
     apl: { name: 'airplanes.live', site: 'https://globe.airplanes.live/', url: (hex, day) => `https://globe.airplanes.live/${day ? 'globe_history/' + day : 'data'}/traces/${hex.slice(-2)}/trace_full_${hex}.json` }
   };
   // (how each answered lately: the window's sources and the log page say it - a verification page above all)
-  const netState = { lol: { ok: 0, none: 0, wall: 0, err: 0, wallUntil: 0, wallAt: 0, okAt: 0, last: '', lastAt: 0, probe: null }, apl: { ok: 0, none: 0, wall: 0, err: 0, wallUntil: 0, wallAt: 0, okAt: 0, last: '', lastAt: 0, probe: null } };
-  const WALL_RE = /verif(?:y|ying|ication)|challenge|just a moment|attention required|cf-chl|captcha|are you (?:a )?(?:human|robot)/i;
-  const wallText = id => `verification page (open ${NETS[id].site} once in a tab, then reload FR24)`;
+  const netState = { lol: { ok: 0, none: 0, wall: 0, err: 0, wallUntil: 0, wallAt: 0, okAt: 0, last: '', lastAt: 0, probe: null, bad: null, wallErr: '' }, apl: { ok: 0, none: 0, wall: 0, err: 0, wallUntil: 0, wallAt: 0, okAt: 0, last: '', lastAt: 0, probe: null, bad: null, wallErr: '' } };
+  // (a verification page by what it is - adsb.lol's proof-of-work page, Cloudflare's challenge - not by any page saying
+  // "verify": a 403 or a site's own error page is a refusal, said as one)
+  const WALL_RE = /<title>\s*(?:verification|just a moment|attention required)|verifying connection|solving security challenge|proof[- ]of[- ]work|cf[-_]chl|challenge-platform|cf-browser-verification/i;
+  const titleOf = text => { const m = /<title[^>]*>([^<]{0,80})/i.exec(String(text || '').slice(0, 6000)); return m ? m[1].replace(/\s+/g, ' ').trim() : ''; };
+  const snippetOf = text => String(text || '').slice(0, 6000).replace(/<(script|style)[\s\S]*?<\/\1>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160);
+  // (what a network answered, said: the status and the page's title - "verification page (HTTP 403, "Just a moment...")")
+  const answerText = (what, r) => `${what} (HTTP ${r.status}${titleOf(r.text) ? ', "' + titleOf(r.text) + '"' : ''})`;
+  // (the last answer of each network that was not a file: kept, and handed to the page - __tweeksLaddBridge.stats.net in the
+  // console - to say what this browser is being sent)
+  function noteBad(id, url, r, c) {
+    const S = netState[id]; S.bad = { at: new Date().toISOString().slice(0, 19), url: url.replace(/^https:\/\//, ''), status: r.status, kind: c.state, title: titleOf(r.text), text: snippetOf(r.text) };
+    postToPage('netDiag', { net: Object.fromEntries(Object.entries(netState).map(([k, v]) => [k, { ok: v.ok, none: v.none, wall: v.wall, err: v.err, last: v.last, bad: v.bad }])) });
+  }
   // (one answer: { state: 'ok', j } | 'none' | 'wall' | 'rate' | 'err', err)
   function classifyTrace(hex, status, text) {
     const body = String(text || ''), head = body.slice(0, 4000).replace(/^\uFEFF/, '').trimStart();
@@ -1122,12 +1133,12 @@
         if (ic && ic !== hex) return { state: 'err', err: 'another aircraft\'s file' };
         return { state: 'ok', j };
       }
-      if (head[0] === '<' && WALL_RE.test(head)) return { state: 'wall', err: 'verification page' };
-      return { state: 'err', err: head ? 'not a trace file' : 'empty answer' };
+      if (head[0] === '<' && WALL_RE.test(body.slice(0, 30000))) return { state: 'wall', err: answerText('verification page', { status, text: body }) };
+      return { state: 'err', err: head ? answerText('not a trace file', { status, text: body }) : 'empty answer' };
     }
     if (status === 429) return { state: 'rate', err: 'HTTP 429' };
-    if (status >= 400 && status !== 404 && WALL_RE.test(body.slice(0, 30000))) return { state: 'wall', err: 'verification page (HTTP ' + status + ')' };
-    return { state: 'err', err: status ? 'HTTP ' + status : 'no answer' };
+    if (status >= 400 && status !== 404 && WALL_RE.test(body.slice(0, 30000))) return { state: 'wall', err: answerText('verification page', { status, text: body }) };
+    return { state: 'err', err: status ? answerText(status >= 500 ? 'server error' : 'refused', { status, text: body }) : 'no answer' };
   }
   const traceMeta = new Map();   // hex -> { r, t, desc, ownOp, year, at }
   function learnTraceMeta(hex, j) {
@@ -1157,20 +1168,21 @@
   async function readTrace1(id, hex, day, opts) {
     const N = NETS[id], S = netState[id], o = opts || {};
     const out = (state, x) => { S[state] = (S[state] || 0) + 1; S.last = state === 'err' ? x.err : state; S.lastAt = now(); if (state === 'ok' || state === 'none') S.okAt = now(); else if (!x.cached) S.lastBadAt = now(); return Object.assign({ net: N.name, id, state, pts: [], j: null, err: '' }, x); };
-    if (S.wallUntil > now()) return out('wall', { err: wallText(id), cached: true });
+    if (S.wallUntil > now()) return out('wall', { err: S.wallErr || 'verification page', cached: true });
     for (let attempt = 0; ; attempt++) {
       let r;
       // (a verification page met by another request while this one waited its turn: not sent)
       try { r = await gmRequest(N.url(hex, day), { raw: true, timeout: 20000, priority: !!o.priority, bg: !!o.bg, idle: !!o.idle, skip: () => S.wallUntil > now() }); }
       catch (e) {
         const m = String(e && e.message || e).replace(/^Error:\s*/, '').slice(0, 60);
-        if (m === 'skipped') return out('wall', { err: wallText(id), cached: true });
+        if (m === 'skipped') return out('wall', { err: S.wallErr || 'verification page', cached: true });
         if (attempt < 1 && !/aborted|unavailable/.test(m)) { await sleep(o.priority ? 1500 : 6000); continue; }
         return out('err', { err: m });
       }
       const c = classifyTrace(hex, r.status, r.text);
       if (c.state === 'rate' && attempt < 2) { await sleep(4000 * (attempt + 1)); continue; }
-      if (c.state === 'wall') { S.wallUntil = now() + 10 * 60000; S.wallAt = now(); log(N.name + ': verification page - not asked again for 10 min'); return out('wall', { err: wallText(id) }); }
+      if (c.state !== 'ok' && c.state !== 'none') noteBad(id, N.url(hex, day), r, c);
+      if (c.state === 'wall') { S.wallUntil = now() + 10 * 60000; S.wallAt = now(); S.wallErr = c.err; log(N.name + ': ' + c.err + ' - not asked again for 10 min'); return out('wall', { err: c.err }); }
       if (c.state === 'ok') { learnTraceMeta(hex, c.j); return out('ok', { j: c.j, pts: ENGINE.parseTrace(c.j) }); }
       if (c.state === 'none') return out('none', {});
       return out('err', { err: c.err });

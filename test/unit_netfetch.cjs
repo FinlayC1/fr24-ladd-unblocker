@@ -96,6 +96,9 @@ function makeWin() {
 
   // ---- 1. each kind of answer told apart -------------------------------------------------------------------------
   const C = (st, body, hex) => L.classifyTrace(hex || HEX, st, body);
+  // (pages that say "verify" or "challenge" but are no verification page: a refusal, said as one)
+  const notWall = [C(403, '<html><head><title>403 Forbidden</title></head><body>Please verify the address</body></html>'), C(200, '<!doctype html><html><head><title>airplanes.live</title></head><body>challenge coins for sale</body></html>')];
+  check('a refusal or a site\'s own page that mentions "verify" or "challenge": not taken for a verification page', notWall.every(r => r.state === 'err') && /refused \(HTTP 403, "403 Forbidden"\)/.test(notWall[0].err), notWall);
   const kinds = {
     file: C(200, json(REAL)).state, none: C(404, '').state, powWall: C(403, POW).state, cfWall: C(403, CF).state, wall200: C(200, POW).state,
     rate: C(429, '').state, cut: C(200, json(REAL).slice(0, 5000)).state, other: C(200, json(Object.assign({}, REAL, { icao: 'abcdef' }))).state,
@@ -115,7 +118,9 @@ function makeWin() {
   asked.length = 0;
   { const a = await L.readTrace('lol', HEX, '2026/01/03', {}), b = await L.readTrace('lol', HEX, '2026/01/04', {});
     const lolAsked = asked.filter(x => x[0] === 'lol').length;
-    check('adsb.lol\'s verification page: read as one - with the way through (open adsb.lol in a tab)', a.state === 'wall' && /verification page/.test(a.err) && /adsb\.lol/.test(a.err), a.err);
+    check('adsb.lol\'s verification page: read as one - said with its status and title', a.state === 'wall' && a.err === 'verification page (HTTP 403, "Verification")', a.err);
+    const diag = posted.filter(d => d && d.__tweeksLadd === 'netDiag').pop();
+    check('... what this browser was sent handed to the page for the console (status, title, its first words; no request made again)', !!diag && diag.net.lol.bad.status === 403 && diag.net.lol.bad.title === 'Verification' && /Verifying connection/.test(diag.net.lol.bad.text) && /adsb\.lol\/globe_history\/2026\/01\/03\//.test(diag.net.lol.bad.url), diag && diag.net.lol.bad);
     check('... and not asked again for ten minutes: the next day answered from that, no request', b.state === 'wall' && lolAsked === 1 && L.netState.lol.wallUntil > Date.now() + 9 * 60000, { lolAsked, until: L.netState.lol.wallUntil - Date.now() });
     const src = L.sourcesHtml();
     check('... said in the sources pop-over: "verification page", with the site to open', /adsb\.lol \(flight logs[^<]*<\/span> <span style="color:#e05252">verification page<\/span>/.test(src) && /href="https:\/\/adsb\.lol\/"/.test(src), (src.match(/adsb\.lol \(flight logs.{0,300}/) || [])[0]); }
@@ -134,10 +139,11 @@ function makeWin() {
   check('two days ago - adsb.lol walling, airplanes.live with its file: the day\'s flights in the log (Morristown - New Haven among them)', d2.includes('MMU-HVN') && d2.some(x => /LUK-MMU|CVG-MMU/.test(x)), d2);
   check('... marked part of it (adsb.lol did not answer: read again later), the reason kept', h.days[D2] === 'p' && /adsb\.lol: .*verification page/.test(h.err[D2] || ''), { mark: h.days[D2], err: h.err[D2] });
   check('yesterday - adsb.lol walling, no file at airplanes.live: not known - never a day without flights; asked again later', !h.days[D1] && !!h.miss[D1] && /verification page/.test(h.err[D1] || ''), { mark: h.days[D1], miss: !!h.miss[D1] });
-  check('three days ago - neither answering (wall, 502): not known either', !h.days[D3] && !!h.miss[D3] && /airplanes\.live: HTTP 502/.test(h.err[D3] || ''), h.err[D3]);
+  check('three days ago - neither answering (wall, 502): not known either', !h.days[D3] && !!h.miss[D3] && /airplanes\.live: server error \(HTTP 502\)/.test(h.err[D3] || ''), h.err[D3]);
   check('... adsb.lol asked at most once in all of it (its verification page remembered)', asked.filter(x => x[0] === 'lol').length <= 1, asked.filter(x => x[0] === 'lol'));
   const gaps = L.logGaps(HEX);
   check('the log page says it: adsb.lol showing this browser a verification page, with the site to open; the days not fully read', /adsb\.lol is showing this browser a verification page/.test(gaps) && /href="https:\/\/adsb\.lol\/"/.test(gaps) && /days? not fully read yet/.test(gaps), gaps);
+  check('... on a line of its own under the summary (a block that wraps - the footer no longer widens FR24\'s table)', /^<div class="tl-foot-note">[\s\S]*<\/div>$/.test(gaps) && /tr\.tl-foot td\{[^}]*white-space:normal!important/.test(SRC), gaps.slice(0, 80));
 
   // ---- 5. both networks answering "no file": a day without flights ----------------------------------------------------
   { const hx = 'a9ca9e'; NET.lol.def = [404, '']; L.netState.lol.wallUntil = 0;

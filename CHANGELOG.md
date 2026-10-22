@@ -2,6 +2,23 @@
 
 All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PATCH`. The userscript and the monitor are released together.
 
+## [22.31.10] - 2026-10-22
+
+### Fixed
+- **The flight log page's layout.** 22.31.9's notice under the log (a verification page, the days not fully read) was one long line in a table cell that FR24 keeps on one line, so it stretched the whole table far past FR24's page. The footer now wraps inside the table, and the notices are on a line of their own, shorter.
+- **A verification page is recognised by what it is.** 22.31.9 took any refusal or error page that mentioned "verify" or "challenge" for one. Now only adsb.lol's proof-of-work page and Cloudflare's challenge count. Anything else is said as what it is, with its status and the page's title: "refused (HTTP 403, "403 Forbidden")", "server error (HTTP 502)".
+
+### Added
+- **What the two networks actually send this browser**, readable in the console: `__tweeksLaddBridge.stats.net`. For each network: the counts of files, "no file", verification pages and failures, and the last answer that wasn't a file (address, status, page title, first words).
+- **The log page says how far the monitor has got with adsb.lol's archives** ("the monitor has 12 of the last 40 days from adsb.lol's archives (reading 2026-10-10)"), or that it runs an older version and needs **Update monitor**. `/status` now counts the archive days read (`archive.have`).
+
+### Tests
+- `unit_netfetch`:
+  - pages mentioning "verify" or "challenge" that aren't verification pages;
+  - the status and title in the reason;
+  - the diagnostics handed to the page;
+  - the footer notices in their own wrapping block.
+
 ## [22.31.9] - 2026-10-22
 
 ### Fixed

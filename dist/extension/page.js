@@ -1,4 +1,4 @@
-// FR24 LADD Unblocker 22.31.9 - the page-world part (see src/page.js)
+// FR24 LADD Unblocker 22.31.10 - the page-world part (see src/page.js)
 (function () {
   'use strict';
   // ------------------------------------------------------------------------------------------------------------
@@ -7,7 +7,7 @@
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "22.31.9";
+    var BRIDGE_V = "22.31.10";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed
@@ -2772,6 +2772,8 @@
       // (OpenStreetMap's Overpass answers a browser's own request; the userscript asks it through here)
       else if (d.__tweeksLadd === 'osmReq') { if (d.key && /^https:\/\/overpass-api\.de\/api\/interpreter\?data=/.test(String(d.url || ''))) oFetch.call(window, d.url).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) { post('osmRes', { key: d.key, j: j }); }, function () { post('osmRes', { key: d.key, j: null }); }); }
       else if (d.__tweeksLadd === 'photosDone') acceptPhotosDone(d);
+      // (what the two networks' trace files answered this browser lately - __tweeksLaddBridge.stats.net in the console)
+      else if (d.__tweeksLadd === 'netDiag') { if (d.net && typeof d.net === 'object') stats.net = d.net; }
       else if (d.__tweeksLadd === 'scan') runScan(d.regions || [], d.opts || {});
       // (the health check's figures - the extension's script runs in its own world and cannot read this one's objects)
       else if (d.__tweeksLadd === 'stats?') post('stats', { stats: stats });
