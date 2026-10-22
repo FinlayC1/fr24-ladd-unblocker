@@ -254,14 +254,17 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   const linksHtml = rec => { const hx = withStored(rec), a = aircraftLinks(hx); return `${a ? `<div class="tl-links">${a}</div>` : ''}<div class="tl-links">${toolLinks(rec)}</div>`; };
   // An aircraft's pictures are FR24's own slideshow's: the page puts them into FR24's panel stream (page.js, the aircraft
   // block), so they are drawn exactly as FR24 draws its own - its size and crop, its credit, its dots. Only while FR24
-  // still draws no picture of the aircraft (its fallback: the "blocked" drawing, a sideview) are they drawn here, and
-  // only once the page has had a moment to hand them over: a frame of FR24's own photo size (the panel's width, 16:9)
-  // in place of FR24's fallback, which is hidden meanwhile (a stylesheet rule on the element after ours - nothing of
-  // FR24's own is changed), the credit at its bottom left as FR24's, dots for more than one. It goes the moment FR24
-  // draws a picture itself. (The picture used to be written into FR24's fallback picture: a sideview's frame, wide and
-  // short - 270 x 110 - with a second credit of ours at its bottom right, beside FR24's own, and FR24 kept drawing into
-  // those same elements: JNY5's and T7OKS's first slide, short, with two credits)
-  const PHOTO_WAIT = 1500;
+  // still draws no picture of the aircraft (its fallback: the "blocked" drawing, a sideview, or its stock picture of the
+  // type) are they drawn here - at once: a frame of FR24's own photo size (the panel's width, 16:9) in place of FR24's,
+  // which is hidden meanwhile (a stylesheet rule on the element after ours - nothing of FR24's own is changed), the
+  // credit at its bottom left as FR24's, dots for more than one. It goes the moment FR24 draws a picture itself. While
+  // its pictures are still being looked up (JetPhotos, Planespotters, the monitor's), the same frame, empty: FR24's thin
+  // stock picture is shown only once they are known to have none. (They were drawn here only after a second and a half,
+  // FR24's stock picture showing until then - a thin strip, then the photo; and earlier written into FR24's fallback
+  // picture itself: a sideview's frame, wide and short, with two credits - JNY5's and T7OKS's first slide)
+  const PHOTO_PEND_MAX = 10000;
+  // (its pictures still being looked up: a lookup running for it, or none answered yet - not for ever)
+  const photoPending = hx => !!hx && !!hx.hex && (photoInFlight.has(hx.hex) || ((hx.photoLevel || 0) < 2 && !(hx.photos || []).length));
   const notPhoto = /sideview|blocked|jp-promo|airport-data|placeholder/i;
   // (FR24's stock picture of the type, "© Flightradar24", is no picture of the aircraft: not one of FR24's own either)
   const stockSlide = i => { const s = i.closest('li') || i.parentElement; return !!s && /©\s*flightradar\s*24\s*$/i.test(clean(s.textContent)); };
@@ -281,19 +284,24 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   function applyPhoto(panel, rec) {
     const list = goodPhotos(rec.photos).filter(p => p.large || p.medium || p.thumb).slice(0, 3);
     // (FR24 draws a picture itself - ours, handed over, or its own: nothing of ours beside it)
-    if (!list.length || fr24Photo(panel)) { panel.__tlPhWait = null; return dropPhoto(panel); }
-    const key = (rec.hex || '') + '|' + list.map(p => noBar(p.large || p.medium || p.thumb)).join('|');
+    if (fr24Photo(panel)) { panel.__tlPhPend = null; return dropPhoto(panel); }
+    let key;
+    if (list.length) { panel.__tlPhPend = null; key = (rec.hex || '') + '|' + list.map(p => noBar(p.large || p.medium || p.thumb)).join('|'); }
+    else {
+      // (none yet: an empty frame while they are being looked up - ten seconds at most - then FR24's own)
+      const pend = panel.__tlPhPend && panel.__tlPhPend.hex === rec.hex ? panel.__tlPhPend : (panel.__tlPhPend = { hex: rec.hex, at: now() });
+      if (!photoPending(rec) || now() - pend.at > PHOTO_PEND_MAX) return dropPhoto(panel);
+      setTimeout(syncPanelSoon, 1000);
+      key = (rec.hex || '') + '|wait';
+    }
     let el = panel.querySelector('.tl-photo');
     if (!el || el.dataset.key !== key) {
-      // (the page hands the pictures to FR24 within a moment of their coming: FR24's own slideshow then, not this)
-      const w = panel.__tlPhWait;
-      if (!el && (!w || w.key !== rec.hex)) { panel.__tlPhWait = { key: rec.hex, at: now() }; setTimeout(syncPanelSoon, PHOTO_WAIT + 50); return; }
-      if (!el && now() - w.at < PHOTO_WAIT) return;
       if (!el) {
         el = document.createElement('div'); el.className = 'tl-photo';
-        el.addEventListener('click', e => { const b = e.target.closest('button[data-n]'); if (!b) return; e.preventDefault(); e.stopPropagation(); el.innerHTML = photoHtml(el.__tlList, Number(b.dataset.n)); });
+        el.addEventListener('click', e => { const b = e.target.closest('button[data-n]'); if (!b || !el.__tlList) return; e.preventDefault(); e.stopPropagation(); el.innerHTML = photoHtml(el.__tlList, Number(b.dataset.n)); });
       }
-      el.__tlList = list; el.dataset.key = key; el.innerHTML = photoHtml(list, 0);
+      el.__tlList = list.length ? list : null; el.dataset.key = key; el.innerHTML = list.length ? photoHtml(list, 0) : '';
+      el.classList.toggle('tl-photo-wait', !list.length);
     }
     // (right before FR24's frame - the stylesheet hides the element after ours - wherever FR24 has put it now)
     const slot = photoSlot(panel); if (!slot || !slot.parentElement) return dropPhoto(panel);

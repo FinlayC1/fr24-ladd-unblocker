@@ -2,6 +2,25 @@
 
 All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PATCH`. The userscript and the monitor are released together.
 
+## [22.31.2] - 2026-10-22
+
+### Fixed
+- **A click on the map closed a bottom-bar window and opened it again, over and over, and could open Widgets from another window.** FR24 puts its window away itself on a map click. 22.31.0 then pressed the window's bar button, which opened it again. 22.31.1 pressed the window's X, but when it didn't recognise FR24's X it still pressed the bar button, or any picture-only button it found level with the title, even outside the window (one opened Widgets).
+  - A map click no longer presses any bar button.
+  - The window and its button are watched from the moment the map is pressed. If FR24 puts the window away, or redraws it or its button, it is left to FR24.
+  - Only a window FR24 leaves exactly as it was is closed, by its own X. The X is looked for only in the window's title band, as a button or as a picture with a click on it.
+  - If no X is found there, nothing is pressed.
+- **Photos: a thin stock picture first, the carousel later.** The panel drew our photos over FR24's picture only after a second and a half, and FR24's thin stock picture or sideview showed until then.
+  - Photos already known are drawn the moment the panel opens.
+  - While they are still being looked up (the monitor's cache, JetPhotos, Planespotters), an empty frame of FR24's photo size shows instead of the thin picture.
+  - FR24's own stock picture is shown only once the lookup has found none (or after 10 seconds without an answer).
+- **An FR24 tab already open did not see a new version for up to half an hour.** 22.31.0 still said "up to date" after 22.31.1 was merged: the tab had last asked GitHub before the merge, and asked again only every 30 minutes (GitHub's copy can also be up to 5 minutes old). It now also asks on coming back to the FR24 tab, when its last answer is over two minutes old, and every 10 minutes otherwise. Opening FR24 still asks at once.
+
+### Tests
+- `unit_barlook`, on an FR24 that puts its window away itself on a map click and draws its button at rest a while after. Its X is tried as a button, a picture, and one that opens what it closes, with a picture-only button of the page beside the windows that opens Widgets. Three windows and LADD Unblock are each put away and nothing opens again; 22.31.1's code reopened them and opened Widgets. On an FR24 that leaves the window open, its X is pressed; with a close button it can't recognise, nothing is pressed.
+- `unit_panelphoto`: photos known as the panel opens are drawn at once and FR24's slideshow takes over. While they are looked up, an empty frame at FR24's photo size shows, never the fallback, then the photos. Looked up with none found, FR24's fallback shows.
+- `unit_hello`: a version merged while FR24 is open. Coming back to the tab within two minutes of the last answer doesn't ask again; later, it does and the update banner comes up.
+
 ## [22.31.1] - 2026-10-22
 
 ### Fixed

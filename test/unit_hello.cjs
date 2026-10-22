@@ -184,6 +184,22 @@ const text = el => (el ? el.textContent.replace(/\s+/g, ' ').trim() : '');
     check('GitHub\'s version check alone (counting off), made as FR24 opens, puts the update banner up at once', !!upd && text(upd).includes(`LADD Unblocker v99.1.0 is out (you have v${VERSION})`) && E.hellos().length === 0, text(upd));
     E.win.close();
   }
+  // ---- a version merged while FR24 is open: shown on coming back to the tab
+  {
+    const o = { ls: { [KEYS.opts]: { count: false } } }, G = makeWin(o);
+    await until(() => G.doc.querySelector('.tl-ub-btn'), 4000);
+    const gh = () => G.reqs.filter(r => /githubusercontent\.com\/.*\/main\/package\.json/.test(r.url)).length;
+    await until(() => gh() >= 1, 3000); await sleep(100);
+    check('(up to date as FR24 opens: no banner)', !banner(G.doc, 'upd'));
+    o.latest = '99.5.0';
+    G.win.dispatchEvent(new G.win.Event('focus')); await sleep(100);
+    check('... back to the tab within two minutes of the last answer: not asked again', gh() === 1, gh());
+    const real = G.win.Date.now.bind(G.win.Date); G.win.Date.now = () => real() + 3 * 60000;
+    G.win.dispatchEvent(new G.win.Event('focus'));
+    const upd = await until(() => banner(G.doc, 'upd'), 3000);
+    check('... later, a version merged meanwhile: asked again on coming back, the update banner up at once', gh() === 2 && !!upd && text(upd).includes('v99.5.0 is out'), { asked: gh(), b: text(upd) });
+    G.win.close();
+  }
   // ---- LADD Unblock switched off: no banner, no hello
   {
     const F = makeWin({ ls: { [KEYS.opts]: { on: false }, [KEYS.hello]: { at: Date.now() - 13 * H, ver: VERSION, ans: { latest: '99.2.0', minVer: '', notice: NOTICE, at: Date.now() - H } } } });

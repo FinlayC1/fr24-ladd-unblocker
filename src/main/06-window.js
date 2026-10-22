@@ -123,12 +123,12 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   }
   // (main's package.json: a version merged to main is released as soon as its tests pass. The answer is kept across page
   // loads - the map's banner says a new version is out from the moment the page opens, not only once this window has
-  // asked again - and asked for again every half hour)
+  // asked again - and asked for again every ten minutes, and on coming back to the tab)
   const UB_LATEST_KEY = 'tweeks.fr24.ladd.latest';
   try { const L = JSON.parse(lsGet(UB_LATEST_KEY) || 'null'); if (L && /^\d+(\.\d+)*$/.test(L.v) && now() - L.at < 12 * 3600e3) ubLatest = { v: L.v, at: L.at }; } catch (e) { /* none kept */ }
   function checkLatest(force) {
     if (ubAsking) return ubAsking;
-    if (!force && ubLatest && now() - ubLatest.at < 30 * 60000) return Promise.resolve(ubLatest);
+    if (!force && ubLatest && now() - ubLatest.at < 10 * 60000) return Promise.resolve(ubLatest);
     ubAsking = gmRequest(UB_LATEST_URL + '?t=' + Math.floor(now() / 60000), { timeout: 15000 })
       .then(j => { const v = j && typeof j.version === 'string' && /^\d+(\.\d+)*$/.test(j.version) ? j.version : ''; ubLatest = v ? { v, at: now() } : { err: 'no version in the answer', at: now() }; if (v) lsSet(UB_LATEST_KEY, JSON.stringify(ubLatest)); })
       .catch(e => { ubLatest = { err: String(e && e.message || e), at: now() }; })
@@ -811,59 +811,76 @@ html.tl-no-strip .tl-strip{display:none!important}`;
 
   // ---- a click on the map puts the bar's open window away, as its X does ----------------------------------------------
   // A click - pressed and let go within a few pixels, not a drag of the map - on the map itself (FR24's map, or a canvas
-  // over most of the page), never in a window, on the bar or in a panel. LADD Unblock's window, or that of FR24's own
-  // Settings, Weather, Filters, Widgets or Playback: its own X pressed, a moment after - an X only ever closes, so a window
-  // FR24 is putting away itself (opening a flight, or on the map's click) is left to go. (Its button was pressed: FR24
-  // draws the button open a while after its window has gone, and the press opened it again.) Where no X is found, the
-  // button is pressed - only while nothing is being put away, and never Playback's. Back again a moment later with nothing
-  // pressed on the bar: its X pressed once more. Playback is left open where the click picked a flight on its map.
+  // over most of the page), never in a window, on the bar or in a panel: the window open - LADD Unblock's, or that of FR24's
+  // own Settings, Weather, Filters, Widgets or Playback - put away by its own X. Only where FR24 leaves it as it was: the
+  // window and its button watched from the press - FR24 putting it away itself (on the map's click, or opening a flight
+  // picked on the map), drawing it or its button otherwise, it is left to FR24. Its button is never pressed: FR24 puts its
+  // window away on the map's click itself, and a press after that opened it again - over and over. (FR24's X may open
+  // what it closes as well: it is pressed only on a window that has stayed as it was.)
   const UB_MAP_SEL = '.gm-style,.maplibregl-map,.mapboxgl-map,.leaflet-container,.ol-viewport';
   const UB_PANEL_SEL = '[data-testid^="aircraft-panel"],[data-testid="airport-panel"]';
-  let ubDown = null, ubBarAt = -1e9;
-  // (a window's close button: in its title's band, named so or drawn as an X - or the one button there that is only a picture)
+  let ubDown = null;
+  // (a window's close button, in its title band: named so - its label, title, class or test id - or drawn as an X; or the
+  // one thing there that is only a picture, as small as a button - the rightmost where there are more. Not a button only:
+  // FR24 may draw its X as a picture with a click on it. None of these: nothing)
   function closeBtnIn(box, title) {
     if (!box || !box.isConnected) return null;
     const tr = title && title.isConnected ? title.getBoundingClientRect() : null;
-    const band = b => { if (!tr || !tr.height) return true; const r = b.getBoundingClientRect(); return !r.height || (r.top < tr.bottom + 12 && r.bottom > tr.top - 12); };
-    const bs = [...box.querySelectorAll('button,[role="button"],a')].filter(b => !b.closest('.tl-ub-c,.tl-ub,' + UB_PANEL_SEL) && !(title && b.contains(title)) && shownEl(b) && band(b));
-    const named = bs.find(b => /\b(close|dismiss)\b/i.test((b.getAttribute('aria-label') || '') + ' ' + (b.getAttribute('title') || '')) || /^[×✕✖xX]$/.test(b.textContent.trim()));
-    if (named) return named;
-    const pics = bs.filter(b => !b.textContent.trim() && b.querySelector('svg,img'));
-    return pics.length === 1 ? pics[0] : null;
+    const band = r => !tr || !tr.height || !r.height || (r.top < tr.bottom + 12 && r.bottom > tr.top - 12);
+    const els = [...box.querySelectorAll('*')].filter(e => !e.closest('.tl-ub-c,.tl-ub,' + UB_PANEL_SEL) && !(title && (e.contains(title) || title.contains(e))));
+    const ok = e => { const r = e.getBoundingClientRect(); return band(r) && r.width <= 64 && r.height <= 64 && shownEl(e); };
+    const outer = list => list.filter(e => !list.some(o => o !== e && o.contains(e)));
+    const named = outer(els.filter(e => /\b(close|dismiss)\b/i.test((e.getAttribute('aria-label') || '') + ' ' + (e.getAttribute('title') || '')) || /(^|[\s_-])(close|dismiss)([\s_-]|$)/i.test((e.getAttribute('data-testid') || '') + ' ' + (typeof e.className === 'string' ? e.className : '')) || (!e.children.length && /^[×✕✖xX]$/.test(e.textContent.trim())))).filter(ok);
+    if (named.length) return named[0];
+    const pics = outer(els.filter(e => !e.textContent.trim() && (e.matches('svg,img') || e.querySelector('svg,img')) && !e.closest('svg') && ok(e)));
+    if (!pics.length) return null;
+    return pics.reduce((m, e) => (e.getBoundingClientRect().right > m.getBoundingClientRect().right ? e : m));
   }
-  // (the window of one of the bar's buttons, open: the box round its title - not the bar's, a panel's or a button's words - in
-  // which its close button is; LADD Unblock's: FR24's window lent to it)
-  function barWindow(label) {
-    if (label === 'LADD Unblock') return HJ.st === 'on' && HJ.host && HJ.host.isConnected ? { box: HJ.host, title: HJ.title } : null;
-    for (const t of titleLeaves(label)) {
-      if (t.closest(UB_PANEL_SEL + ',.tl-pop,.tl-strip,button,[role="button"],a')) continue;
-      for (let a = t.parentElement, d = 0; a && a !== document.body && d < 8; a = a.parentElement, d++) {
-        if (ubBar && a.contains(ubBar)) break;
-        if (closeBtnIn(a, t)) return { box: a, title: t };
-      }
+  // (the window of one of the bar's buttons, open: its title - not the bar's, a panel's or a button's words - and its title
+  // band, where its close button is: the highest box round the title no taller than a title band and no wider than a
+  // window. Nothing beyond it is looked at: a picture-only button of FR24's elsewhere at that height - its header's - was
+  // taken for the X, and pressed, opened Widgets)
+  const barTitles = label => (label === 'LADD Unblock' ? (HJ.st === 'on' && HJ.title && HJ.title.isConnected ? [HJ.title] : []) : titleLeaves(label).filter(t => !t.closest(UB_PANEL_SEL + ',.tl-pop,.tl-strip,button,[role="button"],a')));
+  function titleBand(t) {
+    let head = t.parentElement;
+    for (let a = t.parentElement, d = 0; a && a !== document.body && d < 8; a = a.parentElement, d++) {
+      if (ubBar && a.contains(ubBar)) break;
+      const r = a.getBoundingClientRect(); if (r.height > 96 || r.width > 720) break;
+      head = a;
     }
+    return head;
+  }
+  function barWindow(label) {
+    for (const t of barTitles(label)) { const box = titleBand(t); if (box && closeBtnIn(box, t)) return { box, title: t }; }
     return null;
   }
-  // (FR24 putting something away now: Vue's leaving classes on it)
-  const leavingNow = () => { try { return !!document.querySelector('[class*="-leave-active"]:not(.tl-ub-c)'); } catch (e) { return false; } };
+  // (a click "pressed" on an element as the mouse presses it: FR24's X may answer to the press, not only to the click)
+  function pressEl(el) {
+    const r = el.getBoundingClientRect(), o = { bubbles: true, cancelable: true, view: window, button: 0, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 };
+    ubProg++;
+    try {
+      const P = typeof PointerEvent === 'function' ? PointerEvent : MouseEvent;
+      el.dispatchEvent(new P('pointerdown', Object.assign({ pointerId: 1, isPrimary: true }, o))); el.dispatchEvent(new MouseEvent('mousedown', o));
+      el.dispatchEvent(new P('pointerup', Object.assign({ pointerId: 1, isPrimary: true }, o))); el.dispatchEvent(new MouseEvent('mouseup', o));
+      el.dispatchEvent(new MouseEvent('click', o));
+    } finally { ubProg--; }
+  }
+  // (the window open now, and how it and its button are drawn - its title in the page and shown, the classes and styles of
+  // the title and of every box round it, and of its button: anything FR24 does to put it away changes one of them)
+  function openWindowNow() {
+    if (unblockWindowOpen()) return ubFloat ? { label: 'LADD Unblock', float: true } : { label: 'LADD Unblock', item: HJ.item };
+    if (HJ.st !== 'off') return null;
+    const it = [...ubItems.entries()].find(([, x]) => openItems().includes(x));
+    return it ? { label: it[0], item: it[1] } : null;
+  }
+  function drawnSig(w) {
+    if (w.float) return 'float|' + (ubFloat ? 1 : 0);
+    const t = barTitles(w.label)[0], out = [];
+    if (!t) return 'none';
+    for (let a = t; a && a.nodeType === 1; a = a.parentElement) out.push((a.getAttribute('class') || '') + '/' + (a.getAttribute('style') || ''));
+    return [shownEl(t) ? 1 : 0, w.item && w.item.isConnected ? sigOf(lookOf(w.item)) : '', HJ.st, ...out].join('|');
+  }
   const pickSig = () => { const ps = document.querySelectorAll(UB_PANEL_SEL), cs = document.querySelector('[data-testid="aircraft-panel__header__callsign"]'); return ps.length + '|' + (cs ? cs.textContent.trim() : '') + '|' + location.href; };
-  function isOpenNow(label, item) {
-    if (label === 'LADD Unblock') return unblockWindowOpen();
-    return !!item && item.isConnected && openItems().includes(item);
-  }
-  // (put away as its X does: true where its X was pressed, or its button)
-  function mapShut(label, item, again) {
-    if (label === 'LADD Unblock' && ubFloat) { closeStandIn(); return true; }
-    const w = barWindow(label), x = w && closeBtnIn(w.box, w.title);
-    if (x) { progClick(x); return true; }
-    if (again || leavingNow()) return false;
-    if (label === 'LADD Unblock') {
-      if (HJ.st === 'on' && HJ.item && HJ.item.isConnected && HJ.rest && sigOf(lookOf(HJ.item)) !== HJ.rest && HJ.host && shownEl(HJ.host)) { closeUnblockWindow(); return true; }
-      return false;
-    }
-    if (label !== 'Playback' && isOpenNow(label, item)) { progClick(item); return true; }
-    return false;
-  }
   function onTheMap(t) {
     if (!t || t.nodeType !== 1 || !t.isConnected) return false;
     if (t.closest('.tl-ub,.tl-ub-c,.tl-ub-btn,.tl-ub-face,.tl-pop,.tl-strip,[data-tl-ub-host],[role="dialog"]') || (ubBar && ubBar.contains(t))) return false;
@@ -873,28 +890,33 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     return r.width * r.height >= 0.5 * W * H;
   }
   function onMapDown(ev) {
-    const t = ev.target;
-    if (t && t.nodeType === 1 && ((ubBar && ubBar.contains(t)) || t.closest('.tl-ub-btn,.tl-ub-face'))) ubBarAt = clock();
-    ubDown = ev.button === 0 && ev.isPrimary !== false ? { x: ev.clientX, y: ev.clientY, t: clock(), el: t, pick: pickSig() } : null;
+    ubDown = null;
+    if (ubProg || ev.button !== 0 || ev.isPrimary === false || !onTheMap(ev.target)) return;
+    // (as it is drawn the moment the map is pressed - before FR24 hears of the press)
+    const w = openWindowNow(); if (!w) return;
+    ubDown = { x: ev.clientX, y: ev.clientY, t: clock(), w, sig: drawnSig(w), pick: pickSig() };
   }
   function onMapUp(ev) {
     const d = ubDown; ubDown = null;
-    if (!d || ev.button !== 0 || clock() - d.t > 800 || Math.abs(ev.clientX - d.x) > 6 || Math.abs(ev.clientY - d.y) > 6) return;
-    if (!onTheMap(d.el) || !onTheMap(ev.target)) return;
-    const body = unblockWindowOpen() ? ubBody : null;
-    const it = body || HJ.st !== 'off' ? null : [...ubItems.entries()].find(([, x]) => openItems().includes(x));
-    if (!body && !it) return;
-    const label = body ? 'LADD Unblock' : it[0], item = body ? null : it[1];
+    if (!d || ubProg || ev.button !== 0 || clock() - d.t > 800 || Math.abs(ev.clientX - d.x) > 6 || Math.abs(ev.clientY - d.y) > 6 || !onTheMap(ev.target)) return;
+    const w = d.w;
+    // (looked at once FR24 has had the click - Google's map tells of it a moment after - and has begun putting its window
+    // away if it does; and, where something about it changed, once more a second on: still there, drawn as then - FR24 is
+    // not putting it away)
+    const shut = () => {
+      if (w.float) { if (ubFloat) closeStandIn(); return; }
+      const bw = barWindow(w.label), x = bw && closeBtnIn(bw.box, bw.title);
+      if (x) pressEl(x);
+    };
+    const still = () => { const o = openWindowNow(); return !!o && o.label === w.label && (w.float || o.item === w.item); };
     setTimeout(() => {
       try {
-        if (body ? !(unblockWindowOpen() && ubBody === body) : !(HJ.st === 'off' && isOpenNow(label, item))) return;
-        if (label === 'Playback' && pickSig() !== d.pick) return;
-        const at = clock();
-        if (!mapShut(label, item, false)) return;
-        // (back again with nothing pressed on the bar: put away once more - by its X only)
-        setTimeout(() => { try { if (ubBarAt < at && isOpenNow(label, item)) mapShut(label, item, true); } catch (e) { log('LADD Unblock window', e); } }, 900);
+        if (!still() || (w.label === 'Playback' && pickSig() !== d.pick)) return;
+        const s1 = drawnSig(w);
+        if (s1 === d.sig) return shut();
+        setTimeout(() => { try { if (still() && drawnSig(w) === s1 && !(w.label === 'Playback' && pickSig() !== d.pick)) shut(); } catch (e) { log('LADD Unblock window', e); } }, 1000);
       } catch (e) { log('LADD Unblock window', e); }
-    }, 300);
+    }, 600);
   }
 
   // ---- the button on FR24's bar ---------------------------------------------------------------------------------------
@@ -1038,9 +1060,12 @@ html.tl-no-strip .tl-strip{display:none!important}`;
       };
       tick();
       // (the newest version: the banner from the last answer the moment FR24 opens, the newest looked up at once - every
-      // time FR24 is opened - and every half hour after)
+      // time FR24 is opened - every ten minutes after, and on coming back to the tab where the last answer is two minutes
+      // old: a version merged while the tab was open is shown when it is looked at, not up to half an hour later)
       ubBanners();
-      checkLatest(true); setInterval(() => checkLatest(false), 30 * 60000);
+      checkLatest(true); setInterval(() => checkLatest(false), 10 * 60000);
+      const backToTab = () => { if (document.visibilityState !== 'hidden' && !(ubLatest && ubLatest.v && now() - ubLatest.at < 120000)) checkLatest(true); };
+      document.addEventListener('visibilitychange', backToTab); window.addEventListener('focus', backToTab);
       startHello();
       // (Later, a closed notice or a newer answer in another FR24 tab: the same here)
       window.addEventListener('storage', ev => { if ([UB_LATER_KEY, UB_NOTICE_KEY, HELLO_KEY].includes(ev.key)) ubBanners(); });
