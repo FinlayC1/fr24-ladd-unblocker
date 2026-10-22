@@ -126,9 +126,9 @@ How a page is shown on a user's own screen is the user's choice. That is the pri
 
 **It can:**
 
-- **change its website.** The project may stop working until it is adapted, which is a technical matter, not a legal one;
-- **refuse requests** from an address, such as a monitor's server. The monitor backs off on any refusal. The browsers carry on without its scan, each looking at its own map, as before the monitor existed;
-- **end its service** to an account under its own terms.
+- **change its website.** The project may stop working until it is adapted, which is a technical matter, not a legal one. We will continuously provide updates to fix it should this happen;
+- **refuse requests** from an address, such as a monitor's server. The monitor backs off on any refusal. The browsers carry on without its scan, each looking at its own map, as before the monitor existed. We will deal with this should it ever come to it;
+- **end its service** to an account under its own terms, we have a way around this should this happen.
 
 None of these reaches the user's own browser, the public broadcasts, or the open data the project is built on.
 
