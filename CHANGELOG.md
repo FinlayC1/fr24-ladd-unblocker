@@ -2,6 +2,58 @@
 
 All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PATCH`. The userscript and the monitor are released together.
 
+## [22.31.9] - 2026-10-22
+
+### Fixed
+- **Recent flights: FR24 now asks for the list at a new address.** The panel's "Recent <reg> flights" request moved from `api.flightradar24.com/common/v1/flight/list.json` to `www.flightradar24.com/common/v2/flight/list.json`, with the session's token. The script only recognised the old one, so it never saw the request and the list stayed "No flights available" for every aircraft. Both are now recognised, on any FR24 host and any version, with fetch and with XHR.
+  - The token is blanked out of the request log kept for diagnosis (`stats.reqLog`, `stats.lastList`), since those are pasted into bug reports.
+- **Recent flights now include today's earlier flights.** When an aircraft's log was already saved, today's trace was never read for the list. So the flight before the one on screen was missing, such as N73VR's night crossing New Haven → Luton before its departure from Luton. Today's trace is now always read for the list, and the list is sent again when it arrives.
+- **Flight logs: the networks' answers are read for what they are.** adsb.lol now shows a proof-of-work verification page ("Verifying connection") to clients that ask too much, too fast, and Cloudflare shows one in front of airplanes.live. Those answers were failed requests at best, and gaps in the logs. The trace reader is rewritten in the browser and on the monitor:
+  - **Each answer is told apart:**
+    - the file;
+    - no file (a day the network heard nothing of the aircraft);
+    - a verification page, with a 403 or 200 status;
+    - a refusal to slow down (waited out, twice);
+    - a file cut short, or another aircraft's file;
+    - a server error, or no answer (tried once more).
+
+    Only the file and "no file" count as answers about the day. Nothing else is ever taken for a day without flights: those days are read again later, and the reason is kept.
+  - **A verification page stops the asking.**
+    - The browser stops asking that network for 10 minutes. Requests already waiting their turn aren't sent.
+    - While a network hasn't answered well lately, one request goes first and the others wait for its answer.
+    - The sources pop-over and the log page say so, with a link to open the site once (which clears it for the browser).
+  - **Gentler on both networks.** The browser asks adsb.lol three files at a time, a quarter of a second apart (it was eight, 30 ms apart), and airplanes.live two at a time. The background takes one.
+  - **One refusal no longer turns airplanes.live off.** A single 403 used to stop every airplanes.live request for 30 minutes, and every day asked in that time became a gap.
+  - **Today's trace comes from both networks** for the aircraft being looked at: airplanes.live had N73VR's crossing when adsb.lol's file didn't come. The background asks adsb.lol alone.
+- **Monitor: adsb.lol's days are read from its daily archives.** adsb.lol now shows servers its verification page, so every day the monitor asked for failed. adsb.lol publishes every day's traces on GitHub (`adsblol/globe_history_<year>`), one tar a day in parts of about 1.9 GB.
+  - The monitor reads each finished day of the last `archiveDays` (40) as it downloads, never writing it to disk, and builds every blocked aircraft's day from it. It also builds every aircraft the archive flags LADD, adding it to the blocked list.
+  - Real 21 Oct archive: 3.8 GB, 68,294 traces, 4,259 LADD aircraft, 4 minutes, 141 MB of memory.
+  - A day's job waits for its archive, up to a day and a half after the day ends. Once the archive is in, nothing is asked of adsb.lol's site for that day.
+  - Days built this way are marked as adsb.lol only, so a browser looking at the aircraft adds airplanes.live.
+  - `/status` shows what each network answered (`nets`) and the archives read (`archive`).
+- **Every saved flight log is deleted again and rebuilt with the new reader**, in the browser and on the monitor. The log version goes up to 7 on both, so a monitor not yet updated has its days ignored.
+
+### Tests
+- New `unit_netfetch` (browser), based on N73VR's real 21 Oct trace from adsb.lol's archive plus today's crossing to Luton. It covers:
+  - every kind of answer;
+  - a 429 waited out;
+  - a verification page remembered: adsb.lol asked once in all, the background included, and said in the sources pop-over and on the log page;
+  - a walled day built from airplanes.live and marked to read again;
+  - days neither network answered never taken as days without flights;
+  - both networks with no file: a day without flights;
+  - the background never asking airplanes.live;
+  - today's crossing read from airplanes.live;
+  - "Recent N73VR flights" listing New Haven → Luton and Morristown → New Haven.
+- New `unit_archive` (monitor):
+  - a day's archive made as adsb.lol makes them, cut into two parts mid-file and read in chunks of every size;
+  - the parts found, including a release published again (`-1`);
+  - only blocked and LADD-flagged aircraft taken; a broken file counted;
+  - learning rows written once; the day noted;
+  - jobs once the archive is in asking nothing; before it is out, waiting for it;
+  - an unpublished day retried after an hour;
+  - adsb.lol's verification page pausing it for an hour and never making a day without flights.
+- `unit_recentlist`: FR24's v2 address on the www host, with fetch, XHR and a relative address; a flight number's list left alone; the token never kept.
+
 ## [22.31.8] - 2026-10-22
 
 ### Fixed

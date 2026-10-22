@@ -64,7 +64,7 @@ function makeWin() {
   function today(hex, ...days) {
     const pts = [].concat(...days), legs = [].concat(...days.map(d => E.legsFromPoints(d.map(p => Object.assign({}, p)), {})));
     const sums = legs.map(l => E.summarizeLeg(l, null));
-    L.todayCache.set(hex, { at: Date.now(), pts, lastPt: pts[pts.length - 1], legs, sums });
+    L.todayCache.set(hex, { at: Date.now(), pts, lastPt: pts[pts.length - 1], legs, sums, both: true });   // (read from both networks)
     return sums;
   }
   const histOf = reg => w.__posted.filter(m => m && m.__tweeksLadd === 'hist' && m.reg === reg && m.data);

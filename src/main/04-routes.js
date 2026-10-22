@@ -1074,7 +1074,10 @@
     if (!known) { if (!warm) postToPage('hist', { reg, data: null }); return; }
     let { rec } = known; const { hex } = known;
     // (what is already in memory is answered at once; only a log never loaded is waited for, briefly)
-    if (!warm && !store.peekHist(hex)) { try { await loadAirports(); await Promise.race([Promise.all([loadToday(hex, 300000).catch(() => {}), store.getHist(hex)]), sleep(1600)]); } catch (e) { /* use what we have */ } }
+    // (today's files are read whatever is kept - both networks', the aircraft being looked at: today's earlier flights, the
+    // night's crossing before the flight on screen, are in no day's log yet - N73VR's Luton arrival)
+    const todayJob = warm ? null : loadToday(hex, 300000, { priority: true }).catch(() => null);
+    if (!warm && !store.peekHist(hex)) { try { await loadAirports(); await Promise.race([Promise.all([todayJob, store.getHist(hex)]), sleep(1600)]); } catch (e) { /* use what we have */ } }
     // current flight first (FR24's list component always skips the first entry, which is the flight on screen)
     const fly = flyingNow(hex, rec);
     const past = () => knownLegs(hex).filter(l => l.from || l.to).sort((a, b) => b.tStart - a.tStart);
@@ -1097,13 +1100,16 @@
     // what is known now, marked partial while the log is still being fetched; then the full log (the page waits for
     // it when the first answer has nothing to list)
     const more = !store.peekHist(hex) || Object.keys((store.peekHist(hex) || {}).days || {}).length < 14;
-    postToPage('hist', { reg, data: build(past()), partial: more });
+    const build0 = build(past());
+    postToPage('hist', { reg, data: build0, partial: more });
     // (handed over the moment it has flights to list - the monitor's days come in one request, well before every day is
     // read from the networks: FR24 draws the list once, from its first answer, and that answer waits nine seconds at most;
     // a log read day by day took longer, and N1876T's and HB-IGO's lists said "No flights available")
     let sent = 0;
     const progress = () => { const d = build(past()); if (d.length > 1 && d.length !== sent) { sent = d.length; postToPage('hist', { reg, data: d, partial: true }); } };
     if (more && !warm) loadHistory(hex, 21, progress, { front: true }).then(() => postToPage('hist', { reg, data: build(past()) }), () => postToPage('hist', { reg, data: build(past()) }));
+    // (today's files come in after the first answer: handed over again with what they add)
+    if (todayJob) todayJob.then(() => { const d = build(past()); if (d.length > 1 && JSON.stringify(d) !== JSON.stringify(build0)) { sent = d.length; postToPage('hist', { reg, data: d, partial: more }); } });
   }
   // A flight still "on its way" whose positions stopped five minutes and more ago (a blocked jet FR24 no longer sends
   // once it is down, its transponder off at the stand): its ADS-B track of today read again - landed there, it says so

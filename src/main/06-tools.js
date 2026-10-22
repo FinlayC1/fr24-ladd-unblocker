@@ -318,12 +318,15 @@
     ].filter(Boolean).join(' · ');
   }
   // ---- sources: which data feeds answer, and the user's own ADS-B Exchange key --------------------------------------
-  const SOURCE_ROWS = [['ginfoapi.caa.co.uk', 'UK register (G-INFO: owners, serials, years)'], ['registry.faa.gov', 'FAA register'], ['ardis.iomaircraftregistry.com', 'Isle of Man register'], ['hexdb.io', 'hexdb (registrations, owners)'], ['api.adsb.lol', 'adsb.lol (live)'], ['adsb.lol', 'adsb.lol (flight logs, 6 weeks)'], ['opendata.adsb.fi', 'adsb.fi'], ['globe.airplanes.live', 'airplanes.live (older flight logs)'], ['opensky-network.org', 'OpenSky'], ['adsbexchange-com1.p.rapidapi.com', 'ADS-B Exchange (your key)'], ['api.flightradar24.com', 'FR24 (photos, schedules)'], ['api.planespotters.net', 'Planespotters'], ['aviationweather.gov', 'aviationweather.gov (METARs)'], ['external-api.faa.gov', 'FAA NOTAMs (your key)']];
+  const SOURCE_ROWS = [['ginfoapi.caa.co.uk', 'UK register (G-INFO: owners, serials, years)'], ['registry.faa.gov', 'FAA register'], ['ardis.iomaircraftregistry.com', 'Isle of Man register'], ['hexdb.io', 'hexdb (registrations, owners)'], ['api.adsb.lol', 'adsb.lol (live)'], ['adsb.lol', 'adsb.lol (flight logs, 6 weeks)'], ['opendata.adsb.fi', 'adsb.fi'], ['globe.airplanes.live', 'airplanes.live (flight logs)'], ['opensky-network.org', 'OpenSky'], ['adsbexchange-com1.p.rapidapi.com', 'ADS-B Exchange (your key)'], ['api.flightradar24.com', 'FR24 (photos, schedules)'], ['api.planespotters.net', 'Planespotters'], ['aviationweather.gov', 'aviationweather.gov (METARs)'], ['external-api.faa.gov', 'FAA NOTAMs (your key)']];
   function sourcesHtml() {
     const ago = t => t ? (s => s < 90 ? s + ' s ago' : s < 5400 ? Math.round(s / 60) + ' min ago' : Math.round(s / 3600) + ' h ago')(Math.round((now() - t) / 1000)) : 'not asked yet';
     const rows = SOURCE_ROWS.map(([host, name]) => {
       const h = hostStat.get(host), dead = (deadHosts.get(host) || 0) > now();
       const n = h ? ` <span class="tl-muted">· ${h.ok} ok${h.fail ? ', ' + h.fail + ' failed' : ''}</span>` : '';
+      // (a network's verification page in front of the flight logs: said, with the way through - the site itself)
+      const nid = host === 'adsb.lol' ? 'lol' : host === 'globe.airplanes.live' ? 'apl' : '', ns = nid && netState[nid];
+      if (ns && ns.wallAt && now() - ns.wallAt < 30 * 60000) return `<div class="tl-pop-row"><span>${esc(name)}</span> <span style="color:#e05252">verification page</span> <span class="tl-muted">${ago(ns.wallAt)} - <a href="${NETS[nid].site}" target="_blank" rel="noopener">open ${esc(NETS[nid].name)}</a> once in a tab, then reload FR24</span>${n}</div>`;
       const st = dead ? '<span style="color:#e05252">paused (refused)</span>' : !h ? '<span class="tl-muted">not asked yet</span>' : h.lastOk >= h.lastErr ? `<span style="color:#3fb950">ok</span> <span class="tl-muted">${ago(h.lastOk)}</span>` : `<span style="color:#e0a852">${esc(h.err || 'failing')}</span> <span class="tl-muted">${ago(h.lastErr)}</span>`;
       return `<div class="tl-pop-row"><span>${esc(name)}</span> ${st}${n}</div>`;
     }).join('');

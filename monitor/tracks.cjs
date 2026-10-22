@@ -81,6 +81,9 @@ function createTracks(env) {
     }
     evict();
   }
+  // (a day no longer needed in memory - one read whole from adsb.lol's archive, written: let go now, not when ten more
+  // have been through the cache; read again from its file if asked for)
+  function release(d) { const x = days.get(d); if (x && !x.dirty && d < dayOf(Date.now() / 1000 - 86400)) days.delete(d); }
   // (files older than the days kept: removed)
   function prune(nowS) {
     const cut = dayOf(nowS - keepDays * 86400);
@@ -232,7 +235,7 @@ function createTracks(env) {
     for (let i = 0; i < a.length; i += 4) out.push([a[i], a[i + 1], a[i + 2], a[i + 3] >= 0 ? a[i + 3] * 100 : a[i + 3] === -1 ? 0 : null, a[i + 3] === -1]);
     return out;
   }
-  const api = { put, save, prune, at, of, estimate, atAll, around, gcDist, stats, onChange: null, get days() { return days.size; }, dirty: () => [...days.values()].some(x => x.dirty) };
+  const api = { put, save, release, prune, at, of, estimate, atAll, around, gcDist, stats, onChange: null, get days() { return days.size; }, dirty: () => [...days.values()].some(x => x.dirty) };
   return api;
 }
 module.exports = { createTracks };

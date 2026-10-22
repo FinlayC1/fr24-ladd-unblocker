@@ -1,7 +1,7 @@
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '22.31.8';
+  const VERSION = '22.31.9';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
@@ -31,8 +31,8 @@
   // Every saved flight log deleted, once, the first time a version with this reset id runs in a browser (and when asked from
   // the LADD Unblock window): the logs, today's tracks and each aircraft's compact recent flights - nothing else; what was
   // learned (the self-learning tables), boards and identities stay. They are built again as aircraft are looked at.
-  const LOG_RESET = '22.31.7', LOG_RESET_KEY = 'tweeks.fr24.ladd.logreset';
-  const HIST_V = 6;                     // flight-log reconstruction version; a bump rebuilds cached logs from scratch (5: each flight's path, for matching its own routes; 6: every day from both networks, a day done only once each network asked has answered)
+  const LOG_RESET = '22.31.9', LOG_RESET_KEY = 'tweeks.fr24.ladd.logreset';
+  const HIST_V = 7;                     // flight-log reconstruction version; a bump rebuilds cached logs from scratch (5: each flight's path, for matching its own routes; 6: every day from both networks, a day done only once each network asked has answered; 7: each network's answer read for what it is - a verification page never a day without flights - and the monitor's days from adsb.lol's archives)
   const PRECOMPUTE_MAX = 8;
   // landing places learned away from FR24's airports (03-data): their ids, below the route engine's unlisted fields (1e7 on)
   const SITE_BASE = 9000000, isSiteId = id => id > SITE_BASE && id < 1e7;             // in-view aircraft whose full route (trace + plan) is prepared before a click
@@ -457,8 +457,10 @@
 
   // ---- HTTP: per-host concurrency + spacing ------------------------------------------------------------------------------
   // Aggregator APIs answer 429 to more than ~1 request/second; adsb.lol's static trace files take a few in parallel.
-  // (adsb.lol's history files are static: eight at a time; airplanes.live's older history more gently)
-  const HOSTS = { 'opendata.adsb.fi': [1, 1100], 'adsbexchange-com1.p.rapidapi.com': [1, 1200], 'api.adsb.lol': [1, 1500], 'adsb.lol': [8, 30], 'globe.adsb.lol': [5, 60], 'globe.airplanes.live': [4, 120], 'aviationweather.gov': [2, 300], 'www.jetphotos.com': [1, 1500], 'hexdb.io': [2, 250], 'api.adsbdb.com': [2, 250], 'opensky-network.org': [1, 3000], 'registry.faa.gov': [1, 800], 'api.planespotters.net': [2, 250], 'api.flightradar24.com': [3, 350], 'api.flightradar24.com#bg': [1, 2000], 'www.airport-data.com': [1, 500], 'ardis.iomaircraftregistry.com': [1, 800], 'ginfoapi.caa.co.uk': [1, 1500], 'overpass-api.de': [1, 1500] };
+  // (the two networks' trace files: three at a time from adsb.lol, a quarter of a second apart, two from airplanes.live -
+  // eight at a time, 30 ms apart, is what a scraper does, and both now put a verification page in front of one; the
+  // background never takes more than one)
+  const HOSTS = { 'opendata.adsb.fi': [1, 1100], 'adsbexchange-com1.p.rapidapi.com': [1, 1200], 'api.adsb.lol': [1, 1500], 'adsb.lol': [3, 250], 'globe.adsb.lol': [3, 250], 'globe.airplanes.live': [2, 400], 'aviationweather.gov': [2, 300], 'www.jetphotos.com': [1, 1500], 'hexdb.io': [2, 250], 'api.adsbdb.com': [2, 250], 'opensky-network.org': [1, 3000], 'registry.faa.gov': [1, 800], 'api.planespotters.net': [2, 250], 'api.flightradar24.com': [3, 350], 'api.flightradar24.com#bg': [1, 2000], 'www.airport-data.com': [1, 500], 'ardis.iomaircraftregistry.com': [1, 800], 'ginfoapi.caa.co.uk': [1, 1500], 'overpass-api.de': [1, 1500] };
   const lanes = new Map();
   // `front`: what the user is looking at right now (the selected aircraft) jumps the queue. `bg`: background work (logs
   // of other aircraft, prefetching) never takes the last two slots of a host, so a click is never stuck behind it.
@@ -535,15 +537,19 @@
     const c = monCheck();
     return c ? c.then(go, go) : go();
   }
-  function gmRequest(url, { timeout = 12000, accept = 'application/json', json = true, headers = null, priority = false, bg = false, idle = false, method = 'GET', body = null } = {}) {
+  // raw: answered with { status, text } whatever the status - the caller reads it (the flight logs' trace files: a 404, a
+  // verification page and a refusal are told apart there) - and never held back by a host paused for others. skip(): asked
+  // when the request's turn comes - true: not sent after all (the answer that came meanwhile does for it; 'skipped')
+  function gmRequest(url, { timeout = 12000, accept = 'application/json', json = true, headers = null, priority = false, bg = false, idle = false, method = 'GET', body = null, raw = false, skip = null } = {}) {
     const gm =typeof GM_xmlhttpRequest === 'function' ? GM_xmlhttpRequest : (typeof GM !== 'undefined' && GM && typeof GM.xmlHttpRequest === 'function' ? GM.xmlHttpRequest : null);
     const host = (() => { try { return new URL(url).host; } catch (_) { return url; } })();
-    if ((deadHosts.get(host) || 0) > now()) return Promise.reject(new Error('host paused (refused or rate-limited)'));
+    if (!raw && (deadHosts.get(host) || 0) > now()) return Promise.reject(new Error('host paused (refused or rate-limited)'));
     // (FR24's own API counts every request from this browser against one limit - the user's own panels and dropdowns
     // included: background lookups there - pictures of aircraft nobody has opened - go one every two seconds)
     const lane = bg && !priority && host === 'api.flightradar24.com' ? host + '#bg' : host;
     return acquire(lane, priority, bg && !priority).then(release => new Promise((resolve, reject) => {
       if (!gm) { release(); return reject(new Error('GM_xmlhttpRequest unavailable')); }
+      if (skip && skip()) { release(); return reject(new Error('skipped')); }
       let settled = false, freed = false;
       const free = () => { if (!freed) { freed = true; release(); } };
       const done = (fn, v) => { if (!settled) { settled = true; clearTimeout(guard); free(); fn(v); } };
@@ -554,6 +560,12 @@
         gm({ method, url, timeout, responseType: 'text', data: body == null ? undefined : body, headers: Object.assign({ Accept: accept, 'Accept-Language': 'en-US,en;q=0.9' }, headers || {}),
           onload: r => {
             const text = r.responseText != null ? r.responseText : (typeof r.response === 'string' ? r.response : '');
+            if (raw) {
+              const st = Number(r.status) || 0, res = { status: st, text: String(text || '') };
+              noteHost(host, (st >= 200 && st < 300) || st === 404, 'HTTP ' + st);
+              if ((bg || idle) && !priority && st >= 200 && st < 300) { clearTimeout(guard); free(); idleSlice().then(() => done(resolve, res)); return; }
+              return done(resolve, res);
+            }
             // (background work: the host's slot is free at once; reading the answer - a day's track can be megabytes -
             // and what follows from it wait for an idle moment with the map left alone)
             if ((bg || idle) && !priority && r.status >= 200 && r.status < 300) {
