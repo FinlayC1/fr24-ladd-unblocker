@@ -74,6 +74,9 @@ const MC = Q.get('mapclose') === '1', PBL = Q.get('pbl') === '1';
 // not a button, named nothing; ?xn=1: a close button that says "Done" (not known for an X); ?trap=1: a picture-only button
 // of the page's own at the height of the windows' titles, beside them - it opens Widgets
 const XT = Q.get('xt') === '1', XD = Q.get('xd') === '1', XN = Q.get('xn') === '1', TRAP = Q.get('trap') === '1';
+// ?fakepick=1: FR24 as it is on the real map - every click on it tries to select a flight that is not there ("Flight not found!"):
+// the window open goes away at once and, the try failed, comes back about 0.9 s later (unless one was opened meanwhile)
+const FP = Q.get('fakepick') === '1';
 if (LOOK) document.head.insertAdjacentHTML('beforeend', '<style>.bar-btn svg circle{stroke-width:1.5}.bar-btn:hover svg circle{stroke-width:2.5;stroke:#dddddd}.bar-btn.is-on svg circle{stroke-width:2.5;stroke:#f8c023}</style>');
 const { createApp, reactive, defineAsyncComponent, watch } = Vue;
 const saved = (() => { try { return JSON.parse(localStorage.getItem('mock.widgets') || 'null'); } catch (e) { return null; } })();
@@ -120,7 +123,10 @@ const app = createApp({
   setup() {
     if (MC) watch(() => S.open, () => setTimeout(() => { S.lit = S.open; }, 450));
     return { S, BARS, IND, LI, PB, PANEL, GM, TRAP,
-      mapClick() { if (MC) setTimeout(() => { S.open = null; }, 150); },
+      mapClick() {
+        if (MC) setTimeout(() => { S.open = null; }, 150);
+        if (FP) { const w = S.open; if (w) { setTimeout(() => { S.open = null; }, 120); setTimeout(() => { if (S.open === null) S.open = w; }, 900); } }
+      },
       isOn(b) { return (b === 'Playback' ? PBL && S.pbw : (MC ? S.lit : S.open) === b) ? 'is-on' : ''; },
       toggle(b) { if (b === 'Playback') { S.pbw = !S.pbw; return; } S.flight = false; S.open = S.open === b ? null : b; },
       openFlight() { S.open = null; S.flight = true; } };

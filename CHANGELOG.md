@@ -2,6 +2,18 @@
 
 All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PATCH`. The userscript and the monitor are released together.
 
+## [22.31.3] - 2026-10-22
+
+### Fixed
+- **A click on the map put a bottom-bar window away and it came straight back.** FR24 answers every click on its map by trying to select a flight; its aircraft layer asks for one that is not there ("Flight not found!" in the console, then "Missing parameters: flightId"). Selecting a flight puts the open window away, and the failed try brings it back a moment later. With LADD Unblock open, what came back was FR24's own Widgets window, which is why Widgets appeared when LADD Unblock closed. 22.31.2 looked at the window 0.6 s after the click, found FR24 had already put it away, did nothing, and FR24 then brought it back; spamming the map hid the gap.
+  - The window is now watched for eight seconds from the click. When it is open and not coming in or going out for most of a second, its own X is pressed (three times at most). Never a bar button.
+  - For LADD Unblock, FR24's Widgets window is watched and put away too.
+  - Watching stops as soon as a bar button is pressed after the click, so the person's own choice is never undone. In playback, nothing is pressed once a flight is picked.
+  - After FR24 puts LADD Unblock's window away and brings it back, the script keeps the window's title, so it can be closed by its X again.
+
+### Tests
+- `unit_barlook` has a mode that behaves like FR24's real map: the window goes away at once and comes back 0.9 s later. For each window of the bar, and LADD Unblock, it must end away and stay away. A bar button pressed just after the click is left alone. 22.31.2's code fails this: the window comes back and stays, and FR24's Widgets appears in LADD Unblock's place.
+
 ## [22.31.2] - 2026-10-22
 
 ### Fixed

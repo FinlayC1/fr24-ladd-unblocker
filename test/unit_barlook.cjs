@@ -144,6 +144,37 @@ window.GM_xmlhttpRequest = o => { setTimeout(() => o.onload && o.onload({ status
       check('... LADD Unblock the same: away, nothing opened again', up && gone && s2.open === null && s2.opens.length === o1, { up, gone, s2 });
       await p3.close();
     }
+    // ---- FR24 as it is on the real map: every click on it tries to select a flight that is not there; the window open goes
+    // away at once and comes back about 0.9 s later. It is put away again once it is back, and stays away - each window of
+    // the bar, and LADD Unblock (whose window is FR24's Widgets, brought back as FR24's own)
+    for (const q of ['', '&xd=1']) {
+      const p5 = await ctx.newPage();
+      await p5.goto('https://www.flightradar24.com/53.40,-2.60/9?mode=keyed&gm=1&fakepick=1' + q);
+      await p5.waitForSelector('nav.bar .tl-ub-btn', { timeout: 15000 });
+      const vis = () => p5.evaluate(() => [...document.querySelectorAll('.win,.tl-ub-c')].filter(e => e.getBoundingClientRect().height > 0 && getComputedStyle(e).display !== 'none').length);
+      let bad = null;
+      for (const b of ['Weather', 'Filters', 'Settings']) {
+        await p5.click(bar(b)); await sleep(700);
+        await p5.mouse.click(...MAP); await sleep(5500);
+        const s = await p5.evaluate(() => __S.open), v = await vis(); if (s !== null || v) { bad = { b, s, v }; break; }
+      }
+      check(`FR24 selecting a flight that is not there on a map click${q ? ' (' + q.slice(1) + ')' : ''}: its window put away again when it comes back, and kept away - three windows`, !bad, bad);
+      await p5.click(ours); await sleep(1400);
+      const up = await vis();
+      await p5.mouse.click(...MAP); await sleep(6500);
+      const s2 = await p5.evaluate(() => __S.open), v2 = await vis();
+      check('... LADD Unblock the same: away, and no Widgets window of FR24\'s in its place', up > 0 && s2 === null && v2 === 0, { up, s2, v2 });
+      await p5.close();
+    }
+    // ... and a button pressed on the bar after the click is the person's own choice: left as it is
+    { const p6 = await ctx.newPage();
+      await p6.goto('https://www.flightradar24.com/53.40,-2.60/9?mode=keyed&gm=1&fakepick=1');
+      await p6.waitForSelector('nav.bar .tl-ub-btn', { timeout: 15000 });
+      await p6.click(bar('Filters')); await sleep(700);
+      await p6.mouse.click(...MAP); await sleep(300);
+      await p6.click(bar('Weather')); await sleep(5000);
+      check('a bar button pressed just after a map click: its window stays (not put away with the one before)', (await p6.evaluate(() => __S.open)) === 'Weather');
+      await p6.close(); }
     // ---- an FR24 that leaves its window open on the map's click: its X pressed - a picture, a toggle; not known: nothing
     for (const q of ['&xd=1', '&xt=1', '&xn=1']) {
       const p4 = await ctx.newPage();
