@@ -2,6 +2,14 @@
 
 All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PATCH`. The userscript and the monitor are released together.
 
+## [22.31.2] - 2026-10-22
+
+### Fixed
+- **An FR24 tab already open did not see a new version for up to half an hour.** 22.31.0 still said "up to date" after 22.31.1 was merged: the tab had last asked GitHub before the merge, and asked again only every 30 minutes (GitHub's copy can also be up to 5 minutes old). It now also asks on coming back to the FR24 tab, when its last answer is over two minutes old, and every 10 minutes otherwise. Opening FR24 still asks at once.
+
+### Tests
+- `unit_hello`: a version merged while FR24 is open. Coming back to the tab within two minutes of the last answer doesn't ask again; later, it does and the update banner comes up.
+
 ## [22.31.1] - 2026-10-22
 
 ### Fixed

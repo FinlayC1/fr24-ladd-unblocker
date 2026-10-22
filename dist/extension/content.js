@@ -48,7 +48,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
 // ==UserScript==
 // @name         Flightradar24 LADD / N-A Unblocker (feed-level)
 // @namespace    tweeks.io
-// @version      22.31.1
+// @version      22.31.2
 // @description  Identifies every LADD / N/A / blocked military aircraft on Flightradar24 from public ADS-B, and injects callsign, registration, operator, age, country, MSN, squawk, vertical speed, GPS altitude, airspeeds, wind, photos, a reasoned origin/destination with a wind-corrected ETA (also for ordinary flights FR24 shows as N/A - military, private, GA, helicopters, with private landing sites; learned from 63 days of every aircraft worldwide, with live weather and closures), airport-board entries and a rebuilt 7-month flight log straight into FR24's own data - so it all renders like normal FR24 traffic.
 // @author       Finlay Clarke
 // @updateURL    https://raw.githubusercontent.com/FinlayC1/fr24-ladd-unblocker/main/dist/fr24-ladd-unblocker.user.js
@@ -137,7 +137,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "22.31.1";
+    var BRIDGE_V = "22.31.2";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed
@@ -5435,7 +5435,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '22.31.1';
+  const VERSION = '22.31.2';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
@@ -13116,7 +13116,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // (the version whose "what's new" was put away, and the one whose dot on the button the window was opened for)
   const UB_SEEN_KEY = 'tweeks.fr24.ladd.seenver', UB_DOT_KEY = 'tweeks.fr24.ladd.dotver';
   // (the newest CHANGELOG section's headlines, written in by build.mjs: { v, items })
-  const UB_WHATS_NEW = {"v":"22.31.1","items":["A click on the map put a bottom-bar window away and opened it again at once.","The LADD Unblock icon no longer thickens under the mouse.","Flight logs still had gaps in the last 40 days."]};
+  const UB_WHATS_NEW = {"v":"22.31.2","items":["An FR24 tab already open did not see a new version for up to half an hour."]};
   // (an aircraft with an open padlock: FR24's outline style - 24 grid, 1.5 stroke in the text colour)
   const UB_ICON = '<svg data-tl-ub-icon="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
   const UB_X = '<svg viewBox="0 0 14 14" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5l11 11M12.5 1.5l-11 11"/></svg>';
@@ -13227,12 +13227,12 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   }
   // (main's package.json: a version merged to main is released as soon as its tests pass. The answer is kept across page
   // loads - the map's banner says a new version is out from the moment the page opens, not only once this window has
-  // asked again - and asked for again every half hour)
+  // asked again - and asked for again every ten minutes, and on coming back to the tab)
   const UB_LATEST_KEY = 'tweeks.fr24.ladd.latest';
   try { const L = JSON.parse(lsGet(UB_LATEST_KEY) || 'null'); if (L && /^\d+(\.\d+)*$/.test(L.v) && now() - L.at < 12 * 3600e3) ubLatest = { v: L.v, at: L.at }; } catch (e) { /* none kept */ }
   function checkLatest(force) {
     if (ubAsking) return ubAsking;
-    if (!force && ubLatest && now() - ubLatest.at < 30 * 60000) return Promise.resolve(ubLatest);
+    if (!force && ubLatest && now() - ubLatest.at < 10 * 60000) return Promise.resolve(ubLatest);
     ubAsking = gmRequest(UB_LATEST_URL + '?t=' + Math.floor(now() / 60000), { timeout: 15000 })
       .then(j => { const v = j && typeof j.version === 'string' && /^\d+(\.\d+)*$/.test(j.version) ? j.version : ''; ubLatest = v ? { v, at: now() } : { err: 'no version in the answer', at: now() }; if (v) lsSet(UB_LATEST_KEY, JSON.stringify(ubLatest)); })
       .catch(e => { ubLatest = { err: String(e && e.message || e), at: now() }; })
@@ -14142,9 +14142,12 @@ html.tl-no-strip .tl-strip{display:none!important}`;
       };
       tick();
       // (the newest version: the banner from the last answer the moment FR24 opens, the newest looked up at once - every
-      // time FR24 is opened - and every half hour after)
+      // time FR24 is opened - every ten minutes after, and on coming back to the tab where the last answer is two minutes
+      // old: a version merged while the tab was open is shown when it is looked at, not up to half an hour later)
       ubBanners();
-      checkLatest(true); setInterval(() => checkLatest(false), 30 * 60000);
+      checkLatest(true); setInterval(() => checkLatest(false), 10 * 60000);
+      const backToTab = () => { if (document.visibilityState !== 'hidden' && !(ubLatest && ubLatest.v && now() - ubLatest.at < 120000)) checkLatest(true); };
+      document.addEventListener('visibilitychange', backToTab); window.addEventListener('focus', backToTab);
       startHello();
       // (Later, a closed notice or a newer answer in another FR24 tab: the same here)
       window.addEventListener('storage', ev => { if ([UB_LATER_KEY, UB_NOTICE_KEY, HELLO_KEY].includes(ev.key)) ubBanners(); });

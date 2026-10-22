@@ -123,12 +123,12 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   }
   // (main's package.json: a version merged to main is released as soon as its tests pass. The answer is kept across page
   // loads - the map's banner says a new version is out from the moment the page opens, not only once this window has
-  // asked again - and asked for again every half hour)
+  // asked again - and asked for again every ten minutes, and on coming back to the tab)
   const UB_LATEST_KEY = 'tweeks.fr24.ladd.latest';
   try { const L = JSON.parse(lsGet(UB_LATEST_KEY) || 'null'); if (L && /^\d+(\.\d+)*$/.test(L.v) && now() - L.at < 12 * 3600e3) ubLatest = { v: L.v, at: L.at }; } catch (e) { /* none kept */ }
   function checkLatest(force) {
     if (ubAsking) return ubAsking;
-    if (!force && ubLatest && now() - ubLatest.at < 30 * 60000) return Promise.resolve(ubLatest);
+    if (!force && ubLatest && now() - ubLatest.at < 10 * 60000) return Promise.resolve(ubLatest);
     ubAsking = gmRequest(UB_LATEST_URL + '?t=' + Math.floor(now() / 60000), { timeout: 15000 })
       .then(j => { const v = j && typeof j.version === 'string' && /^\d+(\.\d+)*$/.test(j.version) ? j.version : ''; ubLatest = v ? { v, at: now() } : { err: 'no version in the answer', at: now() }; if (v) lsSet(UB_LATEST_KEY, JSON.stringify(ubLatest)); })
       .catch(e => { ubLatest = { err: String(e && e.message || e), at: now() }; })
@@ -1038,9 +1038,12 @@ html.tl-no-strip .tl-strip{display:none!important}`;
       };
       tick();
       // (the newest version: the banner from the last answer the moment FR24 opens, the newest looked up at once - every
-      // time FR24 is opened - and every half hour after)
+      // time FR24 is opened - every ten minutes after, and on coming back to the tab where the last answer is two minutes
+      // old: a version merged while the tab was open is shown when it is looked at, not up to half an hour later)
       ubBanners();
-      checkLatest(true); setInterval(() => checkLatest(false), 30 * 60000);
+      checkLatest(true); setInterval(() => checkLatest(false), 10 * 60000);
+      const backToTab = () => { if (document.visibilityState !== 'hidden' && !(ubLatest && ubLatest.v && now() - ubLatest.at < 120000)) checkLatest(true); };
+      document.addEventListener('visibilitychange', backToTab); window.addEventListener('focus', backToTab);
       startHello();
       // (Later, a closed notice or a newer answer in another FR24 tab: the same here)
       window.addEventListener('storage', ev => { if ([UB_LATER_KEY, UB_NOTICE_KEY, HELLO_KEY].includes(ev.key)) ubBanners(); });
