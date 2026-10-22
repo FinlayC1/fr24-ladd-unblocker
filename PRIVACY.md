@@ -100,4 +100,4 @@ The project looks up aircraft owners' **names** in public registers. It never fe
 
 ## Contact
 
-Questions about this policy: the author, Finlay Clarke, through the repository.
+Questions about this policy: the author, Finlay Clarke, through the repository, or rbxfinlay on Discord.
