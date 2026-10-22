@@ -136,9 +136,7 @@ None of these reaches the user's own browser, the public broadcasts, or the open
 
 The project's design keeps its use personal, gentle and transparent. Users should keep it that way:
 
-- **Use it for personal interest.** Don't use it to track, follow, locate or harass a person, or to publish where a particular private individual is or goes.
 - **Don't republish.** What the shared monitor gives your browser is for the tool's own use. Running another public monitor, or publishing what one serves, brings in the ODbL's share-alike terms and the data-protection duties of a service. Whoever does it takes those duties on, and the licence requires the author's permission first ([LICENSE](../LICENSE), §2(b)).
-- **Respect refusals.** If any source, Flightradar24 included, explicitly withdraws permission (a block, a notice or a letter), stop using it in the way objected to. For Flightradar24's server-side scan, that means `"fr24Scan": false`. The project's back-off on refusals exists for this reason.
 - **Keep keys your own.** Use only API keys issued to you, within their terms.
 
 ## 9. Disclaimer
