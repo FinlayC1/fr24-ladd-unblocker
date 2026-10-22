@@ -2,6 +2,19 @@
 
 All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PATCH`. The userscript and the monitor are released together.
 
+## [22.31.1] - 2026-10-22
+
+### Fixed
+- **A click on the map put a bottom-bar window away and opened it again at once.** It was put away by pressing its bar button a moment after the click. FR24 was already putting it away itself and draws the button at rest only a while after, so that press opened it again. The click now presses the window's own X, which only ever closes, and does nothing to a window FR24 is already putting away. Should it come back a moment later with nothing pressed on the bar, its X is pressed once more. This applies to LADD Unblock and to FR24's Settings, Weather, Filters, Widgets and now Playback. Playback is left open when the click picks a flight on its map.
+- **The LADD Unblock icon no longer thickens under the mouse.** It takes FR24's hover colour only. Selected, it is drawn at the width it used to have under the mouse (2.3, from 1.5 at rest), in FR24's open yellow, whether or not the mouse is over it.
+- **Flight logs still had gaps in the last 40 days.** TC-ACN's London to Istanbul of 13 September and Larnaca to Istanbul of 26 September are on airplanes.live but were missing from its log, and N1876T's log had nothing between 15 October and 10 September. The log page takes the days the monitor already has, and the monitor called a day "no flights" when adsb.lol had no file of it, or when it watched the aircraft all day and didn't hear it fly. adsb.lol can miss what airplanes.live hears, so those days were wrong, and the log page took them at once (which is why it loaded instantly with the same holes). The browser now takes only the days the monitor has flights for. Days without flights are read in the browser from both networks, and logs that took them from the monitor have those days read again. The monitor also builds those days itself when someone looks at the aircraft.
+- **The "Recent flights" list in the panel said "No flights available"** with the aircraft's flights in its log (N1876T). The list was filled only when FR24's answer came in its usual shape with too few flights. It is now filled whatever FR24 answers: no list at all, an error, or something that isn't JSON. FR24's own lists of ordinary aircraft are left alone. It is also filled when FR24 asks with XHR rather than fetch, without making FR24's own list wait. The last request is noted for diagnosis: `__tweeksLaddBridge.stats.lastList` in the page's console.
+
+### Tests
+- `unit_barlook`: an FR24 that puts its window away itself on the map's click and draws its button at rest a while after. Weather and LADD Unblock stay away; the old way opened both again. Playback is put away by its X, and left open when a flight is picked. Under the mouse the icon keeps its line width; open, it is 2.3.
+- New `unit_recentlist`: FR24's usual empty answer, no list, a refusal, a page that isn't JSON, and FR24's own list of an ordinary aircraft, over both fetch and XHR.
+- `unit_histgap`: the monitor's days with a flight taken as they are, its days "without flights" read from both networks, and a log kept by 22.31.0 read again.
+
 ## [22.31.0] - 2026-10-22
 
 ### Added

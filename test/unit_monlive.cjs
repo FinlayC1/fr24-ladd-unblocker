@@ -243,9 +243,11 @@ const sameDayFlights = l => `${l.from ? l.from.code : '?'}-${l.to ? l.to.code : 
   await Promise.all([L.loadHistory('424c60', N, null, { front: true }), L.loadHistory('b0b0b0', N, null, {}), L.loadHistory('c0c0c0', N, null, {})]);
   const traceAsk = d => net.asked.some(a => new RegExp('adsb\\.lol/globe_history/' + d.replace(/\//g, '\\/') + '/traces/60/trace_full_424c60').test(a.url));
   check('three aircraft\'s logs asked for in one /hist request', histReq.length === 1 && histReq[0].length === 3, histReq);
-  check('the days the monitor has: no request to adsb.lol for them (5, 6, 7 Oct)', !traceAsk('2026/10/05') && !traceAsk('2026/10/06') && !traceAsk('2026/10/07'), net.asked.filter(a => /424c60/.test(a.url)).map(a => a.url.slice(30, 52)));
-  check('... the days it has not: asked for as before', days.filter(d => !['2026/10/05', '2026/10/06', '2026/10/07'].includes(d)).every(traceAsk));
-  check('... the aircraft with only a day of no flights: that day not asked for, the rest asked for', !net.asked.some(a => /2026\/10\/05\/traces\/b0\/trace_full_b0b0b0/.test(a.url)) && net.asked.some(a => /trace_full_b0b0b0/.test(a.url)));
+  check('the days the monitor has flights for: no request to adsb.lol for them (6, 7 Oct)', !traceAsk('2026/10/06') && !traceAsk('2026/10/07'), net.asked.filter(a => /424c60/.test(a.url)).map(a => a.url.slice(30, 52)));
+  // (a day the monitor has as one without flights is read here from both networks: adsb.lol can miss what airplanes.live
+  // heard - TC-ACN's 13 and 26 Sep - and the monitor's watching all day without hearing it is no proof either)
+  check('... the days it has not, and its days without flights (5 Oct): asked for as before', days.filter(d => !['2026/10/06', '2026/10/07'].includes(d)).every(traceAsk));
+  check('... the aircraft with only a day of no flights: that day asked for too', net.asked.some(a => /2026\/10\/05\/traces\/b0\/trace_full_b0b0b0/.test(a.url)));
   const hm = await L.store.getHist('424c60');
   // the same aircraft, the same days, in a browser with no monitor: its own log from adsb.lol's traces
   const net2 = makeNet(() => ({ status: 500, text: '' })), w2 = makeWin(net2), L2 = w2.__tweeksLadd;

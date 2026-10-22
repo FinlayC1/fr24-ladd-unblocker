@@ -498,11 +498,11 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   // FR24's Widgets window: its title "Widgets" (not the bar's), drawn, in a title band - the highest box round it no taller
   // than one, a window's width - in a box about as wide (the window) that holds the rest of the window beside it. (that box
   // is where this content goes; what sits in the title band - the title, the close button - stays)
-  function titleLeaves() {
-    const out = []; if (!document.body) return out;
+  function titleLeaves(word) {
+    const out = [], w = (word || 'widgets').toLowerCase(); if (!document.body) return out;
     const tw = document.createTreeWalker(document.body, 4);
     for (let n = tw.nextNode(); n; n = tw.nextNode()) {
-      if (n.data.length > 24 || n.data.trim().toLowerCase() !== 'widgets') continue;
+      if (n.data.length > 24 || n.data.trim().toLowerCase() !== w) continue;
       const el = n.parentElement;
       if (!el || out.includes(el) || el.closest('.tl-ub,.tl-ub-c,.tl-ub-btn,.tl-ub-face,script,style') || (ubBar && ubBar.contains(el)) || !shownEl(el)) continue;
       out.push(el);
@@ -755,10 +755,10 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   }
 
   // ---- the button's icon: drawn as FR24 draws its buttons' icons at rest, under the mouse and open ----------------------
-  // FR24's icons are drawn thicker, and in another colour, when a button is pointed at and when it is open: read off its
-  // own buttons in each state (at rest, the one under the mouse, the one open) and kept for next time. This icon is a line
-  // drawing: it takes their colour, and their line width relative to theirs at rest. (It was copied with FR24's classes on
-  // the icon itself, and FR24 draws the change on the drawing inside it: it stayed as it was.)
+  // FR24's icons are drawn in another colour when a button is pointed at, and thicker and in another colour when it is open:
+  // read off its own buttons in each state (at rest, the one under the mouse, the one open) and kept for next time. This
+  // icon is a line drawing: it takes their colour - its line as at rest under the mouse, thicker open. (It was copied with
+  // FR24's classes on the icon itself, and FR24 draws the change on the drawing inside it: it stayed as it was.)
   const UB_LOOK_KEY = 'tweeks.fr24.ladd.barlook';
   // (a colour as the browser gives it, or the text colour - what is kept goes into a stylesheet: nothing else is let in)
   const lookOk = L => !!L && typeof L === 'object' && (L.col === 'currentColor' || /^(rgba?\([\d.,\s%/]+\)|#[0-9a-f]{3,8})$/i.test(String(L.col))) && typeof L.sw === 'number' && L.sw >= 0 && L.sw < 20;
@@ -778,20 +778,18 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     const was = ubLook[state]; if (was && was.col === L.col && was.sw === L.sw) return;
     ubLook[state] = L; lsSet(UB_LOOK_KEY, JSON.stringify(ubLook)); ubIconStyle();
   }
-  // (the lines clearly thicker under the mouse and open - at least half as thick again, more where FR24's own grow more:
-  // read off FR24's, the change was too slight to see, and none at all where FR24 draws it by swapping its icon; FR24's
-  // yellow when open where its look has not been seen)
-  const UB_W = { rest: 1.5, hover: 2.3, open: 2.6 };
+  // (the lines as at rest under the mouse - only the colour changes there - and clearly thicker open: 2.3 to 1.5, whatever
+  // FR24's own grow by - read off FR24's, the change was too slight to see, and none at all where FR24 draws it by swapping
+  // its icon; FR24's yellow when open where its look has not been seen)
+  const UB_W = { rest: 1.5, open: 2.3 };
   function ubIconStyle() {
     let el = document.getElementById('tl-ub-icon-style');
     if (!el) { el = document.createElement('style'); el.id = 'tl-ub-icon-style'; (document.head || document.documentElement).appendChild(el); }
-    const base = (ubLook.rest && ubLook.rest.sw) || 0;
-    const w = st => { const L = ubLook[st], k = base && L && L.sw ? 1.5 * L.sw / base : 0; return st === 'rest' ? UB_W.rest : +Math.max(UB_W[st], k).toFixed(2); };
     const col = st => (ubLook[st] && ubLook[st].col) || (st === 'open' ? '#f8c023' : 'currentColor');
     const I = 'svg[data-tl-ub-icon] *';
-    const css = `.tl-ub-btn ${I}{stroke:${col('rest')};stroke-width:${w('rest')};transition:stroke .15s,stroke-width .15s}
-.tl-ub-btn:hover ${I},.tl-ub-btn:focus-visible ${I}{stroke:${col('hover')};stroke-width:${w('hover')}}
-.tl-ub-btn[data-tl-ub-open] ${I},.tl-ub-btn.tl-ub-btn-on ${I}{stroke:${col('open')}!important;stroke-width:${w('open')}}`;
+    const css = `.tl-ub-btn ${I}{stroke:${col('rest')};stroke-width:${UB_W.rest};transition:stroke .15s,stroke-width .15s}
+.tl-ub-btn:hover ${I},.tl-ub-btn:focus-visible ${I}{stroke:${col('hover')};stroke-width:${UB_W.rest}}
+.tl-ub-btn[data-tl-ub-open] ${I},.tl-ub-btn.tl-ub-btn-on ${I}{stroke:${col('open')}!important;stroke-width:${UB_W.open}!important}`;
     if (el.textContent !== css) el.textContent = css;
   }
   // (one of FR24's buttons pointed at - not open: its look under the mouse, once FR24 has drawn it so)
@@ -813,11 +811,59 @@ html.tl-no-strip .tl-strip{display:none!important}`;
 
   // ---- a click on the map puts the bar's open window away, as its X does ----------------------------------------------
   // A click - pressed and let go within a few pixels, not a drag of the map - on the map itself (FR24's map, or a canvas
-  // over most of the page), never in a window, on the bar or in a panel. LADD Unblock's window, or FR24's own Settings,
-  // Weather, Filters or Widgets; Playback - FR24's playback - is left as it is. Looked at a moment after, so a window FR24
-  // has put away itself (opening a flight) is not opened again by pressing its button.
+  // over most of the page), never in a window, on the bar or in a panel. LADD Unblock's window, or that of FR24's own
+  // Settings, Weather, Filters, Widgets or Playback: its own X pressed, a moment after - an X only ever closes, so a window
+  // FR24 is putting away itself (opening a flight, or on the map's click) is left to go. (Its button was pressed: FR24
+  // draws the button open a while after its window has gone, and the press opened it again.) Where no X is found, the
+  // button is pressed - only while nothing is being put away, and never Playback's. Back again a moment later with nothing
+  // pressed on the bar: its X pressed once more. Playback is left open where the click picked a flight on its map.
   const UB_MAP_SEL = '.gm-style,.maplibregl-map,.mapboxgl-map,.leaflet-container,.ol-viewport';
-  let ubDown = null;
+  const UB_PANEL_SEL = '[data-testid^="aircraft-panel"],[data-testid="airport-panel"]';
+  let ubDown = null, ubBarAt = -1e9;
+  // (a window's close button: in its title's band, named so or drawn as an X - or the one button there that is only a picture)
+  function closeBtnIn(box, title) {
+    if (!box || !box.isConnected) return null;
+    const tr = title && title.isConnected ? title.getBoundingClientRect() : null;
+    const band = b => { if (!tr || !tr.height) return true; const r = b.getBoundingClientRect(); return !r.height || (r.top < tr.bottom + 12 && r.bottom > tr.top - 12); };
+    const bs = [...box.querySelectorAll('button,[role="button"],a')].filter(b => !b.closest('.tl-ub-c,.tl-ub,' + UB_PANEL_SEL) && !(title && b.contains(title)) && shownEl(b) && band(b));
+    const named = bs.find(b => /\b(close|dismiss)\b/i.test((b.getAttribute('aria-label') || '') + ' ' + (b.getAttribute('title') || '')) || /^[×✕✖xX]$/.test(b.textContent.trim()));
+    if (named) return named;
+    const pics = bs.filter(b => !b.textContent.trim() && b.querySelector('svg,img'));
+    return pics.length === 1 ? pics[0] : null;
+  }
+  // (the window of one of the bar's buttons, open: the box round its title - not the bar's, a panel's or a button's words - in
+  // which its close button is; LADD Unblock's: FR24's window lent to it)
+  function barWindow(label) {
+    if (label === 'LADD Unblock') return HJ.st === 'on' && HJ.host && HJ.host.isConnected ? { box: HJ.host, title: HJ.title } : null;
+    for (const t of titleLeaves(label)) {
+      if (t.closest(UB_PANEL_SEL + ',.tl-pop,.tl-strip,button,[role="button"],a')) continue;
+      for (let a = t.parentElement, d = 0; a && a !== document.body && d < 8; a = a.parentElement, d++) {
+        if (ubBar && a.contains(ubBar)) break;
+        if (closeBtnIn(a, t)) return { box: a, title: t };
+      }
+    }
+    return null;
+  }
+  // (FR24 putting something away now: Vue's leaving classes on it)
+  const leavingNow = () => { try { return !!document.querySelector('[class*="-leave-active"]:not(.tl-ub-c)'); } catch (e) { return false; } };
+  const pickSig = () => { const ps = document.querySelectorAll(UB_PANEL_SEL), cs = document.querySelector('[data-testid="aircraft-panel__header__callsign"]'); return ps.length + '|' + (cs ? cs.textContent.trim() : '') + '|' + location.href; };
+  function isOpenNow(label, item) {
+    if (label === 'LADD Unblock') return unblockWindowOpen();
+    return !!item && item.isConnected && openItems().includes(item);
+  }
+  // (put away as its X does: true where its X was pressed, or its button)
+  function mapShut(label, item, again) {
+    if (label === 'LADD Unblock' && ubFloat) { closeStandIn(); return true; }
+    const w = barWindow(label), x = w && closeBtnIn(w.box, w.title);
+    if (x) { progClick(x); return true; }
+    if (again || leavingNow()) return false;
+    if (label === 'LADD Unblock') {
+      if (HJ.st === 'on' && HJ.item && HJ.item.isConnected && HJ.rest && sigOf(lookOf(HJ.item)) !== HJ.rest && HJ.host && shownEl(HJ.host)) { closeUnblockWindow(); return true; }
+      return false;
+    }
+    if (label !== 'Playback' && isOpenNow(label, item)) { progClick(item); return true; }
+    return false;
+  }
   function onTheMap(t) {
     if (!t || t.nodeType !== 1 || !t.isConnected) return false;
     if (t.closest('.tl-ub,.tl-ub-c,.tl-ub-btn,.tl-ub-face,.tl-pop,.tl-strip,[data-tl-ub-host],[role="dialog"]') || (ubBar && ubBar.contains(t))) return false;
@@ -826,18 +872,27 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     const r = t.getBoundingClientRect(), W = window.innerWidth || 1, H = window.innerHeight || 1;
     return r.width * r.height >= 0.5 * W * H;
   }
-  function onMapDown(ev) { ubDown = ev.button === 0 && ev.isPrimary !== false ? { x: ev.clientX, y: ev.clientY, t: clock(), el: ev.target } : null; }
+  function onMapDown(ev) {
+    const t = ev.target;
+    if (t && t.nodeType === 1 && ((ubBar && ubBar.contains(t)) || t.closest('.tl-ub-btn,.tl-ub-face'))) ubBarAt = clock();
+    ubDown = ev.button === 0 && ev.isPrimary !== false ? { x: ev.clientX, y: ev.clientY, t: clock(), el: t, pick: pickSig() } : null;
+  }
   function onMapUp(ev) {
     const d = ubDown; ubDown = null;
     if (!d || ev.button !== 0 || clock() - d.t > 800 || Math.abs(ev.clientX - d.x) > 6 || Math.abs(ev.clientY - d.y) > 6) return;
     if (!onTheMap(d.el) || !onTheMap(ev.target)) return;
     const body = unblockWindowOpen() ? ubBody : null;
-    const it = body || HJ.st !== 'off' ? null : [...ubItems.entries()].find(([l, x]) => l !== 'Playback' && openItems().includes(x));
+    const it = body || HJ.st !== 'off' ? null : [...ubItems.entries()].find(([, x]) => openItems().includes(x));
     if (!body && !it) return;
+    const label = body ? 'LADD Unblock' : it[0], item = body ? null : it[1];
     setTimeout(() => {
       try {
-        if (body) { if (unblockWindowOpen() && ubBody === body) closeUnblockWindow(); return; }
-        if (HJ.st === 'off' && it[1].isConnected && openItems().includes(it[1])) progClick(it[1]);
+        if (body ? !(unblockWindowOpen() && ubBody === body) : !(HJ.st === 'off' && isOpenNow(label, item))) return;
+        if (label === 'Playback' && pickSig() !== d.pick) return;
+        const at = clock();
+        if (!mapShut(label, item, false)) return;
+        // (back again with nothing pressed on the bar: put away once more - by its X only)
+        setTimeout(() => { try { if (ubBarAt < at && isOpenNow(label, item)) mapShut(label, item, true); } catch (e) { log('LADD Unblock window', e); } }, 900);
       } catch (e) { log('LADD Unblock window', e); }
     }, 300);
   }

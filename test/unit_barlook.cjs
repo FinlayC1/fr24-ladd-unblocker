@@ -1,10 +1,12 @@
 // The bottom bar's windows and the LADD Unblock button as FR24's own, in a real browser: the BUILT userscript in Chromium
 // on the Vue page made like FR24's map (test/fixtures/fr24mock.html, Google's map under it - ?gm=1 - and the bar's icons
 // drawn thicker under the mouse and yellow open - ?look=1).
-//   - a click on the map puts away the window open - FR24's own (Weather) and LADD Unblock - as its X does; a drag of the
-//     map, a click in the window, and FR24's playback do not
+//   - a click on the map puts away the window open - FR24's own (Weather, Playback) and LADD Unblock - by its X; a drag
+//     of the map, a click in the window, and a click picking a flight in playback do not
+//   - an FR24 that puts its window away itself on the map's click, and draws its button at rest only a while after
+//     (?mapclose=1): the window stays away - its button is not pressed again (that opened it again)
 //   - LADD Unblock's switches slide across as they are turned (the same element, part-way across mid-turn)
-//   - its icon drawn as FR24's: thicker and lighter under the mouse, thicker and yellow open, as FR24's icons are
+//   - its icon drawn as FR24's: lighter under the mouse - its line as at rest - and thicker (2.3) and yellow open
 //   - a tooltip being read stays up while the part of the page it is in is updated
 // Needs Playwright and Vue 3's browser build (skipped without): PLAYWRIGHT_PATH=<its module dir> CHROMIUM=<binary>
 // VUE_PATH=<vue.global.js>.
@@ -42,7 +44,7 @@ window.GM_xmlhttpRequest = o => { setTimeout(() => o.onload && o.onload({ status
   await ctx.addInitScript(src => { window.__SRC = src; }, SRC);
   await ctx.addInitScript({ content: STUBS + '\n;(function (go) { if (document.documentElement) return go(); const mo = new MutationObserver(() => { if (document.documentElement) { mo.disconnect(); go(); } }); mo.observe(document, { childList: true }); })(function () { (0, eval)(window.__SRC); });' });
   try {
-    await page.goto('https://www.flightradar24.com/53.40,-2.60/9?mode=keyed&gm=1&look=1');
+    await page.goto('https://www.flightradar24.com/53.40,-2.60/9?mode=keyed&gm=1&look=1&pbl=1');
     await page.waitForSelector('nav.bar .tl-ub-btn', { timeout: 15000 });
     const ours = 'nav.bar .tl-ub-btn', bar = l => `nav.bar [data-testid="map-bar__${l.toLowerCase()}"]`;
     const st = () => page.evaluate(() => ({ open: __S.open, pbw: !!__S.pbw }));
@@ -64,9 +66,11 @@ window.GM_xmlhttpRequest = o => { setTimeout(() => o.onload && o.onload({ status
     await page.mouse.click(...MAP); await sleep(900);
     check('LADD Unblock open, a click on the map: put away as its X does - FR24\'s window gone, the button back at rest', !(await oursUp()) && (await st()).open === null && !(await page.evaluate(s => document.querySelector(s).hasAttribute('data-tl-ub-open'), ours)), await st());
     await page.click(bar('Playback')); await sleep(400);
+    await page.mouse.click(...MAP); await page.evaluate(() => { __S.flight = true; }); await sleep(800);
+    check('FR24\'s playback open, a click on the map picking a flight in it: left open', (await st()).pbw === true);
+    await page.evaluate(() => { __S.flight = false; }); await sleep(400);
     await page.mouse.click(...MAP); await sleep(800);
-    check('FR24\'s playback open, a click on the map: left as it is', (await st()).pbw === true);
-    await page.click(bar('Playback')); await sleep(400);
+    check('... a click on the map otherwise: put away by its X', (await st()).pbw === false, await st());
 
     // ---- the switches slide
     await page.click(ours); await sleep(900);
@@ -92,13 +96,15 @@ window.GM_xmlhttpRequest = o => { setTimeout(() => o.onload && o.onload({ status
     const fHov = await theirs('Filters');
     await page.hover(ours); await sleep(400);
     const hov = await ico();
-    check('... pointed at: thicker and lighter, as FR24\'s icons are under the mouse (learned from theirs)', hov.w === '2.5px' && hov.c === fHov.c && fHov.w === '2.5px', { hov, fHov });
+    check('... pointed at: lighter as FR24\'s icons are under the mouse (learned from theirs) - its line as at rest, not thicker', hov.w === '1.5px' && hov.c === fHov.c && hov.c !== rest.c, { hov, fHov, rest });
     await page.mouse.move(640, 40); await sleep(400);
     check('... the mouse gone: back as it was', (await ico()).w === '1.5px');
     await page.click(ours); await sleep(900);
     await page.mouse.move(640, 40); await sleep(400);
     const open = await ico();
-    check('... open: clearly thicker (2.6, more than FR24\'s 2.5 here) and yellow, as FR24\'s open button\'s icon', open.w === '2.6px' && open.c === 'rgb(248, 192, 35)', open);
+    check('... open: clearly thicker (2.3) and yellow, as FR24\'s open button\'s icon', open.w === '2.3px' && open.c === 'rgb(248, 192, 35)', open);
+    await page.hover(ours); await sleep(400);
+    check('... open and pointed at: the same', (await ico()).w === '2.3px', await ico());
     await page.mouse.click(...MAP); await sleep(900);
     check('... put away: at rest again', (await ico()).w === '1.5px');
 
@@ -110,7 +116,22 @@ window.GM_xmlhttpRequest = o => { setTimeout(() => o.onload && o.onload({ status
     await page.mouse.move(640, 40); await sleep(100);
     const after = await page.evaluate(() => { window.__tweeksLadd.morphHtml(document.getElementById('tiphost'), '<span id="t1" title="63% - reasons C" style="display:block;height:40px">GSP</span>'); return document.getElementById('t1').title; });
     check('... the mouse gone: brought up to date', after === '63% - reasons C', after);
-    // ---- an FR24 whose icons do not grow under the mouse (or are swapped for another drawing): still clearly thicker
+    // ---- an FR24 that puts its window away itself on the map's click, its button drawn at rest a while after
+    { const p3 = await ctx.newPage();
+      await p3.goto('https://www.flightradar24.com/53.40,-2.60/9?mode=keyed&gm=1&mapclose=1');
+      await p3.waitForSelector('nav.bar .tl-ub-btn', { timeout: 15000 });
+      const st3 = () => p3.evaluate(() => ({ open: __S.open, lit: __S.lit }));
+      await p3.click(bar('Weather')); await sleep(700);
+      await p3.mouse.click(...MAP); await sleep(400);
+      const mid = await st3(); await sleep(1600);
+      check('FR24 putting its window away on the map\'s click, its button still drawn open: the window stays away - not opened again', (await st3()).open === null && mid.open === null, { mid, end: await st3() });
+      await p3.click(ours); await sleep(1400);
+      const up = await p3.evaluate(() => [...document.querySelectorAll('.tl-ub-c')].some(e => e.getBoundingClientRect().height > 0));
+      await p3.mouse.click(...MAP); await sleep(2000);
+      const gone = await p3.evaluate(() => ![...document.querySelectorAll('.tl-ub-c')].some(e => e.getBoundingClientRect().height > 0 && getComputedStyle(e).display !== 'none'));
+      check('... LADD Unblock the same: put away and not opened again', up && gone && (await st3()).open === null, { up, gone, s: await st3() });
+      await p3.close(); }
+    // ---- an FR24 whose icons do not grow under the mouse (or are swapped for another drawing): the same
     { const p2 = await ctx.newPage();
       await p2.goto('https://www.flightradar24.com/53.40,-2.60/9?mode=keyed&gm=1');
       await p2.waitForSelector('nav.bar .tl-ub-btn', { timeout: 15000 });
@@ -119,7 +140,9 @@ window.GM_xmlhttpRequest = o => { setTimeout(() => o.onload && o.onload({ status
       const w0 = await p2.evaluate(() => getComputedStyle(document.querySelector('nav.bar .tl-ub-btn svg[data-tl-ub-icon] path')).strokeWidth);
       await p2.hover('nav.bar .tl-ub-btn'); await sleep(400);
       const w1 = await p2.evaluate(() => getComputedStyle(document.querySelector('nav.bar .tl-ub-btn svg[data-tl-ub-icon] path')).strokeWidth);
-      check('FR24\'s icons not growing under the mouse: this one still clearly thicker when pointed at (1.5 to 2.3)', w0 === '1.5px' && w1 === '2.3px', [w0, w1]);
+      await p2.click('nav.bar .tl-ub-btn'); await sleep(900); await p2.mouse.move(640, 40); await sleep(400);
+      const w2 = await p2.evaluate(() => getComputedStyle(document.querySelector('nav.bar .tl-ub-btn svg[data-tl-ub-icon] path')).strokeWidth);
+      check('FR24\'s icons not growing under the mouse: this one as at rest when pointed at, clearly thicker open (1.5, 1.5, 2.3)', w0 === '1.5px' && w1 === '1.5px' && w2 === '2.3px', [w0, w1, w2]);
       await p2.close(); }
     check('no page errors', errors.length === 0, errors);
   } catch (e) { fails++; console.log('FAIL  CRASH ' + (e && e.stack || e)); }

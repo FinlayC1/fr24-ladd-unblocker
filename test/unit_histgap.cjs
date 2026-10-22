@@ -23,9 +23,15 @@ const check = (name, ok, extra) => { if (!ok) fails++; console.log(`${ok ? 'PASS
 const dayStr = t => { const d = new Date(t); return `${d.getUTCFullYear()}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${String(d.getUTCDate()).padStart(2, '0')}`; };
 const TARGET = dayStr(Date.now() - 5 * 864e5), T0 = Date.parse(TARGET.replace(/\//g, '-') + 'T00:00:00Z') / 1000;
 const TRACE = Object.assign(JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(__dirname, 'fixtures/legs/424c60/2026-10-07_lol.json.gz'))).toString()), { timestamp: T0 });
-const asked = [];
+const asked = [], MON = 'https://143-47-224-210.sslip.io', MONH = { on: false, days: {}, legs: [] };
 function answer(url) {
   if (/flightradar24\.com\/mobile\/airports\/format/.test(url)) return [200, AIRPORTS];
+  if (url.startsWith(MON)) {
+    if (!MONH.on) return [404, ''];
+    if (url.startsWith(MON + '/status')) return [200, JSON.stringify({ v: 3, since: Date.now() - 3600e3, public: true })];
+    const hm = url.match(/\/hist\?hex=([0-9a-f,]+)/); if (hm) { asked.push(['mon', hm[1]]); return [200, JSON.stringify({ hv: HIST_V, list: hm[1].split(',').map(hex => ({ hex, days: MONH.days, legs: MONH.legs })) })]; }
+    return [404, ''];
+  }
   let m = url.match(/^https:\/\/adsb\.lol\/(?:globe_history\/[\d/]+|data)\/traces\/\w\w\/trace_full_(\w{6})\.json/);
   if (m) { asked.push(['lol', m[1], url]); return [404, '']; }
   m = url.match(/^https:\/\/globe\.airplanes\.live\/globe_history\/([\d/]+)\/traces\/\w\w\/trace_full_(\w{6})\.json/);
@@ -84,6 +90,26 @@ function makeWin() {
   h = await L.store.getHist('4ca002');
   check('a log from an older build with its last 40 days empty: those days read again - the flights are there', flightsOn(h, TARGET).length >= 3 && asked.filter(a => a[0] === 'lol').length === 10, flightsOn(h, TARGET).length);
 
+  // ---- a log kept by 22.31.0 (its days without flights taken back from the monitor): read again too
+  L.store.mergeHex('4ca003', { reg: 'EI-VM2', type: 'PC24', ladd: true });
+  L.store.setHist('4ca003', { v: HIST_V, vm: 2, days: Object.fromEntries(days(10).map(d => [d, true])), legs: [], savedAt: Date.now() });
+  await L.loadHistory('4ca003', 10, null, { front: true });
+  check('a log kept by 22.31.0, its days without flights from the monitor: read again - the flights are there', flightsOn(await L.store.getHist('4ca003'), TARGET).length >= 3);
+
+  // ---- the monitor giving days as without flights (it watched and did not hear it; adsb.lol had no file): not taken -
+  // TC-ACN's London - Istanbul of 13 Sep and Larnaca - Istanbul of 26 Sep, on airplanes.live, were lost so
+  { MONH.on = true; await L.monCheck(true); await sleep(50);
+    const D2 = dayStr(Date.now() - 3 * 864e5), lpl = L.engine.byIcao('EGGP'), blk = L.engine.byIcao('EGNH'), t2 = Date.parse(D2.replace(/\//g, '-') + 'T10:00:00Z') / 1000;
+    MONH.days = Object.fromEntries(days(10).map(d => [d, d === D2 ? 1 : 0]));
+    MONH.legs = [{ day: D2, tStart: t2, tEnd: t2 + 3000, from: { id: blk.id, code: 'BLK', conf: 'ground' }, to: { id: lpl.id, code: 'LPL', conf: 'ground' }, ended: true, startedOnGround: true, cs: 'TCACN' }];
+    L.store.mergeHex('4b846e', { reg: 'TC-ACN', type: 'GLEX', ladd: true });
+    asked.length = 0;
+    await L.loadHistory('4b846e', 10, null, { front: true });
+    const h2 = await L.store.getHist('4b846e');
+    check('(the monitor answers, and was asked for the aircraft\'s days)', L.monUp() && asked.some(a => a[0] === 'mon'), asked.filter(a => a[0] === 'mon'));
+    check('the monitor\'s day with a flight taken as it is - nothing asked of the networks for it', flightsOn(h2, D2).length === 1 && !asked.some(a => (a[0] === 'apl' && a[2] === D2) || (a[0] === 'lol' && a[2].includes(D2))), flightsOn(h2, D2).length);
+    check('its days "without flights" not taken: read here, both networks - airplanes.live\'s flights of that day in the log', flightsOn(h2, TARGET).length >= 3 && asked.some(a => a[0] === 'apl' && a[2] === TARGET), flightsOn(h2, TARGET).length);
+    MONH.on = false; await L.monCheck(true).catch(() => null); }
   console.log(fails ? `\n${fails} failed` : '\nall passed');
   process.exit(fails ? 1 : 0);
 })().catch(e => { console.log('FAIL  CRASH ' + (e && e.stack || e)); process.exit(1); });
