@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Flightradar24 LADD / N-A Unblocker (feed-level)
 // @namespace    tweeks.io
-// @version      22.31.4
+// @version      22.31.5
 // @description  Identifies every LADD / N/A / blocked military aircraft on Flightradar24 from public ADS-B, and injects callsign, registration, operator, age, country, MSN, squawk, vertical speed, GPS altitude, airspeeds, wind, photos, a reasoned origin/destination with a wind-corrected ETA (also for ordinary flights FR24 shows as N/A - military, private, GA, helicopters, with private landing sites; learned from 63 days of every aircraft worldwide, with live weather and closures), airport-board entries and a rebuilt 7-month flight log straight into FR24's own data - so it all renders like normal FR24 traffic.
 // @author       Finlay Clarke
 // @updateURL    https://raw.githubusercontent.com/FinlayC1/fr24-ladd-unblocker/main/dist/fr24-ladd-unblocker.user.js
@@ -90,7 +90,7 @@
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "22.31.4";
+    var BRIDGE_V = "22.31.5";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed
@@ -5393,7 +5393,7 @@
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '22.31.4';
+  const VERSION = '22.31.5';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
@@ -13082,7 +13082,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // (the version whose "what's new" was put away, and the one whose dot on the button the window was opened for)
   const UB_SEEN_KEY = 'tweeks.fr24.ladd.seenver', UB_DOT_KEY = 'tweeks.fr24.ladd.dotver';
   // (the newest CHANGELOG section's headlines, written in by build.mjs: { v, items })
-  const UB_WHATS_NEW = {"v":"22.31.4","items":["A click on the map still did nothing to a bottom-bar window; it flashed and stayed open."]};
+  const UB_WHATS_NEW = {"v":"22.31.5","items":["A map click closed the window only after FR24 had redrawn it: the window went, came back, then closed."]};
   // (an aircraft with an open padlock: FR24's outline style - 24 grid, 1.5 stroke in the text colour)
   const UB_ICON = '<svg data-tl-ub-icon="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
   const UB_X = '<svg viewBox="0 0 14 14" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5l11 11M12.5 1.5l-11 11"/></svg>';
@@ -13882,12 +13882,13 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   // ---- a click on the map puts the bar's open window away, as its X does ----------------------------------------------
   // A click - pressed and let go within a few pixels, not a drag of the map - on the map itself (FR24's map, or a canvas
   // over most of the page), never in a window, on the bar or in a panel: the window open - LADD Unblock's, or that of FR24's
-  // own Settings, Weather, Filters, Widgets or Playback - put away by its own X, and kept away. FR24 answers every map click
-  // by trying to select a flight (its aircraft layer asks for a flight that is not there: "Flight not found!"): that puts
-  // the window away, and the failed try puts it back a moment later. So the window is watched for eight seconds from the
-  // click: whenever it is open and not moving - not coming in or going out - for most of a second, its X is pressed (three
-  // times at most). Never a bar button: pressing one opens a window as readily as it closes one. Nothing is pressed once a
-  // bar button has been pressed since the click (the person's own choice), nor in playback once a flight is picked.
+  // own Settings, Weather, Filters, Widgets or Playback - put away by its own X the moment the mouse is let go, before FR24
+  // hears of the click. (FR24 answers every map click by trying to select a flight, and draws the open window afresh a
+  // quarter of a second later: pressed after that, the window was seen to go and come back before it closed.) Then watched
+  // for eight seconds: open again and still for a quarter of a second, its X pressed again (four presses at most). Never a
+  // bar button: pressing one opens a window as readily as it closes one. Nothing more is pressed once a bar button has been
+  // pressed since the click (the person's own choice). Playback's is put away only a moment after, and not where the click
+  // picked a flight on its map.
   const UB_MAP_SEL = '.gm-style,.maplibregl-map,.mapboxgl-map,.leaflet-container,.ol-viewport';
   const UB_PANEL_SEL = '[data-testid^="aircraft-panel"],[data-testid="airport-panel"]';
   let ubDown = null, ubTrack = null, ubBarAt = -1e9;
@@ -13975,7 +13976,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     const bw = barWindow(label), x = bw && closeBtnIn(bw.box, bw.title);
     if (x) pressEl(x);
   }
-  const SETTLE_MS = 8000, STABLE_MS = 700, PRESS_GAP_MS = 1200, PRESS_MAX = 3;
+  const SETTLE_MS = 8000, STABLE_MS = 250, PRESS_GAP_MS = 500, PRESS_MAX = 4;
   function settleTrack(tr) {
     const step = () => {
       try {
@@ -14014,7 +14015,9 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   function onMapUp(ev) {
     const d = ubDown; ubDown = null;
     if (!d || ubProg || ev.button !== 0 || clock() - d.t > 800 || Math.abs(ev.clientX - d.x) > 6 || Math.abs(ev.clientY - d.y) > 6 || !onTheMap(ev.target)) return;
-    settleTrack(ubTrack = { w: d.w, t0: clock(), pick: d.pick, since: 0, last: -1e9, n: 0 });
+    const tr = ubTrack = { w: d.w, t0: clock(), pick: d.pick, since: 0, last: -1e9, n: 0 };
+    if (d.w.label !== 'Playback') { tr.n = 1; tr.last = tr.t0; try { shutLabel(d.w.label); } catch (e) { log('LADD Unblock window', e); } }
+    settleTrack(tr);
   }
 
   // ---- the button on FR24's bar ---------------------------------------------------------------------------------------

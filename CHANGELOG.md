@@ -2,6 +2,16 @@
 
 All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PATCH`. The userscript and the monitor are released together.
 
+## [22.31.5] - 2026-10-22
+
+### Fixed
+- **A map click closed the window only after FR24 had redrawn it: the window went, came back, then closed.** FR24 redraws the open window a quarter of a second after every map click, and 22.31.4 pressed the window's X only once it had been still for most of a second after the click. Its X is now pressed the moment the mouse is let go, before FR24 hears of the click, so the window closes once, as its X closes it, and FR24 has nothing open to redraw.
+  - Should it come back anyway, it is closed again after a quarter of a second rather than most of one (four presses at most within eight seconds).
+  - Playback's window is still closed a moment later, so a flight picked on its map leaves it open.
+
+### Tests
+- `unit_barlook`, on the test page built from the real FR24 recording: the window is gone within half a second of the click (its own closing fade) and is never drawn again. 22.31.4's code fails this: FR24 redraws the window and it closes only 1.6 s after the click.
+
 ## [22.31.4] - 2026-10-22
 
 ### Fixed

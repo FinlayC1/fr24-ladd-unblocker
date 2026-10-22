@@ -812,12 +812,13 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   // ---- a click on the map puts the bar's open window away, as its X does ----------------------------------------------
   // A click - pressed and let go within a few pixels, not a drag of the map - on the map itself (FR24's map, or a canvas
   // over most of the page), never in a window, on the bar or in a panel: the window open - LADD Unblock's, or that of FR24's
-  // own Settings, Weather, Filters, Widgets or Playback - put away by its own X, and kept away. FR24 answers every map click
-  // by trying to select a flight (its aircraft layer asks for a flight that is not there: "Flight not found!"): that puts
-  // the window away, and the failed try puts it back a moment later. So the window is watched for eight seconds from the
-  // click: whenever it is open and not moving - not coming in or going out - for most of a second, its X is pressed (three
-  // times at most). Never a bar button: pressing one opens a window as readily as it closes one. Nothing is pressed once a
-  // bar button has been pressed since the click (the person's own choice), nor in playback once a flight is picked.
+  // own Settings, Weather, Filters, Widgets or Playback - put away by its own X the moment the mouse is let go, before FR24
+  // hears of the click. (FR24 answers every map click by trying to select a flight, and draws the open window afresh a
+  // quarter of a second later: pressed after that, the window was seen to go and come back before it closed.) Then watched
+  // for eight seconds: open again and still for a quarter of a second, its X pressed again (four presses at most). Never a
+  // bar button: pressing one opens a window as readily as it closes one. Nothing more is pressed once a bar button has been
+  // pressed since the click (the person's own choice). Playback's is put away only a moment after, and not where the click
+  // picked a flight on its map.
   const UB_MAP_SEL = '.gm-style,.maplibregl-map,.mapboxgl-map,.leaflet-container,.ol-viewport';
   const UB_PANEL_SEL = '[data-testid^="aircraft-panel"],[data-testid="airport-panel"]';
   let ubDown = null, ubTrack = null, ubBarAt = -1e9;
@@ -905,7 +906,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     const bw = barWindow(label), x = bw && closeBtnIn(bw.box, bw.title);
     if (x) pressEl(x);
   }
-  const SETTLE_MS = 8000, STABLE_MS = 700, PRESS_GAP_MS = 1200, PRESS_MAX = 3;
+  const SETTLE_MS = 8000, STABLE_MS = 250, PRESS_GAP_MS = 500, PRESS_MAX = 4;
   function settleTrack(tr) {
     const step = () => {
       try {
@@ -944,7 +945,9 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   function onMapUp(ev) {
     const d = ubDown; ubDown = null;
     if (!d || ubProg || ev.button !== 0 || clock() - d.t > 800 || Math.abs(ev.clientX - d.x) > 6 || Math.abs(ev.clientY - d.y) > 6 || !onTheMap(ev.target)) return;
-    settleTrack(ubTrack = { w: d.w, t0: clock(), pick: d.pick, since: 0, last: -1e9, n: 0 });
+    const tr = ubTrack = { w: d.w, t0: clock(), pick: d.pick, since: 0, last: -1e9, n: 0 };
+    if (d.w.label !== 'Playback') { tr.n = 1; tr.last = tr.t0; try { shutLabel(d.w.label); } catch (e) { log('LADD Unblock window', e); } }
+    settleTrack(tr);
   }
 
   // ---- the button on FR24's bar ---------------------------------------------------------------------------------------
