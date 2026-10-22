@@ -130,7 +130,7 @@ const app = createApp({
     return { S, BARS, IND, LI, PB, PANEL, GM, TRAP,
       mapClick() {
         if (MC) setTimeout(() => { S.open = null; }, 150);
-        if (RM && S.open) setTimeout(() => { S.rk++; }, 240);
+        if (RM) setTimeout(() => { S.rk++; }, 240);
         if (FP) { const w = S.open; if (w) { setTimeout(() => { S.open = null; }, 120); setTimeout(() => { if (S.open === null) S.open = w; }, 900); } }
       },
       isOn(b) { return ((b === 'Playback' ? PBL && S.pbw : (MC ? S.lit : S.open) === b) ? 'is-on' : '') + (PBODD && b === 'Playback' ? ' pb-new' : ''); },

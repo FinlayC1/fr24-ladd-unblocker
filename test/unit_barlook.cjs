@@ -158,6 +158,13 @@ window.GM_xmlhttpRequest = o => { setTimeout(() => o.onload && o.onload({ status
         const s = await p7.evaluate(() => __S.open), v = await vis(); if (s !== null || v) { bad = { b, s, v }; break; }
       }
       check('FR24\'s real title bar, its window drawn afresh on the click, its bar\'s looks telling nothing: put away by its X - three windows', !bad, bad);
+      // (closed as FR24's X closes it - at once, the window not drawn again by FR24 a quarter of a second later: it was seen to
+      // go and come back before it closed)
+      await p7.click(bar('Weather')); await sleep(700);
+      await p7.evaluate(() => { window.__adds = 0; window.__shown = []; const t0 = performance.now(); new MutationObserver(rs => { for (const r of rs) for (const n of r.addedNodes) if (n.nodeType === 1 && n.matches && n.matches('.win')) window.__adds++; }).observe(document.body, { childList: true, subtree: true }); (function f() { const v = [...document.querySelectorAll('.win')].some(e => e.getBoundingClientRect().height > 0 && +getComputedStyle(e).opacity > 0.05); window.__shown.push([Math.round(performance.now() - t0), v]); if (performance.now() - t0 < 2000) requestAnimationFrame(f); })(); });
+      await p7.mouse.click(...MAP); await sleep(2200);
+      const once = await p7.evaluate(() => { const s = window.__shown, firstOff = s.findIndex(x => !x[1]); return { adds: window.__adds, offAt: firstOff >= 0 ? s[firstOff][0] : -1, back: firstOff >= 0 && s.slice(firstOff).some(x => x[1]), open: __S.open }; });
+      check('... closed once, as its X closes it: gone within half a second of the click, not drawn again by FR24 after', once.adds === 0 && once.offAt >= 0 && once.offAt < 500 && !once.back && once.open === null, once);
       await p7.click(bar('Filters')); await sleep(700);
       await p7.mouse.move(...MAP); await p7.mouse.down(); await p7.mouse.move(MAP[0] + 80, MAP[1] + 50, { steps: 6 }); await p7.mouse.up(); await sleep(2500);
       const dragged = await p7.evaluate(() => __S.open);
