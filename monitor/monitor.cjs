@@ -420,7 +420,9 @@ function fillHist(hex, nowS) {
   let n = 0;
   for (let k = 1; k <= FILL_DAYS; k++) {
     const d = dayOf(nowS - k * 86400), hd = slashDay(d);
-    if (d > closed || served[hd] >= 0 || (hd in h.days && h.days[hd] >= 0)) continue;
+    // (a day served as one without flights only because it was watched and not heard is built too: adsb.lol can have missed
+    // what airplanes.live heard - TC-ACN's 13 and 26 Sep)
+    if (d > closed || served[hd] > 0 || (hd in h.days && h.days[hd] >= 0)) continue;
     queueHist(hex, d, 0, 0, true); n++;
   }
   return n;

@@ -185,7 +185,11 @@ const rep = (hex, o) => Object.assign({ hex, lat: 53.4, lon: -2.3, alt_baro: 120
     check('... with what the userscript learns from each flight (squawk blocks, FMS levels, where it flew)', d7.filter(l => l.from && l.to).every(l => Array.isArray(l.lx) && l.lx.length === 3 && typeof l.lx[2] === 'string'), d7.map(l => l.lx));
     check('... both days, counted', h.days['2026/10/06'] === 4 && h.days['2026/10/07'] === 4, h.days);
     const two = M.answer(new URL('http://x/hist?hex=424c60,c00001,zz,000000'), Date.now() / 1000);
-    check('/hist answers several aircraft at once (bad addresses dropped)', two.hv === 5 && two.list.length === 3 && two.list[0].hex === '424c60' && two.list[1].days['2026/10/07'] === 0, two.list.map(x => x.hex)); }
+    check('/hist answers several aircraft at once (bad addresses dropped)', two.hv === 5 && two.list.length === 3 && two.list[0].hex === '424c60' && two.list[1].hex === 'c00001', two.list.map(x => x.hex));
+    // (c00001's 7 Oct was "without flights" only because it was watched all day and not heard: adsb.lol can miss what
+    // airplanes.live heard, so asking for it has that day built from the traces - and not served as a day without flights meanwhile)
+    check('... a day without flights only from watching: built from the traces when asked for, not served as one without flights meanwhile', !('2026/10/07' in two.list[1].days) && M.histPend.has('c00001|2026-10-07'), { days: two.list[1].days, pend: [...M.histPend].filter(k => k.startsWith('c00001')) });
+    M.histQ.length = 0; M.histPend.clear(); }
   // ---- a day adsb.lol has not published yet; a day long gone with no file -----------------------------------------
   { const hex = 'd00001', y = new Date(Date.now() - 86400e3).toISOString().slice(0, 10); M.markBlocked(hex, null, dayS(y) - 86400);
     const job = { hex, day: y, tries: 0, at: 0 }; M.histPend.add(hex + '|' + y);

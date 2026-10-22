@@ -1149,7 +1149,8 @@
         for (const l of h.legs) if (l.day && l.day >= from && ((!l.to && (!l.ended || /^(gap|lost)/.test(l.how || ''))) || (!l.from && !l.startedOnGround))) redo.add(l.day);
         // (2: a day adsb.lol had no file of was kept as a day without flights - and adsb.lol's files stopped coming: N527P's
         // log empty from 11 Sep to 20 Oct, its last 40 days, though airplanes.live has its flights. Those days are read again)
-        if ((h.vm || 0) < 2) { const flown = new Set(h.legs.map(l => l.day)); for (const d of Object.keys(h.days)) if (d >= from && !flown.has(d)) redo.add(d); }
+        // (3: and again - 22.31.0 took them back from the monitor, which gave them as days without flights)
+        if ((h.vm || 0) < 3) { const flown = new Set(h.legs.map(l => l.day)); for (const d of Object.keys(h.days)) if (d >= from && !flown.has(d)) redo.add(d); }
         for (const d of redo) delete h.days[d];
         h.vm = HIST_VM;
       }
@@ -1173,12 +1174,15 @@
       };
       const ac0 = acOfHex(hex), cls0 = ENGINE.classify(ac0), heli = cls0 === 'heli', patrol = cls0 === 'fighter' || cls0 === 'milheavy';
       // (the days the monitor has: taken as they are - no request to adsb.lol for them; only a day whose flights all came
-      // with it, and never one it could not complete)
+      // with it, and never one it could not complete. Never a day it has no flights for: it says so of a day adsb.lol had
+      // no file of, or one it watched the aircraft all day and did not hear it fly - and airplanes.live has TC-ACN's
+      // London - Istanbul of 13 Sep and Larnaca - Istanbul of 26 Sep, days the monitor gave as none. Those days are read
+      // here, both networks)
       if (todo.length) {
         const mh = await monHist(hex).catch(() => null);
         if (mh && mh.days && typeof mh.days === 'object') {
           const byDay = new Map(); for (const l of Array.isArray(mh.legs) ? mh.legs : []) if (l && l.day && fin(l.tStart)) (byDay.get(l.day) || byDay.set(l.day, []).get(l.day)).push(l);
-          const have = todo.filter(d => Number.isInteger(mh.days[d]) && mh.days[d] >= 0 && (byDay.get(d) || []).length === mh.days[d]);
+          const have = todo.filter(d => Number.isInteger(mh.days[d]) && mh.days[d] > 0 && (byDay.get(d) || []).length === mh.days[d]);
           for (const d of have) {
             const legs = (byDay.get(d) || []).map(l => { const s = Object.assign({}, l), lx = s.lx; delete s.lx; s.day = d; learnFromLeg(hex, null, s, cls0, ac0.mil, lx); return s; });
             h.days[d] = true; h.legs = h.legs.filter(l => l.day !== d).concat(legs); dirty = true;

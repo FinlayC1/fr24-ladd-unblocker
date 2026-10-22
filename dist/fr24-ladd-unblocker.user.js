@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Flightradar24 LADD / N-A Unblocker (feed-level)
 // @namespace    tweeks.io
-// @version      22.31.0
+// @version      22.31.1
 // @description  Identifies every LADD / N/A / blocked military aircraft on Flightradar24 from public ADS-B, and injects callsign, registration, operator, age, country, MSN, squawk, vertical speed, GPS altitude, airspeeds, wind, photos, a reasoned origin/destination with a wind-corrected ETA (also for ordinary flights FR24 shows as N/A - military, private, GA, helicopters, with private landing sites; learned from 63 days of every aircraft worldwide, with live weather and closures), airport-board entries and a rebuilt 7-month flight log straight into FR24's own data - so it all renders like normal FR24 traffic.
 // @author       Finlay Clarke
 // @updateURL    https://raw.githubusercontent.com/FinlayC1/fr24-ladd-unblocker/main/dist/fr24-ladd-unblocker.user.js
@@ -90,7 +90,7 @@
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "22.31.0";
+    var BRIDGE_V = "22.31.1";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed
@@ -869,6 +869,28 @@
         return getter.call(this);
       } });
     }
+    function installListXhr(xhr, reg, url) {
+      var cache = { src: null, out: null };
+      var patched = function (raw) {
+        if (cache.src === raw && cache.out != null) return cache.out;
+        var out = raw;
+        try {
+          var j = typeof raw === 'string' ? (raw ? JSON.parse(raw) : null) : raw, resp = j && j.result && j.result.response, h = hist.get(reg);
+          stats.lastList = { reg: reg, at: Date.now(), via: 'xhr', status: xhr.status, fr24: resp ? (Array.isArray(resp.data) ? resp.data.length : 0) : -1, ours: h && h.data ? h.data.length : 0 };
+          if (!(resp && Array.isArray(resp.data) && resp.data.length > 1) && h && h.data && h.data.length > 1) {
+            var o = resp ? j : listShell(reg, url); fillList(o.result.response, h);
+            out = typeof raw === 'string' ? JSON.stringify(o) : o;
+          }
+        } catch (e) { out = raw; }
+        cache.src = raw; cache.out = out; return out;
+      };
+      Object.defineProperty(xhr, 'responseText', { configurable: true, get: function () { var raw; try { raw = textDesc.get.call(this); } catch (e) { return ''; } return this.readyState === 4 ? patched(raw) : raw; } });
+      Object.defineProperty(xhr, 'response', { configurable: true, get: function () {
+        var raw; try { raw = respDesc.get.call(this); } catch (e) { return null; }
+        if (this.readyState !== 4 || !(typeof raw === 'string' || (raw && typeof raw === 'object' && !(raw instanceof ArrayBuffer) && !(raw instanceof Blob)))) return raw;
+        return patched(raw);
+      } });
+    }
     P.open = function (method, url) { try { this.__tlUrl = String(url); this.__tlHeaders = {}; } catch (e) { /* ignore */ } return oOpen.apply(this, arguments); };
     P.setRequestHeader = function (k, v) { try { if (this.__tlHeaders) this.__tlHeaders[k] = v; } catch (e) { /* ignore */ } return oSetHeader.apply(this, arguments); };
     P.send = function (body) {
@@ -906,6 +928,11 @@
           var ppr = pst.id ? resolved.get(pst.id) : null, pphWait = !!(ppr && ppr.hex && !hasPhotos(ppr) && !((photoCache.get(String(ppr.hex).toUpperCase()) || {}).final));
           if (ppr && ppr.hex && !((photoCache.get(String(ppr.hex).toUpperCase()) || {}).final)) photosFor(ppr, true);
           if (pst.id && (!pbReady(pst.id) || pphWait)) { var xpb = this, bpb = sendBody; Promise.all([whenPbReady(pst.id, 1500), pphWait ? photosWithin(ppr, 2500) : null]).then(function () { try { oSend.call(xpb, bpb); } catch (e) { /* aborted meanwhile */ } }); return; }
+        } else if (!this.__tlOwn && /api\.flightradar24\.com\/common\/v1\/flight\/list\.json\?/.test(url) && /fetchBy=reg/.test(url)) {
+          // (the registration list asked for with XHR: the log asked for as it goes - FR24's own list never waits for it -
+          // and put in FR24's answer when that has no flights)
+          var lq = (url.match(/[?&]query=([^&]*)/) || [])[1], lreg = lq ? decodeURIComponent(lq).toUpperCase() : '';
+          if (lreg) { stats.listAsked = (stats.listAsked || 0) + 1; needHistory(lreg); installListXhr(this, lreg, url); }
         } else if (!this.__tlOwn && /fr24\.feed\.api\.v1\.Feed\/TopFlights(?:$|\?)/.test(url)) {
           stats.topSeen = (stats.topSeen || 0) + 1;
           if (this.responseType === 'arraybuffer') installBinary(this, patchTopFlights);
@@ -2170,6 +2197,20 @@
       try { if (c === 'Data/AirportRoutes') applyRoutes(pg); else if (c === 'Data/AirportStatistics') applyStats(pg); else if (c === 'Data/Airport') applyAirport(pg); else applyBoardPage(pg); } catch (e) { stats.errors++; stats.lastError = String(e); }
     }
     setInterval(routesTick, 300);
+    // FR24's answer to its registration list, its flights the log's (the first, the flight on screen, hidden by FR24)
+    function fillList(resp, h) {
+      resp.data = h.data.slice(0, 1 + Math.max(4, Number((resp.item && resp.item.limit) || 5)));
+      resp.item = Object.assign({}, resp.item, { current: resp.data.length });
+      resp.page = Object.assign({ current: 1 }, resp.page, { more: h.data.length > resp.data.length });
+      stats.lists++;
+    }
+    // (FR24's answer had no list at all: one in its shape)
+    function listShell(reg, url) {
+      var lim = Number((String(url).match(/[?&]limit=(\d+)/) || [])[1]) || 5, now = Math.floor(Date.now() / 1000);
+      return { result: { request: { callback: null, device: null, fetchBy: 'reg', filterBy: 'historic', format: 'json', limit: lim, olderThenFlightId: null, page: 1, pk: null, query: reg, timestamp: now, token: null },
+        response: { item: { current: 0, total: null, limit: lim }, page: { current: 1, more: false }, timestamp: now, data: null, aircraftInfo: null, aircraftImages: [] } },
+        _api: { copyright: 'Copyright (c) 2014-2026 Flightradar24 AB. All rights reserved.', legalNotice: '', version: '1.0' } };
+    }
     // "Recent <reg> flights": FR24 answers `data: null` for blocked registrations; the userscript supplies the log.
     function needHistory(reg) {
       reg = String(reg || '').toUpperCase();
@@ -2410,26 +2451,30 @@
         if ((m = url.match(/api\.flightradar24\.com\/common\/v1\/flight\/list\.json\?(.*)$/)) && /fetchBy=reg/.test(url)) {
           var qr = (m[1].match(/(?:^|&)query=([^&]*)/) || [])[1]; var reg = qr ? decodeURIComponent(qr).toUpperCase() : '';
           if (!reg) return p;
+          stats.listAsked = (stats.listAsked || 0) + 1;
           return p.then(function (res) {
-            return res.clone().json().then(function (j) {
-              var resp = j && j.result && j.result.response; if (!resp) return res;
+            return res.clone().json().then(function (j) { return j; }, function () { return null; }).then(function (j) {
+              var resp = j && j.result && j.result.response;
               // (FR24's own rows of flights that never took off have no flight id, and its dropdown keeps a row open by
               // that id: every such row opened and closed together, stuck open - ZZ504's two "Estimated dep" SCARB54s.
               // Each gets one of its own)
-              var noId = Array.isArray(resp.data) ? resp.data.filter(function (x) { return x && x.identification && !x.identification.id; }) : [];
+              var noId = resp && Array.isArray(resp.data) ? resp.data.filter(function (x) { return x && x.identification && !x.identification.id; }) : [];
               if (noId.length > 1) noId.forEach(function (x, i) { x.identification.id = 'f' + ((Number(x.identification.row) || i + 1) % 0xfffffff).toString(16); });
-              if (Array.isArray(resp.data) && resp.data.length > 1) return noId.length > 1 ? jsonResponse(res, j) : res;
+              var fr24n = resp ? (Array.isArray(resp.data) ? resp.data.length : 0) : -1;   // (-1: no list in FR24's answer at all)
+              stats.lastList = { reg: reg, at: Date.now(), via: 'fetch', status: res.status, fr24: fr24n, ours: null };
+              if (resp && Array.isArray(resp.data) && resp.data.length > 1) return noId.length > 1 ? jsonResponse(res, j) : res;
               // (FR24 listing nothing - a blocked aircraft, a military or N/A one it shows without a past: FAMUS62, 06-6165 -
-              // the log kept here, for any aircraft; one it knows nothing of is answered at once)
+              // the log kept here, for any aircraft; one it knows nothing of is answered at once. Whatever FR24 answered -
+              // its usual shape with no flights, none at all, an error: N1876T's list said "No flights available" with its
+              // flights in the log)
               return needHistory(reg).then(function (h) {
-                if (!h || !h.data || !h.data.length) return res;
-                resp.data = h.data.slice(0, 1 + Math.max(4, Number((resp.item && resp.item.limit) || 5)));
-                resp.item = Object.assign({}, resp.item, { current: resp.data.length });
-                resp.page = Object.assign({}, resp.page, { more: h.data.length > resp.data.length });
-                stats.lists++;
-                return jsonResponse(res, j);
+                stats.lastList.ours = h && h.data ? h.data.length : 0;
+                if (!h || !h.data || h.data.length < 2) return res;
+                var out = resp ? j : listShell(reg, url);
+                fillList(out.result.response, h);
+                return jsonResponse(res.ok ? res : null, out);
               });
-            }, function () { return res; });
+            });
           });
         }
       } catch (e) { stats.errors++; stats.lastError = String(e); }
@@ -5348,7 +5393,7 @@
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '22.31.0';
+  const VERSION = '22.31.1';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
@@ -5376,7 +5421,7 @@
   const TELEMETRY_MS = 2000;            // live ADS-B telemetry poll for the selected aircraft (each aggregator every 4 s)
   const PHOTO_V = 9;                    // photo-pipeline version; a bump re-ranks photos cached by an older one (5: JetPhotos through FR24's own lookup)
   const HIST_V = 5;                     // flight-log reconstruction version; a bump rebuilds cached logs (5: each flight's path, for matching its own routes)
-  const HIST_VM = 2;                    // ... a minor one re-reads only some days (1: an unended / unbegun flight - holes at one end, strips; 2: the last 40 days without flights, from adsb.lol's missing files)
+  const HIST_VM = 3;                    // ... a minor one re-reads only some days (1: an unended / unbegun flight - holes at one end, strips; 2, 3: the last 40 days without flights - adsb.lol's missing files, the monitor's days without flights)
   const PRECOMPUTE_MAX = 8;
   // landing places learned away from FR24's airports (03-data): their ids, below the route engine's unlisted fields (1e7 on)
   const SITE_BASE = 9000000, isSiteId = id => id > SITE_BASE && id < 1e7;             // in-view aircraft whose full route (trace + plan) is prepared before a click
@@ -8185,7 +8230,8 @@
         for (const l of h.legs) if (l.day && l.day >= from && ((!l.to && (!l.ended || /^(gap|lost)/.test(l.how || ''))) || (!l.from && !l.startedOnGround))) redo.add(l.day);
         // (2: a day adsb.lol had no file of was kept as a day without flights - and adsb.lol's files stopped coming: N527P's
         // log empty from 11 Sep to 20 Oct, its last 40 days, though airplanes.live has its flights. Those days are read again)
-        if ((h.vm || 0) < 2) { const flown = new Set(h.legs.map(l => l.day)); for (const d of Object.keys(h.days)) if (d >= from && !flown.has(d)) redo.add(d); }
+        // (3: and again - 22.31.0 took them back from the monitor, which gave them as days without flights)
+        if ((h.vm || 0) < 3) { const flown = new Set(h.legs.map(l => l.day)); for (const d of Object.keys(h.days)) if (d >= from && !flown.has(d)) redo.add(d); }
         for (const d of redo) delete h.days[d];
         h.vm = HIST_VM;
       }
@@ -8209,12 +8255,15 @@
       };
       const ac0 = acOfHex(hex), cls0 = ENGINE.classify(ac0), heli = cls0 === 'heli', patrol = cls0 === 'fighter' || cls0 === 'milheavy';
       // (the days the monitor has: taken as they are - no request to adsb.lol for them; only a day whose flights all came
-      // with it, and never one it could not complete)
+      // with it, and never one it could not complete. Never a day it has no flights for: it says so of a day adsb.lol had
+      // no file of, or one it watched the aircraft all day and did not hear it fly - and airplanes.live has TC-ACN's
+      // London - Istanbul of 13 Sep and Larnaca - Istanbul of 26 Sep, days the monitor gave as none. Those days are read
+      // here, both networks)
       if (todo.length) {
         const mh = await monHist(hex).catch(() => null);
         if (mh && mh.days && typeof mh.days === 'object') {
           const byDay = new Map(); for (const l of Array.isArray(mh.legs) ? mh.legs : []) if (l && l.day && fin(l.tStart)) (byDay.get(l.day) || byDay.set(l.day, []).get(l.day)).push(l);
-          const have = todo.filter(d => Number.isInteger(mh.days[d]) && mh.days[d] >= 0 && (byDay.get(d) || []).length === mh.days[d]);
+          const have = todo.filter(d => Number.isInteger(mh.days[d]) && mh.days[d] > 0 && (byDay.get(d) || []).length === mh.days[d]);
           for (const d of have) {
             const legs = (byDay.get(d) || []).map(l => { const s = Object.assign({}, l), lx = s.lx; delete s.lx; s.day = d; learnFromLeg(hex, null, s, cls0, ac0.mil, lx); return s; });
             h.days[d] = true; h.legs = h.legs.filter(l => l.day !== d).concat(legs); dirty = true;
@@ -13025,7 +13074,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // (the version whose "what's new" was put away, and the one whose dot on the button the window was opened for)
   const UB_SEEN_KEY = 'tweeks.fr24.ladd.seenver', UB_DOT_KEY = 'tweeks.fr24.ladd.dotver';
   // (the newest CHANGELOG section's headlines, written in by build.mjs: { v, items })
-  const UB_WHATS_NEW = {"v":"22.31.0","items":["The monitor builds the logs of LADD aircraft and shares them.","Blocked aircraft's pictures are shared through the monitor.","Flight logs had a hole covering the last 40 days."]};
+  const UB_WHATS_NEW = {"v":"22.31.1","items":["A click on the map put a bottom-bar window away and opened it again at once.","The LADD Unblock icon no longer thickens under the mouse.","Flight logs still had gaps in the last 40 days."]};
   // (an aircraft with an open padlock: FR24's outline style - 24 grid, 1.5 stroke in the text colour)
   const UB_ICON = '<svg data-tl-ub-icon="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
   const UB_X = '<svg viewBox="0 0 14 14" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5l11 11M12.5 1.5l-11 11"/></svg>';
@@ -13511,11 +13560,11 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   // FR24's Widgets window: its title "Widgets" (not the bar's), drawn, in a title band - the highest box round it no taller
   // than one, a window's width - in a box about as wide (the window) that holds the rest of the window beside it. (that box
   // is where this content goes; what sits in the title band - the title, the close button - stays)
-  function titleLeaves() {
-    const out = []; if (!document.body) return out;
+  function titleLeaves(word) {
+    const out = [], w = (word || 'widgets').toLowerCase(); if (!document.body) return out;
     const tw = document.createTreeWalker(document.body, 4);
     for (let n = tw.nextNode(); n; n = tw.nextNode()) {
-      if (n.data.length > 24 || n.data.trim().toLowerCase() !== 'widgets') continue;
+      if (n.data.length > 24 || n.data.trim().toLowerCase() !== w) continue;
       const el = n.parentElement;
       if (!el || out.includes(el) || el.closest('.tl-ub,.tl-ub-c,.tl-ub-btn,.tl-ub-face,script,style') || (ubBar && ubBar.contains(el)) || !shownEl(el)) continue;
       out.push(el);
@@ -13768,10 +13817,10 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   }
 
   // ---- the button's icon: drawn as FR24 draws its buttons' icons at rest, under the mouse and open ----------------------
-  // FR24's icons are drawn thicker, and in another colour, when a button is pointed at and when it is open: read off its
-  // own buttons in each state (at rest, the one under the mouse, the one open) and kept for next time. This icon is a line
-  // drawing: it takes their colour, and their line width relative to theirs at rest. (It was copied with FR24's classes on
-  // the icon itself, and FR24 draws the change on the drawing inside it: it stayed as it was.)
+  // FR24's icons are drawn in another colour when a button is pointed at, and thicker and in another colour when it is open:
+  // read off its own buttons in each state (at rest, the one under the mouse, the one open) and kept for next time. This
+  // icon is a line drawing: it takes their colour - its line as at rest under the mouse, thicker open. (It was copied with
+  // FR24's classes on the icon itself, and FR24 draws the change on the drawing inside it: it stayed as it was.)
   const UB_LOOK_KEY = 'tweeks.fr24.ladd.barlook';
   // (a colour as the browser gives it, or the text colour - what is kept goes into a stylesheet: nothing else is let in)
   const lookOk = L => !!L && typeof L === 'object' && (L.col === 'currentColor' || /^(rgba?\([\d.,\s%/]+\)|#[0-9a-f]{3,8})$/i.test(String(L.col))) && typeof L.sw === 'number' && L.sw >= 0 && L.sw < 20;
@@ -13791,20 +13840,18 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     const was = ubLook[state]; if (was && was.col === L.col && was.sw === L.sw) return;
     ubLook[state] = L; lsSet(UB_LOOK_KEY, JSON.stringify(ubLook)); ubIconStyle();
   }
-  // (the lines clearly thicker under the mouse and open - at least half as thick again, more where FR24's own grow more:
-  // read off FR24's, the change was too slight to see, and none at all where FR24 draws it by swapping its icon; FR24's
-  // yellow when open where its look has not been seen)
-  const UB_W = { rest: 1.5, hover: 2.3, open: 2.6 };
+  // (the lines as at rest under the mouse - only the colour changes there - and clearly thicker open: 2.3 to 1.5, whatever
+  // FR24's own grow by - read off FR24's, the change was too slight to see, and none at all where FR24 draws it by swapping
+  // its icon; FR24's yellow when open where its look has not been seen)
+  const UB_W = { rest: 1.5, open: 2.3 };
   function ubIconStyle() {
     let el = document.getElementById('tl-ub-icon-style');
     if (!el) { el = document.createElement('style'); el.id = 'tl-ub-icon-style'; (document.head || document.documentElement).appendChild(el); }
-    const base = (ubLook.rest && ubLook.rest.sw) || 0;
-    const w = st => { const L = ubLook[st], k = base && L && L.sw ? 1.5 * L.sw / base : 0; return st === 'rest' ? UB_W.rest : +Math.max(UB_W[st], k).toFixed(2); };
     const col = st => (ubLook[st] && ubLook[st].col) || (st === 'open' ? '#f8c023' : 'currentColor');
     const I = 'svg[data-tl-ub-icon] *';
-    const css = `.tl-ub-btn ${I}{stroke:${col('rest')};stroke-width:${w('rest')};transition:stroke .15s,stroke-width .15s}
-.tl-ub-btn:hover ${I},.tl-ub-btn:focus-visible ${I}{stroke:${col('hover')};stroke-width:${w('hover')}}
-.tl-ub-btn[data-tl-ub-open] ${I},.tl-ub-btn.tl-ub-btn-on ${I}{stroke:${col('open')}!important;stroke-width:${w('open')}}`;
+    const css = `.tl-ub-btn ${I}{stroke:${col('rest')};stroke-width:${UB_W.rest};transition:stroke .15s,stroke-width .15s}
+.tl-ub-btn:hover ${I},.tl-ub-btn:focus-visible ${I}{stroke:${col('hover')};stroke-width:${UB_W.rest}}
+.tl-ub-btn[data-tl-ub-open] ${I},.tl-ub-btn.tl-ub-btn-on ${I}{stroke:${col('open')}!important;stroke-width:${UB_W.open}!important}`;
     if (el.textContent !== css) el.textContent = css;
   }
   // (one of FR24's buttons pointed at - not open: its look under the mouse, once FR24 has drawn it so)
@@ -13826,11 +13873,59 @@ html.tl-no-strip .tl-strip{display:none!important}`;
 
   // ---- a click on the map puts the bar's open window away, as its X does ----------------------------------------------
   // A click - pressed and let go within a few pixels, not a drag of the map - on the map itself (FR24's map, or a canvas
-  // over most of the page), never in a window, on the bar or in a panel. LADD Unblock's window, or FR24's own Settings,
-  // Weather, Filters or Widgets; Playback - FR24's playback - is left as it is. Looked at a moment after, so a window FR24
-  // has put away itself (opening a flight) is not opened again by pressing its button.
+  // over most of the page), never in a window, on the bar or in a panel. LADD Unblock's window, or that of FR24's own
+  // Settings, Weather, Filters, Widgets or Playback: its own X pressed, a moment after - an X only ever closes, so a window
+  // FR24 is putting away itself (opening a flight, or on the map's click) is left to go. (Its button was pressed: FR24
+  // draws the button open a while after its window has gone, and the press opened it again.) Where no X is found, the
+  // button is pressed - only while nothing is being put away, and never Playback's. Back again a moment later with nothing
+  // pressed on the bar: its X pressed once more. Playback is left open where the click picked a flight on its map.
   const UB_MAP_SEL = '.gm-style,.maplibregl-map,.mapboxgl-map,.leaflet-container,.ol-viewport';
-  let ubDown = null;
+  const UB_PANEL_SEL = '[data-testid^="aircraft-panel"],[data-testid="airport-panel"]';
+  let ubDown = null, ubBarAt = -1e9;
+  // (a window's close button: in its title's band, named so or drawn as an X - or the one button there that is only a picture)
+  function closeBtnIn(box, title) {
+    if (!box || !box.isConnected) return null;
+    const tr = title && title.isConnected ? title.getBoundingClientRect() : null;
+    const band = b => { if (!tr || !tr.height) return true; const r = b.getBoundingClientRect(); return !r.height || (r.top < tr.bottom + 12 && r.bottom > tr.top - 12); };
+    const bs = [...box.querySelectorAll('button,[role="button"],a')].filter(b => !b.closest('.tl-ub-c,.tl-ub,' + UB_PANEL_SEL) && !(title && b.contains(title)) && shownEl(b) && band(b));
+    const named = bs.find(b => /\b(close|dismiss)\b/i.test((b.getAttribute('aria-label') || '') + ' ' + (b.getAttribute('title') || '')) || /^[×✕✖xX]$/.test(b.textContent.trim()));
+    if (named) return named;
+    const pics = bs.filter(b => !b.textContent.trim() && b.querySelector('svg,img'));
+    return pics.length === 1 ? pics[0] : null;
+  }
+  // (the window of one of the bar's buttons, open: the box round its title - not the bar's, a panel's or a button's words - in
+  // which its close button is; LADD Unblock's: FR24's window lent to it)
+  function barWindow(label) {
+    if (label === 'LADD Unblock') return HJ.st === 'on' && HJ.host && HJ.host.isConnected ? { box: HJ.host, title: HJ.title } : null;
+    for (const t of titleLeaves(label)) {
+      if (t.closest(UB_PANEL_SEL + ',.tl-pop,.tl-strip,button,[role="button"],a')) continue;
+      for (let a = t.parentElement, d = 0; a && a !== document.body && d < 8; a = a.parentElement, d++) {
+        if (ubBar && a.contains(ubBar)) break;
+        if (closeBtnIn(a, t)) return { box: a, title: t };
+      }
+    }
+    return null;
+  }
+  // (FR24 putting something away now: Vue's leaving classes on it)
+  const leavingNow = () => { try { return !!document.querySelector('[class*="-leave-active"]:not(.tl-ub-c)'); } catch (e) { return false; } };
+  const pickSig = () => { const ps = document.querySelectorAll(UB_PANEL_SEL), cs = document.querySelector('[data-testid="aircraft-panel__header__callsign"]'); return ps.length + '|' + (cs ? cs.textContent.trim() : '') + '|' + location.href; };
+  function isOpenNow(label, item) {
+    if (label === 'LADD Unblock') return unblockWindowOpen();
+    return !!item && item.isConnected && openItems().includes(item);
+  }
+  // (put away as its X does: true where its X was pressed, or its button)
+  function mapShut(label, item, again) {
+    if (label === 'LADD Unblock' && ubFloat) { closeStandIn(); return true; }
+    const w = barWindow(label), x = w && closeBtnIn(w.box, w.title);
+    if (x) { progClick(x); return true; }
+    if (again || leavingNow()) return false;
+    if (label === 'LADD Unblock') {
+      if (HJ.st === 'on' && HJ.item && HJ.item.isConnected && HJ.rest && sigOf(lookOf(HJ.item)) !== HJ.rest && HJ.host && shownEl(HJ.host)) { closeUnblockWindow(); return true; }
+      return false;
+    }
+    if (label !== 'Playback' && isOpenNow(label, item)) { progClick(item); return true; }
+    return false;
+  }
   function onTheMap(t) {
     if (!t || t.nodeType !== 1 || !t.isConnected) return false;
     if (t.closest('.tl-ub,.tl-ub-c,.tl-ub-btn,.tl-ub-face,.tl-pop,.tl-strip,[data-tl-ub-host],[role="dialog"]') || (ubBar && ubBar.contains(t))) return false;
@@ -13839,18 +13934,27 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     const r = t.getBoundingClientRect(), W = window.innerWidth || 1, H = window.innerHeight || 1;
     return r.width * r.height >= 0.5 * W * H;
   }
-  function onMapDown(ev) { ubDown = ev.button === 0 && ev.isPrimary !== false ? { x: ev.clientX, y: ev.clientY, t: clock(), el: ev.target } : null; }
+  function onMapDown(ev) {
+    const t = ev.target;
+    if (t && t.nodeType === 1 && ((ubBar && ubBar.contains(t)) || t.closest('.tl-ub-btn,.tl-ub-face'))) ubBarAt = clock();
+    ubDown = ev.button === 0 && ev.isPrimary !== false ? { x: ev.clientX, y: ev.clientY, t: clock(), el: t, pick: pickSig() } : null;
+  }
   function onMapUp(ev) {
     const d = ubDown; ubDown = null;
     if (!d || ev.button !== 0 || clock() - d.t > 800 || Math.abs(ev.clientX - d.x) > 6 || Math.abs(ev.clientY - d.y) > 6) return;
     if (!onTheMap(d.el) || !onTheMap(ev.target)) return;
     const body = unblockWindowOpen() ? ubBody : null;
-    const it = body || HJ.st !== 'off' ? null : [...ubItems.entries()].find(([l, x]) => l !== 'Playback' && openItems().includes(x));
+    const it = body || HJ.st !== 'off' ? null : [...ubItems.entries()].find(([, x]) => openItems().includes(x));
     if (!body && !it) return;
+    const label = body ? 'LADD Unblock' : it[0], item = body ? null : it[1];
     setTimeout(() => {
       try {
-        if (body) { if (unblockWindowOpen() && ubBody === body) closeUnblockWindow(); return; }
-        if (HJ.st === 'off' && it[1].isConnected && openItems().includes(it[1])) progClick(it[1]);
+        if (body ? !(unblockWindowOpen() && ubBody === body) : !(HJ.st === 'off' && isOpenNow(label, item))) return;
+        if (label === 'Playback' && pickSig() !== d.pick) return;
+        const at = clock();
+        if (!mapShut(label, item, false)) return;
+        // (back again with nothing pressed on the bar: put away once more - by its X only)
+        setTimeout(() => { try { if (ubBarAt < at && isOpenNow(label, item)) mapShut(label, item, true); } catch (e) { log('LADD Unblock window', e); } }, 900);
       } catch (e) { log('LADD Unblock window', e); }
     }, 300);
   }

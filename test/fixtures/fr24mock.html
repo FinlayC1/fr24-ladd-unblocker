@@ -66,10 +66,14 @@ const Q = new URLSearchParams(location.search), MODE = Q.get('mode') || 'keyed',
 // ?gm=1: Google's map under everything (FR24's map is Google Maps: .gm-style); ?look=1: the bar's icons drawn thicker under
 // the mouse, and thicker and yellow open - on the drawing inside the icon, as FR24 does
 const GM = Q.get('gm') === '1', LOOK = Q.get('look') === '1';
+// ?mapclose=1: a click on Google's map puts the open window away itself (a moment after, as Google's map tells of a click),
+// and the bar draws its button open or at rest a while after the window comes or goes - its button pressed in between
+// opens the window again; ?pbl=1: Playback's button drawn open while its playback window is up
+const MC = Q.get('mapclose') === '1', PBL = Q.get('pbl') === '1';
 if (LOOK) document.head.insertAdjacentHTML('beforeend', '<style>.bar-btn svg circle{stroke-width:1.5}.bar-btn:hover svg circle{stroke-width:2.5;stroke:#dddddd}.bar-btn.is-on svg circle{stroke-width:2.5;stroke:#f8c023}</style>');
-const { createApp, reactive, defineAsyncComponent } = Vue;
+const { createApp, reactive, defineAsyncComponent, watch } = Vue;
 const saved = (() => { try { return JSON.parse(localStorage.getItem('mock.widgets') || 'null'); } catch (e) { return null; } })();
-const S = reactive({ rk: 0, open: null, flight: false, enabled: true, airport: false, events: ['Runway 09/27 works'], pbw: false, went: [], rows: [], search: [], cs: 'VSB82',
+const S = reactive({ rk: 0, open: null, lit: null, flight: false, enabled: true, airport: false, events: ['Runway 09/27 works'], pbw: false, went: [], rows: [], search: [], cs: 'VSB82',
   widgets: saved || [
     { k: 'mt', title: 'Most tracked flights', desc: 'See the top 10 flights other users are following right now.', on: true },
     { k: 'ad', title: 'Airport disruptions', desc: 'See the top 10 airports with the most cancellations.', on: true },
@@ -109,12 +113,15 @@ const tpl = {
 const app = createApp({
   components: { Win, WidgetsList, Other, WinLazy, AcPhoto },
   setup() {
+    if (MC) watch(() => S.open, () => setTimeout(() => { S.lit = S.open; }, 450));
     return { S, BARS, IND, LI, PB, PANEL, GM,
+      mapClick() { if (MC) setTimeout(() => { S.open = null; }, 150); },
+      isOn(b) { return (b === 'Playback' ? PBL && S.pbw : (MC ? S.lit : S.open) === b) ? 'is-on' : ''; },
       toggle(b) { if (b === 'Playback') { S.pbw = !S.pbw; return; } S.flight = false; S.open = S.open === b ? null : b; },
       openFlight() { S.open = null; S.flight = true; } };
   },
   template: `<div class="map">
-    <div v-if="GM" class="gm-style" style="position:absolute;inset:0"></div>
+    <div v-if="GM" class="gm-style" style="position:absolute;inset:0" @click="mapClick()"></div>
     <div class="left">
       ${tpl}
       <Transition name="col"><div v-if="!S.open && !S.flight && S.enabled" class="col"><template v-for="w in S.widgets" :key="w.k"><div v-if="w.on" class="card" :data-card="w.k"><h3>{{ w.title }}</h3><p>...</p></div></template></div></Transition>
@@ -129,10 +136,10 @@ const app = createApp({
             <div class="dd"><button><span>Airport &amp; runway details</span><svg width="16" height="16" viewBox="0 0 16 16"><path d="M2 5l6 6 6-6" stroke="#393939" fill="none"/></svg></button></div>
           </div></div></div>
     </div>
-    <nav v-if="!LI" class="bar"><button v-for="b in BARS" :key="b" type="button" :class="['bar-btn', S.open===b ? 'is-on' : '', S.pbw ? 'compact' : '']" :data-testid="'map-bar__' + b.toLowerCase()" @click="toggle(b)">
+    <nav v-if="!LI" class="bar"><button v-for="b in BARS" :key="b" type="button" :class="['bar-btn', isOn(b), S.pbw ? 'compact' : '']" :data-testid="'map-bar__' + b.toLowerCase()" @click="toggle(b)">
       <svg width="24" height="24" viewBox="0 0 24 24" :fill="IND && S.open===b ? 'currentColor' : 'none'" stroke="currentColor"><circle cx="12" cy="12" r="8"/></svg><span class="bar-label">{{ b }}</span><div v-if="IND && S.open===b" class="ind"></div></button></nav>
     <nav v-else class="bar"><div v-for="b in BARS" :key="b" class="item" :data-testid="'map-bar__' + b.toLowerCase()"><button type="button" :class="['bar-btn', S.open===b ? 'is-on' : '', S.pbw ? 'compact' : '']" style="height:100%" @click="toggle(b)"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="8"/></svg><span class="bar-label">{{ b }}</span></button></div></nav>
-    <div v-if="S.pbw" class="pbw" data-testid="playback-widget">Playback</div>
+    <div v-if="S.pbw" class="pbw" data-testid="playback-widget"><div class="pbw-head"><span>Playback</span><button type="button" class="pbw-x" aria-label="Close" @click="S.pbw=false"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M1 1l10 10M11 1L1 11" stroke="#fff"/></svg></button></div></div>
     <div v-if="PB" class="pbx">
       <div data-testid="aircraft-panel" class="pbp"><div data-testid="aircraft-panel__header__callsign">{{ S.cs }}</div>
         <div class="fa"><button type="button" data-testid="flight-actions__action-route">Route</button><button type="button" id="pPanel" data-testid="flight-actions__action-playback" @click="S.went.push('log:panel')"><svg width="12" height="12"></svg><span>Playback</span></button></div>
