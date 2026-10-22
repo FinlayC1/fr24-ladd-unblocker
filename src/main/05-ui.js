@@ -35,7 +35,8 @@
 /* aircraft data page */
 #tbl-datatable tr.tl-live-row td{background:rgba(227,176,33,.08)}
 #tbl-datatable .tl-inf{font-size:70%;vertical-align:super;opacity:.65;margin-left:1px}
-#tbl-datatable tr.tl-foot td{padding:10px 8px;font-size:11px;color:#8c8c8c;text-align:center;background:#fff}
+#tbl-datatable tr.tl-foot td{padding:10px 8px;font-size:11px;color:#8c8c8c;text-align:center;background:#fff;white-space:normal!important;word-break:break-word;overflow-wrap:anywhere}
+#tbl-datatable tr.tl-foot .tl-foot-note{margin-top:5px;line-height:1.5}
 #tbl-datatable tr.tl-foot a{color:#8c8c8c;text-decoration:underline}
 #tbl-datatable tr.tl-loading td{padding:14px;text-align:center;color:#8c8c8c;font-size:12px}
 #tbl-datatable a.tl-play,#tbl-datatable a.tl-live{display:inline-flex!important;align-items:center;justify-content:center;line-height:1!important;padding-top:0!important;padding-bottom:0!important;min-height:24px;vertical-align:middle;text-decoration:none!important}

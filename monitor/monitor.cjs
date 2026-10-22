@@ -288,7 +288,7 @@ function learnOf(raw, s) {
 // file, no file (404: a day the network heard nothing of the aircraft), a verification page (adsb.lol's proof-of-work
 // "Verifying connection", Cloudflare's "Just a moment": shown to servers now - the host is left alone an hour; adsb.lol's
 // days come from its archives), a refusal to slow down (two minutes), a failure. Only the file and no file are answers.
-const WALL_RE = /verif(?:y|ying|ication)|challenge|just a moment|attention required|cf-chl|captcha|are you (?:a )?(?:human|robot)/i;
+const WALL_RE = /<title>\s*(?:verification|just a moment|attention required)|verifying connection|solving security challenge|proof[- ]of[- ]work|cf[-_]chl|challenge-platform|cf-browser-verification/i;
 const netSt = {};      // host -> { ok, none, wall, rate, err, last, lastAt, wallAt }
 const pauseWhy = {};   // host -> 'wall' | 'rate'
 function classifyTrace(hex, status, text) {
@@ -302,7 +302,7 @@ function classifyTrace(hex, status, text) {
       if (hex && ic && ic !== hex) return { state: 'err', err: 'another aircraft\'s file' };
       return { state: 'ok', j };
     }
-    if (head[0] === '<' && WALL_RE.test(head)) return { state: 'wall', err: 'verification page' };
+    if (head[0] === '<' && WALL_RE.test(body.slice(0, 30000))) return { state: 'wall', err: 'verification page' };
     return { state: 'err', err: head ? 'not a trace file' : 'empty answer' };
   }
   if (status === 429) return { state: 'rate', err: 'HTTP 429' };
@@ -528,6 +528,12 @@ const archMark = d => path.join(ARCH_DIR, d + '.json');
 const archTried = new Map();   // day -> when it was last found not published
 const AR = { running: '', days: 0, taken: 0, last: null, err: '', errAt: 0 };
 const archRead = d => { try { return JSON.parse(fs.readFileSync(archMark(d), 'utf8')); } catch (e) { return null; } };
+// (how many of the days the archives cover are read - /status, and the log page under each aircraft's flights)
+function archHave(nowS) {
+  const n = +CFG.archiveDays || 0; nowS = nowS || Date.now() / 1000; let k = 0;
+  for (let i = 1; i <= n; i++) { const m = archRead(dayOf(nowS - i * 86400)); if (m && m.published !== false) k++; }
+  return k;
+}
 // 'off' (not covered), 'done', 'wait' (to come)
 function archiveState(day, nowS) {
   const n = +CFG.archiveDays || 0, endS = dayStart(day) + 86400;
@@ -1392,7 +1398,7 @@ function monStatus() {
   return { polls: stats.polls, hexPolls: stats.hexPolls, fails: stats.fails, lastErr: stats.lastErr, laddAt: lastLadd.at, aircraft: ac.size, blocked: blocked.size, withLegs: legs.size, legs: [...legs.values()].reduce((n, m) => n + m.size, 0), backfillQueue: backQ.length,
     live: live.size, listAge: { ladd: age('ladd'), mil: age('mil'), fi: age('fi'), pia: age('pia'), hex: age('hex'), area: age('area'), fiArea: age('fiArea'), adsbx: age('adsbx'), osky: age('osky') }, listPolls: stats.listPolls, adsbx: { key: !!CFG.adsbxKey, today: adsbxUse.n, cap: CFG.adsbxDaily }, apiLastMin: gate.sent.filter(t => now - t < 60000).length,
     hist: Object.assign({ queue: histQ.length, closed }, histStats),
-    nets: netSt, archive: Object.assign({ on: +CFG.archiveDays || 0 }, AR),
+    nets: netSt, archive: Object.assign({ on: +CFG.archiveDays || 0, have: archHave() }, AR),
     tracks: Object.assign({ days: tracks.days }, tracks.stats), playback: PB,
     waiting: { flights: waiting.size, playback: waiting.count('pb'), live: waiting.count('live'), named: waiting.stats.named, tries: waiting.stats.tries, expired: waiting.stats.expired, rounds: WAIT.rounds, lastMs: WAIT.lastMs },
     learned: learnedOut ? { ver: learnedOut.ver, from: learnedOut.from, asOf: learnedOut.asOf, days: learnedOut.days, flights: learnedOut.flights, fromBrowsers: learnedOut.crowd || 0, ops: learnedOut.ops, mb: Math.round(learnedOut.json.length / 1e5) / 10 } : null, backfillWaits: backWaits.n,

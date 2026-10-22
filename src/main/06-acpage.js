@@ -359,17 +359,29 @@
   }
   // (the days of a log a network did not answer for - refused, timed out: how many, and why - said under the log, not
   // left as a silent gap; they are read again next time)
+  // The sources' state under the log, on a line of its own: a network putting a verification page in front of this browser
+  // (with the way through - its site, opened once), the days not fully read, and how far the monitor has got with adsb.lol's
+  // archives (the days it has for the log, whatever this browser is shown)
   function logGaps(hex) {
-    // (a network putting a verification page in front of this browser: said first, with the way through)
+    const parts = [];
     const walls = Object.keys(netState).filter(id => netState[id].wallAt && now() - netState[id].wallAt < 30 * 60000);
-    const wall = walls.map(id => ` · <b>${esc(NETS[id].name)} is showing this browser a verification page</b> - <a href="${NETS[id].site}" target="_blank" rel="noopener">open ${esc(NETS[id].name)}</a> once in a tab, then reload this page`).join('');
-    return wall + logGapsOf(hex);
+    if (walls.length) parts.push(`<b>${walls.map(id => esc(NETS[id].name)).join(' and ')} ${walls.length > 1 ? 'are' : 'is'} showing this browser a verification page</b> - open ${walls.map(id => `<a href="${NETS[id].site}" target="_blank" rel="noopener">${esc(NETS[id].name)}</a>`).join(' and ')} once in a tab, then reload this page`);
+    const g = logGapsOf(hex); if (g) parts.push(g);
+    const m = monitorNote(); if (m) parts.push(m);
+    return parts.length ? `<div class="tl-foot-note">${parts.join(' · ')}</div>` : '';
+  }
+  function monitorNote() {
+    if (!monOk || !monStat) return '';
+    const a = monStat.archive;
+    if (!a) return `the monitor${monStat.ver ? ' (' + esc(monStat.ver) + ')' : ''} runs an older version - <b>Update monitor</b> in the LADD Unblock window`;
+    if (!a.on) return '';
+    return `the monitor has ${a.have != null ? a.have : a.days} of the last ${a.on} days from adsb.lol's archives${a.running ? ' (reading ' + esc(a.running) + ')' : ''}${a.err && a.errAt && now() - a.errAt < 6 * 3600e3 ? ' - last error: ' + esc(a.err) : ''}`;
   }
   function logGapsOf(hex) {
     const h = store.peekHist(hex); if (!h || !h.err) return '';
     const ds = Object.keys(h.err).filter(d => !h.days[d] || h.days[d] === 'p'); if (!ds.length) return '';
     const why = [...new Set(ds.map(d => h.err[d]))].slice(0, 2).join('; ');
-    return ` · ${ds.length} day${ds.length > 1 ? 's' : ''} not fully read yet (${esc(why)}) - read again next time`;
+    return `${ds.length} day${ds.length > 1 ? 's' : ''} not fully read yet (${esc(why)}) - read again next time`;
   }
   const regOfRow = tr => { const a = tr && tr.querySelector('a[href*="/data/aircraft/"]'); return a ? decodeURIComponent(((a.getAttribute('href') || '').match(/\/data\/aircraft\/([^/?#]+)/i) || [])[1] || '').toUpperCase() : ''; };
   function flightPagePlayback(tbody, cs) {

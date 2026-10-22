@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Flightradar24 LADD / N-A Unblocker (feed-level)
 // @namespace    tweeks.io
-// @version      22.31.9
+// @version      22.31.10
 // @description  Identifies every LADD / N/A / blocked military aircraft on Flightradar24 from public ADS-B, and injects callsign, registration, operator, age, country, MSN, squawk, vertical speed, GPS altitude, airspeeds, wind, photos, a reasoned origin/destination with a wind-corrected ETA (also for ordinary flights FR24 shows as N/A - military, private, GA, helicopters, with private landing sites; learned from 63 days of every aircraft worldwide, with live weather and closures), airport-board entries and a rebuilt 7-month flight log straight into FR24's own data - so it all renders like normal FR24 traffic.
 // @author       Finlay Clarke
 // @updateURL    https://raw.githubusercontent.com/FinlayC1/fr24-ladd-unblocker/main/dist/fr24-ladd-unblocker.user.js
@@ -90,7 +90,7 @@
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "22.31.9";
+    var BRIDGE_V = "22.31.10";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed
@@ -2855,6 +2855,8 @@
       // (OpenStreetMap's Overpass answers a browser's own request; the userscript asks it through here)
       else if (d.__tweeksLadd === 'osmReq') { if (d.key && /^https:\/\/overpass-api\.de\/api\/interpreter\?data=/.test(String(d.url || ''))) oFetch.call(window, d.url).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) { post('osmRes', { key: d.key, j: j }); }, function () { post('osmRes', { key: d.key, j: null }); }); }
       else if (d.__tweeksLadd === 'photosDone') acceptPhotosDone(d);
+      // (what the two networks' trace files answered this browser lately - __tweeksLaddBridge.stats.net in the console)
+      else if (d.__tweeksLadd === 'netDiag') { if (d.net && typeof d.net === 'object') stats.net = d.net; }
       else if (d.__tweeksLadd === 'scan') runScan(d.regions || [], d.opts || {});
       // (the health check's figures - the extension's script runs in its own world and cannot read this one's objects)
       else if (d.__tweeksLadd === 'stats?') post('stats', { stats: stats });
@@ -5423,7 +5425,7 @@
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '22.31.9';
+  const VERSION = '22.31.10';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
@@ -5929,6 +5931,7 @@
   const monUrl = () => monBase;
   const monHdr = () => { const r = monRemote(); return r && (monBase === r.url || (r.dflt && MON_DEFAULTS.includes(monBase))) ? monAuth(r) : null; };
   let monOk = false, monCheckAt = 0;
+  let monStat = null;   // (the monitor's last /status: its version, the daily archives it has read - the log page says them)
   const monUp = () => monOk;
   let monChecking = null;
   function monCheck(force) {
@@ -5940,7 +5943,7 @@
       const urls = r.dflt ? [monBase].filter(u => MON_DEFAULTS.includes(u)).concat(MON_DEFAULTS.filter(u => u !== monBase)) : [r.url];
       const ask = i => { const u = urls[i]; HOSTS[new URL(u).host] = [4, 50]; return gmRequest(u + '/status', { timeout: 4000, headers: monAuth(r) }).then(j => { if (!(j && j.v)) throw new Error('not a monitor'); monBase = u; return j; }).catch(e => { if (i + 1 < urls.length) return ask(i + 1); throw e; }); };
       return ask(0).catch(e => { monErr = String((e && e.message) || e).slice(0, 120); throw e; });
-    }).then(j => { monOk = !!(j && j.v); return j; }, e => { monOk = false; monCheckAt = now() - 5 * 60000 + 30000; throw e; });
+    }).then(j => { monOk = !!(j && j.v); monStat = j && j.v ? j : null; return j; }, e => { monOk = false; monCheckAt = now() - 5 * 60000 + 30000; throw e; });
     monChecking.catch(() => {});
     return monChecking;
   }
@@ -8252,9 +8255,20 @@
     apl: { name: 'airplanes.live', site: 'https://globe.airplanes.live/', url: (hex, day) => `https://globe.airplanes.live/${day ? 'globe_history/' + day : 'data'}/traces/${hex.slice(-2)}/trace_full_${hex}.json` }
   };
   // (how each answered lately: the window's sources and the log page say it - a verification page above all)
-  const netState = { lol: { ok: 0, none: 0, wall: 0, err: 0, wallUntil: 0, wallAt: 0, okAt: 0, last: '', lastAt: 0, probe: null }, apl: { ok: 0, none: 0, wall: 0, err: 0, wallUntil: 0, wallAt: 0, okAt: 0, last: '', lastAt: 0, probe: null } };
-  const WALL_RE = /verif(?:y|ying|ication)|challenge|just a moment|attention required|cf-chl|captcha|are you (?:a )?(?:human|robot)/i;
-  const wallText = id => `verification page (open ${NETS[id].site} once in a tab, then reload FR24)`;
+  const netState = { lol: { ok: 0, none: 0, wall: 0, err: 0, wallUntil: 0, wallAt: 0, okAt: 0, last: '', lastAt: 0, probe: null, bad: null, wallErr: '' }, apl: { ok: 0, none: 0, wall: 0, err: 0, wallUntil: 0, wallAt: 0, okAt: 0, last: '', lastAt: 0, probe: null, bad: null, wallErr: '' } };
+  // (a verification page by what it is - adsb.lol's proof-of-work page, Cloudflare's challenge - not by any page saying
+  // "verify": a 403 or a site's own error page is a refusal, said as one)
+  const WALL_RE = /<title>\s*(?:verification|just a moment|attention required)|verifying connection|solving security challenge|proof[- ]of[- ]work|cf[-_]chl|challenge-platform|cf-browser-verification/i;
+  const titleOf = text => { const m = /<title[^>]*>([^<]{0,80})/i.exec(String(text || '').slice(0, 6000)); return m ? m[1].replace(/\s+/g, ' ').trim() : ''; };
+  const snippetOf = text => String(text || '').slice(0, 6000).replace(/<(script|style)[\s\S]*?<\/\1>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160);
+  // (what a network answered, said: the status and the page's title - "verification page (HTTP 403, "Just a moment...")")
+  const answerText = (what, r) => `${what} (HTTP ${r.status}${titleOf(r.text) ? ', "' + titleOf(r.text) + '"' : ''})`;
+  // (the last answer of each network that was not a file: kept, and handed to the page - __tweeksLaddBridge.stats.net in the
+  // console - to say what this browser is being sent)
+  function noteBad(id, url, r, c) {
+    const S = netState[id]; S.bad = { at: new Date().toISOString().slice(0, 19), url: url.replace(/^https:\/\//, ''), status: r.status, kind: c.state, title: titleOf(r.text), text: snippetOf(r.text) };
+    postToPage('netDiag', { net: Object.fromEntries(Object.entries(netState).map(([k, v]) => [k, { ok: v.ok, none: v.none, wall: v.wall, err: v.err, last: v.last, bad: v.bad }])) });
+  }
   // (one answer: { state: 'ok', j } | 'none' | 'wall' | 'rate' | 'err', err)
   function classifyTrace(hex, status, text) {
     const body = String(text || ''), head = body.slice(0, 4000).replace(/^\uFEFF/, '').trimStart();
@@ -8267,12 +8281,12 @@
         if (ic && ic !== hex) return { state: 'err', err: 'another aircraft\'s file' };
         return { state: 'ok', j };
       }
-      if (head[0] === '<' && WALL_RE.test(head)) return { state: 'wall', err: 'verification page' };
-      return { state: 'err', err: head ? 'not a trace file' : 'empty answer' };
+      if (head[0] === '<' && WALL_RE.test(body.slice(0, 30000))) return { state: 'wall', err: answerText('verification page', { status, text: body }) };
+      return { state: 'err', err: head ? answerText('not a trace file', { status, text: body }) : 'empty answer' };
     }
     if (status === 429) return { state: 'rate', err: 'HTTP 429' };
-    if (status >= 400 && status !== 404 && WALL_RE.test(body.slice(0, 30000))) return { state: 'wall', err: 'verification page (HTTP ' + status + ')' };
-    return { state: 'err', err: status ? 'HTTP ' + status : 'no answer' };
+    if (status >= 400 && status !== 404 && WALL_RE.test(body.slice(0, 30000))) return { state: 'wall', err: answerText('verification page', { status, text: body }) };
+    return { state: 'err', err: status ? answerText(status >= 500 ? 'server error' : 'refused', { status, text: body }) : 'no answer' };
   }
   const traceMeta = new Map();   // hex -> { r, t, desc, ownOp, year, at }
   function learnTraceMeta(hex, j) {
@@ -8302,20 +8316,21 @@
   async function readTrace1(id, hex, day, opts) {
     const N = NETS[id], S = netState[id], o = opts || {};
     const out = (state, x) => { S[state] = (S[state] || 0) + 1; S.last = state === 'err' ? x.err : state; S.lastAt = now(); if (state === 'ok' || state === 'none') S.okAt = now(); else if (!x.cached) S.lastBadAt = now(); return Object.assign({ net: N.name, id, state, pts: [], j: null, err: '' }, x); };
-    if (S.wallUntil > now()) return out('wall', { err: wallText(id), cached: true });
+    if (S.wallUntil > now()) return out('wall', { err: S.wallErr || 'verification page', cached: true });
     for (let attempt = 0; ; attempt++) {
       let r;
       // (a verification page met by another request while this one waited its turn: not sent)
       try { r = await gmRequest(N.url(hex, day), { raw: true, timeout: 20000, priority: !!o.priority, bg: !!o.bg, idle: !!o.idle, skip: () => S.wallUntil > now() }); }
       catch (e) {
         const m = String(e && e.message || e).replace(/^Error:\s*/, '').slice(0, 60);
-        if (m === 'skipped') return out('wall', { err: wallText(id), cached: true });
+        if (m === 'skipped') return out('wall', { err: S.wallErr || 'verification page', cached: true });
         if (attempt < 1 && !/aborted|unavailable/.test(m)) { await sleep(o.priority ? 1500 : 6000); continue; }
         return out('err', { err: m });
       }
       const c = classifyTrace(hex, r.status, r.text);
       if (c.state === 'rate' && attempt < 2) { await sleep(4000 * (attempt + 1)); continue; }
-      if (c.state === 'wall') { S.wallUntil = now() + 10 * 60000; S.wallAt = now(); log(N.name + ': verification page - not asked again for 10 min'); return out('wall', { err: wallText(id) }); }
+      if (c.state !== 'ok' && c.state !== 'none') noteBad(id, N.url(hex, day), r, c);
+      if (c.state === 'wall') { S.wallUntil = now() + 10 * 60000; S.wallAt = now(); S.wallErr = c.err; log(N.name + ': ' + c.err + ' - not asked again for 10 min'); return out('wall', { err: c.err }); }
       if (c.state === 'ok') { learnTraceMeta(hex, c.j); return out('ok', { j: c.j, pts: ENGINE.parseTrace(c.j) }); }
       if (c.state === 'none') return out('none', {});
       return out('err', { err: c.err });
@@ -10129,7 +10144,8 @@
 /* aircraft data page */
 #tbl-datatable tr.tl-live-row td{background:rgba(227,176,33,.08)}
 #tbl-datatable .tl-inf{font-size:70%;vertical-align:super;opacity:.65;margin-left:1px}
-#tbl-datatable tr.tl-foot td{padding:10px 8px;font-size:11px;color:#8c8c8c;text-align:center;background:#fff}
+#tbl-datatable tr.tl-foot td{padding:10px 8px;font-size:11px;color:#8c8c8c;text-align:center;background:#fff;white-space:normal!important;word-break:break-word;overflow-wrap:anywhere}
+#tbl-datatable tr.tl-foot .tl-foot-note{margin-top:5px;line-height:1.5}
 #tbl-datatable tr.tl-foot a{color:#8c8c8c;text-decoration:underline}
 #tbl-datatable tr.tl-loading td{padding:14px;text-align:center;color:#8c8c8c;font-size:12px}
 #tbl-datatable a.tl-play,#tbl-datatable a.tl-live{display:inline-flex!important;align-items:center;justify-content:center;line-height:1!important;padding-top:0!important;padding-bottom:0!important;min-height:24px;vertical-align:middle;text-decoration:none!important}
@@ -11192,17 +11208,29 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   }
   // (the days of a log a network did not answer for - refused, timed out: how many, and why - said under the log, not
   // left as a silent gap; they are read again next time)
+  // The sources' state under the log, on a line of its own: a network putting a verification page in front of this browser
+  // (with the way through - its site, opened once), the days not fully read, and how far the monitor has got with adsb.lol's
+  // archives (the days it has for the log, whatever this browser is shown)
   function logGaps(hex) {
-    // (a network putting a verification page in front of this browser: said first, with the way through)
+    const parts = [];
     const walls = Object.keys(netState).filter(id => netState[id].wallAt && now() - netState[id].wallAt < 30 * 60000);
-    const wall = walls.map(id => ` · <b>${esc(NETS[id].name)} is showing this browser a verification page</b> - <a href="${NETS[id].site}" target="_blank" rel="noopener">open ${esc(NETS[id].name)}</a> once in a tab, then reload this page`).join('');
-    return wall + logGapsOf(hex);
+    if (walls.length) parts.push(`<b>${walls.map(id => esc(NETS[id].name)).join(' and ')} ${walls.length > 1 ? 'are' : 'is'} showing this browser a verification page</b> - open ${walls.map(id => `<a href="${NETS[id].site}" target="_blank" rel="noopener">${esc(NETS[id].name)}</a>`).join(' and ')} once in a tab, then reload this page`);
+    const g = logGapsOf(hex); if (g) parts.push(g);
+    const m = monitorNote(); if (m) parts.push(m);
+    return parts.length ? `<div class="tl-foot-note">${parts.join(' · ')}</div>` : '';
+  }
+  function monitorNote() {
+    if (!monOk || !monStat) return '';
+    const a = monStat.archive;
+    if (!a) return `the monitor${monStat.ver ? ' (' + esc(monStat.ver) + ')' : ''} runs an older version - <b>Update monitor</b> in the LADD Unblock window`;
+    if (!a.on) return '';
+    return `the monitor has ${a.have != null ? a.have : a.days} of the last ${a.on} days from adsb.lol's archives${a.running ? ' (reading ' + esc(a.running) + ')' : ''}${a.err && a.errAt && now() - a.errAt < 6 * 3600e3 ? ' - last error: ' + esc(a.err) : ''}`;
   }
   function logGapsOf(hex) {
     const h = store.peekHist(hex); if (!h || !h.err) return '';
     const ds = Object.keys(h.err).filter(d => !h.days[d] || h.days[d] === 'p'); if (!ds.length) return '';
     const why = [...new Set(ds.map(d => h.err[d]))].slice(0, 2).join('; ');
-    return ` · ${ds.length} day${ds.length > 1 ? 's' : ''} not fully read yet (${esc(why)}) - read again next time`;
+    return `${ds.length} day${ds.length > 1 ? 's' : ''} not fully read yet (${esc(why)}) - read again next time`;
   }
   const regOfRow = tr => { const a = tr && tr.querySelector('a[href*="/data/aircraft/"]'); return a ? decodeURIComponent(((a.getAttribute('href') || '').match(/\/data\/aircraft\/([^/?#]+)/i) || [])[1] || '').toUpperCase() : ''; };
   function flightPagePlayback(tbody, cs) {
@@ -13296,7 +13324,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // (the version whose "what's new" was put away, and the one whose dot on the button the window was opened for)
   const UB_SEEN_KEY = 'tweeks.fr24.ladd.seenver', UB_DOT_KEY = 'tweeks.fr24.ladd.dotver';
   // (the newest CHANGELOG section's headlines, written in by build.mjs: { v, items })
-  const UB_WHATS_NEW = {"v":"22.31.9","items":["Recent flights: FR24 now asks for the list at a new address.","Recent flights now include today's earlier flights.","Flight logs: the networks' answers are read for what they are."]};
+  const UB_WHATS_NEW = {"v":"22.31.10","items":["The flight log page's layout.","A verification page is recognised by what it is.","What the two networks actually send this browser"]};
   // (an aircraft with an open padlock: FR24's outline style - 24 grid, 1.5 stroke in the text colour)
   const UB_ICON = '<svg data-tl-ub-icon="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
   const UB_X = '<svg viewBox="0 0 14 14" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5l11 11M12.5 1.5l-11 11"/></svg>';

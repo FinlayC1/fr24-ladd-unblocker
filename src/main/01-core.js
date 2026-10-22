@@ -1,7 +1,7 @@
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '22.31.9';
+  const VERSION = '22.31.10';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
@@ -507,6 +507,7 @@
   const monUrl = () => monBase;
   const monHdr = () => { const r = monRemote(); return r && (monBase === r.url || (r.dflt && MON_DEFAULTS.includes(monBase))) ? monAuth(r) : null; };
   let monOk = false, monCheckAt = 0;
+  let monStat = null;   // (the monitor's last /status: its version, the daily archives it has read - the log page says them)
   const monUp = () => monOk;
   let monChecking = null;
   function monCheck(force) {
@@ -518,7 +519,7 @@
       const urls = r.dflt ? [monBase].filter(u => MON_DEFAULTS.includes(u)).concat(MON_DEFAULTS.filter(u => u !== monBase)) : [r.url];
       const ask = i => { const u = urls[i]; HOSTS[new URL(u).host] = [4, 50]; return gmRequest(u + '/status', { timeout: 4000, headers: monAuth(r) }).then(j => { if (!(j && j.v)) throw new Error('not a monitor'); monBase = u; return j; }).catch(e => { if (i + 1 < urls.length) return ask(i + 1); throw e; }); };
       return ask(0).catch(e => { monErr = String((e && e.message) || e).slice(0, 120); throw e; });
-    }).then(j => { monOk = !!(j && j.v); return j; }, e => { monOk = false; monCheckAt = now() - 5 * 60000 + 30000; throw e; });
+    }).then(j => { monOk = !!(j && j.v); monStat = j && j.v ? j : null; return j; }, e => { monOk = false; monCheckAt = now() - 5 * 60000 + 30000; throw e; });
     monChecking.catch(() => {});
     return monChecking;
   }
