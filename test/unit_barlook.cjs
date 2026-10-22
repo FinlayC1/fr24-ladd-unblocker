@@ -144,6 +144,32 @@ window.GM_xmlhttpRequest = o => { setTimeout(() => o.onload && o.onload({ status
       check('... LADD Unblock the same: away, nothing opened again', up && gone && s2.open === null && s2.opens.length === o1, { up, gone, s2 });
       await p3.close();
     }
+    // ---- FR24 as a recording on the real map showed it: its title bar (a header, the title in a span, the X a button with
+    // only an icon), the window drawn afresh a quarter of a second after a map click, and a bar whose buttons' looks tell
+    // nothing (Playback's always drawn apart) - 22.31.3 found no window open there and did nothing at all
+    { const p7 = await ctx.newPage();
+      await p7.goto('https://www.flightradar24.com/53.40,-2.60/9?mode=keyed&gm=1&real=1&remount=1&pbodd=1');
+      await p7.waitForSelector('nav.bar .tl-ub-btn', { timeout: 15000 });
+      const vis = () => p7.evaluate(() => [...document.querySelectorAll('.win,.tl-ub-c')].filter(e => e.getBoundingClientRect().height > 0 && getComputedStyle(e).display !== 'none').length);
+      let bad = null;
+      for (const b of ['Filters', 'Weather', 'Settings']) {
+        await p7.click(bar(b)); await sleep(700);
+        await p7.mouse.click(...MAP); await sleep(3000);
+        const s = await p7.evaluate(() => __S.open), v = await vis(); if (s !== null || v) { bad = { b, s, v }; break; }
+      }
+      check('FR24\'s real title bar, its window drawn afresh on the click, its bar\'s looks telling nothing: put away by its X - three windows', !bad, bad);
+      await p7.click(bar('Filters')); await sleep(700);
+      await p7.mouse.move(...MAP); await p7.mouse.down(); await p7.mouse.move(MAP[0] + 80, MAP[1] + 50, { steps: 6 }); await p7.mouse.up(); await sleep(2500);
+      const dragged = await p7.evaluate(() => __S.open);
+      await p7.click('.win .win-body'); await sleep(2500);
+      check('... the map dragged, or a click in the window: left open', dragged === 'Filters' && (await p7.evaluate(() => __S.open)) === 'Filters', dragged);
+      await p7.click(bar('Filters')); await sleep(600);
+      await p7.click(ours); await sleep(1400);
+      const up = await vis();
+      await p7.mouse.click(...MAP); await sleep(3500);
+      const s2 = await p7.evaluate(() => __S.open), v2 = await vis();
+      check('... LADD Unblock the same: away, nothing in its place', up > 0 && s2 === null && v2 === 0, { up, s2, v2 });
+      await p7.close(); }
     // ---- FR24 as it is on the real map: every click on it tries to select a flight that is not there; the window open goes
     // away at once and comes back about 0.9 s later. It is put away again once it is back, and stays away - each window of
     // the bar, and LADD Unblock (whose window is FR24's Widgets, brought back as FR24's own)

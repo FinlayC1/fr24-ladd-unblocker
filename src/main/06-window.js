@@ -841,7 +841,16 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   // band, where its close button is: the highest box round the title no taller than a title band and no wider than a
   // window. Nothing beyond it is looked at: a picture-only button of FR24's elsewhere at that height - its header's - was
   // taken for the X, and pressed, opened Widgets)
-  const barTitles = label => (label === 'LADD Unblock' ? (HJ.st === 'on' && HJ.title && HJ.title.isConnected ? [HJ.title] : []) : titleLeaves(label).filter(t => !t.closest(UB_PANEL_SEL + ',.tl-pop,.tl-strip,button,[role="button"],a')));
+  // (a bar's words, not a window's: a box round them, as short as a bar, holding four of the bar's labels - whether or not
+  // it is the bar this button was put on)
+  function inBarLike(t) {
+    for (let a = t.parentElement, n = 0; a && a !== document.body && n < 6; a = a.parentElement, n++) {
+      const r = a.getBoundingClientRect(), txt = a.textContent || '';
+      if (r.height > 0 && r.height < 120 && UB_LABELS.filter(l => txt.includes(l)).length >= 4) return true;
+    }
+    return false;
+  }
+  const barTitles = label => (label === 'LADD Unblock' ? (HJ.st === 'on' && HJ.title && HJ.title.isConnected ? [HJ.title] : []) : titleLeaves(label).filter(t => !t.closest(UB_PANEL_SEL + ',.tl-pop,.tl-strip,button,[role="button"],a') && !inBarLike(t)));
   function titleBand(t) {
     let head = t.parentElement;
     for (let a = t.parentElement, d = 0; a && a !== document.body && d < 8; a = a.parentElement, d++) {
@@ -866,12 +875,16 @@ html.tl-no-strip .tl-strip{display:none!important}`;
       el.dispatchEvent(new MouseEvent('click', o));
     } finally { ubProg--; }
   }
-  // (the window open now by its button's look - at the press on the map, before FR24 hears of it)
+  // (the window open now - at the press on the map, before FR24 hears of it: its title on the page with its close button
+  // beside it, as FR24 draws its windows - a header, the title in the middle, a button with only an X at its right. Not
+  // by its button on the bar: a window was taken to be open only where exactly one of the bar's buttons looked unlike the
+  // rest, and on FR24 that was never so - nothing was ever found open, and nothing was done)
+  const BAR_WINDOWS = ['Settings', 'Weather', 'Filters', 'Widgets', 'Playback'];
   function openWindowNow() {
     if (unblockWindowOpen()) return { label: 'LADD Unblock' };
     if (HJ.st !== 'off') return null;
-    const it = [...ubItems.entries()].find(([, x]) => openItems().includes(x));
-    return it ? { label: it[0] } : null;
+    const l = BAR_WINDOWS.find(windowShown);
+    return l ? { label: l } : null;
   }
   const pickSig = () => { const ps = document.querySelectorAll(UB_PANEL_SEL), cs = document.querySelector('[data-testid="aircraft-panel__header__callsign"]'); return ps.length + '|' + (cs ? cs.textContent.trim() : '') + '|' + location.href; };
   // (this window drawn now - its title in the page, shown - and not coming in or going out: Vue's transition classes on it

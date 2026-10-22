@@ -2,6 +2,16 @@
 
 All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PATCH`. The userscript and the monitor are released together.
 
+## [22.31.4] - 2026-10-22
+
+### Fixed
+- **A click on the map still did nothing to a bottom-bar window; it flashed and stayed open.** A recording on the real FR24 map showed two things. First, the flash is FR24's own: about a quarter of a second after a map click, FR24 draws the open window afresh (the old one removed, a new one added at the same moment). Second, this script pressed nothing at all. It decided a window was open from the bar's buttons, and only when exactly one of them looked unlike the rest. On FR24 that never held, so no window was ever found open. Now:
+  - A window counts as open when it is on the page as FR24 draws its windows: a header with the title in the middle, and a button holding only an X icon at its right.
+  - The bar's buttons are no longer looked at for this. A bar's own labels are never taken for a window's title, even for a bar this script didn't put its button on.
+
+### Tests
+- `unit_barlook` has a test page with FR24's real title bar, the window drawn afresh a quarter of a second after the click, and a bar whose buttons' looks tell nothing. Filters, Weather, Settings and LADD Unblock are each put away by their X; a drag of the map or a click in the window leaves them open. 22.31.3's code leaves Filters open there and presses nothing, as on the real map.
+
 ## [22.31.3] - 2026-10-22
 
 ### Fixed
