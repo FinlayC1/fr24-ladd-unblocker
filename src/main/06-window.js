@@ -239,10 +239,11 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     if (ubMon.confirm !== act || now() - ubMon.confirmAt > 5000) { ubMon.confirm = act; ubMon.confirmAt = now(); monPaint(); setTimeout(() => { if (ubMon.confirm === act && now() - ubMon.confirmAt >= 5000) { ubMon.confirm = ''; monPaint(); } }, 5100); return; }
     ubMon.confirm = '';
     if (act === 'log') return;
-    ubMon.note = act === 'monUpdate' ? 'Asking the monitor to update…' : 'Asking the monitor to restart…'; monPaint();
-    monPost(act === 'monUpdate' ? '/admin/update' : '/admin/restart', {})
+    ubMon.note = act === 'monUpdate' ? 'Asking the monitor to update…' : act === 'monReset' ? 'Asking the monitor to delete its saved logs…' : 'Asking the monitor to restart…'; monPaint();
+    monPost(act === 'monUpdate' ? '/admin/update' : act === 'monReset' ? '/admin/reset-logs' : '/admin/restart', {})
       .then(j => {
         if (!j || !j.ok) { ubMon.note = 'The monitor said no: ' + ((j && j.err) || 'no answer'); return; }
+        if (act === 'monReset') { ubMon.note = `Deleted ${nf(j.deleted || 0)} saved logs. They are built again from both networks as aircraft are looked at.`; return; }
         if (act === 'monUpdate') { ubMon.deployAt = now(); ubMon.deployUntil = now() + 8 * 60000; ubMon.note = 'Updating: it fetches the newest version, restarts with it and checks it answers (back to this one if not). The result shows here.'; }
         else ubMon.note = 'Restarting: it saves everything first and answers again in a minute or two.';
         monOk = false; monCheckAt = 0;
@@ -281,6 +282,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     if (monIsOwner() && C) {
       const b = [];
       if (C.update) b.push(`<button class="tl-ub-b${cf('monUpdate') ? '' : ' tl-ub-b2'}" data-ub-act="monUpdate" title="Fetch the newest version from GitHub, restart with it, and go back to this one if it does not answer">${cf('monUpdate') ? 'Click again to update' : behind ? 'Update to v' + esc(L.v) : 'Update monitor'}</button>`);
+      if (C.reset) b.push(`<button class="tl-ub-b tl-ub-b2" data-ub-act="monReset" title="Delete every flight log the monitor has saved (what it learned is kept): built again from both networks as aircraft are looked at">${cf('monReset') ? 'Click again to delete' : 'Delete saved logs'}</button>`);
       if (C.restart) b.push(`<button class="tl-ub-b tl-ub-b2" data-ub-act="monRestart" title="Save everything and start again">${cf('monRestart') ? 'Click again to restart' : 'Restart'}</button>`);
       b.push(`<button class="tl-ub-b tl-ub-b2" data-ub-act="monLog">${ubMon.logOpen ? 'Hide log' : 'Log'}</button>`);
       ctl = `<div class="tl-ub-btns">${b.join('')}</div>`;
@@ -293,11 +295,18 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     }
     return `<div class="tl-ub-grid">${rows.join('')}</div>${ubMon.err ? `<div class="tl-ub-note"><span class="tl-warn">Last ask failed</span> (${esc(ubMon.err)})</div>` : ''}${ctl}${ubMon.note ? `<div class="tl-ub-note">${esc(ubMon.note)}</div>` : ''}${logBox}<div class="tl-ub-note tl-muted">Updated ${ubMon.at ? agoS((now() - ubMon.at) / 1000) + ' ago' : '-'} · ${esc(r.url.replace(/^https:\/\//, ''))}</div>`;
   }
+  // (this browser's saved flight logs deleted - a second click within 5 s does it)
+  let ubLogAsk = 0, ubLogNote = '';
+  function logResetClick() {
+    if (!ubLogAsk || now() - ubLogAsk > 5000) { ubLogAsk = now(); renderUnblockWindow(); setTimeout(() => { if (ubLogAsk && now() - ubLogAsk >= 5000) { ubLogAsk = 0; renderUnblockWindow(); } }, 5100); return; }
+    ubLogAsk = 0; ubLogNote = 'Deleting…'; renderUnblockWindow();
+    resetLogsNow().then(n => { ubLogNote = `Deleted ${nf(n)} saved logs in this browser. They are built again from both networks as aircraft are looked at.`; }, e => { ubLogNote = 'Could not delete them (' + String((e && e.message) || e).slice(0, 80) + ').'; }).then(renderUnblockWindow);
+  }
   // ---- this browser: what it has done since FR24 was opened -----------------------------------------------------------
   function localHtml() {
     let ok = 0, fail = 0; for (const h of hostStat.values()) { ok += h.ok; fail += h.fail; }
     const kv = (k, v, t) => `<div class="tl-ub-kv"${t ? ` title="${esc(t)}"` : ''}><span>${esc(k)}</span><span>${v}</span></div>`;
-    return `<div class="tl-ub-grid">${kv('Flights identified', nf(live.size), 'Blocked and N/A flights this tab has named')}${kv('Routes worked out', nf(routeState.size))}${kv('Named by the monitor', nf(srvIds.rows.size), 'FR24 flights the monitor has named, known to this tab')}${kv('Blocked aircraft live', nf(globalList.byHex.size))}${kv('Requests', `${nf(ok)} answered${fail ? ` · <span class="tl-warn">${nf(fail)} failed</span>` : ''}`, "Every data source together; each one's own count is under Data sources")}</div><div class="tl-ub-note tl-muted">Since FR24 was opened in this tab.</div>`;
+    return `<div class="tl-ub-grid">${kv('Flights identified', nf(live.size), 'Blocked and N/A flights this tab has named')}${kv('Routes worked out', nf(routeState.size))}${kv('Named by the monitor', nf(srvIds.rows.size), 'FR24 flights the monitor has named, known to this tab')}${kv('Blocked aircraft live', nf(globalList.byHex.size))}${kv('Requests', `${nf(ok)} answered${fail ? ` · <span class="tl-warn">${nf(fail)} failed</span>` : ''}`, "Every data source together; each one's own count is under Data sources")}</div><div class="tl-ub-note tl-muted">Since FR24 was opened in this tab.</div><div class="tl-ub-btns"><button class="tl-ub-b tl-ub-b2" data-ub-act="logReset" title="Delete every flight log saved in this browser (what was learned is kept): built again from both networks as aircraft are looked at">${ubLogAsk && now() - ubLogAsk <= 5000 ? 'Click again to delete' : 'Rebuild flight logs'}</button></div>${ubLogNote ? `<div class="tl-ub-note">${esc(ubLogNote)}</div>` : ''}`;
   }
   function monPaint() {
     if (!ubBody || !ubBody.isConnected) return;
@@ -362,7 +371,8 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     else if (act === 'check') { ubNote = ''; checkLatest(true); }
     else if (act === 'ffConsent') { if (typeof TL_DATA_CONSENT === 'function') TL_DATA_CONSENT(true); }
     else if (act === 'seenNew') { lsSet(UB_SEEN_KEY, VERSION); renderUnblockWindow(); ubBadge(); }
-    else if (act === 'monUpdate' || act === 'monRestart') monControl(act);
+    else if (act === 'monUpdate' || act === 'monRestart' || act === 'monReset') monControl(act);
+    else if (act === 'logReset') logResetClick();
     else if (act === 'monLog') { ubMon.logOpen = !ubMon.logOpen; if (ubMon.logOpen) { ubMon.log = null; monLog().then(monPaint); } monPaint(); }
     else doUpdate(act);
   }

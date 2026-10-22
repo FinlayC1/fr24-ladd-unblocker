@@ -569,6 +569,7 @@
   if (routeChan) routeChan.onmessage = ev => {
     const d = ev.data || {};
     if (d.hist) { onHistElsewhere(d.hist); return; }
+    if (d.logsReset) { resetLogsNow(true).catch(() => {}); return; }
     if (d.askBoard || d.boardRows) { onBoardChannel(d); return; }
     if (d.ask) { routeAsked.set(d.ask, now()); if (routeAsked.size > 50) routeAsked.delete(routeAsked.keys().next().value); for (const [id, st] of routeState) { const rec = live.get(id) || pubRecs.get(id); if (rec && rec.hex === d.ask && st && st.route) shareRoute(id, st.route); } return; }
     if (d.hex && d.route) { mapRoutes.set(d.hex, { at: now(), route: d.route }); if (mapRoutes.size > 200) mapRoutes.delete(mapRoutes.keys().next().value); if (mapRouteHook) mapRouteHook(d.hex); }

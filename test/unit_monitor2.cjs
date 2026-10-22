@@ -236,6 +236,27 @@ const rep = (hex, o) => Object.assign({ hex, lat: 53.4, lon: -2.3, alt_baro: 120
     M.answer(new URL('http://x/hist?hex=a6a436'), Date.now() / 1000);
     check('... once: asked again at once, nothing more queued', M.histQ.filter(j => j.hex === 'a6a436').length === q1.length);
     M.histQ.length = 0; for (const j of q1) M.histPend.delete(j.hex + '|' + j.day); M.closed = was; }
+  // ---- every saved flight log deleted, once, on the first start of this version (and when asked): learned data kept ---------
+  { const store = fs.mkdtempSync(path.join(os.tmpdir(), 'monreset-'));
+    fs.mkdirSync(path.join(store, 'hist'), { recursive: true }); fs.mkdirSync(path.join(store, 'learn'), { recursive: true });
+    fs.writeFileSync(path.join(store, 'hist', '4b15ca.json'), JSON.stringify({ hv: 5, days: { '2026/10/01': 1 }, legs: [{ day: '2026/10/01', tStart: 1 }] }));
+    fs.writeFileSync(path.join(store, 'hist', '4b15cb.json'), '{}');
+    fs.writeFileSync(path.join(store, 'learn', '2026-10-01.json'), JSON.stringify([['4b15ca|1', 1, 2, 3]]));
+    const run = async () => {
+      const ch = spawn(process.execPath, [path.join(__dirname, '../monitor/monitor.cjs')], { env: Object.assign({}, process.env, { MON_STORE: store, MON_PORT: String(40000 + Math.floor(Math.random() * 9000)), MON_DATA: process.env.MON_DATA }), stdio: ['ignore', 'pipe', 'pipe'] });
+      let out = ''; ch.stdout.on('data', d => { out += d; }); ch.stderr.on('data', d => { out += d; });
+      for (let i = 0; i < 300 && !/listening/.test(out); i++) await sleep(100);
+      ch.kill('SIGTERM'); await new Promise(r => ch.on('exit', r)); return out;
+    };
+    const out1 = await run();
+    check('first start of this version: every saved flight log deleted (files of hist/), the reset said in its log', !fs.readdirSync(path.join(store, 'hist')).length && /every saved log deleted/.test(out1), { hist: fs.readdirSync(path.join(store, 'hist')), log: out1.slice(0, 300) });
+    check('... what it learned kept (learn/), the reset noted so it is not done again', fs.existsSync(path.join(store, 'learn', '2026-10-01.json')) && fs.readFileSync(path.join(store, 'hist-reset.txt'), 'utf8') === M.HIST_RESET);
+    fs.writeFileSync(path.join(store, 'hist', '4b15ca.json'), JSON.stringify({ hv: M.HIST_V, days: { '2026/10/02': 1 }, legs: [{ day: '2026/10/02', tStart: 2 }] }));
+    await run();
+    check('... the next start: the logs built since are kept', fs.existsSync(path.join(store, 'hist', '4b15ca.json')));
+    fs.writeFileSync(path.join(process.env.MON_STORE, 'hist-x.tmp'), '1');
+    fs.mkdirSync(path.join(process.env.MON_STORE, 'hist'), { recursive: true }); fs.writeFileSync(path.join(process.env.MON_STORE, 'hist', 'a00001.json'), '{}');
+    check('asked for by its owner (/admin/reset-logs): every log file deleted', M.resetHistLogs() >= 1 && !fs.existsSync(path.join(process.env.MON_STORE, 'hist', 'a00001.json'))); }
   // ---- the pictures browsers found: kept, handed to every browser (photos.cjs) ----------------------------------------
   { const ph = { link: 'https://www.jetphotos.com/photo/9', credit: 'X', large: 'https://cdn.jetphotos.com/640/5/9_1.jpg', source: 'JetPhotos' };
     const r = M.report({ photos: [['a63864', [ph]], ['zz', [ph]]] }, Date.now(), { admin: false, ip: '192.0.2.7' });

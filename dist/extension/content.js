@@ -48,7 +48,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
 // ==UserScript==
 // @name         Flightradar24 LADD / N-A Unblocker (feed-level)
 // @namespace    tweeks.io
-// @version      22.31.6
+// @version      22.31.7
 // @description  Identifies every LADD / N/A / blocked military aircraft on Flightradar24 from public ADS-B, and injects callsign, registration, operator, age, country, MSN, squawk, vertical speed, GPS altitude, airspeeds, wind, photos, a reasoned origin/destination with a wind-corrected ETA (also for ordinary flights FR24 shows as N/A - military, private, GA, helicopters, with private landing sites; learned from 63 days of every aircraft worldwide, with live weather and closures), airport-board entries and a rebuilt 7-month flight log straight into FR24's own data - so it all renders like normal FR24 traffic.
 // @author       Finlay Clarke
 // @updateURL    https://raw.githubusercontent.com/FinlayC1/fr24-ladd-unblocker/main/dist/fr24-ladd-unblocker.user.js
@@ -137,7 +137,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "22.31.6";
+    var BRIDGE_V = "22.31.7";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed
@@ -165,7 +165,14 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     var photoCache = new Map();   // HEX -> { photos, at, err, final } - the pictures shown (from the userscript)
     var psCache = new Map();      // HEX -> { photos, at, err } - Planespotters answers (the fallback source)
     var photoJobs = new Map();    // hex -> promise
-    var stats = { liveFeed: 0, follow: 0, patched: 0, errors: 0, lastError: '', maskPatched: 0, maskDisabled: false, scans: 0, searchHits: 0, boardHits: 0, details: 0, lists: 0, flightDetails: 0, boardRefreshes: 0, unlocked: 0 };
+    // (FR24's own requests, as they go - method, address, how it was asked - the last sixty, in memory only: what the page
+    // asks for "Recent <reg> flights" and the like, readable in the console as __tweeksLaddBridge.stats.reqLog)
+    var reqLog = [];
+    function noteReq(how, method, url) {
+      try { url = String(url || ''); if (!/flightradar24\.com|fr24\./i.test(url) || /\.(png|jpe?g|svg|webp|woff2?|css|js|mjs|map|ico)(\?|$)/i.test(url) || /\/tiles?\//i.test(url)) return;
+        reqLog.push((new Date().toISOString().slice(11, 19)) + ' ' + how + ' ' + (method || 'GET') + ' ' + url.replace(/^https?:\/\//, '').slice(0, 200)); if (reqLog.length > 60) reqLog.shift(); } catch (e) { /* ignore */ }
+    }
+    var stats = { reqLog: reqLog, liveFeed: 0, follow: 0, patched: 0, errors: 0, lastError: '', maskPatched: 0, maskDisabled: false, scans: 0, searchHits: 0, boardHits: 0, details: 0, lists: 0, flightDetails: 0, boardRefreshes: 0, unlocked: 0 };
     var feedHeaders = null;       // request headers of FR24's own LiveFeed requests (device id, platform, ...)
     var enc = new TextEncoder();
     var fr24ImgSent = {};   // flight id -> FR24's own photos already handed to the userscript
@@ -938,7 +945,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
         return patched(raw);
       } });
     }
-    P.open = function (method, url) { try { this.__tlUrl = String(url); this.__tlHeaders = {}; } catch (e) { /* ignore */ } return oOpen.apply(this, arguments); };
+    P.open = function (method, url) { try { this.__tlUrl = String(url); this.__tlHeaders = {}; noteReq('xhr', method, url); } catch (e) { /* ignore */ } return oOpen.apply(this, arguments); };
     P.setRequestHeader = function (k, v) { try { if (this.__tlHeaders) this.__tlHeaders[k] = v; } catch (e) { /* ignore */ } return oSetHeader.apply(this, arguments); };
     P.send = function (body) {
       var url = this.__tlUrl || '', sendBody = body;
@@ -2272,6 +2279,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
 
     window.fetch = function (input, init) {
       var url = urlOf(input), m;
+      noteReq('fetch', (init && init.method) || (input && input.method), url);
       // the userscript's own lookups (boards for filed plans, registration searches): passed through untouched
       try {
         var hd = init && init.headers;
@@ -5435,7 +5443,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '22.31.6';
+  const VERSION = '22.31.7';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
@@ -5462,6 +5470,10 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   const WORLD_SCAN_INTERVAL_MS = 180000; // background world scan for new callsign-less flights
   const TELEMETRY_MS = 2000;            // live ADS-B telemetry poll for the selected aircraft (each aggregator every 4 s)
   const PHOTO_V = 10;                   // photo-pipeline version; a bump re-ranks photos cached by an older one (5: JetPhotos through FR24's own lookup; 10: FR24's aircraft page and JetPhotos itself where FR24's lookup holds none back)
+  // Every saved flight log deleted, once, the first time a version with this reset id runs in a browser (and when asked from
+  // the LADD Unblock window): the logs, today's tracks and each aircraft's compact recent flights - nothing else; what was
+  // learned (the self-learning tables), boards and identities stay. They are built again as aircraft are looked at.
+  const LOG_RESET = '22.31.7', LOG_RESET_KEY = 'tweeks.fr24.ladd.logreset';
   const HIST_V = 6;                     // flight-log reconstruction version; a bump rebuilds cached logs from scratch (5: each flight's path, for matching its own routes; 6: every day from both networks, a day done only once each network asked has answered)
   const PRECOMPUTE_MAX = 8;
   // landing places learned away from FR24's airports (03-data): their ids, below the route engine's unlisted fields (1e7 on)
@@ -5862,6 +5874,25 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       peekHist: hex => histMem.get(hex) || dirty.hist.get(hex) || null,
       // (another FR24 tab has kept a newer log of it: read again from disk - unless this one has changes of its own unsaved)
       reloadHist: hex => { if (!dirty.hist.has(hex)) histMem.delete(hex); return store.getHist(hex); },
+      // every flight log - the full ones (key: the address), today's tracks (t:<address>), and the compact recent flights
+      // of every aircraft's record - deleted; the learned tables (x:), boards (b:) and everything else kept. memOnly: this
+      // tab's copies only (another tab has done the deleting on disk)
+      clearLogs: async memOnly => {
+        await ready;
+        const isLog = k => /^(t:)?[0-9a-f]{6}$/.test(String(k));
+        histMem.clear();
+        for (const k of [...dirty.hist.keys()]) if (isLog(k)) dirty.hist.delete(k);
+        for (const [h, v] of mem.hex) if (v && v.recent && v.recent.length) { v.recent = []; if (!memOnly) touch('hex', h); }
+        if (memOnly || !db) return 0;
+        return new Promise(res => {
+          let n = 0;
+          try {
+            const tx = db.transaction('hist', 'readwrite'), st = tx.objectStore('hist'), rq = st.openKeyCursor();
+            rq.onsuccess = () => { const c = rq.result; if (c) { if (isLog(c.key)) { st.delete(c.key); n++; } c.continue(); } };
+            tx.oncomplete = () => res(n); tx.onerror = tx.onabort = () => res(n);
+          } catch (e) { res(0); }
+        });
+      },
       setHist: (hex, v) => { histMem.set(hex, v); dirty.hist.set(hex, v); if (histMem.size > 150) histMem.delete(histMem.keys().next().value); if (!timer) timer = setTimeout(idleFlush, 700); }
     };
   })();
@@ -8295,6 +8326,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     if (cur && cur.running) { if (front) cur.front = true; if (cur.maxDays >= maxDays) { if (onProgress) cur.prog.push(onProgress); return cur.promise; } return cur.promise.catch(() => null).then(() => loadHistory(hex, maxDays, onProgress, opts)); }
     const st = { running: true, maxDays, front, prog: onProgress ? [onProgress] : [] };
     st.promise = (async () => {
+      await logWipeDone;
       await loadAirports();
       await Promise.race([loadSites(), sleep(8000)]);        // (landings at unlisted fields are read as such)
       let h = (await store.getHist(hex)) || { legs: [], days: {}, savedAt: 0, v: HIST_V };
@@ -8407,6 +8439,21 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   // after a refresh each aircraft's take-off airport and track so far are known before any request is made.
   const todayCache = new Map();   // hex -> { at, pts, lastPt, legs (raw), sums, disk? , failAt? }
   const todayWarmed = new Set();
+  // Every saved log deleted - on disk and in this tab (LOG_RESET: once; the window's button: when asked). Loading a log waits
+  // for it, so nothing built meanwhile is deleted after it. Other tabs forget their copies (they wrote nothing since).
+  async function resetLogsNow(fromOtherTab) {
+    const n = await store.clearLogs(!!fromOtherTab);
+    todayCache.clear(); todayWarmed.clear(); historyJobs.clear(); histShown.clear(); histReqs.clear();
+    if (!fromOtherTab) { try { if (routeChan) routeChan.postMessage({ logsReset: now() }); } catch (e) { /* closed */ } }
+    return n;
+  }
+  const logWipeDone = (async () => {
+    let was = ''; try { was = localStorage.getItem(LOG_RESET_KEY) || ''; } catch (e) { /* none */ }
+    if (was === LOG_RESET) return;
+    try { localStorage.setItem(LOG_RESET_KEY, LOG_RESET); } catch (e) { /* the next start does it again */ }
+    try { const n = await resetLogsNow(); log('flight logs: every saved log deleted (reset ' + LOG_RESET + '):', n); }
+    catch (e) { log('log reset', e); try { localStorage.removeItem(LOG_RESET_KEY); } catch (_) { /* none */ } }
+  })();
   const thinPts = (pts, gap) => { const o = []; for (const p of pts || []) if (!o.length || p.t - o[o.length - 1].t >= gap) o.push(p); const last = pts && pts[pts.length - 1]; if (last && o[o.length - 1] !== last) o.push(last); return o; };
   function saveToday(hex, out) {
     const leg = out.legs && out.legs.length ? out.legs[out.legs.length - 1] : null;
@@ -9425,6 +9472,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   if (routeChan) routeChan.onmessage = ev => {
     const d = ev.data || {};
     if (d.hist) { onHistElsewhere(d.hist); return; }
+    if (d.logsReset) { resetLogsNow(true).catch(() => {}); return; }
     if (d.askBoard || d.boardRows) { onBoardChannel(d); return; }
     if (d.ask) { routeAsked.set(d.ask, now()); if (routeAsked.size > 50) routeAsked.delete(routeAsked.keys().next().value); for (const [id, st] of routeState) { const rec = live.get(id) || pubRecs.get(id); if (rec && rec.hex === d.ask && st && st.route) shareRoute(id, st.route); } return; }
     if (d.hex && d.route) { mapRoutes.set(d.hex, { at: now(), route: d.route }); if (mapRoutes.size > 200) mapRoutes.delete(mapRoutes.keys().next().value); if (mapRouteHook) mapRouteHook(d.hex); }
@@ -13174,7 +13222,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // (the version whose "what's new" was put away, and the one whose dot on the button the window was opened for)
   const UB_SEEN_KEY = 'tweeks.fr24.ladd.seenver', UB_DOT_KEY = 'tweeks.fr24.ladd.dotver';
   // (the newest CHANGELOG section's headlines, written in by build.mjs: { v, items })
-  const UB_WHATS_NEW = {"v":"22.31.6","items":["Panel photos: \"Aircraft photo not available\" for an aircraft JetPhotos has photos of","\"Recent <reg> flights\" said \"No flights available\" for a blocked aircraft whose log has flights.","Flight logs: much more thorough, in the browser and on the monitor, and rebuilt from scratch."]};
+  const UB_WHATS_NEW = {"v":"22.31.7","items":["Every saved flight log is deleted, once, and rebuilt from scratch","Recent flights: FR24's requests are now kept for diagnosis."]};
   // (an aircraft with an open padlock: FR24's outline style - 24 grid, 1.5 stroke in the text colour)
   const UB_ICON = '<svg data-tl-ub-icon="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
   const UB_X = '<svg viewBox="0 0 14 14" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5l11 11M12.5 1.5l-11 11"/></svg>';
@@ -13401,10 +13449,11 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     if (ubMon.confirm !== act || now() - ubMon.confirmAt > 5000) { ubMon.confirm = act; ubMon.confirmAt = now(); monPaint(); setTimeout(() => { if (ubMon.confirm === act && now() - ubMon.confirmAt >= 5000) { ubMon.confirm = ''; monPaint(); } }, 5100); return; }
     ubMon.confirm = '';
     if (act === 'log') return;
-    ubMon.note = act === 'monUpdate' ? 'Asking the monitor to update…' : 'Asking the monitor to restart…'; monPaint();
-    monPost(act === 'monUpdate' ? '/admin/update' : '/admin/restart', {})
+    ubMon.note = act === 'monUpdate' ? 'Asking the monitor to update…' : act === 'monReset' ? 'Asking the monitor to delete its saved logs…' : 'Asking the monitor to restart…'; monPaint();
+    monPost(act === 'monUpdate' ? '/admin/update' : act === 'monReset' ? '/admin/reset-logs' : '/admin/restart', {})
       .then(j => {
         if (!j || !j.ok) { ubMon.note = 'The monitor said no: ' + ((j && j.err) || 'no answer'); return; }
+        if (act === 'monReset') { ubMon.note = `Deleted ${nf(j.deleted || 0)} saved logs. They are built again from both networks as aircraft are looked at.`; return; }
         if (act === 'monUpdate') { ubMon.deployAt = now(); ubMon.deployUntil = now() + 8 * 60000; ubMon.note = 'Updating: it fetches the newest version, restarts with it and checks it answers (back to this one if not). The result shows here.'; }
         else ubMon.note = 'Restarting: it saves everything first and answers again in a minute or two.';
         monOk = false; monCheckAt = 0;
@@ -13443,6 +13492,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     if (monIsOwner() && C) {
       const b = [];
       if (C.update) b.push(`<button class="tl-ub-b${cf('monUpdate') ? '' : ' tl-ub-b2'}" data-ub-act="monUpdate" title="Fetch the newest version from GitHub, restart with it, and go back to this one if it does not answer">${cf('monUpdate') ? 'Click again to update' : behind ? 'Update to v' + esc(L.v) : 'Update monitor'}</button>`);
+      if (C.reset) b.push(`<button class="tl-ub-b tl-ub-b2" data-ub-act="monReset" title="Delete every flight log the monitor has saved (what it learned is kept): built again from both networks as aircraft are looked at">${cf('monReset') ? 'Click again to delete' : 'Delete saved logs'}</button>`);
       if (C.restart) b.push(`<button class="tl-ub-b tl-ub-b2" data-ub-act="monRestart" title="Save everything and start again">${cf('monRestart') ? 'Click again to restart' : 'Restart'}</button>`);
       b.push(`<button class="tl-ub-b tl-ub-b2" data-ub-act="monLog">${ubMon.logOpen ? 'Hide log' : 'Log'}</button>`);
       ctl = `<div class="tl-ub-btns">${b.join('')}</div>`;
@@ -13455,11 +13505,18 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     }
     return `<div class="tl-ub-grid">${rows.join('')}</div>${ubMon.err ? `<div class="tl-ub-note"><span class="tl-warn">Last ask failed</span> (${esc(ubMon.err)})</div>` : ''}${ctl}${ubMon.note ? `<div class="tl-ub-note">${esc(ubMon.note)}</div>` : ''}${logBox}<div class="tl-ub-note tl-muted">Updated ${ubMon.at ? agoS((now() - ubMon.at) / 1000) + ' ago' : '-'} · ${esc(r.url.replace(/^https:\/\//, ''))}</div>`;
   }
+  // (this browser's saved flight logs deleted - a second click within 5 s does it)
+  let ubLogAsk = 0, ubLogNote = '';
+  function logResetClick() {
+    if (!ubLogAsk || now() - ubLogAsk > 5000) { ubLogAsk = now(); renderUnblockWindow(); setTimeout(() => { if (ubLogAsk && now() - ubLogAsk >= 5000) { ubLogAsk = 0; renderUnblockWindow(); } }, 5100); return; }
+    ubLogAsk = 0; ubLogNote = 'Deleting…'; renderUnblockWindow();
+    resetLogsNow().then(n => { ubLogNote = `Deleted ${nf(n)} saved logs in this browser. They are built again from both networks as aircraft are looked at.`; }, e => { ubLogNote = 'Could not delete them (' + String((e && e.message) || e).slice(0, 80) + ').'; }).then(renderUnblockWindow);
+  }
   // ---- this browser: what it has done since FR24 was opened -----------------------------------------------------------
   function localHtml() {
     let ok = 0, fail = 0; for (const h of hostStat.values()) { ok += h.ok; fail += h.fail; }
     const kv = (k, v, t) => `<div class="tl-ub-kv"${t ? ` title="${esc(t)}"` : ''}><span>${esc(k)}</span><span>${v}</span></div>`;
-    return `<div class="tl-ub-grid">${kv('Flights identified', nf(live.size), 'Blocked and N/A flights this tab has named')}${kv('Routes worked out', nf(routeState.size))}${kv('Named by the monitor', nf(srvIds.rows.size), 'FR24 flights the monitor has named, known to this tab')}${kv('Blocked aircraft live', nf(globalList.byHex.size))}${kv('Requests', `${nf(ok)} answered${fail ? ` · <span class="tl-warn">${nf(fail)} failed</span>` : ''}`, "Every data source together; each one's own count is under Data sources")}</div><div class="tl-ub-note tl-muted">Since FR24 was opened in this tab.</div>`;
+    return `<div class="tl-ub-grid">${kv('Flights identified', nf(live.size), 'Blocked and N/A flights this tab has named')}${kv('Routes worked out', nf(routeState.size))}${kv('Named by the monitor', nf(srvIds.rows.size), 'FR24 flights the monitor has named, known to this tab')}${kv('Blocked aircraft live', nf(globalList.byHex.size))}${kv('Requests', `${nf(ok)} answered${fail ? ` · <span class="tl-warn">${nf(fail)} failed</span>` : ''}`, "Every data source together; each one's own count is under Data sources")}</div><div class="tl-ub-note tl-muted">Since FR24 was opened in this tab.</div><div class="tl-ub-btns"><button class="tl-ub-b tl-ub-b2" data-ub-act="logReset" title="Delete every flight log saved in this browser (what was learned is kept): built again from both networks as aircraft are looked at">${ubLogAsk && now() - ubLogAsk <= 5000 ? 'Click again to delete' : 'Rebuild flight logs'}</button></div>${ubLogNote ? `<div class="tl-ub-note">${esc(ubLogNote)}</div>` : ''}`;
   }
   function monPaint() {
     if (!ubBody || !ubBody.isConnected) return;
@@ -13524,7 +13581,8 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     else if (act === 'check') { ubNote = ''; checkLatest(true); }
     else if (act === 'ffConsent') { if (typeof TL_DATA_CONSENT === 'function') TL_DATA_CONSENT(true); }
     else if (act === 'seenNew') { lsSet(UB_SEEN_KEY, VERSION); renderUnblockWindow(); ubBadge(); }
-    else if (act === 'monUpdate' || act === 'monRestart') monControl(act);
+    else if (act === 'monUpdate' || act === 'monRestart' || act === 'monReset') monControl(act);
+    else if (act === 'logReset') logResetClick();
     else if (act === 'monLog') { ubMon.logOpen = !ubMon.logOpen; if (ubMon.logOpen) { ubMon.log = null; monLog().then(monPaint); } monPaint(); }
     else doUpdate(act);
   }

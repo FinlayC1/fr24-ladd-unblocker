@@ -175,6 +175,7 @@ All answers are JSON. On a public monitor every endpoint answers without the sec
 | `GET /admin/log[?n=80]` | Owner only (the secret; never on a monitor without one). The latest log lines (300 kept in memory, the secret blanked out), the last update's output (`deploy`) and which controls work here (`controls`: `update`, `restart`). |
 | `POST /admin/update` | Owner only. Runs `deploy.sh` as a unit of its own (`sudo -n systemd-run`), so restarting the service does not stop it; its output goes to `<store>/deploy-last.log`. Only on a git checkout run by systemd; one at a time. |
 | `POST /admin/restart` | Owner only. Saves everything and exits, and systemd starts it again. Only under systemd. |
+| `POST /admin/reset-logs` | Owner only. Deletes every saved flight log (the files of `hist/`); what the monitor learned (`learn/`, `learn-crowd/`), its tracks and its names are kept. The logs are built again from both networks as aircraft are looked at. The same deletion is done once, on the first start of each version that asks for it (`hist-reset.txt` in the store says which). |
 
 ## Public mode
 

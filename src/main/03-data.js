@@ -1173,6 +1173,7 @@
     if (cur && cur.running) { if (front) cur.front = true; if (cur.maxDays >= maxDays) { if (onProgress) cur.prog.push(onProgress); return cur.promise; } return cur.promise.catch(() => null).then(() => loadHistory(hex, maxDays, onProgress, opts)); }
     const st = { running: true, maxDays, front, prog: onProgress ? [onProgress] : [] };
     st.promise = (async () => {
+      await logWipeDone;
       await loadAirports();
       await Promise.race([loadSites(), sleep(8000)]);        // (landings at unlisted fields are read as such)
       let h = (await store.getHist(hex)) || { legs: [], days: {}, savedAt: 0, v: HIST_V };
@@ -1285,6 +1286,21 @@
   // after a refresh each aircraft's take-off airport and track so far are known before any request is made.
   const todayCache = new Map();   // hex -> { at, pts, lastPt, legs (raw), sums, disk? , failAt? }
   const todayWarmed = new Set();
+  // Every saved log deleted - on disk and in this tab (LOG_RESET: once; the window's button: when asked). Loading a log waits
+  // for it, so nothing built meanwhile is deleted after it. Other tabs forget their copies (they wrote nothing since).
+  async function resetLogsNow(fromOtherTab) {
+    const n = await store.clearLogs(!!fromOtherTab);
+    todayCache.clear(); todayWarmed.clear(); historyJobs.clear(); histShown.clear(); histReqs.clear();
+    if (!fromOtherTab) { try { if (routeChan) routeChan.postMessage({ logsReset: now() }); } catch (e) { /* closed */ } }
+    return n;
+  }
+  const logWipeDone = (async () => {
+    let was = ''; try { was = localStorage.getItem(LOG_RESET_KEY) || ''; } catch (e) { /* none */ }
+    if (was === LOG_RESET) return;
+    try { localStorage.setItem(LOG_RESET_KEY, LOG_RESET); } catch (e) { /* the next start does it again */ }
+    try { const n = await resetLogsNow(); log('flight logs: every saved log deleted (reset ' + LOG_RESET + '):', n); }
+    catch (e) { log('log reset', e); try { localStorage.removeItem(LOG_RESET_KEY); } catch (_) { /* none */ } }
+  })();
   const thinPts = (pts, gap) => { const o = []; for (const p of pts || []) if (!o.length || p.t - o[o.length - 1].t >= gap) o.push(p); const last = pts && pts[pts.length - 1]; if (last && o[o.length - 1] !== last) o.push(last); return o; };
   function saveToday(hex, out) {
     const leg = out.legs && out.legs.length ? out.legs[out.legs.length - 1] : null;

@@ -1,4 +1,4 @@
-// FR24 LADD Unblocker 22.31.6 - the page-world part (see src/page.js)
+// FR24 LADD Unblocker 22.31.7 - the page-world part (see src/page.js)
 (function () {
   'use strict';
   // ------------------------------------------------------------------------------------------------------------
@@ -7,7 +7,7 @@
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "22.31.6";
+    var BRIDGE_V = "22.31.7";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed
@@ -35,7 +35,14 @@
     var photoCache = new Map();   // HEX -> { photos, at, err, final } - the pictures shown (from the userscript)
     var psCache = new Map();      // HEX -> { photos, at, err } - Planespotters answers (the fallback source)
     var photoJobs = new Map();    // hex -> promise
-    var stats = { liveFeed: 0, follow: 0, patched: 0, errors: 0, lastError: '', maskPatched: 0, maskDisabled: false, scans: 0, searchHits: 0, boardHits: 0, details: 0, lists: 0, flightDetails: 0, boardRefreshes: 0, unlocked: 0 };
+    // (FR24's own requests, as they go - method, address, how it was asked - the last sixty, in memory only: what the page
+    // asks for "Recent <reg> flights" and the like, readable in the console as __tweeksLaddBridge.stats.reqLog)
+    var reqLog = [];
+    function noteReq(how, method, url) {
+      try { url = String(url || ''); if (!/flightradar24\.com|fr24\./i.test(url) || /\.(png|jpe?g|svg|webp|woff2?|css|js|mjs|map|ico)(\?|$)/i.test(url) || /\/tiles?\//i.test(url)) return;
+        reqLog.push((new Date().toISOString().slice(11, 19)) + ' ' + how + ' ' + (method || 'GET') + ' ' + url.replace(/^https?:\/\//, '').slice(0, 200)); if (reqLog.length > 60) reqLog.shift(); } catch (e) { /* ignore */ }
+    }
+    var stats = { reqLog: reqLog, liveFeed: 0, follow: 0, patched: 0, errors: 0, lastError: '', maskPatched: 0, maskDisabled: false, scans: 0, searchHits: 0, boardHits: 0, details: 0, lists: 0, flightDetails: 0, boardRefreshes: 0, unlocked: 0 };
     var feedHeaders = null;       // request headers of FR24's own LiveFeed requests (device id, platform, ...)
     var enc = new TextEncoder();
     var fr24ImgSent = {};   // flight id -> FR24's own photos already handed to the userscript
@@ -808,7 +815,7 @@
         return patched(raw);
       } });
     }
-    P.open = function (method, url) { try { this.__tlUrl = String(url); this.__tlHeaders = {}; } catch (e) { /* ignore */ } return oOpen.apply(this, arguments); };
+    P.open = function (method, url) { try { this.__tlUrl = String(url); this.__tlHeaders = {}; noteReq('xhr', method, url); } catch (e) { /* ignore */ } return oOpen.apply(this, arguments); };
     P.setRequestHeader = function (k, v) { try { if (this.__tlHeaders) this.__tlHeaders[k] = v; } catch (e) { /* ignore */ } return oSetHeader.apply(this, arguments); };
     P.send = function (body) {
       var url = this.__tlUrl || '', sendBody = body;
@@ -2142,6 +2149,7 @@
 
     window.fetch = function (input, init) {
       var url = urlOf(input), m;
+      noteReq('fetch', (init && init.method) || (input && input.method), url);
       // the userscript's own lookups (boards for filed plans, registration searches): passed through untouched
       try {
         var hd = init && init.headers;
