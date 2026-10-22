@@ -1,7 +1,7 @@
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '22.31.6';
+  const VERSION = '22.31.7';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
@@ -28,6 +28,10 @@
   const WORLD_SCAN_INTERVAL_MS = 180000; // background world scan for new callsign-less flights
   const TELEMETRY_MS = 2000;            // live ADS-B telemetry poll for the selected aircraft (each aggregator every 4 s)
   const PHOTO_V = 10;                   // photo-pipeline version; a bump re-ranks photos cached by an older one (5: JetPhotos through FR24's own lookup; 10: FR24's aircraft page and JetPhotos itself where FR24's lookup holds none back)
+  // Every saved flight log deleted, once, the first time a version with this reset id runs in a browser (and when asked from
+  // the LADD Unblock window): the logs, today's tracks and each aircraft's compact recent flights - nothing else; what was
+  // learned (the self-learning tables), boards and identities stay. They are built again as aircraft are looked at.
+  const LOG_RESET = '22.31.7', LOG_RESET_KEY = 'tweeks.fr24.ladd.logreset';
   const HIST_V = 6;                     // flight-log reconstruction version; a bump rebuilds cached logs from scratch (5: each flight's path, for matching its own routes; 6: every day from both networks, a day done only once each network asked has answered)
   const PRECOMPUTE_MAX = 8;
   // landing places learned away from FR24's airports (03-data): their ids, below the route engine's unlisted fields (1e7 on)
@@ -428,6 +432,25 @@
       peekHist: hex => histMem.get(hex) || dirty.hist.get(hex) || null,
       // (another FR24 tab has kept a newer log of it: read again from disk - unless this one has changes of its own unsaved)
       reloadHist: hex => { if (!dirty.hist.has(hex)) histMem.delete(hex); return store.getHist(hex); },
+      // every flight log - the full ones (key: the address), today's tracks (t:<address>), and the compact recent flights
+      // of every aircraft's record - deleted; the learned tables (x:), boards (b:) and everything else kept. memOnly: this
+      // tab's copies only (another tab has done the deleting on disk)
+      clearLogs: async memOnly => {
+        await ready;
+        const isLog = k => /^(t:)?[0-9a-f]{6}$/.test(String(k));
+        histMem.clear();
+        for (const k of [...dirty.hist.keys()]) if (isLog(k)) dirty.hist.delete(k);
+        for (const [h, v] of mem.hex) if (v && v.recent && v.recent.length) { v.recent = []; if (!memOnly) touch('hex', h); }
+        if (memOnly || !db) return 0;
+        return new Promise(res => {
+          let n = 0;
+          try {
+            const tx = db.transaction('hist', 'readwrite'), st = tx.objectStore('hist'), rq = st.openKeyCursor();
+            rq.onsuccess = () => { const c = rq.result; if (c) { if (isLog(c.key)) { st.delete(c.key); n++; } c.continue(); } };
+            tx.oncomplete = () => res(n); tx.onerror = tx.onabort = () => res(n);
+          } catch (e) { res(0); }
+        });
+      },
       setHist: (hex, v) => { histMem.set(hex, v); dirty.hist.set(hex, v); if (histMem.size > 150) histMem.delete(histMem.keys().next().value); if (!timer) timer = setTimeout(idleFlush, 700); }
     };
   })();

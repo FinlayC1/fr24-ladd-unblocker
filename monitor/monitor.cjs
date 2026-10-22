@@ -255,6 +255,19 @@ function histRead(hex) {
   } catch (e) { /* none yet */ }
   return { hv: HIST_V, days: {}, legs: [], part: {} };
 }
+// Every saved flight log deleted, once, the first time a monitor with this reset id starts (and when the owner asks): the
+// files of STORE/hist - nothing else; what the monitor learned (learn/, learn-crowd/), its tracks and its names are kept.
+// They are built again from both networks as aircraft are looked at.
+const HIST_RESET = '22.31.7';
+const histResetMark = path.join(STORE, 'hist-reset.txt');
+function resetHistLogs() {
+  let n = 0;
+  try { for (const f of fs.readdirSync(HIST_DIR)) { try { fs.unlinkSync(path.join(HIST_DIR, f)); n++; } catch (e) { /* gone */ } } } catch (e) { /* none yet */ }
+  try { fs.mkdirSync(STORE, { recursive: true }); fs.writeFileSync(histResetMark, HIST_RESET); } catch (e) { /* the next start does it again */ }
+  return n;
+}
+let histResetN = -1;
+try { if (fs.readFileSync(histResetMark, 'utf8').trim() !== HIST_RESET) throw new Error('older'); } catch (e) { histResetN = resetHistLogs(); log('flight logs: every saved log deleted (reset ' + HIST_RESET + '):', histResetN, 'files - built again from both networks as aircraft are looked at'); }
 // (kept for good: a blocked aircraft's whole history - a few kilobytes a month)
 function histWrite(hex, h) {
   fs.mkdirSync(HIST_DIR, { recursive: true });
@@ -1319,7 +1332,7 @@ const UNDER_SYSTEMD = !!process.env.INVOCATION_ID;
 const CAN_DEPLOY = process.platform === 'linux' && UNDER_SYSTEMD && fs.existsSync(path.join(DIR, 'deploy.sh')) && fs.existsSync(path.join(DIR, '..', '.git'));
 const DEPLOY_LOG = path.join(STORE, 'deploy-last.log');
 const ctl = { deployAt: 0, restartAt: 0, stop: null };
-const controls = () => ({ update: CAN_DEPLOY, restart: UNDER_SYSTEMD });
+const controls = () => ({ update: CAN_DEPLOY, restart: UNDER_SYSTEMD, reset: true });
 function deployLogTail() {
   try { const st = fs.statSync(DEPLOY_LOG); const txt = fs.readFileSync(DEPLOY_LOG, 'utf8'); return { at: st.mtimeMs, text: scrub(txt.split('\n').slice(-40).join('\n')).slice(-6000) }; } catch (e) { return null; }
 }
@@ -1423,6 +1436,12 @@ function adminAnswer(p, method, q, body) {
     ctl.restartAt = Date.now(); log('restart asked for from the LADD Unblock window');
     setTimeout(() => { if (ctl.stop) ctl.stop(); else process.exit(0); }, 500);
     return { ok: true };
+  }
+  if (p === '/admin/reset-logs') {
+    const n = resetHistLogs(); fillAsked.clear();
+    for (let i = histQ.length - 1; i >= 0; i--) if (histQ[i].fill) { histPend.delete(histQ[i].hex + '|' + histQ[i].day); histQ.splice(i, 1); }
+    log('every saved flight log deleted from the LADD Unblock window:', n, 'files');
+    return { ok: true, deleted: n };
   }
   if (p === '/admin/update') {
     if (!CAN_DEPLOY) return { ok: false, err: 'not a git checkout run by systemd: update it on the server' };
@@ -1575,5 +1594,5 @@ if (require.main === module) {
   ownersLoop();
   setInterval(() => { wx.pump().catch(e => log('wx', String(e))); }, 2000);
 }
-module.exports = { HIST_V, adminAnswer, ctl, logRing, log, MON_VER, learnCheck, learnFromCrowd, crowdLearnSave, crowdRows, LC, tracks, waiting, waitRound, waitLive, waitNamed, waitClaims, WAIT, saveWaiting, loadWaiting, pbMatch, learnedBuild, learnedDue, learnedLoad, learnedRef: () => learnedOut, liveBusy, backWaits, E, CFG, loadEngine, ingest, buildLegs, fr24Legs, fr24Leg, F24ref: () => F24, owners, ownersLoop, APT, legRunways, names, nearAnswer, telAnswer, tel, wx, pbNames, get PUBLIC() { return PUBLIC; }, get RATE() { return RATE; }, limited, tokenOk, installs, opts, optionsSet, optionsLoad, latestCheck, latestVer, helloAnswer, badge, wakeQuiet, parkedAt, boardLegs, flightsOfCs, lastHeard, legs, ac, backfillOne, backQ, blocked, markBlocked, seed, gapFill, addArea, userAreas,
+module.exports = { HIST_V, HIST_RESET, resetHistLogs, histResetMark, get histResetN() { return histResetN; }, adminAnswer, ctl, logRing, log, MON_VER, learnCheck, learnFromCrowd, crowdLearnSave, crowdRows, LC, tracks, waiting, waitRound, waitLive, waitNamed, waitClaims, WAIT, saveWaiting, loadWaiting, pbMatch, learnedBuild, learnedDue, learnedLoad, learnedRef: () => learnedOut, liveBusy, backWaits, E, CFG, loadEngine, ingest, buildLegs, fr24Legs, fr24Leg, F24ref: () => F24, owners, ownersLoop, APT, legRunways, names, nearAnswer, telAnswer, tel, wx, pbNames, get PUBLIC() { return PUBLIC; }, get RATE() { return RATE; }, limited, tokenOk, installs, opts, optionsSet, optionsLoad, latestCheck, latestVer, helloAnswer, badge, wakeQuiet, parkedAt, boardLegs, flightsOfCs, lastHeard, legs, ac, backfillOne, backQ, blocked, markBlocked, seed, gapFill, addArea, userAreas,
   serve, fr24, ident, dest, F24, report, identRound, fr24Round, saveIdent, loadIdent, histUnknown, learnSince, learnWrite, diskLegs, KEEP_LADD, save, loadStore, dirtyDays, pollOpenSky, adsbxUse, live, liveList, answer, step, P, piaState, apiGet, gate, stats, lastOk, noteWatch, watch, watchedAll, flew, closeDays, histQ, histPend, histOne, histDay, histOf, histRead, histWrite, histFile, fillHist, fillAsked, queueHist, photos, nextHist, saveState, loadState, lastW, get closed() { return closed; }, set closed(v) { closed = v; }, pause };

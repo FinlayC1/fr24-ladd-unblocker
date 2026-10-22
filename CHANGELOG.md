@@ -2,6 +2,19 @@
 
 All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PATCH`. The userscript and the monitor are released together.
 
+## [22.31.7] - 2026-10-22
+
+### Fixed
+- **Every saved flight log is deleted, once, and rebuilt from scratch**, in the browser and on the monitor. 22.31.6 made old logs unusable but left them saved until each aircraft's log was next loaded, so the log pages still showed what the old build had read.
+  - **Browser:** on the first run of this version, the saved logs (IndexedDB), today's tracks and every aircraft's compact recent flights are deleted. What was learned (the self-learning tables), the airport boards and the aircraft's identity records are kept. Loading a log waits for the deletion, so nothing built meanwhile is deleted after it.
+  - **Monitor:** on the first start of this version, the files of its `hist/` folder are deleted. What it learned (`learn/`, `learn-crowd/`), its tracks and its names are kept. `hist-reset.txt` in its store notes it, so it is not done again.
+  - **When asked:** the LADD Unblock window has **Rebuild flight logs** under "This browser", and the owner's secret adds **Delete saved logs** for the monitor (`POST /admin/reset-logs`). Each takes a second click within 5 seconds, so nothing is deleted by a stray click.
+- **Recent flights: FR24's requests are now kept for diagnosis.** On one FR24 the panel's list never reached the script's hook (`listAsked` never set), so the list could not be filled whatever the log held. The last sixty FR24 requests of the page are now kept in memory, readable in the console as `__tweeksLaddBridge.stats.reqLog`, so which request carries the list can be read straight off.
+
+### Tests
+- New `unit_logreset`: a real IndexedDB with an older build's logs, today's tracks, learned data, boards and an aircraft record. The first run deletes the logs and tracks and empties the compact recent flights, and keeps the rest of the record, the learned data and the boards. The reset is noted, so the next start keeps a log built since. The window's button asks on the first click and deletes on the second.
+- `unit_monitor2`: the monitor's first start with an older (or no) reset note deletes `hist/` and keeps `learn/`; the next start keeps the logs built since; the owner's action deletes the files.
+
 ## [22.31.6] - 2026-10-22
 
 ### Fixed
