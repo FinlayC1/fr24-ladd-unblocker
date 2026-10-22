@@ -8290,8 +8290,10 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     // (the aircraft being looked at - opts.front - jumps the queue, and so does what is left of a load already running for
     // it; a longer load than the running one follows it and asks only for the days that one did not cover)
     const front = !!(opts && opts.front), cur = historyJobs.get(hex);
-    if (cur && cur.running) { if (front) cur.front = true; if (cur.maxDays >= maxDays) return cur.promise; return cur.promise.catch(() => null).then(() => loadHistory(hex, maxDays, onProgress, opts)); }
-    const st = { running: true, maxDays, front };
+    // (a caller joining a load already running hears of its progress too: "Recent flights" hands its list over the moment
+    // it has flights in it, whichever load brings them)
+    if (cur && cur.running) { if (front) cur.front = true; if (cur.maxDays >= maxDays) { if (onProgress) cur.prog.push(onProgress); return cur.promise; } return cur.promise.catch(() => null).then(() => loadHistory(hex, maxDays, onProgress, opts)); }
+    const st = { running: true, maxDays, front, prog: onProgress ? [onProgress] : [] };
     st.promise = (async () => {
       await loadAirports();
       await Promise.race([loadSites(), sleep(8000)]);        // (landings at unlisted fields are read as such)
@@ -8327,7 +8329,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
         const chained = ENGINE.chainLegs(ENGINE.stitchLegs(h.legs.slice().reverse()));
         store.mergeHex(hex, { recent: legsToCompact(chained) });
         try { boardNoteLegs(hex, chained.filter(l => l.tStart > nowS() - 3 * 86400)); } catch (e) { log('board legs', e); }
-        if (onProgress) { try { onProgress(h, done, todo.length); } catch (e) { log('history progress', e); } }
+        for (const f of st.prog) { try { f(h, done, todo.length); } catch (e) { log('history progress', e); } }
       };
       const ac0 = acOfHex(hex), cls0 = ENGINE.classify(ac0), heli = cls0 === 'heli', patrol = cls0 === 'fighter' || cls0 === 'milheavy';
       // (the days the monitor has: taken as they are - no request for them; only a day whose flights all came with it, and

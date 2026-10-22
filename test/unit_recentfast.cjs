@@ -58,7 +58,17 @@ function makeWin() {
   const routes = first ? first.d.data.map(r => (r.airport && r.airport.origin && r.airport.origin.code && r.airport.origin.code.iata) + '-' + (r.airport && r.airport.destination && r.airport.destination.code && r.airport.destination.code.iata)) : [];
   // (FR24 hides the first row - the flight on screen: an aircraft not flying has its newest flight there, and again below)
   check('... the rows FR24 shows: Athens - Nice and Geneva - Athens, the newest first', routes.slice(1).join() === 'ATH-NCE,GVA-ATH', routes);
+  // (its log already being read in the background, slowly, when the list is asked for: the list joins that read, and is
+  // handed over the moment the monitor's flights are in)
+  L.store.mergeHex('4b15cb', { reg: 'HB-IGP', type: 'F2TH', ladd: true });
+  const bgLoad = L.loadHistory('4b15cb', 40, null, { bg: true }).catch(() => null);
+  await sleep(20);
+  const t2 = Date.now();
+  w.dispatchEvent(new w.MessageEvent('message', { data: { __tweeksLadd: 'needHist', reg: 'HB-IGP' }, source: w }));
+  const first2 = await until(() => posted.find(p => p.d && p.d.__tweeksLadd === 'hist' && p.d.reg === 'HB-IGP' && Array.isArray(p.d.data) && p.d.data.length > 1), 8000);
+  check('... its log already being read in the background: the list joins that read, handed over within a few seconds', !!first2 && first2.at - t2 < 5000, first2 && { ms: first2.at - t2, n: first2.d.data.length });
   NET_MS = 5;
+  await bgLoad;
   const last = await until(() => posted.filter(p => p.d && p.d.__tweeksLadd === 'hist' && p.d.reg === 'HB-IGO' && !p.d.partial).pop(), 60000);
   check('... and the full list once the log is read', !!last && Array.isArray(last.d.data) && last.d.data.length >= 2, last && last.d.data && last.d.data.length);
   console.log(fails ? `\n${fails} failed` : '\nall passed');
