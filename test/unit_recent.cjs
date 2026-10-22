@@ -38,6 +38,9 @@ function makeWin() {
 (async () => {
   const w = makeWin(), L = w.__tweeksLadd;
   await until(() => L && L.engine.airports.length > 5000, 60000);
+  // (the saved logs of an older build are deleted when this version first runs - and the day's tracks in memory with them:
+  // this aircraft's logs are set up after that is done)
+  await until(() => w.localStorage.getItem('tweeks.fr24.ladd.logreset'), 15000);
   L.engine.setRunways(RWY); L.engine.setRunwayLengths(RWL);
   const E = L.engine, man = E.byIcao('EGCC'), fab = E.byIcao('EGLF'), rtm = E.byIcao('EHRD'), teb = E.byIcao('KTEB'), lcy = E.byIcao('EGLC');
   check('airports: Manchester, Farnborough, Rotterdam, Teterboro, London City', !!man && !!fab && !!rtm && !!teb && !!lcy);

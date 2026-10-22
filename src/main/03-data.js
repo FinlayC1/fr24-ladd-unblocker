@@ -1297,9 +1297,10 @@
   const logWipeDone = (async () => {
     let was = ''; try { was = localStorage.getItem(LOG_RESET_KEY) || ''; } catch (e) { /* none */ }
     if (was === LOG_RESET) return;
-    try { localStorage.setItem(LOG_RESET_KEY, LOG_RESET); } catch (e) { /* the next start does it again */ }
-    try { const n = await resetLogsNow(); log('flight logs: every saved log deleted (reset ' + LOG_RESET + '):', n); }
-    catch (e) { log('log reset', e); try { localStorage.removeItem(LOG_RESET_KEY); } catch (_) { /* none */ } }
+    // (noted when it is done - not before: a tab closed half way leaves the logs, and the next start deletes them; a second
+    // tab opened meanwhile may delete them again, which loses only what was built in those first seconds)
+    try { const n = await resetLogsNow(); try { localStorage.setItem(LOG_RESET_KEY, LOG_RESET); } catch (e) { /* the next start does it again */ } log('flight logs: every saved log deleted (reset ' + LOG_RESET + '):', n); }
+    catch (e) { log('log reset', e); }
   })();
   const thinPts = (pts, gap) => { const o = []; for (const p of pts || []) if (!o.length || p.t - o[o.length - 1].t >= gap) o.push(p); const last = pts && pts[pts.length - 1]; if (last && o[o.length - 1] !== last) o.push(last); return o; };
   function saveToday(hex, out) {

@@ -2,6 +2,14 @@
 
 All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PATCH`. The userscript and the monitor are released together.
 
+## [22.31.8] - 2026-10-22
+
+### Fixed
+- **The deletion of every saved log could be skipped if the tab was closed during it.** 22.31.7 noted "done" in the browser before the deletion had run, so a tab closed half way left the old logs saved, and the next start took them for already deleted. It is now noted once the deletion has finished. A second tab opened in those first seconds may delete again, which loses only what was built in them.
+
+### Tests
+- `unit_recent` sets up its aircraft's logs only after the first-run deletion is done: it deleted the test's logs, and the test failed six times in eight.
+
 ## [22.31.7] - 2026-10-22
 
 ### Fixed
