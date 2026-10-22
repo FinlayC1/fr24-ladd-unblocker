@@ -38,7 +38,9 @@ function makeWin() {
   const win = new JSDOM('<!doctype html><html><head></head><body></body></html>', { url: 'https://www.flightradar24.com/53.33,-2.85/10', runScripts: 'dangerously', pretendToBeVisual: true }).window;
   win.indexedDB = new FIDB.IDBFactory(); win.IDBKeyRange = FIDB.IDBKeyRange; win.Response = Response; win.Headers = Headers; win.AbortController = AbortController;
   win.DecompressionStream = DecompressionStream; win.Blob = Blob; win.BroadcastChannel = function () { return { postMessage() {}, close() {}, addEventListener() {}, set onmessage(f) {} }; };
-  win.fetch = input => { let u = typeof input === 'string' ? input : input.url; if (u.startsWith('/')) u = 'https://www.flightradar24.com' + u; const [st, text] = answer(u); return Promise.resolve(new Response(text, { status: st })); };
+  win.fetch = input => { let u = typeof input === 'string' ? input : input.url; if (u.startsWith('/')) u = 'https://www.flightradar24.com' + u;
+    if (/Feed\/TopFlights/.test(u) && S.top) return Promise.resolve(new Response(S.top.body, { status: 200, headers: { 'content-type': S.top.ct, 'content-length': String(S.top.body.length) } }));
+    const [st, text] = answer(u); return Promise.resolve(new Response(text, { status: st })); };
   win.GM_xmlhttpRequest = o => { const [st, text] = answer(o.url); setTimeout(() => o.onload && o.onload({ status: st, responseText: text, response: text }), 2); return { abort() {} }; };
   win.unsafeWindow = win; win.GM_notification = () => {};
   win.__posted = []; win.postMessage = data => { win.__posted.push(data); setTimeout(() => win.dispatchEvent(new win.MessageEvent('message', { data, origin: 'https://www.flightradar24.com', source: win })), 0); };
@@ -69,6 +71,18 @@ const cat = parts => { const n = parts.reduce((s, p) => s + p.length, 0), o = ne
   check('... one not worked out yet left N/A, and asked for (with its callsign, origin and type)', !str(items[2], 9) && w.__posted.some(m => m.__tweeksLadd === 'needNaRoutes' && m.list.some(x => x.id === NEW && x.cs === 'RCH359' && x.from === 'ADW' && x.type === 'C17')), w.__posted.map(m => m.__tweeksLadd));
   check('... and asked for again only after a while', (w.__posted.length = 0, H.patchTopFlights(top), !w.__posted.some(m => m.__tweeksLadd === 'needNaRoutes')));
   check('... the patch is put on FR24\'s TopFlights requests', /Feed\\\/TopFlights/.test(SRC) && /installBinary\(this, patchTopFlights\)/.test(SRC));
+
+  // ---- the same list asked for with fetch (gRPC-web, binary and base64 text)
+  { const frame = b => cat([Uint8Array.of(0, (b.length >>> 24) & 255, (b.length >>> 16) & 255, (b.length >>> 8) & 255, b.length & 255), b]), trailer = Buffer.from('\x80\x00\x00\x00\x0fgrpc-status:0\r\n', 'binary');
+    const items = buf => { const u = new Uint8Array(buf), len = ((u[1] << 24) | (u[2] << 16) | (u[3] << 8) | u[4]) >>> 0; return H.parse(u.subarray(5, 5 + len)).map(f => H.parse(f.val)); };
+    S.top = { ct: 'application/grpc-web+proto', body: Buffer.concat([Buffer.from(frame(top)), trailer]) };
+    let r = await w.fetch('https://data-feed.flightradar24.com/fr24.feed.api.v1.Feed/TopFlights', { method: 'POST' }), buf = await r.arrayBuffer();
+    check('Most tracked asked for with fetch (binary): AF1 to GSP, the trailer frame kept', str(items(buf)[0], 9) === 'GSP' && Buffer.from(buf).subarray(-trailer.length).equals(trailer) && !r.headers.get('content-length'), str(items(buf)[0], 9));
+    S.top = { ct: 'application/grpc-web-text+proto', body: Buffer.from(Buffer.from(frame(top)).toString('base64') + trailer.toString('base64')) };
+    r = await w.fetch('https://data-feed.flightradar24.com/fr24.feed.api.v1.Feed/TopFlights', { method: 'POST' });
+    const raw = Buffer.from(await r.text(), 'base64');
+    check('... and as base64 text: AF1 to GSP', str(items(raw)[0], 9) === 'GSP', str(items(raw)[0], 9));
+    S.top = null; }
 
   // ---- the same list as JSON
   const mt = await (await w.fetch('https://www.flightradar24.com/flights/most-tracked')).json();

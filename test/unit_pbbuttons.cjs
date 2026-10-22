@@ -22,8 +22,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 let fails = 0;
 const check = (name, ok, info) => { if (!ok) fails++; console.log((ok ? 'PASS  ' : 'FAIL  ') + name + (info !== undefined ? '  ' + JSON.stringify(info) : '')); };
 const ymd = t => new Date(t * 1000).toISOString().slice(0, 10), hm = t => new Date(t * 1000).toISOString().slice(11, 16);
-// (airplanes.live's track address: five minutes before t0 to five minutes after t1, ten minutes at least; the end minute may be a minute out)
-const okT = (u, hex, t0, t1) => { try { const x = new URL(u), q = x.searchParams, from = t0 - 300, to = Math.max(t1, t0 + 600) + 300; return x.host === 'globe.airplanes.live' && q.get('icao') === hex && q.get('showTrace') === ymd(from) && q.get('startTime') === hm(from) && [0, -60, 60].some(d => q.get('endTime') === hm(to + d) || (ymd(to + d) !== ymd(from) && q.get('endTime') === '23:59')); } catch (e) { return false; } };
+// (airplanes.live's track address: the day of t0, whole - no startTime / endTime / timestamp, which airplanes.live keeps
+// for every other day it is moved to)
+const okT = (u, hex, t0) => { try { const x = new URL(u), q = x.searchParams; return x.host === 'globe.airplanes.live' && q.get('icao') === hex && q.get('showTrace') === ymd(t0) && !q.has('startTime') && !q.has('endTime') && !q.has('timestamp') && [...q.keys()].length === 2; } catch (e) { return false; } };
 
 (async () => {
   // ---- 1. the page-world part
@@ -173,14 +174,14 @@ const okT = (u, hex, t0, t1) => { try { const x = new URL(u), q = x.searchParams
 
   // ---- the track's address
   { const d0 = Date.UTC(2026, 9, 9, 12, 35) / 1000;
-    check('the address airplanes.live\'s track has: five minutes either side, UTC', H.pbTraceUrl({ hex: '424C60', dep: d0, end: d0 + 5700 }) === 'https://globe.airplanes.live/?icao=424c60&showTrace=2026-10-09&startTime=12:30&endTime=14:15', H.pbTraceUrl({ hex: '424C60', dep: d0, end: d0 + 5700 }));
-    check('a take-off with no landing known: three hours', H.pbTraceUrl({ hex: '424c60', dep: nowS - 86400 * 3 }) === H.pbTraceUrl({ hex: '424c60', dep: nowS - 86400 * 3, end: nowS - 86400 * 3 + 3 * 3600 }));
-    check('a take-off just now: until now at most', okT(H.pbTraceUrl({ hex: '424c60', dep: nowS - 600 }), '424c60', nowS - 600, nowS));
-    check('an arrival with no take-off: the three hours before it', H.pbTraceUrl({ hex: '424c60', at: d0 }) === 'https://globe.airplanes.live/?icao=424c60&showTrace=2026-10-09&startTime=09:30&endTime=12:40', H.pbTraceUrl({ hex: '424c60', at: d0 }));
+    check('the address airplanes.live\'s track has: the flight\'s day (UTC), whole - every other day reachable from it', H.pbTraceUrl({ hex: '424C60', dep: d0, end: d0 + 5700 }) === 'https://globe.airplanes.live/?icao=424c60&showTrace=2026-10-09', H.pbTraceUrl({ hex: '424C60', dep: d0, end: d0 + 5700 }));
+    check('... no startTime / endTime / timestamp: airplanes.live keeps them for every day it is moved to (those days showed only the same hours)', !/startTime|endTime|timestamp/.test(H.pbTraceUrl({ hex: '424c60', dep: d0, end: d0 + 5700 })));
+    check('a take-off just now: its day', okT(H.pbTraceUrl({ hex: '424c60', dep: nowS - 600 }), '424c60', nowS - 600));
+    check('an arrival with no take-off: the day of the arrival', H.pbTraceUrl({ hex: '424c60', at: d0 }) === 'https://globe.airplanes.live/?icao=424c60&showTrace=2026-10-09', H.pbTraceUrl({ hex: '424c60', at: d0 }));
     const m0 = Date.UTC(2026, 9, 9, 23, 50) / 1000;
-    check('a flight across midnight: that day\'s track to its end', H.pbTraceUrl({ hex: '424c60', dep: m0, end: m0 + 1800 }) === 'https://globe.airplanes.live/?icao=424c60&showTrace=2026-10-09&startTime=23:45&endTime=23:59');
+    check('a flight across midnight: the day it took off', H.pbTraceUrl({ hex: '424c60', dep: m0, end: m0 + 1800 }) === 'https://globe.airplanes.live/?icao=424c60&showTrace=2026-10-09');
     const m1 = Date.UTC(2026, 9, 10, 0, 2) / 1000;
-    check('a take-off just after midnight: the day before\'s last minutes (the start is five minutes before)', H.pbTraceUrl({ hex: '424c60', dep: m1, end: m1 + 3600 }) === 'https://globe.airplanes.live/?icao=424c60&showTrace=2026-10-09&startTime=23:57&endTime=23:59');
+    check('a take-off just after midnight: that day, not the day before', H.pbTraceUrl({ hex: '424c60', dep: m1, end: m1 + 3600 }) === 'https://globe.airplanes.live/?icao=424c60&showTrace=2026-10-10');
     check('only the aircraft known: its track today', H.pbTraceUrl({ hex: '424c60' }) === 'https://globe.airplanes.live/?icao=424c60&showTrace=' + ymd(nowS));
     check('no aircraft: none', H.pbTraceUrl({ dep: d0 }) === ''); }
 

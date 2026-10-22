@@ -2,6 +2,28 @@
 
 All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PATCH`. The userscript and the monitor are released together.
 
+## [22.31.0] - 2026-10-22
+
+### Added
+- **The monitor builds the logs of LADD aircraft and shares them.** When anyone looks at a blocked aircraft (its panel, its "Recent flights" list or its log page), the monitor builds any of its last 40 days it doesn't have yet. From then on every browser gets them at once from the monitor.
+- **Blocked aircraft's pictures are shared through the monitor.** Pictures a browser finds are sent to the monitor with its regular report, and every other browser gets them at once instead of looking them up again. Only addresses on JetPhotos' and Planespotters' own sites are accepted, three per aircraft.
+
+### Fixed
+- **Flight logs had a hole covering the last 40 days.** N527P's log jumped from 10 September to 21 October, though airplanes.live has all its flights. Every day adsb.lol had no file for was recorded as a day without flights and never read again, and the last 40 days are the ones read from adsb.lol. A day is now recorded as having no flights only when airplanes.live has no file for it either. Logs saved by earlier versions have those days read again, and the monitor's saved days are re-checked the same way.
+- **The "Recent flights" list in the panel was empty.** It is built from the last 21 days, which were the empty ones. It now loads like the log page does when you open it, and it also works for aircraft FR24 shows with no history of their own, such as military and N/A flights (FAMUS62, 06-6165).
+- **A blocked aircraft's panel showed FR24's stock picture of its type instead of its photos.** N50JE showed a generic Gulfstream credited to Flightradar24, while JetPhotos has pictures of it. That stock picture was taken for FR24's own photo of the aircraft. It is now never treated as a photo of the aircraft, never saved, and the aircraft's JetPhotos pictures are shown in its place. Aircraft saved with it by earlier versions are looked up again.
+- **airplanes.live playback links now open the flight's whole day, with every other day reachable.** Before, stepping to another day often showed nothing until you searched for the aircraft again. airplanes.live keeps a link's start and end times for every day you move to, so the other days only showed those hours. Links now open the flight's day and nothing else; the flight is one of that day's legs.
+- **FR24's Most tracked list also gets predicted destinations when FR24 asks for the list with fetch**, not only with XHR.
+- **The update banner appears the moment FR24 opens on an out-of-date version.** It only came up once the LADD Unblock window was opened. The newest version is now checked as FR24 opens, and the last answer is kept so the banner shows at once. It was also hidden while any of FR24's map widgets were up, because they count as dialogs; it now hides only for real pop-ups.
+- **The update page downloads the right zip, and has been redesigned to match the project's GitHub page.** The download link pointed at GitHub's "latest release", which lags behind and could hand back the version you already had. The page now downloads the exact version on offer and names the file for it. It also lists what's new since your version, and in Brave it explains how to turn on one-click updates.
+- **A blocked flight opened before FR24 had drawn its panel no longer loses its strip.** If the script looked at the page in the moment between the flight being opened and its panel appearing, it found no panel and forgot which flight was open, so the strip was never drawn unless the flight was also in the page address. A flight opened in the last 3 seconds is now kept while its panel is being drawn.
+- **The LADD Unblock icon now gets clearly thicker on hover and when open**, and the dot drawn on it when an update was out has been removed. The update banner says so instead.
+
+### Tests
+- New `unit_histgap`: with no adsb.lol files, a looked-at log gets its flights from airplanes.live and both networks' "no file" counts as no flights. A background load records no day as empty and doesn't ask again at once. Logs saved by older versions are read again.
+- New `unit_photocache`: the monitor's picture store (sites accepted, stock pictures dropped, a browser's budget, kept on disk); the browser takes the monitor's pictures with no lookup, and sends pictures it finds.
+- `unit_monitor2`: days asked for to fill a log, airplanes.live refusing, old saved "no flights" days, `/hist` queueing the missing days, and `/report` with `/photos`. `unit_flightmsg`: FR24's stock picture dropped from a blocked aircraft's panel. `unit_mosttracked`: Most tracked over fetch. `unit_selfupdate`: the by-hand download and what's new. `unit_barlook`: the icon on an FR24 whose icons don't thicken. `unit_pbbuttons` / `unit_pbnative`: day-only playback links.
+
 ## [22.30.3] - 2026-10-21
 
 ### Added

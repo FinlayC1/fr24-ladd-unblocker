@@ -446,8 +446,17 @@
     // airport-data.com pictures (FR24's fallback when it has no JetPhotos one): never shown - JetPhotos / Planespotters
     // instead when there are any, otherwise no picture at all
     var AD_RE = /airport-data/i;
-    function adImg(im) { for (var k = 1; k <= 5; k++) if (AD_RE.test(strOf(im, k))) return true; return false; }
-    function adJson(o) { if (!o || typeof o !== 'object') return false; for (var k in o) if (typeof o[k] === 'string' && AD_RE.test(o[k])) return true; return false; }
+    // (nor FR24's stock picture of the type - a G550 that is not N50JE - credited to Flightradar24 itself, with no JetPhotos
+    // page: taken for FR24's own photo of a blocked airframe, it kept the JetPhotos ones out of the panel and was kept as its
+    // pictures. FR24's real pictures are JetPhotos', credited to their photographer)
+    var STOCK_RE = /^\W*flightradar\s*24\W*$/i, JP_RE = /jetphotos/i;
+    function adImg(im) { for (var k = 1; k <= 5; k++) if (AD_RE.test(strOf(im, k))) return true; return STOCK_RE.test(strOf(im, 2)) && ![1, 3, 4, 5].some(function (k) { return JP_RE.test(strOf(im, k)); }); }
+    function adJson(o) {
+      if (!o || typeof o !== 'object') return false;
+      var jp = false, stock = false;
+      for (var k in o) { if (typeof o[k] !== 'string') continue; if (AD_RE.test(o[k])) return true; if (JP_RE.test(o[k])) jp = true; if (/^(copyright|credit|photographer)$/i.test(k) && STOCK_RE.test(o[k])) stock = true; }
+      return stock && !jp;
+    }
     var aiKeep = {};   // flight id -> { val: FR24's aircraft block of the first frame, sig: the pictures it was sent with, ... }
     var photoSig = function (l) { return (l || []).slice(0, 3).map(function (p) { return p.large || p.medium || p.thumb || ''; }).join('|'); };
     function aiWanted(fid) {
@@ -812,6 +821,7 @@
           if (ppr && ppr.hex && !((photoCache.get(String(ppr.hex).toUpperCase()) || {}).final)) photosFor(ppr, true);
           if (pst.id && (!pbReady(pst.id) || pphWait)) { var xpb = this, bpb = sendBody; Promise.all([whenPbReady(pst.id, 1500), pphWait ? photosWithin(ppr, 2500) : null]).then(function () { try { oSend.call(xpb, bpb); } catch (e) { /* aborted meanwhile */ } }); return; }
         } else if (!this.__tlOwn && /fr24\.feed\.api\.v1\.Feed\/TopFlights(?:$|\?)/.test(url)) {
+          stats.topSeen = (stats.topSeen || 0) + 1;
           if (this.responseType === 'arraybuffer') installBinary(this, patchTopFlights);
           else installText(this, function (b) { return patchTopFlights(b); }, {});
         } else if (!this.__tlOwn && /fr24\.feed\.api\.v1\.Feed\/(?:FollowFlight|FlightDetails)(?:$|\?)/.test(url)) {
@@ -2127,6 +2137,21 @@
             }, function () { return res; });
           });
         }
+        // (the same list asked for with fetch rather than XHR: its frames patched the same way, binary or base64 text)
+        if (/fr24\.feed\.api\.v1\.Feed\/TopFlights(?:$|\?)/.test(url)) {
+          stats.topSeen = (stats.topSeen || 0) + 1;
+          return p.then(function (res) {
+            if (!res.ok) return res;
+            var ct = res.headers.get('content-type') || '', text = /grpc-web-text/i.test(ct);
+            return (text ? res.clone().text() : res.clone().arrayBuffer()).then(function (body) {
+              var out;
+              if (text) { var arr = []; b64DecodeInto(body.slice(0, body.length - body.length % 4), arr); out = b64Encode(new Uint8Array(patchFrames(Uint8Array.from(arr).buffer, patchTopFlights))); }
+              else out = patchFrames(body, patchTopFlights);
+              var h = new Headers(res.headers); h.delete('content-length'); h.delete('content-encoding');
+              return new Response(out, { status: res.status, statusText: res.statusText, headers: h });
+            }, function () { return res; });
+          });
+        }
         if (/\/most-tracked(?:$|[?#/])/.test(url)) {
           return p.then(function (res) {
             if (!res.ok) return res;
@@ -2308,7 +2333,8 @@
               var noId = Array.isArray(resp.data) ? resp.data.filter(function (x) { return x && x.identification && !x.identification.id; }) : [];
               if (noId.length > 1) noId.forEach(function (x, i) { x.identification.id = 'f' + ((Number(x.identification.row) || i + 1) % 0xfffffff).toString(16); });
               if (Array.isArray(resp.data) && resp.data.length > 1) return noId.length > 1 ? jsonResponse(res, j) : res;
-              if (!recByReg(reg) && !hist.has(reg)) return res;
+              // (FR24 listing nothing - a blocked aircraft, a military or N/A one it shows without a past: FAMUS62, 06-6165 -
+              // the log kept here, for any aircraft; one it knows nothing of is answered at once)
               return needHistory(reg).then(function (h) {
                 if (!h || !h.data || !h.data.length) return res;
                 resp.data = h.data.slice(0, 1 + Math.max(4, Number((resp.item && resp.item.limit) || 5)));
@@ -2575,18 +2601,15 @@
       }
       return w ? { w: w, el: top } : null;
     }
-    // The track on airplanes.live (its day and its minutes, UTC): from five minutes before the take-off to five minutes
-    // after the landing (a flight still flying: now; a take-off with no landing known: three hours at most); a row with
-    // only the time it reached its airport: the three hours before it. Nothing but the aircraft known: its track today.
-    var hhmmZ = function (t) { return new Date(t * 1000).toISOString().slice(11, 16); }, dayZ = function (t) { return new Date(t * 1000).toISOString().slice(0, 10); };
+    // The track on airplanes.live: the flight's day (UTC) - the day of its take-off, else of its arrival; nothing but the
+    // aircraft known: today. The whole day, and nothing more in the address: airplanes.live (tar1090) keeps a startTime /
+    // endTime - or a timestamp - for every other day it is moved to, so those days showed only the same hours (mostly
+    // nothing) until the aircraft was searched for again. The flight is one of that day's legs.
+    var dayZ = function (t) { return new Date(t * 1000).toISOString().slice(0, 10); };
     function pbTraceUrl(w) {
       var hex = String(w.hex || '').toLowerCase(); if (!isHex(hex)) return '';
-      var base = 'https://globe.airplanes.live/?icao=' + encodeURIComponent(hex), nowS = Math.floor(Date.now() / 1000), t0 = 0, t1 = 0;
-      if (w.dep > 0) { t0 = w.dep; t1 = w.end > t0 ? w.end : Math.min(t0 + 3 * 3600, nowS); }
-      else if (w.at > 0) { t1 = w.at; t0 = t1 - 3 * 3600; }
-      if (!t0) return base + '&showTrace=' + dayZ(nowS);
-      var from = t0 - 300, to = Math.max(t1, t0 + 600) + 300;
-      return base + '&showTrace=' + dayZ(from) + '&startTime=' + hhmmZ(from) + '&endTime=' + (dayZ(to) === dayZ(from) ? hhmmZ(to) : '23:59');
+      var t = w.dep > 0 ? w.dep : w.at > 0 ? w.at : Math.floor(Date.now() / 1000);
+      return 'https://globe.airplanes.live/?icao=' + encodeURIComponent(hex) + '&showTrace=' + dayZ(t);
     }
     // (the userscript's answer, a moment at most: the flight's aircraft and its take-off)
     var pbAsks = {}, pbAskN = 0;
