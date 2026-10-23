@@ -88,6 +88,24 @@ const io = {
     const p0 = await A.partsOf(D, async () => 404);
     check('... none published: none', p0.length === 0); }
 
+  // ---- the server first: the archive read one day at a time, waiting while the machine is busy (22.31.12) -------------
+  { check('one day read at a time (two ran the 1 GB VM into swap: browsers took the monitor for gone)', M.CFG.archiveJobs === 1, M.CFG.archiveJobs);
+    let waits = 0; const w = async () => { waits++; };
+    const fine = await M.archBreath(w, { lag: 10, free: 600 * 1048576 });
+    check('... a quiet server with memory to spare: no wait', fine === 0 && waits === 0, { fine, waits });
+    waits = 0; let n = 0; const st = { get lag() { return ++n <= 3 ? 900 : 20; }, free: 600 * 1048576 };
+    const late = await M.archBreath(w, st);
+    check('... its event loop late (900 ms): waits half a second at a time until it is not', late === 3 && waits === 3, { late, waits });
+    waits = 0; const short = await M.archBreath(w, { lag: 0, free: 40 * 1048576 });
+    check('... short of memory the whole time: a minute at most (120 waits), then on', short === 120 && waits === 120, { short, waits });
+    check('... memory as Linux has it available (page cache included), a number', M.memAvail() > 0);
+    // (a day of 450 traces: the reader paced every 200, the ones not wanted too - the download waits meanwhile)
+    const many = []; for (let i = 0; i < 450; i++) { const hx = (0xd00000 + i).toString(16); many.push(tarEntry(tr(hx), gz({ icao: hx, dbFlags: 0, timestamp: dayS(D), trace: [] }))); }
+    const T2 = Buffer.concat(many.concat([Buffer.alloc(1024)])), b2 = base + '.tar.aa';
+    let paced = 0;
+    const st2 = await A.importDay(D, () => false, async () => {}, { get: async u => u === b2 ? 206 : 404, open: async () => (async function* () { for (let o = 0; o < T2.length; o += 4096) yield T2.subarray(o, o + 4096); })(), pace: async () => { paced++; } });
+    check('... the reader paced every 200 traces, the ones not taken too', st2.traces === 450 && st2.taken === 0 && paced === 2, { traces: st2.traces, paced }); }
+
   // ---- the day built from it ----------------------------------------------------------------------------------------
   M.markBlocked('c0ffee', { reg: 'M-ARNZ' }, dayS(D) - 86400);
   M.markBlocked('c0ffe1', { reg: 'N1' }, dayS(D) - 86400);

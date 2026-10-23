@@ -60,7 +60,7 @@ const asked = [];
 const NET = { lol: { def: [404, ''] }, apl: { def: [404, ''] } };
 const MON = 'https://143-47-224-210.sslip.io';
 // (the monitor, when on: /status, /hist - MONH.hist(hex) -> its answer for the aircraft - and /trace - MONH.trace(hex))
-const MONH = { on: false, hist: null, trace: null };
+const MONH = { on: false, hist: null, trace: null, slow: false };
 function answer(url) {
   if (/flightradar24\.com\/mobile\/airports\/format/.test(url)) return [200, AIRPORTS];
   if (url.startsWith(MON)) {
@@ -86,7 +86,8 @@ function makeWin() {
   win.indexedDB = new FIDB.IDBFactory(); win.IDBKeyRange = FIDB.IDBKeyRange; win.Response = Response; win.Headers = Headers; win.AbortController = AbortController;
   win.DecompressionStream = DecompressionStream; win.Blob = Blob; win.BroadcastChannel = function () { return { postMessage() {}, close() {}, addEventListener() {}, set onmessage(f) {} }; };
   win.fetch = input => { let u = typeof input === 'string' ? input : input.url; if (u.startsWith('/')) u = 'https://www.flightradar24.com' + u; const [st, text] = answer(u); return Promise.resolve(new Response(text, { status: st })); };
-  win.GM_xmlhttpRequest = o => { const [st, text] = answer(o.url); setTimeout(() => o.onload && o.onload({ status: st, responseText: text, response: text }), 2); return { abort() {} }; };
+  // (the monitor busy - MONH.slow: no answer in time, as GM's own timeout says)
+  win.GM_xmlhttpRequest = o => { if (MONH.slow && o.url.startsWith(MON)) { setTimeout(() => o.ontimeout && o.ontimeout(), 2); return { abort() {} }; } const [st, text] = answer(o.url); setTimeout(() => o.onload && o.onload({ status: st, responseText: text, response: text }), 2); return { abort() {} }; };
   win.unsafeWindow = win; win.GM_notification = () => {};
   win.postMessage = d => posted.push(d); win.console.debug = () => {}; win.console.log = () => {};
   win.eval(SRC);
@@ -218,6 +219,27 @@ function makeWin() {
     L.todayCache.delete('4ca9e9'); L.store.mergeHex('4ca9e9', { reg: 'EI-PLN' }); asked.length = 0; L.netState.lol.wallUntil = 0;
     await L.loadToday('4ca9e9', 60000, { bg: true }).catch(() => null);
     check('an ordinary aircraft in the background: the monitor not asked for its positions', !asked.some(a => a[0] === 'mon'), asked);
+    MONH.on = false; }
+  // ---- 10. the monitor busy (reading adsb.lol's archives on the 1 GB VM): a late answer is not the monitor gone. One
+  // slow answer took it for gone at once, for everything - logs, live figures, today's track (23 Oct)
+  { MONH.on = true; MONH.slow = false; await L.monCheck(true); await sleep(20);
+    check('(the monitor answering: in use)', L.monUp());
+    MONH.slow = true;
+    const r1 = await L.monGet('/tel?hex=a7fa04').then(() => 'answered', e => String(e.message || e));
+    await L.monCheck(true).catch(() => null);
+    const r2 = await L.monGet('/near?lat=51&lon=0&r=50').then(() => 'answered', e => String(e.message || e));
+    check('a busy monitor (no answer in time, three times): still in use - it answered within two minutes', L.monUp() && /timeout/.test(r1) && /timeout/.test(r2), { up: L.monUp(), r1, r2 });
+    // (two minutes on without an answer: gone - then the sites alone, as before)
+    const realNow = w.Date.now, at = realNow.call(w.Date); w.Date.now = () => at + 3 * 60000;
+    await L.monGet('/tel?hex=a7fa04').catch(() => null);
+    check('... no answer for over two minutes, three no-answers in a row: taken for gone', !L.monUp());
+    const g10 = L.logGaps('a7fa04');
+    check('... and the log page says so (not silent: its days are what a walled browser\'s log is made of)', /the monitor isn't answering this browser<\/b> \(no answer for over two minutes\)/.test(g10), g10);
+    MONH.slow = false; w.Date.now = realNow; await L.monCheck(true).catch(() => null); await sleep(20);
+    check('... it answers again: in use again', L.monUp());
+    // (a refusal is an answer: the monitor is there)
+    MONH.on = false; const r3 = await L.monGet('/tel?hex=a7fa04').then(() => 'answered', e => String(e.message || e));
+    check('... a refusal (HTTP 404) is an answer: still in use', L.monUp() && /HTTP 404/.test(r3), r3);
     MONH.on = false; }
   console.log(fails ? `\n${fails} failed` : '\nall passed');
   process.exit(fails ? 1 : 0);

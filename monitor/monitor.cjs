@@ -56,7 +56,7 @@ const limited = ip => { if (!RATE) return false; const t = Math.floor(Date.now()
 // (all of them together); liveMaxAge: seconds an aircraft stays in /live after its last position; closeDelayH: hours after
 // a day ends before its flights are rebuilt from adsb.lol's day traces (published with some delay); fullGap: the longest
 // silence (s) of the lists in a day for it to count as watched throughout
-const CFG = Object.assign({ areas: [[53.8, -2.6, 250]], laddEvery: 10, milEvery: 30, piaEvery: 120, areaEvery: 120, hexEvery: 30, coldEvery: 600, hotWindow: 2700, hexBatch: 100, backWorkers: 3, userAreas: 8, apiPerMin: 20, liveMaxAge: 300, closeDelayH: 3, fullGap: 200, apiWindowMs: 60000, openskyEvery: 900, adsbxDaily: 150, adsbxKey: process.env.MON_ADSBX_KEY || '', fr24Scan: true, fr24Every: 120, fr24Gap: 400, lookupRadius: 220, ident: {}, dest: {}, public: true, rate: 300, crowdNeed: 2, nearPerMin: 30, telMax: 30000, trackDays: 90, learnDays: 90, lolKeepDays: 40, archiveDays: 220, archiveJobs: 2 }, (() => { try { return JSON.parse(fs.readFileSync(path.join(DIR, 'monitor.json'), 'utf8')); } catch (e) { return {}; } })());
+const CFG = Object.assign({ areas: [[53.8, -2.6, 250]], laddEvery: 10, milEvery: 30, piaEvery: 120, areaEvery: 120, hexEvery: 30, coldEvery: 600, hotWindow: 2700, hexBatch: 100, backWorkers: 3, userAreas: 8, apiPerMin: 20, liveMaxAge: 300, closeDelayH: 3, fullGap: 200, apiWindowMs: 60000, openskyEvery: 900, adsbxDaily: 150, adsbxKey: process.env.MON_ADSBX_KEY || '', fr24Scan: true, fr24Every: 120, fr24Gap: 400, lookupRadius: 220, ident: {}, dest: {}, public: true, rate: 300, crowdNeed: 2, nearPerMin: 30, telMax: 30000, trackDays: 90, learnDays: 90, lolKeepDays: 40, archiveDays: 220, archiveJobs: 1 }, (() => { try { return JSON.parse(fs.readFileSync(path.join(DIR, 'monitor.json'), 'utf8')); } catch (e) { return {}; } })());
 // (PUBLIC0 / RATE_ENV: as started; PUBLIC / RATE: as now - the owner's options (/admin/options, applyOptions) may change
 // both while it runs, and every use reads them as they are at the time)
 const PUBLIC0 = process.env.MON_PUBLIC ? process.env.MON_PUBLIC !== '0' : CFG.public !== false, RATE_ENV = +(process.env.MON_RATE || 0) || 0;
@@ -558,6 +558,28 @@ function archiveNext(nowS) {
   }
   return null;
 }
+// The server first. Reading a day's archive is hours of work on a small machine (3.8 GB, tens of thousands of traces);
+// two at a time on the 1 GB VM ran it into swap, and /status took longer than browsers wait - they took the monitor for
+// gone (no logs, no live figures). The archive waits while the server is slow to answer (its event loop late) or the
+// machine is short of memory - a minute at most at a time.
+let loopLag = 0, loopAt = Date.now(), memAt = 0, memFree = Infinity;
+setInterval(() => { const t = Date.now(); loopLag = Math.max(0, t - loopAt - 500); loopAt = t; }, 500).unref();
+// (memory the machine can still give: Linux's MemAvailable - os.freemem() leaves out the page cache under Node 18, and
+// on the 1 GB VM that is nearly always "short")
+function memAvail() {
+  if (Date.now() - memAt < 1000) return memFree; memAt = Date.now();
+  try { const m = /MemAvailable:\s+(\d+) kB/.exec(fs.readFileSync('/proc/meminfo', 'utf8')); memFree = m ? +m[1] * 1024 : require('os').freemem(); } catch (e) { memFree = require('os').freemem(); }
+  return memFree;
+}
+async function archBreath(wait, st) {
+  wait = wait || sleep; st = st || {};
+  for (let i = 0; i < 120; i++) {
+    const lag = 'lag' in st ? st.lag : loopLag, free = 'free' in st ? st.free : memAvail();
+    if (lag < 200 && free > (+CFG.archiveFreeMb || 120) * 1048576) return i;
+    AR.waits = (AR.waits || 0) + 1; await wait(500);
+  }
+  return 120;
+}
 // One day's archive: every blocked aircraft in it, every aircraft it flags LADD (blocked from now on) and every military
 // one (its log kept here; not followed live)
 async function archiveDay(d, io) {
@@ -567,8 +589,9 @@ async function archiveDay(d, io) {
       // (an aircraft the archive flags LADD that the monitor did not know: blocked from now on - its days come from here)
       if (blocked.has(hex) || (j.dbFlags & 8)) { if (!blocked.has(hex)) backDone.add(hex); markBlocked(hex, { reg: j.r || '', type: j.t || '' }, nowS); }
       try { await histDay(hex, d, { state: 'ok', j }, { state: 'later' }, rows); histStats.fromArchive++; AR.taken++; } catch (e) { log('archive day', hex, d, String(e)); }
-      await new Promise(r => setImmediate(r));   // (the server answers meanwhile)
-    }, io || { get: ARCH.netGet, open: ARCH.netOpen });
+      // (the server answers meanwhile; a test's own network: its own pace)
+      await (!io ? archBreath() : io.breath ? io.breath() : new Promise(r => setImmediate(r)));
+    }, io || { get: ARCH.netGet, open: ARCH.netOpen, pace: () => archBreath() });
     // (not out a week after the day: none of it will be - noted, and the day read the old way)
     if (!st.published) { archTried.set(d, Date.now()); if (nowS > dayStart(d) + 8 * 86400) archNote(d, { at: Date.now(), published: false }); return st; }
     if (rows.length) learnWrite(slashDay(d), rows);
@@ -580,7 +603,7 @@ async function archiveDay(d, io) {
     return st;
   } finally { archRunning.delete(d); AR.running = [...archRunning].join(', '); }
 }
-// (archiveJobs days read at once - two: the download, not the work, is what takes the time)
+// (archiveJobs days read at once - one: on the 1 GB VM two ran it into swap)
 async function archiveLoop() {
   for (;;) {
     const d = archiveNext(Date.now() / 1000);
@@ -1730,5 +1753,5 @@ if (require.main === module) {
   ownersLoop();
   setInterval(() => { wx.pump().catch(e => log('wx', String(e))); }, 2000);
 }
-module.exports = { classifyTrace, traceGet, netSt, archiveDay, archiveState, archiveNext, archMark, archTried, archDays, archRunning, traceOf, AR, apliveTrace, HIST_V, HIST_RESET, resetHistLogs, histResetMark, get histResetN() { return histResetN; }, adminAnswer, ctl, logRing, log, MON_VER, learnCheck, learnFromCrowd, crowdLearnSave, crowdRows, LC, tracks, waiting, waitRound, waitLive, waitNamed, waitClaims, WAIT, saveWaiting, loadWaiting, pbMatch, learnedBuild, learnedDue, learnedLoad, learnedRef: () => learnedOut, liveBusy, backWaits, E, CFG, loadEngine, ingest, buildLegs, fr24Legs, fr24Leg, F24ref: () => F24, owners, ownersLoop, APT, legRunways, names, nearAnswer, telAnswer, tel, wx, pbNames, get PUBLIC() { return PUBLIC; }, get RATE() { return RATE; }, limited, tokenOk, installs, opts, optionsSet, optionsLoad, latestCheck, latestVer, helloAnswer, badge, wakeQuiet, parkedAt, boardLegs, flightsOfCs, lastHeard, legs, ac, backfillOne, backQ, blocked, markBlocked, seed, gapFill, addArea, userAreas,
+module.exports = { archBreath, memAvail, classifyTrace, traceGet, netSt, archiveDay, archiveState, archiveNext, archMark, archTried, archDays, archRunning, traceOf, AR, apliveTrace, HIST_V, HIST_RESET, resetHistLogs, histResetMark, get histResetN() { return histResetN; }, adminAnswer, ctl, logRing, log, MON_VER, learnCheck, learnFromCrowd, crowdLearnSave, crowdRows, LC, tracks, waiting, waitRound, waitLive, waitNamed, waitClaims, WAIT, saveWaiting, loadWaiting, pbMatch, learnedBuild, learnedDue, learnedLoad, learnedRef: () => learnedOut, liveBusy, backWaits, E, CFG, loadEngine, ingest, buildLegs, fr24Legs, fr24Leg, F24ref: () => F24, owners, ownersLoop, APT, legRunways, names, nearAnswer, telAnswer, tel, wx, pbNames, get PUBLIC() { return PUBLIC; }, get RATE() { return RATE; }, limited, tokenOk, installs, opts, optionsSet, optionsLoad, latestCheck, latestVer, helloAnswer, badge, wakeQuiet, parkedAt, boardLegs, flightsOfCs, lastHeard, legs, ac, backfillOne, backQ, blocked, markBlocked, seed, gapFill, addArea, userAreas,
   serve, fr24, ident, dest, F24, report, identRound, fr24Round, saveIdent, loadIdent, histUnknown, learnSince, learnWrite, diskLegs, KEEP_LADD, save, loadStore, dirtyDays, pollOpenSky, adsbxUse, live, liveList, answer, step, P, piaState, apiGet, gate, stats, lastOk, noteWatch, watch, watchedAll, flew, closeDays, histQ, histPend, histOne, histDay, histOf, histRead, histWrite, histFile, fillHist, fillAsked, queueHist, photos, nextHist, saveState, loadState, lastW, get closed() { return closed; }, set closed(v) { closed = v; }, pause };

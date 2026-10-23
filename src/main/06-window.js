@@ -108,7 +108,9 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   }
 
   // ---- the version: what is installed, the newest one, and how this kind of install is updated ----------------------
-  const verParts = v => String(v || '').split('.').map(x => parseInt(x, 10) || 0);
+  // (1.0.0 and on are newer than every beta: the versions before it - 22.31.12 and earlier, "B22.31.12" - are numbered
+  // 20 and up, so the first number counts only within its own line)
+  const verParts = v => { const s = String(v || ''), p = s.replace(/^[vB]/i, '').split('.').map(x => parseInt(x, 10) || 0); return [!/^B/i.test(s) && p[0] >= 1 && p[0] < 20 ? 1 : 0].concat(p); };
   const newerThan = (a, b) => { const x = verParts(a), y = verParts(b); for (let i = 0; i < Math.max(x.length, y.length); i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); } return false; };
   function installKind() {
     if (typeof TL_EXTENSION === 'boolean') {
@@ -139,7 +141,8 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   const extMsg = m => new Promise(res => { try { chrome.runtime.sendMessage(m, r => { void chrome.runtime.lastError; res(r); }); } catch (e) { res(null); } });
   function doUpdate(act) {
     const k = installKind().kind;
-    if (act === 'update' && k === 'us') { window.open(UB_USERSCRIPT_URL, '_blank', 'noopener'); ubNote = 'Your userscript manager opens the new version in a tab: click Update there, then reload FR24.'; }
+    // (from a beta - 22.x - to 1.0.0 and on: the manager compares the numbers alone, and calls the newer one a downgrade)
+    if (act === 'update' && k === 'us') { window.open(UB_USERSCRIPT_URL, '_blank', 'noopener'); ubNote = verParts(VERSION)[0] === 0 && verParts(latestV())[0] === 1 ? 'Your userscript manager opens the new version in a tab. It may call it a downgrade (it compares 1 with 22), but it is the newer one: confirm it there, then reload FR24.' : 'Your userscript manager opens the new version in a tab: click Update there, then reload FR24.'; }
     // (unpacked: the extension's own update page, in a tab next to this one - it writes the new version into the extension's
     // folder, extension/update.js; the zip by hand only where that page cannot be opened)
     else if (act === 'update' && k === 'ext') {

@@ -2,6 +2,41 @@
 
 All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PATCH`. The userscript and the monitor are released together.
 
+## [22.31.12] - 2026-10-23
+
+### Fixed
+- **Pages lost the monitor while it read adsb.lol's archives**, so the log page, live figures and panels all fell back to the walled sites. On 22.31.11, HB-IXL's log page said "209 days not read yet". Panels lost their progress bar and time zones, and other flights read "N/A" until a page refresh.
+  - The cause: 22.31.11 had the monitor read 220 days of archives (3.8 GB each), two at a time. On the 1 GB VM that ran it into swap, and its answers took longer than the browser waits. One late answer made the browser treat the monitor as gone, for everything, until it checked again.
+  - **The monitor now reads one day at a time** (`archiveJobs` 1). The archive waits while the server is slow to answer (event loop over 200 ms late) or memory is short (less than `archiveFreeMb`, 120 MB, available). The wait is at most a minute at a time. Memory is read as Linux's MemAvailable, because Node 18's `os.freemem()` leaves out the page cache.
+  - **The browser keeps using a busy monitor.** It waits 10 s for `/status` (was 4 s). It gives the monitor up only after three requests in a row go unanswered and none has been answered for two minutes. A refusal (an HTTP error) still counts as an answer.
+  - **The log page says when the monitor isn't answering**, and why, instead of saying nothing.
+- **A blocked flight's route stays in FR24's panel through a moment without data.** A route that comes out empty while the aircraft is in the air no longer replaces the one the page has. This holds for half an hour at most. Before, the panel lost its airports, time zones and progress bar until the next route.
+
+### Changed
+- **Ready for 1.0.0.** The next release is 1.0.0. The versions before it, 22.31.12 and earlier, become the betas ("B22.31.12"). Until now every check compared versions number by number, so 1.0.0 would have looked older than 22.31.12 and never been offered. 1.0.0 and later now count as newer than every beta. This affects:
+  - the update banner on FR24 and the LADD Unblock window;
+  - the extension's update page and its "what's new" list, which also reads "B" headings;
+  - the monitor's "behind" check and its count of outdated installs;
+  - the monitor's dashboard.
+- **Update to this version before 1.0.0 comes out.** An older install can't tell that 1.0.0 is newer.
+- **Userscript users:** userscript managers compare versions themselves, so they won't update 22.x to 1.0.0 on their own. Use the banner's Update and confirm the install once. The manager may call it a downgrade, and the window now says so.
+
+### Tests
+- `unit_archive`:
+  - one day at a time;
+  - no wait on a quiet server;
+  - waits while the event loop is late, and at most a minute when memory is short;
+  - the reader paced every 200 traces, the ones not taken included.
+- `unit_netfetch`:
+  - a monitor that misses three answers but answered within two minutes is still used;
+  - after two minutes with no answer it is given up, and the log page says so;
+  - used again once it answers;
+  - an HTTP refusal counts as an answer.
+- `unit_shared`: a route that comes out empty mid-flight leaves the page's route in place; the next route replaces it.
+- `unit_installs`: 1.0.0 newer than 22.31.12 and "B22.31.11"; 1.0.1, 1.10.0 and 2.0.0 in order; '' older than both lines.
+- `unit_selfupdate`: the extension updates itself from this beta to a "v1.0.0". The banner says it is out, the update page offers it, and the folder is updated and reloaded. The "what's new" list skips the beta's "B" heading.
+- `unit_native` and `unit_hello` use an older beta (22.0.0) as their "older version", in place of 1.0.0.
+
 ## [22.31.11] - 2026-10-23
 
 ### Fixed

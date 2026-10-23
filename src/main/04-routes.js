@@ -574,10 +574,18 @@
     if (d.ask) { routeAsked.set(d.ask, now()); if (routeAsked.size > 50) routeAsked.delete(routeAsked.keys().next().value); for (const [id, st] of routeState) { const rec = live.get(id) || pubRecs.get(id); if (rec && rec.hex === d.ask && st && st.route) shareRoute(id, st.route); } return; }
     if (d.hex && d.route) { mapRoutes.set(d.hex, { at: now(), route: d.route }); if (mapRoutes.size > 200) mapRoutes.delete(mapRoutes.keys().next().value); if (mapRouteHook) mapRouteHook(d.hex); }
   };
+  // (what the page was last given of each blocked flight's route, and when)
+  const routeOut = new Map();
   function publishRoute(id, route) {
     if (!route) return;
     if (!live.has(id) && pubRecs.has(id) && !pubRouted(id)) return;   // an ordinary flight FR24 has (by now) a route for
-    postToPage('route', { id, route: (route.originId || route.destId || route.groundAirportId || route.destIata || route.originIata) ? routeForPage(route) : null });
+    const has = !!(route.originId || route.destId || route.groundAirportId || route.destIata || route.originIata), was = routeOut.get(id);
+    // A blocked flight in the air whose route comes out empty for a moment - its track and log not to be had while the
+    // sources wall this browser and the monitor is slow to answer - keeps the one the page has (half an hour at most):
+    // taken away, FR24's panel lost the airports, their time zones and the progress bar of HB-IXL over the Atlantic, 23 Oct
+    if (!has && was && was.has && live.has(id) && !route.onGround && now() - was.at < 30 * 60000) return;
+    routeOut.set(id, { at: now(), has }); if (routeOut.size > 3000) routeOut.delete(routeOut.keys().next().value);
+    postToPage('route', { id, route: has ? routeForPage(route) : null });
     shareRoute(id, route);
     noteRouteOut(id, route);
     const rec = live.get(id) || pubRecs.get(id);

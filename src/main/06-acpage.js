@@ -371,7 +371,8 @@
     return parts.length ? `<div class="tl-foot-note">${parts.join(' · ')}</div>` : '';
   }
   function monitorNote() {
-    if (!monOk || !monStat) return '';
+    // (not answering this browser: said - its days are what fills a log while the sites wall it)
+    if (!monOk || !monStat) return monErr && monErr !== 'turned off' ? `<b>the monitor isn't answering this browser</b> (${esc(monErr)}) - its days are used once it does` : '';
     const a = monStat.archive;
     if (!a) return `the monitor${monStat.ver ? ' (' + esc(monStat.ver) + ')' : ''} runs an older version - <b>Update monitor</b> in the LADD Unblock window`;
     if (!a.on) return '';

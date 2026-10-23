@@ -29,7 +29,9 @@ function kv(mode, fn) {
 }
 const kvGet = k => kv('readonly', s => s.get(k)), kvSet = (k, v) => kv('readwrite', s => s.put(v, k)), kvDel = k => kv('readwrite', s => s.delete(k));
 
-const verParts = v => String(v || '').split('.').map(x => parseInt(x, 10) || 0);
+// (1.0.0 and on are newer than every beta: the versions before it - 22.31.12 and earlier, "B22.31.12" - are numbered 20
+// and up, so the first number counts only within its own line)
+const verParts = v => { const s = String(v || ''), p = s.replace(/^[vB]/i, '').split('.').map(x => parseInt(x, 10) || 0); return [!/^B/i.test(s) && p[0] >= 1 && p[0] < 20 ? 1 : 0].concat(p); };
 const newerThan = (a, b) => { const x = verParts(a), y = verParts(b); for (let i = 0; i < Math.max(x.length, y.length); i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); } return false; };
 const sha256 = async buf => [...new Uint8Array(await crypto.subtle.digest('SHA-256', buf))].map(b => b.toString(16).padStart(2, '0')).join('');
 // (a file of the extension: a name, or one folder deep - icons/16.png; never .. or an absolute path)
@@ -151,7 +153,7 @@ async function news(from, to) {
     const items = [], vers = [];
     for (const sec of md.split(/^## \[/m).slice(1)) {
       const v = sec.slice(0, sec.indexOf(']'));
-      if (!/^\d+(\.\d+)+$/.test(v) || !newerThan(v, from) || newerThan(v, to)) continue;
+      if (!/^B?\d+(\.\d+)+$/.test(v) || !newerThan(v, from) || newerThan(v, to)) continue;
       vers.push(v);
       for (const m of sec.split(/^### Tests/m)[0].matchAll(/^- \*\*(.+?)\*\*/gm)) items.push(m[1].replace(/\.$/, ''));
       if (vers.length >= 3) break;

@@ -14,8 +14,10 @@ const dayOf = t => new Date(t).toISOString().slice(0, 10);
 const KEYS = ['id', 'ver', 'kind', 'handler', 'browser', 'os'];
 const KINDS = ['ext', 'us'], BROWSERS = ['chrome', 'edge', 'brave', 'opera', 'firefox', 'safari', 'other'], OSES = ['windows', 'mac', 'linux', 'android', 'ios', 'other'];
 const VER_RE = /^\d{1,4}\.\d{1,4}\.\d{1,6}$/;
-// (a version "x.y.z" against another: -1, 0, 1; '' is older than any)
-const cmpVer = (a, b) => { const x = String(a || '').split('.').map(Number), y = String(b || '').split('.').map(Number); for (let i = 0; i < 3; i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return d < 0 ? -1 : 1; } return 0; };
+// (a version "x.y.z" against another: -1, 0, 1; '' is older than any. 1.0.0 and on are newer than every beta - the
+// versions before it, 22.31.12 and earlier ("B22.31.12"), numbered 20 and up)
+const verKey = v => { const s = String(v || ''), p = s.replace(/^[vB]/i, '').split('.').map(x => parseInt(x, 10) || 0); return [!/^B/i.test(s) && p[0] >= 1 && p[0] < 20 ? 1 : 0, p[0] || 0, p[1] || 0, p[2] || 0]; };
+const cmpVer = (a, b) => { const x = verKey(a), y = verKey(b); for (let i = 0; i < 4; i++) { const d = x[i] - y[i]; if (d) return d < 0 ? -1 : 1; } return 0; };
 // (a hello as sent, checked strictly: these six fields and no other, each as the contract has it - null: refused)
 function valid(d) {
   if (!d || typeof d !== 'object' || Array.isArray(d)) return null;

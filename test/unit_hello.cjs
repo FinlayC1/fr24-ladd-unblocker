@@ -132,7 +132,7 @@ const text = el => (el ? el.textContent.replace(/\s+/g, ' ').trim() : '');
     click(win, sw);
     check('... switched off: kept with the other switches', JSON.parse(win.localStorage.getItem(KEYS.opts)).count === false && w.querySelector('[data-ub-opt="count"]').getAttribute('aria-checked') === 'false');
     A.setSt({ at: Date.now() - 13 * H }); await T().sayHello();
-    A.setSt({ ver: '1.0.0' }); await T().sayHello();
+    A.setSt({ ver: '22.0.0' }); await T().sayHello();
     check('... then nothing is sent - not after 12 hours, not after an update', A.hellos().length === 3, A.hellos().length);
     click(win, w.querySelector('[data-ub-opt="count"]'));
     await until(() => A.hellos().length === 4, 3000);

@@ -32,7 +32,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const STUBS = `
 window.GM_info = { scriptHandler: 'Tampermonkey', version: '5.3' };
 window.unsafeWindow = window; window.GM_notification = () => {};
-window.GM_xmlhttpRequest = o => { const raw = /raw\\.githubusercontent\\.com\\/FinlayC1\\/fr24-ladd-unblocker\\/main\\/package\\.json/.test(o.url); const t = raw ? JSON.stringify({ version: '1.0.0' }) : ''; setTimeout(() => o.onload && o.onload({ status: raw ? 200 : 404, responseText: t, response: t }), 2); return { abort() {} }; };
+window.GM_xmlhttpRequest = o => { const raw = /raw\\.githubusercontent\\.com\\/FinlayC1\\/fr24-ladd-unblocker\\/main\\/package\\.json/.test(o.url); const t = raw ? JSON.stringify({ version: '22.0.0' }) : ''; setTimeout(() => o.onload && o.onload({ status: raw ? 200 : 404, responseText: t, response: t }), 2); return { abort() {} }; };
 // (each frame: the windows' titles drawn, the bar's buttons drawn open, the Bookmarks widget or row drawn)
 window.__F = null;
 (function probe() {
