@@ -169,5 +169,28 @@ const near = (t, hhmm, tol) => { const [h, m] = hhmm.split(':').map(Number), x =
   check('... a blocked aircraft\'s short hop the monitor keeps for good is left (SF50 Wolverhampton -> Blackpool)', !E.climbedOut(Object.assign({}, mon, { ladd: true, maxAlt: 1550, tEnd: t + 420 }), 'bizjet'));
   check('... and a low hop of any jet the monitor kept is left', !E.climbedOut(Object.assign({}, mon, { maxAlt: 1550 }), 'bizjet'));
 }
+// (1.0.1) Flights cut by a day's end and a hole in coverage, joined - as the browser's log and the monitor's days have them
+// (each day's file built alone, then stitched and chained). N1868M (G650ER), 19 Oct: Teterboro at 21:07, lost off
+// Newfoundland at FL410 at 23:15 doing 566 kt, heard again west of Spain at 01:55 - 2,774 km in 2 h 40 min, 1,044 km/h - and
+// down at Barcelona: "Teterboro -> ?" and "? -> Barcelona" in its log and its panel's recent flights
+{
+  const a = day('a15a72', 'GLF6', '2026-10-19', 'lol'), b = day('a15a72', 'GLF6', '2026-10-20', 'lol');
+  const joined = E.chainLegs(E.stitchLegs(a.concat(b).map(x => Object.assign({}, x))));
+  const x = joined.find(l => l.from && l.from.code === 'TEB');
+  check('N1868M: Teterboro -> Barcelona across midnight and the Atlantic hole (at the speed it was doing) - one flight, not two', !!x && x.to && x.to.code === 'BCN' && x.ended && joined.filter(l => l.tStart < (x.tEnd || 0) && l !== x && l.tEnd > x.tStart).length === 0, joined.map(sig));
+  // (the same hole, the aircraft heard again too far for its speed: two flights still)
+  const far = b.map(l => Object.assign({}, l, l.from ? null : { startLat: 30.0, startLon: 31.0 }));
+  check('... a hole crossed faster than 1,300 km/h: not joined', E.chainLegs(E.stitchLegs(a.concat(far).map(x2 => Object.assign({}, x2)))).filter(l => l.tStart >= a[0].tStart).length >= 2);
+}
+// N811MK (G650ER), 7 Oct: Vienna, lost descending through 13,900 ft over Spain at 07:23; 8 Oct, first heard climbing through
+// 22,000 ft 85 km away at 05:44, then Trenton - neither end known, a night between. No field is guessed for it: a landing read
+// into such a night (landingInGap, as a hole within a day is read) was right 25% of the time on 3,143 real stops, and this
+// one's guess (Valladolid) was wrong - the next guess of its destination counted it as a visit
+{
+  const a = day('ab0e30', 'GLF6', '2026-10-07', 'lol'), b = day('ab0e30', 'GLF6', '2026-10-08', 'lol');
+  check('N811MK: each day alone has "Vienna -> ?" and "? -> Trenton"', a.length === 1 && a[0].from && a[0].from.code === 'VIE' && !a[0].to && b[0] && !b[0].from && b[0].to && b[0].to.code === 'TTN', a.concat(b).map(sig));
+  const j = E.chainLegs(E.stitchLegs(a.concat(b).map(x => Object.assign({}, x))));
+  check('... chained: still two flights, the ends between them unknown (no field guessed across the night)', j.length === 2 && j[0].from && j[0].from.code === 'VIE' && !j[0].to && !j[1].from && j[1].to && j[1].to.code === 'TTN', j.map(sig));
+}
 console.log(fails ? `\n${fails} failed` : '\nall passed');
 process.exitCode = fails ? 1 : 0;

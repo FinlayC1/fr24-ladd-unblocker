@@ -74,6 +74,14 @@ function createRouteEngine() {
   let TYPE_DESC = null;
   const typeDesc = t => { if (!TYPE_DESC) { TYPE_DESC = new Map(); for (const e of AC_TYPES.split(',')) { const i = e.indexOf(':'); if (i > 0) TYPE_DESC.set(e.slice(0, i), e.slice(i + 1)); } } return TYPE_DESC.get(t) || ''; };
   const TURBOPROP = /^(?:PC12|TBM\d|B350|BE20|BE9L|BE9T|BE99|C208|C425|C441|P180|PAY\d|SW\d|E120|DHC6|KODI|M600|P46T|PA46|AC\d\d|MU2|C90|B190|D228|L410|AN\d\d|PC6T|PC6)$/;
+  // A maker's line of types, from an ICAO type designator: two databases name one airframe differently within it - TC-MAA
+  // is a GA7C (G700) in FR24's and a GLF6 (G650) in adsb.lol's, and their first three letters (GA7, GLF) are not alike, so
+  // FR24's blocked G700 over Bulgaria was never matched to the G650 at its very position, height, track and speed. Its
+  // first three letters otherwise (A32 - A320 family, B77 - 777s).
+  const TYPE_LINES = [[/^(GLF\d|GA\dC|G150|G200|G280|GALX|ASTR|GLF)$/, 'GULFSTREAM'], [/^(FA\dX|FA[1-9]0|F900|F2TH|FA50|F50)$/, 'FALCON'], [/^(GLEX|GL\dT|CL30|CL35|CL60|CL64|CL65)$/, 'BOMBARDIER'],
+    [/^(C25[A-CM]|C50[01]|C510|C52[56]|C55[01B]|C56X|C560|C650|C680|C68A|C700|C750)$/, 'CITATION'], [/^(E50P|E55P|E545|E550|E35L)$/, 'EMBRAERBIZ'], [/^LJ\d\d$/, 'LEARJET'], [/^(H25[A-C]|HA4T|BE40|PRM1)$/, 'HAWKER'],
+    [/^(B73\d|B3[789]M|BBJ\d?)$/, 'B737'], [/^(A31[89]|A32[01]|A[12][019]N)$/, 'A320']];
+  function typeFamily(t) { t = String(t || '').trim().toUpperCase(); if (!t) return ''; for (const [re, f] of TYPE_LINES) if (re.test(t)) return f; return t.slice(0, 3); }
   function classify(ac) {
     const t = String(ac && ac.type || '').toUpperCase(), cat = String(ac && ac.cat || '').toUpperCase(), mil = !!(ac && ac.mil);
     const td0 = typeDesc(t);
@@ -1133,9 +1141,13 @@ function createRouteEngine() {
       if (p && (!p.ended || holeJoin(p)) && !l.startedOnGround && l.tStart >= p.tEnd - 60) {
         const gapH = (l.tStart - p.tEnd) / 3600, high = (p.endAlt == null || p.endAlt >= 18000) && (l.startAlt == null || l.startAlt >= 18000);
         const gapKm = dist(p.endLat, p.endLon, l.startLat, l.startLon);
+        // (at height, as fast as it was going either side of the hole - a seventh more, 1,300 km/h at most: N1868M east over
+        // the Atlantic on 19 Oct at 566 kt, lost off Newfoundland at FL410 and heard again west of Spain 2 h 40 min later,
+        // 2,774 km - 1,044 km/h - stayed "Teterboro -> ?" and "? -> Barcelona")
+        const vMax = Math.max(p.ended ? 1150 : 1000, high ? Math.min(1300, Math.max(p.endGs || 0, l.startGs || 0) * NM * 1.15) : 0);
         // (not across a hole it came down in: N6012C's flight from Hanoi, last heard hours before its flight from Baku was
         // heard again, became one leg "Hanoi -> ?" with 8,000 km flown)
-        if (gapH < (high || p.ended ? 10 : 2) && gapKm < Math.max(100, gapH * (p.ended ? 1150 : 1000)) && !idleHole(l.tStart - p.tEnd, gapKm, p.endGs, l.startGs)) { Object.assign(p, { tOn: l.tOn, tOnEst: l.tOnEst, endGs: l.endGs, tEnd: l.tEnd, endLat: l.endLat, endLon: l.endLon, endAlt: l.endAlt, endTrk: l.endTrk, ended: l.ended, how: l.how, to: l.to, maxAlt: Math.max(p.maxAlt, l.maxAlt), pathKm: p.pathKm + l.pathKm + Math.round(gapKm) }); if (!p.cs) p.cs = l.cs; continue; }
+        if (gapH < (high || p.ended ? 10 : 2) && gapKm < Math.max(100, gapH * vMax) && !idleHole(l.tStart - p.tEnd, gapKm, p.endGs, l.startGs)) { Object.assign(p, { tOn: l.tOn, tOnEst: l.tOnEst, endGs: l.endGs, tEnd: l.tEnd, endLat: l.endLat, endLon: l.endLon, endAlt: l.endAlt, endTrk: l.endTrk, ended: l.ended, how: l.how, to: l.to, maxAlt: Math.max(p.maxAlt, l.maxAlt), pathKm: p.pathKm + l.pathKm + Math.round(gapKm) }); if (!p.cs) p.cs = l.cs; continue; }
       }
       out.push(Object.assign({}, l));
     }
@@ -1156,6 +1168,11 @@ function createRouteEngine() {
       const nearTo = () => { const x = byId.get(a.to.id), y = byId.get(b.from.id); return !!x && !!y && dist(x.lat, x.lon, y.lat, y.lon) <= 25; };
       const weakFrom = !!b.from && !b.startedOnGround && a.ended && !!a.to && ['ground', 'low'].includes(a.to.conf) && gapH < 8 && a.to.id !== b.from.id && (b.from.conf === 'near' || (b.from.conf === 'low' && gapH < 12 && nearTo()));
       if ((!b.from || weakFrom) && a.to) { const ap = byId.get(a.to.id); if (reach(b.startLat, b.startLon, ap, gapH + 1)) { b.from = Object.assign({}, a.to, { conf: 'chain' }); if (!b.tOff) { const e = fieldTimeOfSum(b, ap, true); if (e && e.t > a.tEnd) { b.tOff = e.t; b.tOffEst = e.est; } } } }
+      // (Not done: a landing guessed between a piece lost coming down at a day's end and the next day's first heard climbing -
+      // landingInGap across the night. Tried in 1.0.1 on 3,143 real stops of business jets and airliners with both ends cut
+      // out of coverage: right 25% of the time, a neighbouring field 43% (Teterboro read as Newark, Zurich as a strip beside
+      // it) - and a field guessed wrongly is a visit in the aircraft's history: N811MK's "Valladolid" of 7 Oct made it
+      // "Valladolid 73%" on 23 Oct, and it landed at Madrid. Those ends stay unknown.)
       // (an end known but its time not: the way left from the last point heard)
       if (a.to && !a.tOn) { const ap = byId.get(a.to.id), e = ap && fieldTimeOfSum(a, ap, false); if (e && e.t < b.tStart) { a.tOn = e.t; a.tOnEst = e.est; } }
     }
@@ -2422,7 +2439,7 @@ function createRouteEngine() {
     return res;
   }
 
-  return { surgeOf, setTables2, get T2() { return T2; }, trackState, offTrack, fieldShortName, placeShort, placeLabels, setApproach, approachCell, approachPath, apprGroup, apprKey, trackAgree, heatNear, heatMatch, reckon, trackErr, remotePath, flowKeysOf, pgrpOf, grp6, sunElev, airData, gsAlong, minutesTo, flowAt, pathOf, pathDev, ownerKey, parseRunwayLengths, setRunwayLengths, csvLine, SQ_NOINFO, tripBin, regionOf, learnLeg, learnRow, learnCollector, addLearnedOp, odAdd: (x, y, w) => { const k = odKey(String(x).toUpperCase(), String(y).toUpperCase()), v = (OD.get(k) || 0) + w; if (v > 1e-9) OD.set(k, v); else OD.delete(k); }, odWeight: (x, y) => OD.get(odKey(String(x).toUpperCase(), String(y).toUpperCase())) || 0, odCount: () => OD.size, setAirports, setUsage, addUsage, setRunways, parseRunwaysCsv, runwayFit, setWeights, setTables, setLogit, calibrated, mergePoints, finalTo, longFinal, typeRangeKm, FEAT, groupOf, W, classify, isStepClimb, rangeKm, parseTrace, legsFromPoints, summarizeLeg, stitchLegs, chainLegs, histStats, inferOrigin, predict, privateSite, rwyImpossible, typeDesc, heliSpots, heliAirportAt, landedSum, localFlew, climbedOut, approachTo, downAndUp, landingInGap, gapEnds, slowGap, idleHole, currentLeg, circuits, mergeCircuits, setFields, fieldAt, placeAt, isField, nearbyFields, fieldCount: () => FL.length, airportAt, departureFromClimb, arrivalFromDescent, nearby, dist, brg, xtat, destPoint, angDiff, get airports() { return AP; }, byId: id => byId.get(id), byIcao: c => byIcao.get(String(c || '').toUpperCase()) };
+  return { typeFamily, surgeOf, setTables2, get T2() { return T2; }, trackState, offTrack, fieldShortName, placeShort, placeLabels, setApproach, approachCell, approachPath, apprGroup, apprKey, trackAgree, heatNear, heatMatch, reckon, trackErr, remotePath, flowKeysOf, pgrpOf, grp6, sunElev, airData, gsAlong, minutesTo, flowAt, pathOf, pathDev, ownerKey, parseRunwayLengths, setRunwayLengths, csvLine, SQ_NOINFO, tripBin, regionOf, learnLeg, learnRow, learnCollector, addLearnedOp, odAdd: (x, y, w) => { const k = odKey(String(x).toUpperCase(), String(y).toUpperCase()), v = (OD.get(k) || 0) + w; if (v > 1e-9) OD.set(k, v); else OD.delete(k); }, odWeight: (x, y) => OD.get(odKey(String(x).toUpperCase(), String(y).toUpperCase())) || 0, odCount: () => OD.size, setAirports, setUsage, addUsage, setRunways, parseRunwaysCsv, runwayFit, setWeights, setTables, setLogit, calibrated, mergePoints, finalTo, longFinal, typeRangeKm, FEAT, groupOf, W, classify, isStepClimb, rangeKm, parseTrace, legsFromPoints, summarizeLeg, stitchLegs, chainLegs, histStats, inferOrigin, predict, privateSite, rwyImpossible, typeDesc, heliSpots, heliAirportAt, landedSum, localFlew, climbedOut, approachTo, downAndUp, landingInGap, gapEnds, slowGap, idleHole, currentLeg, circuits, mergeCircuits, setFields, fieldAt, placeAt, isField, nearbyFields, fieldCount: () => FL.length, airportAt, departureFromClimb, arrivalFromDescent, nearby, dist, brg, xtat, destPoint, angDiff, get airports() { return AP; }, byId: id => byId.get(id), byIcao: c => byIcao.get(String(c || '').toUpperCase()) };
 }
 /* ==/ENGINE== */
 if (typeof module !== 'undefined') module.exports = { createRouteEngine };

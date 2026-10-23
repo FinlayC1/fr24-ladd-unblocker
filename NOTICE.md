@@ -6,7 +6,7 @@ FR24 LADD Unblocker - Copyright © 2026 Finlay Clarke. See [LICENSE](LICENSE).
 
 "Flightradar24" is a trademark of **Flightradar24 AB**. It is used in this project only to describe the website the software works with. This project is independent: it is not affiliated with, endorsed by, sponsored by or connected to Flightradar24 AB. It uses none of its logos.
 
-FAA, adsb.lol, adsb.fi, OpenSky Network, airplanes.live, ADS-B Exchange, JetPhotos, Planespotters, OurAirports, OpenStreetMap and other names are the property of their owners. They are used only to credit and describe sources.
+FAA, adsb.lol, adsb.fi, OpenSky Network, airplanes.live, TheAirTraffic, ADS-B Exchange, JetPhotos, Planespotters, OurAirports, OpenStreetMap and other names are the property of their owners. They are used only to credit and describe sources.
 
 ## Data
 
@@ -16,6 +16,7 @@ FAA, adsb.lol, adsb.fi, OpenSky Network, airplanes.live, ADS-B Exchange, JetPhot
 | Aircraft positions | [adsb.fi](https://adsb.fi) | adsb.fi open-data terms |
 | Aircraft positions | [The OpenSky Network](https://opensky-network.org) | OpenSky terms of use (non-commercial) |
 | History files | [airplanes.live](https://airplanes.live) | airplanes.live terms |
+| Aircraft positions, today's and recent days' files | [TheAirTraffic](https://theairtraffic.com) (Ground Control) | TheAirTraffic's terms; its public map files only |
 | Aircraft positions (optional, user's own key) | ADS-B Exchange | ADS-B Exchange API terms |
 | Airports, airfields, heliports, runways, radio frequencies | [OurAirports](https://ourairports.com) | Public domain |
 | Wind and temperature aloft, for estimated airspeeds where no receiver has them | [Open-Meteo](https://open-meteo.com) (NOAA GFS) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) |

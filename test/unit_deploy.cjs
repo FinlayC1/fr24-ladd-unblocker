@@ -19,7 +19,7 @@ const root = path.join(__dirname, '..'), work = path.join(T, 'work'), origin = p
 // (a repository with the files deploy.sh checks)
 fs.mkdirSync(work);
 git(work, 'init', '-q', '-b', 'main');
-for (const f of ['monitor/monitor.cjs', 'monitor/fr24.cjs', 'monitor/ident.cjs', 'monitor/dest.cjs', 'monitor/owners.cjs', 'monitor/airport.cjs', 'monitor/names.cjs', 'monitor/tel.cjs', 'monitor/wx.cjs', 'monitor/tracks.cjs', 'monitor/waiting.cjs', 'monitor/photos.cjs', 'monitor/installs.cjs', 'monitor/merge-store.cjs', 'monitor/deploy.sh', 'src/engine.js', 'src/registry.js', 'test/dataset.cjs']) { fs.mkdirSync(path.join(work, path.dirname(f)), { recursive: true }); fs.copyFileSync(path.join(root, f), path.join(work, f)); }
+for (const f of ['monitor/monitor.cjs', 'monitor/fr24.cjs', 'monitor/ident.cjs', 'monitor/dest.cjs', 'monitor/owners.cjs', 'monitor/airport.cjs', 'monitor/names.cjs', 'monitor/tel.cjs', 'monitor/wx.cjs', 'monitor/tracks.cjs', 'monitor/archive.cjs', 'monitor/world.cjs', 'monitor/central.cjs', 'monitor/datalink.cjs', 'monitor/waiting.cjs', 'monitor/photos.cjs', 'monitor/installs.cjs', 'monitor/merge-store.cjs', 'monitor/deploy.sh', 'src/engine.js', 'src/registry.js', 'test/dataset.cjs']) { fs.mkdirSync(path.join(work, path.dirname(f)), { recursive: true }); fs.copyFileSync(path.join(root, f), path.join(work, f)); }
 git(work, 'add', '-A'); git(work, 'commit', '-q', '-m', 'v1');
 execFileSync('git', ['clone', '-q', '--bare', work, origin]);
 execFileSync('git', ['clone', '-q', origin, vm]);

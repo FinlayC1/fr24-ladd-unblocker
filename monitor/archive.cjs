@@ -15,6 +15,9 @@ const partName = i => '.tar.' + String.fromCharCode(97 + Math.floor(i / 26)) + S
 const urlOf = (day, n, i) => `https://github.com/${repoOf(day)}/releases/download/${tagOf(day, n)}/${tagOf(day, n)}${partName(i)}`;
 
 // A day's parts, in order: [] - not published (yet). Asked with a one-byte range request each (no API, no key).
+// (a short day - adsb.lol's own outage - is one tar, not cut into parts: 5 and 7 May, 11 Jun 2026 (226 MB, 1 GB, 1.4
+// GB); read as such - they were taken for days never published, and their aircraft's logs had them "not read")
+const wholeUrl = (day, n) => `https://github.com/${repoOf(day)}/releases/download/${tagOf(day, n)}/${tagOf(day, n)}.tar`;
 async function partsOf(day, get) {
   for (let n = 0; n < 3; n++) {
     const out = [];
@@ -25,6 +28,9 @@ async function partsOf(day, get) {
       out.push(u);
     }
     if (out.length) return out;
+    const w = wholeUrl(day, n), sw = await get(w);
+    if (sw >= 200 && sw < 300) return [w];
+    if (sw !== 404) throw new Error('archive ' + tagOf(day, n) + '.tar: HTTP ' + sw);
   }
   return [];
 }

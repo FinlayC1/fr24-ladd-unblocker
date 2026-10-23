@@ -4,6 +4,124 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 
 1.0.0 is the first release. The versions before it are the betas, labelled B: B22.31.12 is version 22.31.12.
 
+## [1.0.1] - 2026-10-23
+
+### Fixed
+- **Flights cut in two by a day's end and an ocean.** N1868M, 19 Oct, Teterboro to Barcelona, was "Teterboro -> N/A" and "N/A -> Barcelona" in its log and in the panel's recent flights.
+  - Each day's file is built alone and the pieces joined after. Across a hole in coverage the join allowed 1,000 km/h. N1868M, east over the Atlantic at 566 kt, was lost off Newfoundland and heard again west of Spain 2 h 40 min later: 2,774 km, 1,044 km/h.
+  - The join now allows the speed the aircraft was doing either side of the hole, plus a seventh, 1,300 km/h at most. It still doesn't join when there was time to land in between.
+- **The monitor's flights cut by a restart.** On 23 Oct the monitor had N811MK as "Trenton -> ?" and "? -> ?". It restarted while the aircraft was over the Atlantic, and it continued a flight only within three hours.
+  - It now continues one heard again high on the other side, when the distance fits the speed (the same rule as the logs).
+- **Flights adsb.lol's archive doesn't have.** N811MK flew Trenton to Valencia on 15 Oct. adsb.lol's archive has it parked at Trenton from 22:38 and has no file of it the next day. The monitor heard the flight live, but the log page had nothing for it, nor for the aircraft's predictions.
+  - The monitor's `/hist` now serves such flights with their day.
+  - When the monitor builds a day, the positions it heard itself fill the archive's holes of two minutes and more.
+  - A browser that reads such a day again itself keeps them.
+- **The flight-number page has exactly the log page's flights.** N811MK's page had "Naples -> -" and "- -> Trenton" for one flight cut at midnight, beside the joined copy, and was missing flights its log had.
+  - Both the monitor's `/flights` and the browser now take each aircraft's whole log, stitched and chained, and keep the flights under the callsign.
+  - The browser then loads each aircraft's log the way its log page does.
+- **TC-MAA was never identified.** FR24 has it as a G700 (GA7C) and adsb.lol's database as a G650 (GLF6). The matcher compared types by their first three letters (GA7, GLF), so it rejected an aircraft at the very position, height, track and speed.
+  - Types now match within a maker's line, in the browser and the monitor alike: Gulfstream, Falcon, Global and Challenger, Citation, Embraer business jets, Learjet, Hawker, the 737 and A320 families.
+  - Another maker's jet at the same spot is still not matched.
+- **"N/A -> N/A" on ordinary flights, and LADD panels without time zones or progress bar, now and then until a reload.**
+  - The cause: to add the learned landing places to FR24's airport list, the page deleted FR24's own airport and airline databases whenever that list had changed.
+  - With another FR24 tab open, the deletion waits for that tab. FR24 in this tab opened its database behind it and never got its airports.
+  - Nothing of FR24's is deleted now. The landing places join at FR24's next read of its list (hourly), which is asked for in full.
+- **Aircraft logs said "verification page" for days the monitor gives anyway.** N811MK's log read "adsb.lol and airplanes.live are showing this browser a verification page ... 4 days not read yet". The 4 days were:
+  - 5 May, 7 May and 11 Jun 2026, which adsb.lol published as one tar instead of in parts. The monitor took them for never published. It now reads such days, and looks again at start for days an older monitor gave up on.
+  - 6 May, which adsb.lol never published (its outage). The monitor's `/atrace` now says so, and the log reads "6 May is in no public archive (adsb.lol published none)".
+
+  The log page also changed:
+  - A day the monitor has not indexed yet reads "the monitor's copy of this day is not ready yet".
+  - The bold verification-page line shows only when those days can't come from the monitor (no monitor, or its archive not in use).
+  - "Last error: terminated" (an archive download cut short, which is read again within the hour) no longer shows under every log.
+- **Boards showed N/A while loading, and the list jumped.**
+  - A board's first answer now waits up to 2 s for its kept rows, including the monitor's flights of the airport. Before, blocked aircraft's rows had "N/A" for where they went or came from until a re-read about 15 s later.
+  - The row at the top of the view is held in place through each re-read, for 6 s after the answer, until the user moves the list. Rows arriving above it had moved the view "two days behind".
+
+### Added
+- **TheAirTraffic as another source, beside adsb.fi.** It is a community aggregator with feeders of its own; it heard N811MK further out over the Atlantic than adsb.lol did. It has no query API, but its map's files are public, in adsb.lol's format with the LADD flags:
+  - **The monitor reads its whole-world file once a minute** (`tatEvery`; about 1 MB compressed, 12,000-odd aircraft):
+    - its LADD, military, PIA and blocked aircraft are taken in the way the lists' are (live positions, flights, the live list);
+    - every aircraft in it is a candidate for naming FR24's blocked flights, and for `/near` and `/tel` (TC-MAA is in it, unflagged);
+    - its positions fill the holes of the monitor's day logs.
+  - **The browser:**
+    - reads today's file of the aircraft looked at, plus the last five days' (as far back as it keeps them), merged in;
+    - uses it for a single day's file (playback) when adsb.lol's doesn't come;
+    - uses its whole-world file as a fallback live source when the others can't name a flight, read at most every 30 s.
+  - Its "no file" never makes a day without flights, and its refusals never make a day incomplete. A refusal or verification page pauses it for ten minutes (an hour after three in a row).
+  - The extension asks for one more site (`globe.theairtraffic.com`); Tampermonkey asks once to allow it.
+
+- **The world log: every aircraft's flights, every day, kept for good.** The monitor already read each day of adsb.lol's archive (every aircraft it heard that day) to index it. In the same read it now builds every aircraft's flights, with the same engine as the logs, and keeps them in one file a day (`STORE/world/`).
+  - 21 Oct 2026: 68,294 aircraft and 193,149 flights in 21.8 MB, built in under 7 minutes here. An aircraft's day is found in 0.17 ms.
+  - The past year (366 days, `worldDays`) is filled in newest first, one day at a time; a day read before is read again for it. Each new day is added once adsb.lol publishes it.
+  - Nothing is ever deleted. While the disk has less than 4 GB free (`worldFreeGb`), no more days are built, and `/status` says so.
+  - `/hist` now serves any aircraft, not only blocked ones. On a day the archive has no file of it, it had no flights; on a day it has one, its flights come from the world log. With `since`, only the days a browser is missing.
+  - Browsers ask a monitor that has it for an ordinary aircraft's missing days in one request, instead of one request per day through `/atrace`.
+  - A blocked aircraft's day read before it was known to be blocked is no longer served as a day without flights: the day's index or the world log says.
+- **Central calculation: one route for every browser.** Each flight a browser shows is worked out on the monitor, once, and every browser shows that answer: the same departure, destination, odds, reasons and ETA. It is the userscript's own route code, run on the monitor unchanged (the blocks marked `==ROUTE-...==`), with the same engine and tables.
+  - Browsers send what they see of each flight they show (`POST /calc`): its track (whole once, then what is new), FR24's plan, its flights of the day, the weather and closures at the airports in question. The monitor adds its own logs of the aircraft, the world log among them.
+  - N1868M over the Atlantic: from what a browser sent, the monitor's answer is the browser's own, field for field. A second browser with only the last minute of the track gets the very same.
+  - Each browser still keeps its user's own confirmation of a destination, and a landing it has seen before the monitor's answer has. The progress bar and the time to go are worked out from where the aircraft is now.
+  - The tables take about 150 MB more memory on the monitor. It is on only with 300 MB free at start (`centralFreeMb`) and does at most 12 s of this work a minute (`centralMsPerMin`); otherwise every browser works routes out itself, as before. `/status` says which.
+
+### Changed
+- **Flight logs are rebuilt once** (log format 8): the monitor's days now carry its live-heard flights.
+
+### Destination accuracy: why the odds are low, and when they're wrong
+Measured on aircraft held out of training: 66,679 moments of 2,073 aircraft, 1-21 Oct, observed every 12 minutes of their flights.
+
+| The flight, to the aircraft's history | Moments | Top choice right | Shown under 40% |
+|---|---|---|---|
+| Route flown 3 times or more | 2,763 | 92.9% | 1.6% |
+| Route flown twice | 1,235 | 87.9% | 4.1% |
+| Route flown once | 4,177 | 84.3% | 8.7% |
+| Destination visited before, not from this origin | 18,033 | 79.7% | 13.6% |
+| Destination never visited | 34,222 | 32.8% | 45.3% |
+| No history at all | 6,249 | 33.9% | 57.3% |
+
+- **A route flown before already gets high odds.** Low odds come from flights to places the aircraft hasn't been, which are half of all moments.
+- **New destinations are mostly uncertain early in the flight:** 14% right with over 90 minutes to go (most misses 400 km or more away), 70% right within 20 minutes (most misses a neighbouring airport).
+- **The odds shown are honest:** shown 10-30%, right 10-25% of the time.
+- **N811MK, 23 Oct:** out of Trenton it has flown four different Atlantic crossings, each once (Rome Ciampino in April, Prague in August, Munich and Valencia in October). Mid-ocean, 25% for the most recent is what its history supports. Its Valencia flight was also missing from its log; that is fixed above.
+- **The long logs browsers get from the monitor help a lot.** The figures above give each aircraft three weeks of history. Your browser gives a LADD aircraft the monitor's whole log, up to 220 days (a median of 75 flights here, against 5). On the same 27,034 moments of 665 held-out LADD aircraft:
+  - right 51.1% -> 56.7%;
+  - top three 66.5% -> 73.2%;
+  - shown under 40% 36.2% -> 26.0%;
+  - flights to places never visited 54% -> 29% of moments.
+- **A landing guessed across a night is not made.** N811MK, 7 Oct, was lost coming down over Spain, and heard climbing 85 km away the next morning before Trenton. Reading a landing into that night the way a hole within one day is read gave Valladolid. Tried on 3,143 real stops of business jets and airliners with both ends out of coverage, such a guess was right 25% of the time and a neighbouring field 43% of it (Teterboro read as Newark). A wrong field is a visit in the aircraft's history: with it, N811MK's guess on 23 Oct was "Valladolid 73%", and it landed at Madrid. Those ends stay "-".
+- **The weights were fitted on three-week histories.** With long logs a route flown before is right 77.7% of the time, below the 84-93% above. The next step is refitting them on long histories, as browsers have them (`pipe_eval` `LONGHIST` measures it).
+
+### Tests
+- `unit_legs`, on the aircraft's real traces:
+  - N1868M's crossing joined; a hole crossed faster than 1,300 km/h not joined;
+  - N811MK's two days, lost coming down and heard climbing a night apart: no field guessed between them.
+- `unit_monitor`: the crossing across a restart (fails without the fix).
+- `unit_monitor2`:
+  - the monitor's own positions fill the archive day's hole;
+  - `/hist` serves the live-heard flight, and not twice;
+  - `/flights?cs=` is the whole log, and a flight cut at midnight comes once.
+- New `unit_world`:
+  - every field of the fixtures' real flights kept through the world log's row;
+  - a day of 1,000 aircraft added in the archive's order: each found again, one that did not fly, one not in the day, a day not kept; found again after a restart; a half-written day not taken;
+  - the monitor: the world log built in the archive's read; an ordinary aircraft's day served from it, the same flights as the day's log is built; one not in the day's index: no flights; one in it whose day the world log has not: left out; a day read before read again for it alone (and its index); a day not published; the disk short of room.
+- New `unit_central`:
+  - every name the route code uses from outside its blocks is given on the monitor (found with ESLint's no-undef: a name added to the route code later fails it);
+  - not on when turned off or short of memory, and said why; the landing sites left out with too little room after the tables;
+  - the route tables compacted exactly as the build does;
+  - tracks sent whole, then in parts; a part without the whole asked for whole; a new leg; nothing kept that is not a flight's;
+  - N1868M: the monitor's answer is the browser's own;
+  - end to end in two browsers (the built userscript, jsdom): the flight sent, the monitor's answer shown in both; then only what is new sent; the user's confirmation and a landing seen first stand; the monitor off: the browser's own;
+  - the minute's allowance; a flight the monitor named itself.
+- `unit_netfetch`: a monitor without the world log not asked for an ordinary aircraft's log; one with it asked once, from the oldest day wanted, nothing asked day by day; its flights not kept over a read of the day here.
+- `unit_archive`: a day published as one tar; a never-published day's 404; days given up before retried at start.
+- `unit_fr24`: TC-MAA matched; maker's lines; another maker's jet not matched.
+- `unit_netfetch`:
+  - no verification line when the monitor gives every day;
+  - "not ready yet" for a day without an index;
+  - a never-published day noted as such.
+- New `unit_boardplace`: the present on opening; the top row held through re-reads with rows added above; the nearest row by time; the user's scroll respected; the first-open wait.
+- `pipe_eval`: each moment's relation to the aircraft's history in the dump; `LONGHIST` / `LONGONLY` / `LONGSEL` evaluate with the monitor's long logs.
+
 ## [1.0.0] - 2026-10-23
 
 ### Fixed

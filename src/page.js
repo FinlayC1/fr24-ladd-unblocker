@@ -1405,8 +1405,10 @@
       var a = boardArch.get(apId);
       if (a && Date.now() - a.at < 60000) return Promise.resolve(a);
       post('needBoard', { apId: apId });
-      // (the first time: a short wait for it - it is read from disk - and FR24's board goes on without it after that)
-      return withTimeout(new Promise(function (res) { var l = archWait.get(apId) || []; l.push(res); archWait.set(apId, l); }), 0, a || null);
+      // (the first time: waited for, two seconds at most - read from disk, with the monitor's flights of the airport - so the
+      // board is drawn whole: its blocked aircraft's rows were "N/A" where they went or came from, and the list jumped, as
+      // the rest came in a re-read later. A copy kept from before: used at once, the new one re-reads the board)
+      return withTimeout(new Promise(function (res) { var l = archWait.get(apId) || []; l.push(res); archWait.set(apId, l); }), a ? 0 : 2000, a || null);
     }
     function acceptBoardArch(d) {
       var apId = Number(d.apId); if (!apId) return;
@@ -1544,18 +1546,51 @@
       });
     }
     // The list opens at the present, as FR24's own does (it starts three days back now): the first row from a quarter of
-    // an hour ago is brought to the top - once per board opened (FR24's own re-reads leave the user's place alone)
-    function scrollBoardToNow(rowId, key) {
-      var tries = 0;
-      (function look() {
-        var el = document.querySelector('[data-testid="airport-panel__schedules__flight__' + rowId + '"]'), main = el && el.closest('main');
-        if (!el || !main) { if (++tries < 40) oSetTimeout(look, 150); return; }
-        var wrap = el.closest('[data-testid="list-wrapper"]') || main;
-        if (wrap.__tlScrolled === key && Math.abs(main.scrollTop - (wrap.__tlTop || 0)) > 4) return;      // (moved by the user)
-        wrap.__tlScrolled = key;
-        main.scrollTop += el.getBoundingClientRect().top - main.getBoundingClientRect().top - 36;
-        wrap.__tlTop = main.scrollTop;
-      })();
+    // an hour ago is brought to the top, once per board opened. After that the row at the top of the view is held where it
+    // is through every re-read: FR24 draws the whole list again each time, and rows coming in above it - days of kept
+    // flights, as they are read - moved the view back "two days behind" without a touch. Held for six seconds after each
+    // answer, until the list is moved by the user (wheel, touch, a key, a click).
+    var ROW_TID = 'airport-panel__schedules__flight__', boardHold = null, boardTimes = {};
+    function boardRows(root) { return (root || document).querySelectorAll('[data-testid^="' + ROW_TID + '"]'); }
+    function rowById(id) { return document.querySelector('[data-testid="' + ROW_TID + id + '"]'); }
+    // (the row at the top of the view now - the first one not scrolled past - and how far below the list's top it is)
+    function topRowOf(main) {
+      var mt = main.getBoundingClientRect().top, rows = boardRows(main);
+      for (var i = 0; i < rows.length; i++) { var r = rows[i].getBoundingClientRect(); if (r.bottom > mt + 1) return { id: rows[i].getAttribute('data-testid').slice(ROW_TID.length), off: r.top - mt }; }
+      return null;
+    }
+    function stopBoardHold() { if (boardHold) boardHold.stop = true; }
+    function holdBoardRow(id, off, t) {
+      var h = boardHold = { id: String(id), off: off, t: t || 0, until: Date.now() + 6000, stop: false }, mo = null, main = null, tries = 0;
+      var apply = function () {
+        if (boardHold !== h || h.stop || Date.now() > h.until) { if (mo) mo.disconnect(); return false; }
+        var el = rowById(h.id);
+        // (the row gone from the new list - a flight now shown under another id: the one nearest its time)
+        if (!el && h.t) { var best = null, bd = Infinity; Object.keys(boardTimes).forEach(function (k) { var d = Math.abs(boardTimes[k] - h.t); if (d < bd && rowById(k)) { bd = d; best = k; } }); if (best != null && bd < 3600) { h.id = best; el = rowById(best); } }
+        var m = el && el.closest('main'); if (!el || !m) return true;
+        if (m !== main) {
+          if (mo) mo.disconnect(); main = m;
+          if (typeof MutationObserver === 'function') { mo = new MutationObserver(function () { if (window.requestAnimationFrame) window.requestAnimationFrame(apply); else oSetTimeout(apply, 16); }); mo.observe(m, { childList: true, subtree: true }); }
+          if (!m.__tlHoldL) { m.__tlHoldL = true; ['wheel', 'touchstart', 'keydown', 'mousedown'].forEach(function (ev) { m.addEventListener(ev, stopBoardHold, { passive: true }); }); }
+        }
+        var d = el.getBoundingClientRect().top - m.getBoundingClientRect().top - h.off;
+        if (Math.abs(d) > 1) m.scrollTop += d;
+        return true;
+      };
+      (function poll() { if (apply() && ++tries < 60) oSetTimeout(poll, 100); })();
+    }
+    // (an answer of the board: the present brought up when the board is opened; else the row at the top held there)
+    function placeBoard(first, key, data) {
+      var times = {}; (data || []).forEach(function (e) { if (e && e.id) times[e.id] = e.scheduledTime || e.landedTime || 0; });
+      var anyRow = boardRows()[0], main = anyRow && anyRow.closest('main'), wrap = main && (anyRow.closest('[data-testid="list-wrapper"]') || main);
+      var top = wrap && wrap.__tlKey === key ? topRowOf(main) : null;
+      if (top) holdBoardRow(top.id, top.off, boardTimes[top.id] || times[top.id] || 0);
+      else if (first) {
+        holdBoardRow(first.id, 36, first.scheduledTime || 0);
+        // (the board marked opened once its rows are drawn)
+        var tries = 0; (function mark() { var el = rowById(first.id), m = el && el.closest('main'); if (m) (el.closest('[data-testid="list-wrapper"]') || m).__tlKey = key; else if (++tries < 40) oSetTimeout(mark, 150); })();
+      }
+      boardTimes = times;
     }
     // the card of a kept row: from what was kept (FR24 has no card for it - or no longer gives a free account one)
     function archDetail(ar, apId, kind) {
@@ -1575,8 +1610,11 @@
     // BAE Systems' three airlines have no logo (the public-domain text logo from Wikimedia Commons is drawn for them);
     // the landing places the userscript has learned - private sites, strips - are no airports of FR24's. Added to every
     // full list FR24 receives, so its boards, cards and panel draw them as their own ("Ormskirk PVT", not "N/A"). When
-    // what is added has changed since FR24 last kept its list, that copy is dropped before FR24 opens it, so it reads the
-    // list anew - at most once an hour.
+    // what is added has changed since FR24 last kept its list, its next read of the list (it reads it again hourly) asks
+    // for the whole of it. (Until 1.0.1 FR24's copy was dropped - its IndexedDB database deleted - at the page's start:
+    // with another FR24 tab open the deletion waits for that tab, and FR24 here, opening the database behind it, never
+    // had its airports - every flight "N/A -> N/A", blocked flights without time zones or progress bar, until a reload.
+    // Nothing of FR24's own is deleted now.)
     var BAE_LOGO = { source: 'https://upload.wikimedia.org/wikipedia/commons/thumb/7/73/BAE_Systems_logo.svg/250px-BAE_Systems_logo.svg.png', dimensions: { width: 250, height: 39 } };
     var LOGO_ADD = { 583: BAE_LOGO, 3046: BAE_LOGO, 582: BAE_LOGO };
     var LISTS_V = '1';
@@ -1599,11 +1637,6 @@
       lsSet('tl.list.' + kind, listSig(kind));
       return true;
     }
-    ['airlines', 'airports'].forEach(function (kind) {
-      if (lsGet('tl.list.' + kind) === listSig(kind) || Date.now() - (Number(lsGet('tl.listDel.' + kind)) || 0) < 3600e3) return;
-      lsSet('tl.listDel.' + kind, String(Date.now()));
-      try { indexedDB.deleteDatabase(kind === 'airlines' ? 'Airlines' : 'Airports'); } catch (e) { /* none kept */ }
-    });
     function acceptSites(list) { if (!Array.isArray(list)) return; siteRows = list; lsSet('tl.sites', JSON.stringify(list)); }
     // Learned landing places stay in FR24's airport list (its panel and boards look airports up there by id) but never on
     // its map: the airport layer draws the 'airports' store's array - and highlights by IATA code, which every site shares
@@ -2382,7 +2415,7 @@
                   j.meta = Object.assign({}, j.meta, { currentPage: 1, previousPage: null, nextPage: null, hasMorePreviousData: false, hasMoreNextData: false });
                   j.data.sort(function (x, y) { return (x.scheduledTime || x.landedTime || 0) - (y.scheduledTime || y.landedTime || 0); });
                   var nowS1 = Date.now() / 1000 - 900, first = j.data.filter(function (e) { return e && (e.scheduledTime || 0) >= nowS1; })[0] || j.data[j.data.length - 1];
-                  if (first) scrollBoardToNow(first.id, apId + '/' + kind);
+                  placeBoard(first, apId + '/' + kind, j.data);
                 }
               }
               if (kind !== 'on-grounds') noteBoardRows(j.data, apId, kind);
@@ -2778,6 +2811,6 @@
       else if (d.__tweeksLadd === 'hello') post('ready', { stats: stats, feedReady: !!feedHeaders, hdr: feedHdrPublic(), v: BRIDGE_V });
     });
     window[NS] = { resolved: resolved, routes: routes, naRecs: naRecs, naRoutes: naRoutes, telem: telem, hist: hist, lastPos: lastPos, photoCache: photoCache, psCache: psCache, stats: stats, fetchPhotos: fetchPhotos, hello: function () { post('ready', { stats: stats, feedReady: !!feedHeaders, v: BRIDGE_V }); }, v: BRIDGE_V };
-    if (window.__tlTestHook) try { window.__tlTestHook({ csOf: csOf, patchTopFlights: patchTopFlights, fillFlightList: fillFlightList, routeRows: routeRows, liveDestFix: liveDestFix, hist: hist, preloaded: function () { return preloaded; }, parse: parse, photoFits: photoFits, makerOf: makerOf, patchFollow: patchFollow, patchFlightMsg: patchFlightMsg, pushFollow: pushFollow, followSt: function () { return followSt; }, setFollowSt: function (s) { followSt = s; }, shownPhotos: shownPhotos, photoCache: photoCache, FOLLOW: FOLLOW, DETAILS: DETAILS, fLen: fLen, fStr: fStr, fVar: fVar, patchFlight: patchFlight, patchLiveFeed: patchLiveFeed, fr24Named: fr24Named, psState: function () { return { q: psQ.length, busy: psBusy, last: psLast, blockedFor: Math.max(0, psBlockedUntil - Date.now()), pri: Array.from(psPri), jobs: photoJobs.size, head: psQ.slice(0, 3).map(function (j) { return j.hex; }) }; }, acceptPubTel: acceptPubTel, pubTelFor: pubTelFor, fillNativeCard: fillNativeCard, regsOfCallsign: regsOfCallsign, categoryOf: categoryOf, placeShort: placeShort, nativeFill: nativeFill, natInfo: natInfo, addArch: addArch, acceptBoardArch: acceptBoardArch, telem: telem, b64Encode: b64Encode, b64DecodeInto: b64DecodeInto, frameHeader: frameHeader, concat: concat, varintInt32: varintInt32, PLAYBACK: PLAYBACK, patchPlayback: patchPlayback, patchPlaybackRequest: patchPlaybackRequest, pbRoutes: pbRoutes, pbTelAt: pbTelAt, setPbTrace: function (t) { pbTrace = t; }, patchList: patchList, acceptSites: acceptSites, listSig: listSig, mergeRoutes: mergeRoutes, applyRoutes: applyRoutes, routesAdd: routesAdd, applyAirport: applyAirport, applyBoardPage: applyBoardPage, applyStats: applyStats, mergeFlights: mergeFlights, apData: apData, telAt: telAt, noteTelem: noteTelem, pbTraceOf: function () { return pbTrace; }, logoOf: logoOf, archDetail: archDetail, tsOf: tsOf, noteAirportJson: noteAirportJson, rwyOf: rwyOf, rwyPanel: rwyPanel, panelTick: panelTick, panelData: panelData, promoSlots: promoSlots, acceptAirportPanel: acceptAirportPanel, unlockRunways: unlockRunways, mvRows: mvRows, mvKept: mvKept, dayOf: dayOf, pbPanelTick: pbPanelTick, logoFix: logoFix, liveEntries: liveEntries, pbPos: pbPos, unlockFeed: unlockFeed, derivedVs: derivedVs, altHist: altHist, acceptAir: acceptAir, airCache: airCache, flushAir: flushAir, airWant: function () { return airWant; }, lastPos: lastPos, resolved: resolved, stats: stats, pbFind: pbFind, pbTraceUrl: pbTraceUrl, pbMerge: pbMerge, inBar: inBar, pbBlk: pbBlk, cardInfo: cardInfo, boardRowsSeen: boardRowsSeen, archById: archById, routes: routes, setCurFollow: function (id) { curFollowId = id; } }); } catch (e) { /* ignore */ }
+    if (window.__tlTestHook) try { window.__tlTestHook({ csOf: csOf, patchTopFlights: patchTopFlights, fillFlightList: fillFlightList, routeRows: routeRows, liveDestFix: liveDestFix, hist: hist, preloaded: function () { return preloaded; }, parse: parse, photoFits: photoFits, makerOf: makerOf, patchFollow: patchFollow, patchFlightMsg: patchFlightMsg, pushFollow: pushFollow, followSt: function () { return followSt; }, setFollowSt: function (s) { followSt = s; }, shownPhotos: shownPhotos, photoCache: photoCache, FOLLOW: FOLLOW, DETAILS: DETAILS, fLen: fLen, fStr: fStr, fVar: fVar, patchFlight: patchFlight, patchLiveFeed: patchLiveFeed, fr24Named: fr24Named, psState: function () { return { q: psQ.length, busy: psBusy, last: psLast, blockedFor: Math.max(0, psBlockedUntil - Date.now()), pri: Array.from(psPri), jobs: photoJobs.size, head: psQ.slice(0, 3).map(function (j) { return j.hex; }) }; }, acceptPubTel: acceptPubTel, pubTelFor: pubTelFor, fillNativeCard: fillNativeCard, regsOfCallsign: regsOfCallsign, categoryOf: categoryOf, placeShort: placeShort, nativeFill: nativeFill, natInfo: natInfo, addArch: addArch, acceptBoardArch: acceptBoardArch, telem: telem, b64Encode: b64Encode, b64DecodeInto: b64DecodeInto, frameHeader: frameHeader, concat: concat, varintInt32: varintInt32, PLAYBACK: PLAYBACK, patchPlayback: patchPlayback, patchPlaybackRequest: patchPlaybackRequest, pbRoutes: pbRoutes, pbTelAt: pbTelAt, setPbTrace: function (t) { pbTrace = t; }, patchList: patchList, acceptSites: acceptSites, listSig: listSig, mergeRoutes: mergeRoutes, applyRoutes: applyRoutes, routesAdd: routesAdd, applyAirport: applyAirport, applyBoardPage: applyBoardPage, applyStats: applyStats, mergeFlights: mergeFlights, apData: apData, telAt: telAt, noteTelem: noteTelem, pbTraceOf: function () { return pbTrace; }, logoOf: logoOf, archDetail: archDetail, tsOf: tsOf, noteAirportJson: noteAirportJson, rwyOf: rwyOf, rwyPanel: rwyPanel, panelTick: panelTick, panelData: panelData, promoSlots: promoSlots, acceptAirportPanel: acceptAirportPanel, unlockRunways: unlockRunways, mvRows: mvRows, mvKept: mvKept, dayOf: dayOf, pbPanelTick: pbPanelTick, logoFix: logoFix, liveEntries: liveEntries, pbPos: pbPos, unlockFeed: unlockFeed, derivedVs: derivedVs, altHist: altHist, acceptAir: acceptAir, airCache: airCache, flushAir: flushAir, airWant: function () { return airWant; }, lastPos: lastPos, resolved: resolved, stats: stats, pbFind: pbFind, pbTraceUrl: pbTraceUrl, pbMerge: pbMerge, inBar: inBar, pbBlk: pbBlk, cardInfo: cardInfo, boardRowsSeen: boardRowsSeen, archById: archById, placeBoard: placeBoard, stopBoardHold: stopBoardHold, needBoardArch: needBoardArch, routes: routes, setCurFollow: function (id) { curFollowId = id; } }); } catch (e) { /* ignore */ }
     post('ready', { stats: stats, feedReady: false, v: BRIDGE_V });
   }

@@ -299,18 +299,22 @@
       finally { naFillBusy = false; }
     })();
   }
-  // the page opened this airport's board: everything kept for it, now
+  // the page opened this airport's board: everything kept for it, now - with the monitor's flights of it in the same
+  // answer (its logs of every blocked aircraft, from memory: a fraction of a second). Its blocked aircraft's rows were
+  // "N/A" where they went or came from until a later answer brought them, and the list jumped as they came in.
   async function onNeedBoard(d) {
     const apId = Number(d.apId); if (!boardOk(apId)) return;
     boardAsked.set(apId, now());
+    const monP = boardMonFill(apId).catch(e => log('board monitor', e));
     const b = await boardFresh(apId);
+    await Promise.race([monP, sleep(1200)]);
     const rows = boardPend.get(apId); if (rows) { boardPend.delete(apId); for (const [kind, row] of rows) boardMerge(b, kind, row, apId); boardSave(apId, b); }
     boardSend(apId, b);
     // (the airline of each row is its callsign's: once FR24's airline list is in, the rows again)
     if (!fr24.airlines) fr24.loadAirlines().then(() => boardSend(apId, b)).catch(() => {});
     boardSchedFill(apId, b);
     { const ap = apById(apId); if (ap) monArea(ap.lat, ap.lon); }
-    boardMonFill(apId).then(() => boardInfoFill(apId)).catch(e => log('board monitor', e));
+    monP.then(() => boardInfoFill(apId)).catch(e => log('board monitor', e));
     boardFr24Fill(apId).catch(e => log('board schedule', e));
   }
   // FR24's own rows of a board as it served them (kept for when they have dropped off its free day)

@@ -26,6 +26,7 @@ let fails = 0;
 const check = (name, ok, extra) => { if (!ok) fails++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${extra !== undefined ? '  ' + JSON.stringify(extra).slice(0, 600) : ''}`); };
 const dayStr = t => { const d = new Date(t); return `${d.getUTCFullYear()}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${String(d.getUTCDate()).padStart(2, '0')}`; };
 const HEX = 'a9ca9d', REG = 'N73VR';
+const dd0 = k => dayStr(Date.now() - k * 864e5);
 
 // ---- the answers --------------------------------------------------------------------------------------------------
 // (adsb.lol's verification page, as it looks: a proof-of-work challenge; Cloudflare's "Just a moment")
@@ -57,24 +58,26 @@ function todayTrace(ap) {
 let TODAY = null;
 const asked = [];
 // per network: what it answers - { ['<hex>|<day or today>' or day or 'today']: [status, body] }, else the default
-const NET = { lol: { def: [404, ''] }, apl: { def: [404, ''] } };
+const NET = { lol: { def: [404, ''] }, apl: { def: [404, ''] }, tat: { def: [404, ''] } };
+let TATWORLD = null;   // (TheAirTraffic's whole-world file, when it answers one)
 const MON = 'https://143-47-224-210.sslip.io';
 // (the monitor, when on: /status, /hist - MONH.hist(hex) -> its answer for the aircraft - and /trace - MONH.trace(hex))
-const MONH = { on: false, hist: null, trace: null, slow: false, arc: null, idx: null };
+const MONH = { on: false, hist: null, trace: null, slow: false, arc: null, idx: null, world: 0 };
 function answer(url) {
   if (/flightradar24\.com\/mobile\/airports\/format/.test(url)) return [200, AIRPORTS];
   if (url.startsWith(MON)) {
     if (!MONH.on) return [404, ''];
-    if (url.startsWith(MON + '/status')) return [200, JSON.stringify({ v: 3, since: Date.now() - 3600e3, public: true, ver: '22.31.11', archive: Object.assign({ on: 220, have: 39, days: 39, running: '' }, MONH.idx != null ? { idx: MONH.idx } : {}) })];
-    let mm = url.match(/\/hist\?hex=([0-9a-f,]+)/); if (mm) { asked.push(['mon', 'hist', mm[1]]); return [200, JSON.stringify({ hv: Number((SRC.match(/const HIST_V = (\d+);/) || [])[1]), list: mm[1].split(',').map(h => Object.assign({ hex: h }, MONH.hist ? MONH.hist(h) : { days: {}, legs: [] })) })]; }
+    if (url.startsWith(MON + '/status')) return [200, JSON.stringify({ v: 3, since: Date.now() - 3600e3, public: true, ver: '22.31.11', archive: Object.assign({ on: 220, have: 39, days: 39, running: '' }, MONH.idx != null ? { idx: MONH.idx } : {}, MONH.world ? { world: { on: 366, v: 1, days: MONH.world } } : {}) })];
+    let mm = url.match(/\/hist\?hex=([0-9a-f,]+)(?:&since=([0-9-]+))?/); if (mm) { asked.push(['mon', 'hist', mm[1], mm[2] || '']); return [200, JSON.stringify({ hv: Number((SRC.match(/const HIST_V = (\d+);/) || [])[1]), list: mm[1].split(',').map(h => Object.assign({ hex: h }, MONH.hist ? MONH.hist(h) : { days: {}, legs: [] })) })]; }
     mm = url.match(/\/trace\?hex=([0-9a-f]{6})/); if (mm) { asked.push(['mon', 'trace', mm[1]]); const t = MONH.trace && MONH.trace(mm[1]); return t ? [200, JSON.stringify(t)] : [404, '']; }
     // (adsb.lol's archive through the monitor: MONH.arc(hex, 'YYYY-MM-DD') -> [status, body]; no index of any day without it)
     mm = url.match(/\/atrace\?hex=([0-9a-f]{6})&day=(\d{4}-\d\d-\d\d)$/); if (mm) { asked.push(['mon', 'atrace', mm[1], mm[2]]); return MONH.arc ? MONH.arc(mm[1], mm[2]) : [409, '{"noindex":1}']; }
     return [404, ''];
   }
-  const m = url.match(/^https:\/\/(adsb\.lol|globe\.airplanes\.live)\/(?:globe_history\/([\d/]+)|data)\/traces\/(\w\w)\/trace_full_(\w{6})\.json$/);
+  if (url === 'https://globe.theairtraffic.com/data/aircraft.json') { asked.push(['tat', 'world']); return TATWORLD ? [200, JSON.stringify(TATWORLD)] : [404, '']; }
+  const m = url.match(/^https:\/\/(adsb\.lol|globe\.airplanes\.live|globe\.theairtraffic\.com)\/(?:globe_history\/([\d/]+)|data)\/traces\/(\w\w)\/trace_full_(\w{6})\.json$/);
   if (m) {
-    const net = m[1] === 'adsb.lol' ? 'lol' : 'apl', day = m[2] || 'today';
+    const net = m[1] === 'adsb.lol' ? 'lol' : m[1] === 'globe.airplanes.live' ? 'apl' : 'tat', day = m[2] || 'today';
     asked.push([net, day, m[4]]);
     if (m[3] !== m[4].slice(-2)) return [500, 'wrong folder'];
     const a = NET[net][m[4] + '|' + day] || NET[net][day] || NET[net].def;
@@ -208,7 +211,8 @@ function makeWin() {
     check('walled from both sites: the monitor\'s days are the log - its flight (White Plains - San Juan) and its days without flights, every day marked', marks.every(m => m === 'l') && (h9.legs || []).filter(l => l.day === D5).length === 1, marks);
     check('... nothing asked of the walled sites for them (airplanes.live walled within the hour: not read again now)', !asked.some(a => a[0] === 'lol' || a[0] === 'apl') && asked.some(a => a[0] === 'mon' && a[1] === 'hist'), asked);
     const g9 = L.logGaps(HX);
-    check('... the log page no longer says hundreds of days not read: no "not read yet" for days the monitor gave', !/not read yet/.test(g9) && /verification page/.test(g9) && /the monitor has 39 of the last 220 days/.test(g9), g9);
+    // (1.0.1: and no verification page to act on either - it costs this log nothing, the monitor gave every day)
+    check('... the log page no longer says hundreds of days not read: no "not read yet" for days the monitor gave, no verification page to act on', !/not read yet/.test(g9) && !/verification page/.test(g9) && /the monitor has 39 of the last 220 days/.test(g9), g9);
     L.todayCache.delete(HX); asked.length = 0;
     const td9 = await L.loadToday(HX, 60000, { priority: true });
     const s9 = (td9.sums || []).map(l => (l.from ? l.from.code : '?') + '-' + (l.to ? l.to.code : '?'));
@@ -243,14 +247,22 @@ function makeWin() {
     const h11 = await L.loadHistory(HX3, n, null, { front: true });
     const marks = Array.from({ length: n }, (_, i) => h11.days[dd(i + 1)]), withFlights = [2, 45].map(k => (h11.legs || []).filter(l => l.day === dd(k)).length);
     check('an ordinary aircraft, both sites walling: every past day from adsb.lol\'s archive through the monitor - the days it flew with their flights (one older than adsb.lol\'s site keeps), the rest without', marks.every((m, i) => i + 1 === 10 ? !m : m === 'l') && withFlights.every(x => x > 0), { marks, withFlights });
-    const arcAsks = asked.filter(a => a[0] === 'mon' && a[1] === 'atrace'), lolAsks = asked.filter(a => a[0] === 'lol'), aplAsks = asked.filter(a => a[0] === 'apl');
+    // (this aircraft's requests: other aircraft's background loads may still be running)
+    const arcAsks = asked.filter(a => a[0] === 'mon' && a[1] === 'atrace' && a[2] === HX3), lolAsks = asked.filter(a => a[0] === 'lol' && a[2] === HX3), aplAsks = asked.filter(a => a[0] === 'apl' && a[2] === HX3);
     check('... each day asked of the monitor once; adsb.lol\'s site only for the day the monitor has no index of (walled: not even that); airplanes.live, walling, not asked', arcAsks.length === n && new Set(arcAsks.map(a => a[3])).size === n && lolAsks.every(a => a[1] === dd(10)) && aplAsks.length === 0, { arc: arcAsks.length, lol: lolAsks, apl: aplAsks.length });
     const g11 = L.logGaps(HX3);
-    check('... the log page: one day not read yet (the one without an index, adsb.lol walling) - not fifty', /\b1 day not read yet \(adsb\.lol: verification page/.test(g11), g11);
+    // (1.0.1: said as what it is - the monitor's copy still to come - not a verification page to act on)
+    check('... the log page: one day not read yet (the one without an index, adsb.lol walling) - not fifty; the monitor\'s copy still to come, no verification page to act on', /\b1 day not read yet \(the monitor(&#39;|')s copy of this day is not ready yet\)/.test(g11) && !/verification page/.test(g11), g11);
     // (the day's index made at the monitor: read next time, from the archive)
     MONH.arc = (hex, day) => hex === HX3 && day === dk(10) ? [200, file(10)] : NONE;
     asked.length = 0; const h11b = await L.loadHistory(HX3, n, null, { front: true });
     check('... once the monitor has its index: that day read from the archive too, nothing else asked again', h11b.days[dd(10)] === 'l' && (h11b.legs || []).some(l => l.day === dd(10)) && asked.filter(a => a[1] === 'atrace').length === 1 && !/not read yet/.test(L.logGaps(HX3)), { mark: h11b.days[dd(10)], asked });
+    // (1.0.1: a day adsb.lol never published - 6 May, its outage: the monitor says so; the log says it as what it is, no
+    // verification page to act on, nothing left "not read")
+    { const HX4 = 'c0a1b6'; L.store.mergeHex(HX4, { reg: 'G-ORDP', type: 'FA7X' });
+      MONH.arc = (hex, day) => day === dk(12) ? [404, '{"none":1,"unpub":1}'] : NONE;
+      asked.length = 0; const h12 = await L.loadHistory(HX4, 20, null, { front: true }), g12 = L.logGaps(HX4);
+      check('a day adsb.lol never published: noted as that - "in no public archive" - no day left not read, no verification page to act on, the sites not asked', h12.nopub && h12.nopub[dd(12)] === 1 && /in no public archive \(adsb\.lol published none\)/.test(g12) && !/not read yet/.test(g12) && !/verification page/.test(g12) && !asked.some(a => a[0] === 'lol' || a[0] === 'apl'), { g12, nopub: h12.nopub, asked: asked.filter(a => a[0] !== 'mon').length }); }
     // (a single past file - playback, the panel's take-off: from the archive too)
     asked.length = 0; MONH.arc = (hex, day) => hex === HX3 && day === dk(3) ? [200, file(3)] : NONE;
     const one = await L.fetchTrace(HX3, dd(3), { back: 3 }).catch(e => String(e.message || e));
@@ -260,6 +272,24 @@ function makeWin() {
     asked.length = 0; const h11c = await L.loadHistory('c0a1b4', 5, null, { front: true });
     check('... a 404 that does not say "none" (a path the monitor does not know): never a day without flights - no day marked, adsb.lol\'s site its source', asked.filter(a => a[1] === 'atrace').length === 5 && Object.keys(h11c.days || {}).length === 0 && Object.keys(h11c.err || {}).length === 5, { days: h11c.days, err: Object.values(h11c.err || {})[0] });
     MONH.arc = null; MONH.idx = null; MONH.on = false; }
+  // ---- 11c. (1.0.1) a monitor with the world log - every aircraft's flights of every day of adsb.lol's archive: an
+  // ordinary aircraft's days from it in one request, from the oldest day wanted; nothing asked day by day
+  { const HX5 = 'c0a1b7', HX6 = 'c0a1b8', n = 20, dd = k => dayStr(Date.now() - k * 864e5);
+    const bwf = L.engine.byIcao('EGNL'), lpl = L.engine.byIcao('EGGP'), D3 = dd(3), t3 = Date.parse(D3.replace(/\//g, '-') + 'T10:00:00Z') / 1000;
+    const leg3 = { day: D3, tStart: t3, tEnd: t3 + 1800, from: { id: bwf.id, code: 'BWF', conf: 'ground' }, to: { id: lpl.id, code: 'LPL', conf: 'ground' }, ended: true, startedOnGround: true, cs: 'BAE1', maxAlt: 9000, src: 'world', lx: ['', '', ''] };
+    MONH.hist = h => h === HX5 ? { days: Object.fromEntries(Array.from({ length: n }, (_, i) => [dd(i + 1), dd(i + 1) === D3 ? 1 : 0])), legs: [leg3], part: [], lo: Array.from({ length: n }, (_, i) => dd(i + 1)) } : { days: {}, legs: [] };
+    MONH.arc = () => [404, '{"none":1}']; MONH.idx = 49; MONH.on = true; MONH.slow = false; MONH.world = 0; await L.monCheck(true); await sleep(20);
+    L.store.mergeHex(HX6, { reg: 'G-ORDQ', type: 'FA7X' }); asked.length = 0;
+    await L.loadHistory(HX6, 3, null, { front: true });
+    check('a monitor without the world log: an ordinary aircraft\'s log not asked of it (its days one by one from the archive, as before)', !asked.some(a => a[1] === 'hist') && asked.some(a => a[1] === 'atrace' && a[2] === HX6), asked);
+    MONH.world = 300; await L.monCheck(true); await sleep(20);
+    L.store.mergeHex(HX5, { reg: 'G-ORDR', type: 'FA7X' }); asked.length = 0;
+    const h5 = await L.loadHistory(HX5, n, null, { front: true });
+    const marks = Array.from({ length: n }, (_, i) => h5.days[dd(i + 1)]), l3 = (h5.legs || []).filter(l => l.day === D3), hq = asked.filter(a => a[1] === 'hist' && a[2].includes(HX5));
+    check('a monitor with the world log: an ordinary aircraft\'s days from it in one request, from the oldest day wanted - every day marked, its flight there', hq.length === 1 && hq[0][3] === dd(n).replace(/\//g, '-') && marks.every(m => m === 'l') && l3.length === 1 && l3[0].to.code === 'LPL', { hq, marks, l3: l3.length });
+    check('... nothing asked day by day (the archive, the sites)', !asked.some(a => (a[1] === 'atrace' && a[2] === HX5) || ((a[0] === 'lol' || a[0] === 'apl') && a[2] === HX5)), asked.filter(a => a[2] === HX5));
+    check('... its flight kept as the day\'s read has it: not marked the monitor\'s own (kept over a read of the day here), no field of the monitor\'s left', l3.length === 1 && !l3[0].mon && !('src' in l3[0]) && !('lx' in l3[0]), l3[0]);
+    MONH.world = 0; MONH.arc = null; MONH.idx = null; MONH.hist = null; MONH.on = false; }
   // ---- 10. the monitor busy (reading adsb.lol's archives on the 1 GB VM): a late answer is not the monitor gone. One
   // slow answer took it for gone at once, for everything - logs, live figures, today's track (23 Oct)
   { MONH.on = true; MONH.slow = false; await L.monCheck(true); await sleep(20);
@@ -281,6 +311,43 @@ function makeWin() {
     MONH.on = false; const r3 = await L.monGet('/tel?hex=a7fa04').then(() => 'answered', e => String(e.message || e));
     check('... a refusal (HTTP 404) is an answer: still in use', L.monUp() && /HTTP 404/.test(r3), r3);
     MONH.on = false; }
+  // ---- 12. (1.0.1) TheAirTraffic: another network's files, and its whole-world file as a fallback live source ----------
+  { const HX5 = 'a0b0c5', D1 = dayStr(Date.now() - 864e5), D9 = dayStr(Date.now() - 9 * 864e5);
+    NET.lol.def = [403, POW]; NET.apl.def = [403, CF]; L.netState.lol.wallUntil = 0; L.netState.apl.wallUntil = 0; L.netState.tat.wallUntil = 0;
+    await L.readTrace('lol', 'abcdef', dd0(30), {}); await L.readTrace('apl', 'abcdef', dd0(30), {});
+    L.store.mergeHex(HX5, { reg: 'N5TAT', type: 'FA7X' });
+    // (today, the aircraft looked at, both sites walling: TheAirTraffic's file is its day)
+    NET.tat[HX5 + '|today'] = [200, JSON.stringify(Object.assign({}, TODAY, { icao: HX5 }))];
+    L.todayCache.delete(HX5); asked.length = 0;
+    const td = await L.loadToday(HX5, 60000, { priority: true });
+    const sums = (td.sums || []).map(l => (l.from ? l.from.code : '?') + '-' + (l.to ? l.to.code : '?'));
+    check('TheAirTraffic: today\'s file of the aircraft looked at, both sites walling - its flights from it (New Haven - Luton)', sums.includes('HVN-LTN') && asked.some(a => a[0] === 'tat' && a[1] === 'today' && a[2] === HX5) && td.nets.some(x => /TheAirTraffic: ok/.test(x)), { sums, nets: td.nets });
+    // (the background, adsb.lol walling, TheAirTraffic without the aircraft: no answer - never "no flights today")
+    const HX6 = 'a0b0c6'; L.store.mergeHex(HX6, { reg: 'N6TAT', type: 'FA7X' }); L.todayCache.delete(HX6); L.netState.lol.wallUntil = 0;
+    const bg = await L.loadToday(HX6, 60000, { bg: true }).then(() => 'answered', e => String(e.message || e));
+    check('... the background, adsb.lol walling, TheAirTraffic with no file of it: not taken for a day without flights', bg !== 'answered' && /TheAirTraffic: none/.test(bg), bg);
+    // (a recent day: its file merged in for the aircraft looked at - the day's mark as the others make it; an older day:
+    // not asked, TheAirTraffic keeping five days)
+    const D1S = Date.parse(D1.replace(/\//g, '-') + 'T00:00:00Z') / 1000;
+    NET.tat[HX5 + '|' + D1] = [200, JSON.stringify(Object.assign({}, REAL, { icao: HX5, timestamp: D1S }))];
+    // (its file of today flagged it LADD: its days asked of the monitor first - which has none of it here)
+    MONH.on = true; MONH.idx = 49; MONH.hist = null; await L.monCheck(true); await sleep(20);
+    MONH.arc = () => [404, '{"none":1}']; asked.length = 0;
+    const h = await L.loadHistory(HX5, 10, null, { front: true });
+    check('... a recent day: TheAirTraffic\'s file merged in where adsb.lol\'s archive has none - its flights in the log', (h.legs || []).some(l => l.day === D1) && asked.some(a => a[0] === 'tat' && a[1] === D1), { d1: (h.legs || []).filter(l => l.day === D1).length, asked: asked.filter(a => a[0] === 'tat').map(a => a[1]) });
+    check('... a day older than it keeps (9 days): not asked of it', !asked.some(a => a[0] === 'tat' && a[1] === D9));
+    // (a single file - playback: TheAirTraffic's when adsb.lol's does not come)
+    MONH.arc = () => [409, '{"noindex":1}']; asked.length = 0;
+    const one = await L.fetchTrace(HX5, D1, { back: 1 }).catch(e => String(e.message || e));
+    check('... a single past file (playback): TheAirTraffic\'s when adsb.lol\'s site walls', one && one.icao === HX5 && asked.some(a => a[0] === 'tat'), { one: one && one.icao });
+    MONH.arc = null; MONH.on = false;
+    // (the whole-world file as a live source: around a point, by address; read once for both)
+    const now0 = Date.now() / 1000;
+    TATWORLD = { now: now0, aircraft: [{ hex: '4bb421', r: 'TC-MAA', t: 'GLF6', flight: 'TCMAA   ', lat: 42.148, lon: 25.641, alt_baro: 37250, gs: 545, track: 111.5, seen_pos: 1 }, { hex: '400001', r: 'G-FARA', t: 'A320', lat: 51.5, lon: -0.1, alt_baro: 9000, gs: 300, track: 90, seen_pos: 1 }] };
+    asked.length = 0;
+    const near = await L.tatSource.area(42.15, 25.64, 50), byHex = await L.tatSource.hex('4bb421');
+    check('TheAirTraffic\'s whole-world file as a fallback live source: the aircraft around a point (TC-MAA over Bulgaria, not London\'s), and by address - the file read once', near.length === 1 && near[0].reg === 'TC-MAA' && byHex && byHex.type === 'GLF6' && asked.filter(a => a[0] === 'tat' && a[1] === 'world').length === 1 && L.tatSource.fallback === true, { near: near.map(c => c.reg), asked });
+    NET.lol.def = [404, '']; NET.apl.def = [404, '']; }
   console.log(fails ? `\n${fails} failed` : '\nall passed');
   process.exit(fails ? 1 : 0);
 })().catch(e => { console.log('FAIL  CRASH ' + (e && e.stack || e)); process.exit(1); });

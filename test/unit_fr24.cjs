@@ -94,6 +94,17 @@ const liveRow = (hex, o) => ({ a: Object.assign({ hex, lat: 50, lon: 0, alt_baro
     check('... over the ocean (FR24 satellite positions, no ADS-B): still named', I.ids.get(1) && I.ids.get(1).hex === 'a00001');
     const tb = I.table(0);
     check('... in the browsers\' table: id, address, registration, type, flags, how', tb.rows.length === 1 && tb.rows[0][0] === 1 && tb.rows[0][1] === 'a00001' && tb.rows[0][2] === 'N1' && tb.rows[0][3] === 'GLF6' && tb.rows[0][5] === 1 && tb.rows[0][6] === 'list', tb.rows[0]); }
+  // (1.0.1) TC-MAA, 23 Oct: FR24's blocked GA7C (G700) over Bulgaria and adsb.lol's TC-MAA, a GLF6 (G650) in its database, at
+  // the very same position, height, track and speed - the two databases name the airframe differently; never named before
+  { const e = env();
+    e.live.set('4bb421', liveRow('4bb421', { lat: 42.148, lon: 25.641, alt_baro: 37250, gs: 545, track: 111.5, dbFlags: 0, r: 'TC-MAA', t: 'GLF6' }));
+    const I = createIdent(e); I.observe([fl(11, { lat: 42.14886, lon: 25.63947, alt: 37275, trk: 111, spd: 545, type: 'GA7C' })], MS, 'scan'); I.match(MS);
+    const R = I.ids.get(11);
+    check('ident: TC-MAA - FR24\'s G700 (GA7C) named as the G650 (GLF6) adsb.lol has at its position: one maker\'s line', !!R && R.hex === '4bb421' && R.reg === 'TC-MAA', R);
+    check('... a maker\'s line: Gulfstreams alike, a Gulfstream and a Falcon not', I.typeRelation('GA7C', 'GLF6') === 'family' && I.typeRelation('GL5T', 'GLEX') === 'family' && I.typeRelation('C68A', 'C700') === 'family' && I.typeRelation('GLF6', 'FA7X') === 'different' && I.typeRelation('PC12', 'PC24') === 'different');
+    const e2 = env(); e2.live.set('4bb421', liveRow('4bb421', { lat: 42.148, lon: 25.641, alt_baro: 37250, gs: 545, track: 111.5, dbFlags: 0, r: 'TC-MAA', t: 'FA7X' }));
+    const I2 = createIdent(e2); I2.observe([fl(12, { lat: 42.14886, lon: 25.63947, alt: 37275, trk: 111, spd: 545, type: 'GA7C' })], MS, 'scan'); I2.match(MS);
+    check('... another maker\'s jet at that spot: not named', !I2.ids.has(12)); }
   // two that could be it: none; a flight with a callsign or registration: not FR24's N/A, left alone
   { const e = env();
     e.live.set('a00001', liveRow('a00001', { lat: 50.01, lon: 0.0 })); e.live.set('a00002', liveRow('a00002', { lat: 50.0, lon: 0.015, r: 'N2' }));

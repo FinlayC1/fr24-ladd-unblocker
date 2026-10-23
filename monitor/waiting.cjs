@@ -15,7 +15,7 @@ function createWaiting(env) {
   const C = Object.assign({ keepDays: 3, max: 10000, maxPts: 60, sample: 10, recentH: 6 }, env.cfg || {});
   const W = new Map();   // FR24 id -> { id, type, src: 'pb' | 'live', pts: [[t, lat, lon, alt ft | null, on the ground]], tries, next, first, kicked }
   const stats = { noted: 0, tries: 0, named: { track: 0, reckon: 0 }, expired: 0 };
-  const fam = t => String(t || '').toUpperCase().slice(0, 3);
+  const fam = env.typeFamily || (t => String(t || '').toUpperCase().slice(0, 3));   // (the engine's: a maker's line - GA7C and GLF6 alike)
   const typeFits = (a, b) => { a = String(a || '').toUpperCase(); b = String(b || '').toUpperCase(); return !a || !b || a === b || fam(a) === fam(b); };
   const R = p => p[4] ? 2 : 12;                     // (FR24's position and the track's at one moment: this far apart at most)
 

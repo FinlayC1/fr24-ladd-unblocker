@@ -59,6 +59,7 @@ Every copy connects to the project's shared monitor by default. You can change t
   - the airport boards you open;
   - the playback moments you play, with the flight id, position and type of each flight in them that has no name yet. The monitor keeps these positions, without your address, for up to three days while it works out which aircraft each flight is;
   - the place your map is looking at, so the monitor can follow it (it keeps that place rounded to a whole degree).
+  - (1.0.1) each flight your map works a route out for, as your browser sees it - Flightradar24's flight id, the aircraft, its track since it took off, Flightradar24's plan for it, its flights of the day, the weather and closures your browser has for the airports in question - so the monitor works the route out once and every browser shows the same. Kept without your address, for 30 minutes after the last time any browser sent it.
 - **A report every minute:**
   - the flights without a callsign your Flightradar24 page shows (Flightradar24's flight id, position, type);
   - the names your browser found for them, in live view and in playback;
@@ -66,7 +67,7 @@ Every copy connects to the project's shared monitor by default. You can change t
   - the routes it worked out for flights the monitor names (the airports, the chance, the times), so other browsers can show them;
   - the flights it learned from: an aircraft's take-off and landing airports and times, callsign and type, as rebuilt from public ADS-B, so every browser's route engine learns from them;
   - the pictures it found of blocked aircraft: the aircraft's ICAO address and the pictures' addresses on JetPhotos or Planespotters, with their photographers' credits, so other browsers show them without looking them up.
-- **Every 30 seconds:** the public ADS-B reports your browser fetched from adsb.lol and adsb.fi around your map, so other browsers need not fetch them again.
+- **Every 30 seconds:** the public ADS-B reports your browser fetched from adsb.lol, adsb.fi and TheAirTraffic around your map, so other browsers need not fetch them again.
 - **Once a day at most, the hello** described under [Counting installs](#counting-installs), unless you switched it off.
 
 **What it never receives:** your Flightradar24 account, cookies, password or e-mail address, anything typed into a page, or Flightradar24's device id for your browser. That id is sent only to a monitor of your own (one you gave a secret).

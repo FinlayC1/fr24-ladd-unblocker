@@ -240,6 +240,60 @@ const rep = (hex, o) => Object.assign({ hex, lat: 53.4, lon: -2.3, alt_baro: 120
     M.answer(new URL('http://x/hist?hex=a6a436'), Date.now() / 1000);
     check('... once: asked again at once, nothing more queued', M.histQ.filter(j => j.hex === 'a6a436').length === q1.length);
     M.histQ.length = 0; for (const j of q1) M.histPend.delete(j.hex + '|' + j.day); M.closed = was; }
+  // ---- (1.0.1) what the monitor heard itself, in the days its archive lacks - N811MK, 15 Oct: adsb.lol's archive has it
+  // parked at Trenton from 22:38 and nothing the next day; the monitor heard it take off at 23:22 and land at Valencia ------
+  { const hex = 'ab0e30', TTN = E.byIcao('KTTN'), VLC = E.byIcao('LEVC'), d15 = '2026-10-15', t0 = dayS(d15) + 23 * 3600 + 22 * 60;
+    M.markBlocked(hex, { reg: 'N811MK', type: 'GLF6' }, Date.now() / 1000);
+    // (its positions heard here: on the ground at Trenton, then the climb away east - a point a minute, as kept)
+    const heard = []; for (let t = t0 - 420; t < t0; t += 60) heard.push([t, TTN.lat, TTN.lon, 'ground']);
+    for (let k = 0, t = t0; t < dayS(d15) + 86400; t += 60, k++) { const p = E.destPoint(TTN.lat, TTN.lon, 60, 2 + k * 12); heard.push([t, p[0], p[1], Math.min(41000, 1500 + k * 2500)]); }
+    M.tracks.put(hex, heard);
+    await M.histDay(hex, d15, { state: 'ok', j: JSON.parse(fx(hex, d15)) }, { state: 'later' });
+    const h15 = M.histRead(hex).legs.filter(l => l.day === '2026/10/15');
+    check('N811MK 15 Oct: the archive\'s day with what the monitor heard in its hole - Bedford -> Trenton, and the take-off from Trenton at 23:22', h15.length === 2 && h15.some(l => l.from && l.from.code === 'BED' && l.to && l.to.code === 'TTN') && h15.some(l => l.from && l.from.code === 'TTN' && Math.abs(l.tStart - t0) < 300 && !l.ended), h15.map(l => [l.from && l.from.code, l.to && l.to.code, new Date(l.tStart * 1000).toISOString().slice(11, 16)]));
+    // (the day after: no file of it in the archive - its flight from the live log; and the live log's copy of a flight the
+    // day has is not served twice)
+    M.archDays.set('2026-10-16', true); M.archDays.set('2026-10-15', true);
+    const h = M.histRead(hex); h.days['2026/10/15'] = 1; h.legs = h.legs.filter(l => !(l.day === '2026/10/15' && l.from && l.from.code === 'TTN')); M.histWrite(hex, h);
+    const bed = h.legs.find(l => l.day === '2026/10/15');
+    M.legs.set(hex, new Map([[1, { hex, reg: 'N811MK', type: 'GLF6', cs: 'N811MK', ladd: true, from: { id: TTN.id, code: 'TTN', conf: 'ground' }, to: { id: VLC.id, code: 'VLC', conf: 'low' }, tStart: t0, tOff: t0 + 150, tEnd: t0 + 6.6 * 3600, tOn: t0 + 6.6 * 3600, ended: true, open: false, startedOnGround: true }],
+      [2, { hex, reg: 'N811MK', type: 'GLF6', cs: 'N811MK', ladd: true, from: bed.from, to: bed.to, tStart: bed.tStart + 30, tEnd: bed.tEnd - 20, ended: true, open: false, startedOnGround: true }]]));
+    const o = M.histOf(hex), s15 = o.legs.filter(l => l.day === '2026/10/15');
+    check('/hist: the flight heard here live that the archive lacks served with its day (Trenton -> Valencia), marked so - the day counts it', o.days['2026/10/15'] === 2 && s15.length === 2 && s15.some(l => l.src === 'live' && l.to && l.to.code === 'VLC' && l.lx), { days: o.days['2026/10/15'], legs: s15.map(l => [l.from && l.from.code, l.to && l.to.code, l.src]) });
+    check('... the live log\'s copy of the day\'s own flight not served again', s15.filter(l => l.from && l.from.code === 'BED').length === 1);
+    // (the flight-number page: the aircraft's whole log - the days rebuilt and the live log's flights, each once)
+    const fl = M.flightsOfCs('N811MK');
+    check('/flights?cs=: the whole log - Trenton -> Valencia and Bedford -> Trenton, each once, with the aircraft', fl.filter(l => l.to && l.to.code === 'VLC').length === 1 && fl.filter(l => l.from && l.from.code === 'BED').length === 1 && fl.every(l => l.hex === hex && l.reg === 'N811MK'), fl.map(l => [l.from && l.from.code, l.to && l.to.code]));
+    // (a flight the archive split at midnight - "Naples -> ?" and "? -> Trenton" - and the live log's whole copy: one flight)
+    const APF = E.byIcao('KAPF'), d23 = '2026/09/23', t23 = dayS('2026-09-23') + 22 * 3600 + 41 * 60;
+    const h2 = M.histRead(hex); h2.days[d23] = 1; h2.days['2026/09/24'] = 1;
+    h2.legs.push({ day: d23, tStart: t23, tEnd: dayS('2026-09-24') - 1, from: { id: APF.id, code: 'APF', conf: 'low' }, to: null, ended: false, how: 'open', startedOnGround: false, startAlt: 450, endAlt: 35000, endLat: 36.5, endLon: -76.9, endGs: 470, maxAlt: 35000, cs: 'N811MK' },
+      { day: '2026/09/24', tStart: dayS('2026-09-24'), tEnd: dayS('2026-09-24') + 46 * 60, from: null, to: { id: TTN.id, code: 'TTN', conf: 'ground' }, ended: true, how: 'ground', startedOnGround: false, startAlt: 35000, startLat: 36.6, startLon: -76.85, startGs: 470, maxAlt: 35000, cs: 'N811MK' });
+    M.histWrite(hex, h2);
+    M.legs.get(hex).set(3, { hex, cs: 'N811MK', from: { id: APF.id, code: 'APF', conf: 'low' }, to: { id: TTN.id, code: 'TTN', conf: 'ground' }, tStart: t23 - 30, tEnd: dayS('2026-09-24') + 45 * 60, ended: true, open: false });
+    const fl2 = M.flightsOfCs('N811MK').filter(l => l.tStart > dayS('2026-09-23') && l.tStart < dayS('2026-09-25'));
+    check('... a flight cut at midnight in the archive\'s days: one flight Naples -> Trenton, not "Naples -> -" and "- -> Trenton"', fl2.length === 1 && fl2[0].from.code === 'APF' && fl2[0].to.code === 'TTN', fl2.map(l => [l.from && l.from.code, l.to && l.to.code]));
+    M.legs.delete(hex); }
+  // ---- (1.0.1) TheAirTraffic's whole-world file, once a minute: its LADD aircraft taken in; every aircraft a candidate for
+  // naming FR24's blocked flights and for /near (TC-MAA, unflagged in it, a G650 at FR24's G700's position) -----------------
+  { const t = Date.now() / 1000, world = { now: t, aircraft: [
+      { hex: 'a0d0e1', r: 'N1TAT', t: 'GLF6', dbFlags: 8, flight: 'N1TAT   ', lat: 40.1, lon: -74.2, alt_baro: 31000, gs: 450, track: 80, seen_pos: 1 },
+      { hex: '4bb421', r: 'TC-MAA', t: 'GLF6', flight: 'TCMAA   ', lat: 42.148, lon: 25.641, alt_baro: 37250, gs: 545, track: 111.5, seen_pos: 2 },
+      { hex: '400002', r: 'G-PLNB', t: 'A320', lat: 51.47, lon: -0.45, alt_baro: 'ground', gs: 3, track: 90, seen_pos: 1 },
+      { hex: 'abcdef', r: 'N9', t: 'C172' } ] };
+    check('TheAirTraffic: asked once a minute by default', M.CFG.tatEvery === 60);
+    const got = []; const ok = await M.pollTat({ get: async u => { got.push(u); return { status: 200, text: JSON.stringify(world) }; } });
+    check('... its whole-world file read: the LADD aircraft in it taken in as the LADD list\'s (the live list)', ok && got[0] === 'https://globe.theairtraffic.com/data/aircraft.json' && M.live.has('a0d0e1') && !M.live.has('400002') && M.TAT.aircraft === 3 && M.TAT.taken === 1, { ok, TAT: M.TAT });
+    const near = await M.nearAnswer(42.15, 25.64, 50);
+    check('... every aircraft in it there for naming FR24\'s blocked flights and for /near - TC-MAA over Bulgaria, unflagged', near.ac.some(a => a.hex === '4bb421' && a.r === 'TC-MAA'), near.ac.map(a => a.hex));
+    const st = M.answer(new URL('http://x/status'), Date.now() / 1000);
+    check('... /status says so (polls, aircraft, its list\'s age)', st.tat && st.tat.polls >= 1 && st.tat.aircraft === 3 && st.listAge.tat != null, st.tat);
+    // (a verification page: left alone ten minutes; three in a row an hour)
+    for (let k = 0; k < 3; k++) { delete M.pause['globe.theairtraffic.com']; await M.pollTat({ get: async () => ({ status: 403, text: '<html><head><title>Just a moment...</title></head><body>challenge-platform</body></html>' }) }); if (k === 0) check('... a verification page: left alone ten minutes', Math.abs(M.pause['globe.theairtraffic.com'] - Date.now() - 600e3) < 5000); }
+    check('... three in a row: an hour', Math.abs(M.pause['globe.theairtraffic.com'] - Date.now() - 3600e3) < 5000 && /verification page/.test(M.TAT.last), M.TAT.last);
+    const asked0 = []; const r2 = await M.pollTat({ get: async u => { asked0.push(u); return { status: 200, text: '{}' }; } });
+    check('... and not asked while left alone', r2 === false && !asked0.length);
+    delete M.pause['globe.theairtraffic.com']; M.TAT.inARow = 0; }
   // ---- every saved flight log deleted, once, on the first start of this version (and when asked): learned data kept ---------
   { const store = fs.mkdtempSync(path.join(os.tmpdir(), 'monreset-'));
     fs.mkdirSync(path.join(store, 'hist'), { recursive: true }); fs.mkdirSync(path.join(store, 'learn'), { recursive: true });
