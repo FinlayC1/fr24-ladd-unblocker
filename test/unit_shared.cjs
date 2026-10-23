@@ -119,6 +119,14 @@ const lastReport = ip => { for (let i = reports.length - 1; i >= 0; i--) if (rep
   check('... sent with A\'s next report, taken by the monitor', !!rep && (rep.d.routes || []).length === 1 && rep.rep.routes === 1 && !LA.routesOut.has(ID), rep && { routes: rep.d.routes, taken: rep.rep.routes });
   LA.publishRoute(ID, Object.assign({}, routeA, { computedAt: Date.now() }));
   check('... and not again while it stays the same', !LA.routesOut.has(ID));
+  // (a moment with nothing - its track and log not to be had, the sites walling the browser and the monitor slow: an
+  // empty route - the page keeps the one it has: taken away, FR24's panel lost the airports, their time zones and the
+  // progress bar, 23 Oct)
+  A.__posted.length = 0;
+  LA.publishRoute(ID, { computedAt: Date.now(), quick: false, onGround: false });
+  check('a route that comes out empty for a moment, in the air: the page keeps the one it has (no "no route" sent)', !posted(A, 'route').some(m => m.id === ID), posted(A, 'route'));
+  LA.publishRoute(ID, Object.assign({}, routeA, { computedAt: Date.now() }));
+  check('... the route again: the page has it', posted(A, 'route').some(m => m.id === ID && m.route && m.route.destIata === 'TEB'));
 
   // ---- B: the flight not on its map - the name and A's route together ----------------------------------------------
   await sleep(5); B.__posted.length = 0; await LB.pullSrvIds();

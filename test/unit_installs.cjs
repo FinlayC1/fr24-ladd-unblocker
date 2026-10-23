@@ -54,12 +54,13 @@ const storeText = () => { let s = ''; const walk = d => { for (const e of fs.rea
   // ---- installs.cjs on its own ---------------------------------------------------------------------------------------
   check('a network: IPv4 as it is (a mapped one too), IPv6 by its /64', I.netOf('::ffff:198.51.100.7') === '198.51.100.7' && I.netOf('2001:db8:77:88::5') === I.netOf('2001:DB8:77:88:aaaa:0:0:9') && I.netOf('2001:db8:77:88::5') !== I.netOf('2001:db8:77:89::5'), [I.netOf('2001:db8:77:88::5')]);
   check('versions compared as numbers', I.cmpVer('22.28.9', '22.28.10') < 0 && I.cmpVer('22.3.0', '22.28.0') < 0 && I.cmpVer('23.0.0', '22.99.99') > 0 && I.cmpVer('1.2.3', '1.2.3') === 0);
+  check('1.0.0 and on newer than every beta (22.x, "B22.x")', I.cmpVer('1.0.0', '22.31.12') > 0 && I.cmpVer('22.31.12', '1.0.0') < 0 && I.cmpVer('B22.31.11', '22.31.10') > 0 && I.cmpVer('B22.31.11', '1.0.0') < 0 && I.cmpVer('1.0.1', '1.0.0') > 0 && I.cmpVer('1.10.0', '1.9.9') > 0 && I.cmpVer('2.0.0', '1.99.99') > 0 && I.cmpVer('', '1.0.0') < 0 && I.cmpVer('', '22.0.0') < 0 && I.cmpVer('v1.0.0', '1.0.0') === 0);
   { const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'moninst-u-')), D = 86400e3, now = Date.now();
     const A = I.createInstalls({ store: dir, max: 10 });
     A.hello(I.valid(hello({ id: id('1') })), '198.51.100.1', now - 401 * D);
     A.hello(I.valid(hello({ id: id('2') })), '198.51.100.2', now - 2 * D); A.hello(I.valid(hello({ id: id('3') })), '198.51.100.2', now - 2 * D);
     A.hello(I.valid(hello({ id: id('4') })), '198.51.100.4', now - D - 1000);
-    A.hello(I.valid(hello({ id: id('5'), ver: '1.0.0' })), '198.51.100.5', now);
+    A.hello(I.valid(hello({ id: id('5'), ver: '22.0.0' })), '198.51.100.5', now);
     const s = A.summary(now, VER), dd = new Date(now - 2 * D).toISOString().slice(0, 10), d1 = new Date(now - D).toISOString().slice(0, 10);
     const day2 = s.activePerDay.find(r => r[0] === dd), day1 = s.activePerDay.find(r => r[0] === d1);
     check('installs.cjs: each finished day kept as its active people and installs (two ids, one network: 1 person)', day2 && day2[1] === 1 && day2[2] === 2 && day1 && day1[1] === 1 && day1[2] === 1, { day2, day1 });

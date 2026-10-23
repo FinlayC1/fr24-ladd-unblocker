@@ -77,7 +77,8 @@ function parseTrace(buf) {
 }
 
 // One day: every trace in the archive whose aircraft want(hex, head) takes, to onTrace(hex, json) - in the archive's
-// order. opts.get(url) -> HTTP status of a one-byte request; opts.open(url) -> an async iterable of the part's bytes.
+// order. opts.get(url) -> HTTP status of a one-byte request; opts.open(url) -> an async iterable of the part's bytes;
+// opts.pace() (optional) - awaited every 200 traces, the ones not taken too: the download waits while it does.
 // -> { published: false } or { published: true, parts, entries, traces, taken, bad, ms }
 async function importDay(day, want, onTrace, opts) {
   const t0 = Date.now(), parts = await partsOf(day, opts.get);
@@ -86,6 +87,7 @@ async function importDay(day, want, onTrace, opts) {
   const RE = /(?:^|\/)traces\/[0-9a-f]{2}\/trace_full_([0-9a-f]{6})\.json$/;
   const rd = tarReader((name) => RE.test(name), async (name, buf) => {
     const hex = RE.exec(name)[1]; st.traces++;
+    if (opts.pace && st.traces % 200 === 0) await opts.pace();
     const hd = headOf(buf); if (!hd) { st.bad++; return; }
     if (!want(hex, hd)) return;
     let j; try { j = parseTrace(buf); } catch (e) { st.bad++; return; }
