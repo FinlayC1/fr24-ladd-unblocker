@@ -2,6 +2,39 @@
 
 All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PATCH`. The userscript and the monitor are released together.
 
+## [22.31.11] - 2026-10-23
+
+### Fixed
+- **Flight logs work with both sites walled.** The user's browser is shown adsb.lol's proof-of-work page and Cloudflare's block page by airplanes.live ("Attention Required!"), so it can read neither site's files. The monitor already had 39 of the last 40 days from adsb.lol's archives, but the log still said "221 days not fully read". The monitor only served days the aircraft flew, so every other day was asked of the walled sites.
+  - **The monitor serves every day its archives cover.** A day the aircraft isn't in the archive is served as one without flights, as adsb.lol knows it.
+  - **The browser takes those days** as read from adsb.lol alone. A day with no flights from the monitor used to be read again from both sites (airplanes.live has had flights adsb.lol missed, TC-ACN on 13 Sep). It still is when the aircraft is looked at and airplanes.live answers this browser. When airplanes.live has walled this browser within the hour, the day stays as the monitor has it, with nothing asked.
+  - **"Not read yet"** now counts only days with nothing at all. A day with adsb.lol's flights and airplanes.live's still to add isn't a hole.
+- **Today's flights with both sites walled.** The monitor's new `/trace` gives an aircraft's positions over the last 26 hours, from its own polling of adsb.lol's API, which has no verification page. It uses adsb.lol's trace format.
+  - The browser reads it with both sites for the aircraft looked at.
+  - For other blocked, LADD and military aircraft, it reads it when adsb.lol's file doesn't come.
+
+### Changed
+- **The monitor reads adsb.lol's archives for 220 days, two at a time** (`archiveDays` 220, `archiveJobs` 2), newest first. 220 days is the whole log page. Archives exist back to January.
+  - Days in that range are left to the archive loop, not asked of adsb.lol's site one aircraft at a time.
+  - A day's job waits for its archive, however old the day.
+- **Military aircraft's days are also built from the archives** (not followed live), and the browser asks the monitor for them as for LADD aircraft.
+
+### Tests
+- `unit_archive`:
+  - a military aircraft taken and not made blocked;
+  - an aircraft not in a day's archive served that day as one without flights;
+  - days 30 and 219 back "to come", day 300 not covered;
+  - filling a log queues nothing the archives cover;
+  - two days read at once, the same aircraft's file written by both;
+  - `/trace`.
+- `unit_netfetch`, both sites walled as in the user's browser:
+  - the monitor's days (a flight and 11 days without) are the whole log, with nothing asked of the sites;
+  - no "not read yet" for those days;
+  - today's crossing read from the monitor's positions;
+  - a military aircraft's log asked of the monitor;
+  - an ordinary aircraft's positions not asked of the monitor in the background.
+- `unit_histgap`: "not asked again next time" allows for days that ended under 6 hours ago, which are read again by design. It failed between 00:00 and 06:00 UTC.
+
 ## [22.31.10] - 2026-10-22
 
 ### Fixed

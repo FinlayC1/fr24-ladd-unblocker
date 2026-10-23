@@ -44,6 +44,7 @@ const rep = (hex, o) => Object.assign({ hex, lat: 53.4, lon: -2.3, alt_baro: 120
 (async () => {
   // ---- the poll step: LADD list, then military, then PIA; adsb.fi's military list while adsb.lol is paused --------------
   M.CFG.areas = []; M.CFG.lolKeepDays = 100000;   // (the fixtures' days within what adsb.lol keeps, whatever the date)
+  M.CFG.archiveDays = 0;   // (each day asked of adsb.lol's site here; the days from its archives: unit_archive)
   lists = { ladd: [rep('a00001', { dbFlags: 8, r: 'N1', t: 'GLF6' })], mil: [rep('ae0001', { dbFlags: 1, r: '11-0001', t: 'C17' })], fi: [rep('ae0002', { dbFlags: 1, t: 'K35R' })], area: [rep('400001', { r: 'G-PLAIN', t: 'A320' })] };
   asked.length = 0;
   for (let i = 0; i < 3; i++) await M.step();

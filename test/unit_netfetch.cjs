@@ -59,9 +59,17 @@ const asked = [];
 // per network: what it answers - { ['<hex>|<day or today>' or day or 'today']: [status, body] }, else the default
 const NET = { lol: { def: [404, ''] }, apl: { def: [404, ''] } };
 const MON = 'https://143-47-224-210.sslip.io';
+// (the monitor, when on: /status, /hist - MONH.hist(hex) -> its answer for the aircraft - and /trace - MONH.trace(hex))
+const MONH = { on: false, hist: null, trace: null };
 function answer(url) {
   if (/flightradar24\.com\/mobile\/airports\/format/.test(url)) return [200, AIRPORTS];
-  if (url.startsWith(MON)) return [404, ''];
+  if (url.startsWith(MON)) {
+    if (!MONH.on) return [404, ''];
+    if (url.startsWith(MON + '/status')) return [200, JSON.stringify({ v: 3, since: Date.now() - 3600e3, public: true, ver: '22.31.11', archive: { on: 220, have: 39, days: 39, running: '' } })];
+    let mm = url.match(/\/hist\?hex=([0-9a-f,]+)/); if (mm) { asked.push(['mon', 'hist', mm[1]]); return [200, JSON.stringify({ hv: Number((SRC.match(/const HIST_V = (\d+);/) || [])[1]), list: mm[1].split(',').map(h => Object.assign({ hex: h }, MONH.hist ? MONH.hist(h) : { days: {}, legs: [] })) })]; }
+    mm = url.match(/\/trace\?hex=([0-9a-f]{6})/); if (mm) { asked.push(['mon', 'trace', mm[1]]); const t = MONH.trace && MONH.trace(mm[1]); return t ? [200, JSON.stringify(t)] : [404, '']; }
+    return [404, ''];
+  }
   const m = url.match(/^https:\/\/(adsb\.lol|globe\.airplanes\.live)\/(?:globe_history\/([\d/]+)|data)\/traces\/(\w\w)\/trace_full_(\w{6})\.json$/);
   if (m) {
     const net = m[1] === 'adsb.lol' ? 'lol' : 'apl', day = m[2] || 'today';
@@ -142,7 +150,7 @@ function makeWin() {
   check('three days ago - neither answering (wall, 502): not known either', !h.days[D3] && !!h.miss[D3] && /airplanes\.live: server error \(HTTP 502\)/.test(h.err[D3] || ''), h.err[D3]);
   check('... adsb.lol asked at most once in all of it (its verification page remembered)', asked.filter(x => x[0] === 'lol').length <= 1, asked.filter(x => x[0] === 'lol'));
   const gaps = L.logGaps(HEX);
-  check('the log page says it: adsb.lol showing this browser a verification page, with the site to open; the days not fully read', /adsb\.lol is showing this browser a verification page/.test(gaps) && /href="https:\/\/adsb\.lol\/"/.test(gaps) && /days? not fully read yet/.test(gaps), gaps);
+  check('the log page says it: adsb.lol showing this browser a verification page, with the site to open; the days not fully read', /adsb\.lol is showing this browser a verification page/.test(gaps) && /href="https:\/\/adsb\.lol\/"/.test(gaps) && /days? not read yet/.test(gaps), gaps);
   check('... on a line of its own under the summary (a block that wraps - the footer no longer widens FR24\'s table)', /^<div class="tl-foot-note">[\s\S]*<\/div>$/.test(gaps) && /tr\.tl-foot td\{[^}]*white-space:normal!important/.test(SRC), gaps.slice(0, 80));
 
   // ---- 5. both networks answering "no file": a day without flights ----------------------------------------------------
@@ -179,6 +187,38 @@ function makeWin() {
   const got = await until(() => { const p = posted.filter(d => d && d.__tweeksLadd === 'hist' && d.reg === REG && Array.isArray(d.data)).pop(); return p && rowsOf(p).includes('HVN-LTN') && rowsOf(p).includes('MMU-HVN') ? p : null; }, 15000);
   const last = posted.filter(d => d && d.__tweeksLadd === 'hist' && d.reg === REG && Array.isArray(d.data)).pop();
   check('"Recent N73VR flights": New Haven - Luton (today, before the flight on screen) and Morristown - New Haven (two days ago) both listed', !!got, last && rowsOf(last));
+  // ---- 9. walled from both sites, as the user's browser is (N613BH): the monitor's days - from adsb.lol's archives - are the
+  // log, the days without flights included; today's flights from the monitor's own positions
+  { const HX = 'a7fa04', REG2 = 'N613BH', n = 12, dd = k => dayStr(Date.now() - k * 864e5);
+    NET.lol.def = [403, POW]; NET.apl.def = [403, CF]; L.netState.lol.wallUntil = 0; L.netState.apl.wallUntil = 0;
+    // (each site has shown this browser its page once already, as the user's had)
+    await L.readTrace('lol', 'abcdef', dd(30), {}); await L.readTrace('apl', 'abcdef', dd(30), {});
+    const wpi = L.engine.byIcao('KHPN'), sju = L.engine.byIcao('TJSJ'), D5 = dd(5), t5 = Date.parse(D5.replace(/\//g, '-') + 'T14:00:00Z') / 1000;
+    const leg5 = [{ day: D5, tStart: t5, tEnd: t5 + 13000, from: { id: wpi.id, code: 'HPN', conf: 'ground' }, to: { id: sju.id, code: 'SJU', conf: 'ground' }, ended: true, startedOnGround: true, cs: 'TWY318', maxAlt: 41000 }];
+    MONH.hist = () => ({ days: Object.fromEntries(Array.from({ length: n }, (_, i) => [dd(i + 1), dd(i + 1) === D5 ? 1 : 0])), legs: leg5, part: [], lo: Array.from({ length: n }, (_, i) => dd(i + 1)) });
+    MONH.trace = hex => hex === HX ? Object.assign({}, TODAY, { icao: HX, r: REG2, t: 'F900', src: 'monitor' }) : null;
+    MONH.on = true; await L.monCheck(true); await sleep(50);
+    L.store.mergeHex(HX, { reg: REG2, type: 'F900', ladd: true });
+    asked.length = 0;
+    const h9 = await L.loadHistory(HX, n, null, { front: true });
+    const marks = Array.from({ length: n }, (_, i) => h9.days[dd(i + 1)]);
+    check('walled from both sites: the monitor\'s days are the log - its flight (White Plains - San Juan) and its days without flights, every day marked', marks.every(m => m === 'l') && (h9.legs || []).filter(l => l.day === D5).length === 1, marks);
+    check('... nothing asked of the walled sites for them (airplanes.live walled within the hour: not read again now)', !asked.some(a => a[0] === 'lol' || a[0] === 'apl') && asked.some(a => a[0] === 'mon' && a[1] === 'hist'), asked);
+    const g9 = L.logGaps(HX);
+    check('... the log page no longer says hundreds of days not read: no "not read yet" for days the monitor gave', !/not read yet/.test(g9) && /verification page/.test(g9) && /the monitor has 39 of the last 220 days/.test(g9), g9);
+    L.todayCache.delete(HX); asked.length = 0;
+    const td9 = await L.loadToday(HX, 60000, { priority: true });
+    const s9 = (td9.sums || []).map(l => (l.from ? l.from.code : '?') + '-' + (l.to ? l.to.code : '?'));
+    check('today, walled from both sites: the monitor\'s positions read - the night\'s crossing in today\'s flights', s9.includes('HVN-LTN') && asked.some(a => a[0] === 'mon' && a[1] === 'trace') && td9.nets.some(x => /the monitor: ok/.test(x)), { s9, nets: td9.nets });
+    // (a military aircraft: the monitor asked for its log too)
+    L.store.mergeHex('ae0cf1', { reg: '10-0001', type: 'C17', mil: true }); asked.length = 0;
+    await L.loadHistory('ae0cf1', 3, null, { front: true });
+    check('a military aircraft: its log asked of the monitor too', asked.some(a => a[0] === 'mon' && a[1] === 'hist' && a[2].includes('ae0cf1')), asked);
+    // (an aircraft not blocked, the monitor's answer for it not asked in the background: adsb.lol's file failing is all)
+    L.todayCache.delete('4ca9e9'); L.store.mergeHex('4ca9e9', { reg: 'EI-PLN' }); asked.length = 0; L.netState.lol.wallUntil = 0;
+    await L.loadToday('4ca9e9', 60000, { bg: true }).catch(() => null);
+    check('an ordinary aircraft in the background: the monitor not asked for its positions', !asked.some(a => a[0] === 'mon'), asked);
+    MONH.on = false; }
   console.log(fails ? `\n${fails} failed` : '\nall passed');
   process.exit(fails ? 1 : 0);
 })().catch(e => { console.log('FAIL  CRASH ' + (e && e.stack || e)); process.exit(1); });
