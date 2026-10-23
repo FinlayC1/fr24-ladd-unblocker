@@ -379,9 +379,10 @@
   }
   function logGapsOf(hex) {
     const h = store.peekHist(hex); if (!h || !h.err) return '';
-    const ds = Object.keys(h.err).filter(d => !h.days[d] || h.days[d] === 'p'); if (!ds.length) return '';
+    // (a day not read at all - not one with adsb.lol's flights in it, airplanes.live's still to add)
+    const ds = Object.keys(h.err).filter(d => !h.days[d]); if (!ds.length) return '';
     const why = [...new Set(ds.map(d => h.err[d]))].slice(0, 2).join('; ');
-    return `${ds.length} day${ds.length > 1 ? 's' : ''} not fully read yet (${esc(why)}) - read again next time`;
+    return `${ds.length} day${ds.length > 1 ? 's' : ''} not read yet (${esc(why)}) - read again next time`;
   }
   const regOfRow = tr => { const a = tr && tr.querySelector('a[href*="/data/aircraft/"]'); return a ? decodeURIComponent(((a.getAttribute('href') || '').match(/\/data\/aircraft\/([^/?#]+)/i) || [])[1] || '').toUpperCase() : ''; };
   function flightPagePlayback(tbody, cs) {

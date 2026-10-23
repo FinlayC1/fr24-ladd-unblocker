@@ -67,7 +67,10 @@ function makeWin() {
   check('... its flights of that day in the log (Barrow - Bristol - Barrow - Farnborough - Barrow), not a day without flights', fl.length >= 3, fl.map(l => [l.from && l.from.code, l.to && l.to.code]));
   check('... the other days, which neither network has, are days without flights - done, not asked again', days(10).every(d => h.days[d]) && !Object.keys(h.miss || {}).length, Object.keys(h.miss || {}));
   asked.length = 0; await L.loadHistory('424c60', 10, null, { front: true });
-  check('... and not asked again next time', asked.length === 0, asked.length);
+  // (a day that ended under six hours ago is read again by design - its files can still be growing: between midnight and
+  // 06:00 UTC that is yesterday)
+  const settled = a => Date.parse(String(a[2]).match(/\d{4}\/\d\d\/\d\d/)[0].replace(/\//g, '-') + 'T00:00:00Z') + 86400e3 + 6 * 3600e3 <= Date.now();
+  check('... and not asked again next time', asked.filter(settled).length === 0, asked);
 
   // ---- in the background: adsb.lol only - nothing taken for a day without flights
   L.store.mergeHex('4ca001', { reg: 'EI-TST', type: 'PC24', ladd: true });

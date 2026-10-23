@@ -58,6 +58,7 @@ const entries = [
   ['file', './traces/23/trace_full_~123123.json', gz({ icao: '~123123', dbFlags: 8, timestamp: dayS(D), trace: [] })],               // (not an ICAO address)
   ['file', tr('bbbbbb'), Buffer.concat([gz({ icao: 'bbbbbb', dbFlags: 8, timestamp: dayS(D), trace: [[0, 50, 0, 1000]] }).subarray(0, 40)])],   // (cut short)
   ['file', tr('c0ffef'), Buffer.from(JSON.stringify(Object.assign({}, ARNZ, { icao: 'c0ffef', dbFlags: 8, timestamp: dayS(D) })))],    // (not gzipped, flagged)
+  ['file', tr('ae1234'), gz(Object.assign({}, ARNZ, { icao: 'ae1234', r: '11-1234', t: 'C30J', dbFlags: 1, timestamp: dayS(D) }))],     // (military: its log kept, not followed)
   ['file', './README.txt', Buffer.from('adsb.lol globe history')]
 ];
 const TAR = Buffer.concat(entries.map(e => e[0] === 'dir' ? tarDir(e[1]) : tarEntry(e[1], e[2])).concat([Buffer.alloc(1024)]));
@@ -93,17 +94,20 @@ const io = {
   check('(before: the LADD aircraft the archive flags is not known to the monitor)', !M.blocked.has('a9ca9d'));
   asked.length = 0;
   const st = await M.archiveDay(D, io);
-  check('the day read: both parts, every trace of an ICAO address in it (not the "~" one)', st.published && st.parts === 2 && st.traces === 5 && st.entries === entries.length, st);
-  check('... taken: the blocked aircraft\'s and those the archive flags LADD; not an ordinary one; a broken file counted', st.taken === 3 && st.bad === 1 && !M.blocked.has('aaaaaa') && !fs.existsSync(M.histFile('aaaaaa')), st);
+  check('the day read: both parts, every trace of an ICAO address in it (not the "~" one)', st.published && st.parts === 2 && st.traces === 6 && st.entries === entries.length, st);
+  check('... taken: the blocked aircraft\'s, those the archive flags LADD and the military ones; not an ordinary one; a broken file counted', st.taken === 4 && st.bad === 1 && !M.blocked.has('aaaaaa') && !fs.existsSync(M.histFile('aaaaaa')), st);
   check('... nothing asked of adsb.lol\'s site or airplanes.live meanwhile', asked.length === 0, asked);
   const h = M.histRead('a9ca9d'), legs = h.legs.filter(l => l.day === HD).map(l => (l.from ? code(l.from.id) : '?') + '-' + (l.to ? code(l.to.id) : '?'));
   check('N73VR (flagged LADD, new to the monitor): blocked from now on; its day\'s flights built - Morristown - New Haven among them', M.blocked.has('a9ca9d') && legs.includes('MMU-HVN') && h.days[HD] === legs.length, { legs, n: h.days[HD] });
-  check('... marked built from adsb.lol alone (a browser looking at it adds airplanes.live), and served so', h.lo[HD] === 1 && !h.part[HD] && M.histOf('a9ca9d').part.includes(HD) && M.histOf('a9ca9d').days[HD] === legs.length, { lo: h.lo, part: M.histOf('a9ca9d').part });
+  check('... marked built from adsb.lol alone (a browser looking at it adds airplanes.live), and served so', h.lo[HD] === 1 && !h.part[HD] && M.histOf('a9ca9d').lo.includes(HD) && !M.histOf('a9ca9d').part.includes(HD) && M.histOf('a9ca9d').days[HD] === legs.length, { lo: h.lo, served: M.histOf('a9ca9d') && { lo: M.histOf('a9ca9d').lo, part: M.histOf('a9ca9d').part } });
   const hC = M.histRead('c0ffee');
   check('the blocked aircraft the monitor knew (no flag in the file): its day built too', hC.days[HD] >= 3, hC.days);
   check('... and one not gzipped, flagged LADD: built', M.histRead('c0ffef').days[HD] >= 3, M.histRead('c0ffef').days);
   const learn = (() => { try { return JSON.parse(fs.readFileSync(path.join(process.env.MON_STORE, 'learn', D + '.json'), 'utf8')); } catch (e) { return null; } })();
   check('the learning rows of the day written (once, at the end)', Array.isArray(learn) && learn.some(r => String(r[0]).startsWith('a9ca9d|')) && learn.some(r => String(r[0]).startsWith('c0ffee|')), learn && learn.length);
+  check('a military aircraft: its day built and served (/hist) - not made a blocked aircraft (not followed live)', M.histRead('ae1234').days[HD] >= 3 && M.histOf('ae1234').days[HD] >= 3 && !M.blocked.has('ae1234'), { days: M.histRead('ae1234').days, blocked: M.blocked.has('ae1234') });
+  { const z = M.histOf('c0ffe3'), D9 = dayOf(nowS() - 9 * 86400).replace(/-/g, '/');
+    check('an aircraft not in the day\'s archive: that day served as one without flights, adsb.lol alone (lo) - not a day not read', z.days[HD] === 0 && z.lo.includes(HD) && !(D9 in z.days), z); }
   check('the day noted - "done" - and the archive\'s figures kept (/status)', fs.existsSync(M.archMark(D)) && M.archiveState(D, nowS()) === 'done' && M.AR.days === 1 && M.AR.last.day === D && M.answer(new URL('http://x/status'), nowS()).archive.days === 1, M.AR);
 
   // ---- a day's job once its archive is in; before it is out -------------------------------------------------------
@@ -117,6 +121,31 @@ const io = {
   const q = M.histQ.find(j => j.hex === 'c0ffee');
   check('yesterday, its archive not out yet: the job waits for it (an hour) - nothing asked', M.archiveState(Y, nowS()) === 'wait' && asked.length === 0 && !!q && q.at > Date.now() + 3500e3 && M.histPend.has('c0ffee|' + Y), { state: M.archiveState(Y, nowS()), asked, q });
   M.histQ.length = 0; M.histPend.clear();
+  // ---- every day of the 220 the archives cover: read in the end, newest first; nothing asked of the sites for them -------
+  { const D30 = dayOf(nowS() - 30 * 86400), D219 = dayOf(nowS() - 219 * 86400), D300 = dayOf(nowS() - 300 * 86400);
+    check('a day of 30 or 219 days ago not read yet: to come ("wait") - one of 300 days ago: not covered ("off")', M.CFG.archiveDays === 220 && M.archiveState(D30, nowS()) === 'wait' && M.archiveState(D219, nowS()) === 'wait' && M.archiveState(D300, nowS()) === 'off', [M.archiveState(D30, nowS()), M.archiveState(D219, nowS()), M.archiveState(D300, nowS())]);
+    M.markBlocked('c0ffe4', null, nowS() - 400 * 86400); M.fillAsked.clear(); M.histQ.length = 0; M.histPend.clear();
+    const was = M.closed; M.closed = dayOf(nowS() - 2 * 86400);
+    M.fillHist('c0ffe4', nowS());
+    check('filling an aircraft\'s log: no day the archives cover queued to be asked of adsb.lol\'s site (all 220)', M.histQ.filter(j => j.hex === 'c0ffe4').length === 0, M.histQ.length);
+    M.closed = was; M.histQ.length = 0; M.histPend.clear(); }
+  // ---- two days read at once ------------------------------------------------------------------------------------------
+  { const mk = day => { const E2 = entries.map(e => e[0] === 'file' && /trace_full_c0ffee/.test(e[1]) ? ['file', e[1], gz(Object.assign({}, ARNZ, { icao: 'c0ffee', dbFlags: 0, timestamp: dayS(day) }))] : e).filter(e => !(e[0] === 'file' && /trace_full_(a9ca9d|ae1234)/.test(e[1])));
+      const T = Buffer.concat(E2.map(e => e[0] === 'dir' ? tarDir(e[1]) : tarEntry(e[1], e[2])).concat([Buffer.alloc(1024)])), tg = A.tagOf(day, 0), bs = `https://github.com/adsblol/globe_history_${day.slice(0, 4)}/releases/download/${tg}/${tg}`, c = Math.floor(T.length / 2) + 1;
+      PARTS[bs + '.tar.aa'] = T.subarray(0, c); PARTS[bs + '.tar.ab'] = T.subarray(c); };
+    const Da = dayOf(nowS() - 6 * 86400), Db = dayOf(nowS() - 7 * 86400); mk(Da); mk(Db);
+    const both = await Promise.all([M.archiveDay(Da, io), M.archiveDay(Db, io)]);
+    const hc = M.histRead('c0ffee');
+    check('two days read at once: both done, each aircraft\'s days built (its file written by both, neither lost)', both.every(x => x.published && x.taken === 2) && M.archiveState(Da, nowS()) === 'done' && M.archiveState(Db, nowS()) === 'done' && hc.days[Da.replace(/-/g, '/')] >= 3 && hc.days[Db.replace(/-/g, '/')] >= 3 && hc.days[HD] >= 3 && !M.archRunning.size && M.AR.running === '', { days: hc.days, running: M.AR.running }); }
+  // ---- today's positions, for browsers the sites' own files are walled from (/trace) ----------------------------------
+  { const t = Math.floor(nowS()) - 3 * 3600, hexT = 'c0ffee';
+    M.tracks.put(hexT, [[t, 51.0, -0.5, 'ground'], [t + 60, 51.01, -0.5, 1200], [t + 120, 51.1, -0.6, 5000]]);
+    M.ingest({ hex: hexT, lat: 51.5, lon: -1.0, alt_baro: 20000, gs: 400, track: 300, seen_pos: 0, flight: 'MARNZ', r: 'M-ARNZ', t: 'PC24' }, nowS() - 60);
+    M.ingest({ hex: hexT, lat: 51.6, lon: -1.2, alt_baro: 22000, gs: 410, track: 300, seen_pos: 0 }, nowS());
+    const tr2 = M.answer(new URL('http://x/trace?hex=' + hexT), nowS()), none = M.answer(new URL('http://x/trace?hex=abcdef'), nowS());
+    const ts = tr2 ? tr2.trace.map(r => r[0]) : [];
+    check('/trace: the day\'s kept track and the positions held now, in time order, as an adsb.lol trace file (icao, absolute times)', !!tr2 && tr2.icao === hexT && tr2.timestamp === 0 && tr2.trace.length === 5 && tr2.trace[0][3] === 'ground' && ts.every((x, i) => !i || x > ts[i - 1]) && tr2.trace[4][3] === 22000, tr2 && tr2.trace.map(r => [r[0] - t, r[3]]));
+    check('... an aircraft not heard: nothing (404)', none === null); }
 
   // ---- a day not published ------------------------------------------------------------------------------------------
   { const D5 = dayOf(nowS() - 5 * 86400); PARTS = {};

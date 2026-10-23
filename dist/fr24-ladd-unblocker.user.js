@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Flightradar24 LADD / N-A Unblocker (feed-level)
 // @namespace    tweeks.io
-// @version      22.31.10
+// @version      22.31.11
 // @description  Identifies every LADD / N/A / blocked military aircraft on Flightradar24 from public ADS-B, and injects callsign, registration, operator, age, country, MSN, squawk, vertical speed, GPS altitude, airspeeds, wind, photos, a reasoned origin/destination with a wind-corrected ETA (also for ordinary flights FR24 shows as N/A - military, private, GA, helicopters, with private landing sites; learned from 63 days of every aircraft worldwide, with live weather and closures), airport-board entries and a rebuilt 7-month flight log straight into FR24's own data - so it all renders like normal FR24 traffic.
 // @author       Finlay Clarke
 // @updateURL    https://raw.githubusercontent.com/FinlayC1/fr24-ladd-unblocker/main/dist/fr24-ladd-unblocker.user.js
@@ -90,7 +90,7 @@
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "22.31.10";
+    var BRIDGE_V = "22.31.11";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed
@@ -5425,7 +5425,7 @@
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '22.31.10';
+  const VERSION = '22.31.11';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
@@ -8252,10 +8252,14 @@
   // again later, the reason kept for the log page to say.
   const NETS = {
     lol: { name: 'adsb.lol', site: 'https://adsb.lol/', url: (hex, day) => `https://adsb.lol/${day ? 'globe_history/' + day : 'data'}/traces/${hex.slice(-2)}/trace_full_${hex}.json` },
-    apl: { name: 'airplanes.live', site: 'https://globe.airplanes.live/', url: (hex, day) => `https://globe.airplanes.live/${day ? 'globe_history/' + day : 'data'}/traces/${hex.slice(-2)}/trace_full_${hex}.json` }
+    apl: { name: 'airplanes.live', site: 'https://globe.airplanes.live/', url: (hex, day) => `https://globe.airplanes.live/${day ? 'globe_history/' + day : 'data'}/traces/${hex.slice(-2)}/trace_full_${hex}.json` },
+    // (the monitor: today's positions of the aircraft it follows - from its own polling of adsb.lol's API, which has no
+    // verification page - in the same format; today only)
+    mon: { name: 'the monitor', site: '', url: hex => `${monUrl()}/trace?hex=${hex}`, hdr: () => monHdr() }
   };
   // (how each answered lately: the window's sources and the log page say it - a verification page above all)
-  const netState = { lol: { ok: 0, none: 0, wall: 0, err: 0, wallUntil: 0, wallAt: 0, okAt: 0, last: '', lastAt: 0, probe: null, bad: null, wallErr: '' }, apl: { ok: 0, none: 0, wall: 0, err: 0, wallUntil: 0, wallAt: 0, okAt: 0, last: '', lastAt: 0, probe: null, bad: null, wallErr: '' } };
+  const netNew = () => ({ ok: 0, none: 0, wall: 0, err: 0, wallUntil: 0, wallAt: 0, okAt: 0, last: '', lastAt: 0, probe: null, bad: null, wallErr: '' });
+  const netState = { lol: netNew(), apl: netNew(), mon: netNew() };
   // (a verification page by what it is - adsb.lol's proof-of-work page, Cloudflare's challenge - not by any page saying
   // "verify": a 403 or a site's own error page is a refusal, said as one)
   const WALL_RE = /<title>\s*(?:verification|just a moment|attention required)|verifying connection|solving security challenge|proof[- ]of[- ]work|cf[-_]chl|challenge-platform|cf-browser-verification/i;
@@ -8320,7 +8324,7 @@
     for (let attempt = 0; ; attempt++) {
       let r;
       // (a verification page met by another request while this one waited its turn: not sent)
-      try { r = await gmRequest(N.url(hex, day), { raw: true, timeout: 20000, priority: !!o.priority, bg: !!o.bg, idle: !!o.idle, skip: () => S.wallUntil > now() }); }
+      try { r = await gmRequest(N.url(hex, day), { raw: true, timeout: 20000, priority: !!o.priority, bg: !!o.bg, idle: !!o.idle, skip: () => S.wallUntil > now(), headers: N.hdr ? N.hdr() : null }); }
       catch (e) {
         const m = String(e && e.message || e).replace(/^Error:\s*/, '').slice(0, 60);
         if (m === 'skipped') return out('wall', { err: S.wallErr || 'verification page', cached: true });
@@ -8381,7 +8385,8 @@
   // for blocked aircraft (the monitor keeps no others' days); right after the page opens, once its check has answered.
   const histAsk = { q: new Map(), t: 0 };
   function monHist(hex) {
-    if (!(store.getHex(hex) || {}).ladd) return Promise.resolve(null);
+    // (the monitor keeps the days of the blocked aircraft and, from adsb.lol's archives, of every LADD and military one)
+    const hx0 = store.getHex(hex) || {}; if (!hx0.ladd && !hx0.mil) return Promise.resolve(null);
     const c = monCheck();
     return Promise.resolve(c && c.catch(() => null)).then(() => !monUp() ? null : new Promise(res => { const l = histAsk.q.get(hex) || []; l.push(res); histAsk.q.set(hex, l); if (!histAsk.t) histAsk.t = setTimeout(flushMonHist, 60); }));
   }
@@ -8454,13 +8459,22 @@
         const mh = await monHist(hex).catch(() => null);
         if (mh && mh.days && typeof mh.days === 'object') {
           const byDay = new Map(); for (const l of Array.isArray(mh.legs) ? mh.legs : []) if (l && l.day && fin(l.tStart)) (byDay.get(l.day) || byDay.set(l.day, []).get(l.day)).push(l);
-          const part = new Set(Array.isArray(mh.part) ? mh.part : []);
-          const have = todo.filter(d => Number.isInteger(mh.days[d]) && mh.days[d] > 0 && (byDay.get(d) || []).length === mh.days[d] && !(h.days[d] === 'b' && part.has(d)));
+          const part = new Set(Array.isArray(mh.part) ? mh.part : []), lo = new Set(Array.isArray(mh.lo) ? mh.lo : []);
+          // (a day of flights: all of them with it. A day with none - adsb.lol's archive read and the aircraft not in it, or
+          // the monitor's lists watched all day and it not heard: no flights as adsb.lol knows it - taken as a day read from
+          // adsb.lol alone, 'l', for a day not known here yet: airplanes.live heard flights adsb.lol missed (TC-ACN, 13 Sep),
+          // so it is read again with both when the aircraft is looked at and airplanes.live answers; walled from both, as
+          // browsers are now, it is all there is - and never a hole in the log)
+          const have = todo.filter(d => Number.isInteger(mh.days[d]) && (mh.days[d] > 0 ? (byDay.get(d) || []).length === mh.days[d] && !(h.days[d] === 'b' && part.has(d)) : mh.days[d] === 0 && !h.days[d]));
           for (const d of have) {
             const legs = (byDay.get(d) || []).map(l => { const s = Object.assign({}, l), lx = s.lx; delete s.lx; s.day = d; learnFromLeg(hex, null, s, cls0, ac0.mil, lx); return s; });
-            h.days[d] = part.has(d) ? 'p' : 'm'; h.rd[d] = now(); h.legs = h.legs.filter(l => l.day !== d).concat(legs); dirty = true;
+            h.days[d] = part.has(d) ? 'p' : lo.has(d) || !legs.length ? 'l' : 'm'; h.rd[d] = now(); delete h.miss[d]; h.legs = h.legs.filter(l => l.day !== d).concat(legs); dirty = true;
           }
-          if (have.length) { const got = new Set(have.filter(d => !(looked && part.has(d) && backOf[d] <= LOL_DAYS))); todo = todo.filter(d => !got.has(d)); monDays = have.length; flush(); }
+          // (looked at: a day built with a network refusing is read again here, both networks, at once - and so is a day of
+          // adsb.lol's alone, flights or none, while airplanes.live answers this browser; one that has shown it a
+          // verification page within the hour is not asked: the day stays as the monitor has it, read again later)
+          const aplOpen = !(netState.apl.wallAt && now() - netState.apl.wallAt < 3600e3);
+          if (have.length) { const got = new Set(have.filter(d => !(looked && backOf[d] <= LOL_DAYS && (part.has(d) || (aplOpen && (lo.has(d) || !mh.days[d])))))); todo = todo.filter(d => !got.has(d)); monDays = have.length; flush(); }
         }
       }
       const legsOf = (pts, day) => ENGINE.legsFromPoints(pts, { heli, patrol, cls: cls0, type: ac0.type, rangeKm: ENGINE.typeRangeKm(ac0), dataEnd: dayEndS(day) });
@@ -8564,9 +8578,15 @@
   // Today's files: both networks' for the aircraft looked at (airplanes.live had N73VR's night crossing to Luton - the
   // flight before the one on screen - when adsb.lol's file did not come); adsb.lol's alone for the rest - every aircraft
   // on the map whose take-off is worked out, the boards: airplanes.live is asked only for what the user opens
+  // The monitor's positions of it (the aircraft it follows: blocked, LADD, military) as well for the aircraft looked at, and
+  // for the rest when adsb.lol's file does not come - a verification page in front of it: this browser's own today then
   async function todayFiles(hex, opts) {
-    const o = { priority: !!opts.priority, bg: !!opts.bg, idle: !!opts.idle };
-    return Promise.all((opts.priority ? ['lol', 'apl'] : ['lol']).map(id => readTrace(id, hex, '', o)));
+    const o = { priority: !!opts.priority, bg: !!opts.bg, idle: !!opts.idle }, hx = store.getHex(hex) || {};
+    const mon = monOk && !!monBase && !!(hx.ladd || hx.mil || hx.pia || hx.fr24Blocked);
+    if (opts.priority) return Promise.all(['lol', 'apl'].concat(mon ? ['mon'] : []).map(id => readTrace(id, hex, '', o)));
+    const a = await readTrace('lol', hex, '', o);
+    if (a.state === 'ok' || a.state === 'none' || !mon) return [a];
+    return [a, await readTrace('mon', hex, '', o)];
   }
   // Parked since `since` (a landing): five minutes at a standstill, or a quarter of an hour unheard, on the ground after
   // it - in today's trace (taxiing in does neither)
@@ -11228,9 +11248,10 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   }
   function logGapsOf(hex) {
     const h = store.peekHist(hex); if (!h || !h.err) return '';
-    const ds = Object.keys(h.err).filter(d => !h.days[d] || h.days[d] === 'p'); if (!ds.length) return '';
+    // (a day not read at all - not one with adsb.lol's flights in it, airplanes.live's still to add)
+    const ds = Object.keys(h.err).filter(d => !h.days[d]); if (!ds.length) return '';
     const why = [...new Set(ds.map(d => h.err[d]))].slice(0, 2).join('; ');
-    return `${ds.length} day${ds.length > 1 ? 's' : ''} not fully read yet (${esc(why)}) - read again next time`;
+    return `${ds.length} day${ds.length > 1 ? 's' : ''} not read yet (${esc(why)}) - read again next time`;
   }
   const regOfRow = tr => { const a = tr && tr.querySelector('a[href*="/data/aircraft/"]'); return a ? decodeURIComponent(((a.getAttribute('href') || '').match(/\/data\/aircraft\/([^/?#]+)/i) || [])[1] || '').toUpperCase() : ''; };
   function flightPagePlayback(tbody, cs) {
@@ -13324,7 +13345,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // (the version whose "what's new" was put away, and the one whose dot on the button the window was opened for)
   const UB_SEEN_KEY = 'tweeks.fr24.ladd.seenver', UB_DOT_KEY = 'tweeks.fr24.ladd.dotver';
   // (the newest CHANGELOG section's headlines, written in by build.mjs: { v, items })
-  const UB_WHATS_NEW = {"v":"22.31.10","items":["The flight log page's layout.","A verification page is recognised by what it is.","What the two networks actually send this browser"]};
+  const UB_WHATS_NEW = {"v":"22.31.11","items":["Flight logs work with both sites walled.","Today's flights with both sites walled.","The monitor reads adsb.lol's archives for 220 days, two at a time"]};
   // (an aircraft with an open padlock: FR24's outline style - 24 grid, 1.5 stroke in the text colour)
   const UB_ICON = '<svg data-tl-ub-icon="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
   const UB_X = '<svg viewBox="0 0 14 14" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5l11 11M12.5 1.5l-11 11"/></svg>';
