@@ -58,6 +58,11 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
   - `/hist` now serves any aircraft, not only blocked ones. On a day the archive has no file of it, it had no flights; on a day it has one, its flights come from the world log. With `since`, only the days a browser is missing.
   - Browsers ask a monitor that has it for an ordinary aircraft's missing days in one request, instead of one request per day through `/atrace`.
   - A blocked aircraft's day read before it was known to be blocked is no longer served as a day without flights: the day's index or the world log says.
+- **Central calculation: one route for every browser.** Each flight a browser shows is worked out on the monitor, once, and every browser shows that answer: the same departure, destination, odds, reasons and ETA. It is the userscript's own route code, run on the monitor unchanged (the blocks marked `==ROUTE-...==`), with the same engine and tables.
+  - Browsers send what they see of each flight they show (`POST /calc`): its track (whole once, then what is new), FR24's plan, its flights of the day, the weather and closures at the airports in question. The monitor adds its own logs of the aircraft, the world log among them.
+  - N1868M over the Atlantic: from what a browser sent, the monitor's answer is the browser's own, field for field. A second browser with only the last minute of the track gets the very same.
+  - Each browser still keeps its user's own confirmation of a destination, and a landing it has seen before the monitor's answer has. The progress bar and the time to go are worked out from where the aircraft is now.
+  - The tables take about 150 MB more memory on the monitor. It is on only with 300 MB free at start (`centralFreeMb`) and does at most 12 s of this work a minute (`centralMsPerMin`); otherwise every browser works routes out itself, as before. `/status` says which.
 
 ### Changed
 - **Flight logs are rebuilt once** (log format 8): the monitor's days now carry its live-heard flights.
@@ -99,6 +104,14 @@ Measured on aircraft held out of training: 66,679 moments of 2,073 aircraft, 1-2
   - every field of the fixtures' real flights kept through the world log's row;
   - a day of 1,000 aircraft added in the archive's order: each found again, one that did not fly, one not in the day, a day not kept; found again after a restart; a half-written day not taken;
   - the monitor: the world log built in the archive's read; an ordinary aircraft's day served from it, the same flights as the day's log is built; one not in the day's index: no flights; one in it whose day the world log has not: left out; a day read before read again for it alone (and its index); a day not published; the disk short of room.
+- New `unit_central`:
+  - every name the route code uses from outside its blocks is given on the monitor (found with ESLint's no-undef: a name added to the route code later fails it);
+  - not on when turned off or short of memory, and said why; the landing sites left out with too little room after the tables;
+  - the route tables compacted exactly as the build does;
+  - tracks sent whole, then in parts; a part without the whole asked for whole; a new leg; nothing kept that is not a flight's;
+  - N1868M: the monitor's answer is the browser's own;
+  - end to end in two browsers (the built userscript, jsdom): the flight sent, the monitor's answer shown in both; then only what is new sent; the user's confirmation and a landing seen first stand; the monitor off: the browser's own;
+  - the minute's allowance; a flight the monitor named itself.
 - `unit_netfetch`: a monitor without the world log not asked for an ordinary aircraft's log; one with it asked once, from the oldest day wanted, nothing asked day by day; its flights not kept over a read of the day here.
 - `unit_archive`: a day published as one tar; a never-published day's 404; days given up before retried at start.
 - `unit_fr24`: TC-MAA matched; maker's lines; another maker's jet not matched.

@@ -197,6 +197,7 @@
   // ("Royal London Hospital Helipad", "Private site near Henley") instead of being left blank. Fetched once, the first
   // time one is needed, and kept on disk for three months (a compact copy, read only when needed).
   const SITES_URL = 'https://raw.githubusercontent.com/davidmegginson/ourairports-data/main/airports.csv';
+  // ==ROUTE-SITES== (to its end mark: run by the monitor too - monitor/central.cjs)
   const SITE_KIND = { heliport: 'H', small_airport: 'S', seaplane_base: 'W', medium_airport: 'M' };
   const sites = { grid: null, loading: null, n: 0 };
   function csvCells(s) {
@@ -246,6 +247,7 @@
     return best ? { row: best, dist: bd } : null;
   }
   const heliportNear = (lat, lon, km) => { const n = siteNear(lat, lon, km, 'H'); return n ? { lat: n.row[0], lon: n.row[1], dist: n.dist, name: n.row[3] } : null; };
+  // ==/ROUTE-SITES==
   // ---- places OurAirports does not have, from OpenStreetMap (Overpass): hospital helipads and offshore platforms ------
   // A helicopter down at Southmead Hospital was "a private site near Bristol" - the pad is in OpenStreetMap, not in
   // OurAirports. One small query per spot (0.001°), asked in the background and kept on disk; answers: a named helipad
@@ -325,6 +327,7 @@
   // helipad, an offshore platform - asked once, the route worked out again when it answers), else "Private site near
   // <town>". Its code is the site's ICAO code when it has one (London Heliport: EGLW), otherwise PVT; its time zone that
   // of the nearest airport.
+  // ==ROUTE-PLACE== (the monitor runs this too: monitor/central.cjs)
   function privatePlace(lat, lon, opts) {
     const heli = !!(opts && opts.heli), generic = !!(opts && opts.generic);
     const near = ENGINE.airportAt(lat, lon, 150), tzId = near ? near.airport.id : 0;
@@ -336,7 +339,8 @@
     // (cut at the first comma where it shows - Rotherham, South Yorkshire - with the whole name kept for telling places apart)
     const raw = s ? (s[2] === 'H' ? s[3] : ENGINE.fieldShortName(s[3])) : 'Private site' + (town ? ' near ' + town.row[5] : '');
     return { code: s && /^[A-Z]{4}$/.test(s[4]) ? s[4] : 'PVT', name: ENGINE.placeShort(raw), full: raw, lat: s ? s[0] : lat, lon: s ? s[1] : lon, alt: s ? s[6] : (near ? near.airport.alt || 0 : 0), tzId, known: s ? s[2] : '' };
-  }
+  }  // ==/ROUTE-PLACE==
+
   // ---- landing places learned: every spot an aircraft was seen down at away from FR24's airports - a strip FR24 does not
   // list, a pad, a farm field - gets a lasting id (9,000,001 on) and its name (as privatePlace gives it), the same each
   // time anything lands there again, kept for good. The page adds them to FR24's own airport list, so its boards, cards

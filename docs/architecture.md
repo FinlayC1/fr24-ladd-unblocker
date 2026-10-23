@@ -223,6 +223,15 @@ adsb.lol publishes every finished day as an archive on GitHub: every aircraft it
 
 Each day is one file (`world/YYYY-MM-DD.wl`, `monitor/world.cjs`): aircraft in blocks of 32 by address, each block gzipped, with an index of the blocks at the start. One aircraft's day is a binary search of the index and one block read (0.17 ms here). `/hist` serves any aircraft from it: a day the day's index says the aircraft is not in has no flights; a day it is in has its flights from the world log. Browsers ask for an aircraft's missing days in one request instead of one per day.
 
+### 4.3b Central calculation (1.0.1)
+
+Every browser used to work each route out itself, from what it alone had seen, so two browsers could show the same flight going to different airports. Now the monitor works each flight out once (`central.cjs`) and every browser shows that answer.
+
+- **The same code.** The route code in `src/main/04-routes.js` and `03-data.js` sits in blocks marked `==ROUTE-...==`. The monitor reads those blocks from its checkout and runs them unchanged, in a `vm` context of their own, with the same engine and the same tables as a browser: the population tables (unpacked by the userscript's own `unpackT2`), the arrival paths, the route tables compacted as the build does, and the landing sites. Each outside name the code uses is given by the monitor (`unit_central` finds them all with ESLint and fails on a new one).
+- **The evidence.** Browsers send what they see of each flight they show (`POST /calc`): its track as their `trailFor` has it (whole once, then what is new), FR24's plan, the flights of the day, the weather and closures they have for the airports in question. The monitor keeps the longest track any of them sent, adds its own logs of the aircraft (its days and the world log), and works the flight out again when there is more to go on, at most every 15 s.
+- **What stays in the browser.** The user's own confirmation of a destination; a landing or take-off it has seen before the monitor's answer has; the progress bar and time to go, from where the aircraft is now. Without the monitor's answer (not on, not answering, over 90 s old by its own clock), the browser's own is shown, as before.
+- **Its cost.** About 150 MB of memory for the tables, and some 65 ms of work per flight. It is on only when the machine has room, within a budget of work a minute.
+
 ### 4.4 State and persistence
 
 `state.json` holds:

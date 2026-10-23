@@ -59,6 +59,7 @@ Every copy connects to the project's shared monitor by default. You can change t
   - the airport boards you open;
   - the playback moments you play, with the flight id, position and type of each flight in them that has no name yet. The monitor keeps these positions, without your address, for up to three days while it works out which aircraft each flight is;
   - the place your map is looking at, so the monitor can follow it (it keeps that place rounded to a whole degree).
+  - (1.0.1) each flight your map works a route out for, as your browser sees it - Flightradar24's flight id, the aircraft, its track since it took off, Flightradar24's plan for it, its flights of the day, the weather and closures your browser has for the airports in question - so the monitor works the route out once and every browser shows the same. Kept without your address, for 30 minutes after the last time any browser sent it.
 - **A report every minute:**
   - the flights without a callsign your Flightradar24 page shows (Flightradar24's flight id, position, type);
   - the names your browser found for them, in live view and in playback;

@@ -91,10 +91,11 @@ function createDest(env) {
     for (const [id, R] of ident.ids) { const F = ident.flights.get(id); if (!F || F.gnd || nowMs - F.seen > 10 * 60000) continue; const at = R.destTried || 0; if (nowS - at >= C.every) due.push([id, R, F, at]); }
     due.sort((a, b) => a[3] - b[3]);
     const t0 = Date.now(); let n = 0;
-    for (const [, R, F] of due) {
+    for (const [id, R, F] of due) {
       if (n >= C.perRound || Date.now() - t0 > C.budgetMs) break;
       n++; R.destTried = nowS;
-      let r = null; try { r = predictFor(R, F, nowS); stats.done++; } catch (e) { stats.failed++; continue; }
+      // (1.0.1: the flight's route as central calculation worked it out - the one every browser shows - when it has one)
+      let r = null; try { r = (env.fromCentral && env.fromCentral(id, nowS)) || predictFor(R, F, nowS); stats.done++; } catch (e) { stats.failed++; continue; }
       if (!r) continue;
       const before = JSON.stringify([R.dest && R.dest.id, R.dest && Math.round(R.dest.p * 20), R.origin && R.origin.id]);
       R.dest = r.dest; if (r.origin) R.origin = r.origin;

@@ -6767,7 +6767,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   const routesOut = new Map(), routesSent = new Map();
   function noteRouteOut(id, route) {
     const r = srvIds.rows.get(id), rec = live.get(id);
-    if (!r || !rec || !rec.hex || rec.hex !== String(r[1] || '').toLowerCase() || !route || route.quick || route.crowd) return;
+    if (!r || !rec || !rec.hex || rec.hex !== String(r[1] || '').toLowerCase() || !route || route.quick || route.crowd || route.central) return;
     if (!(route.legCount > 0 || (route.originConf === 'ground' && !route.crowdO) || (route.destConf === 'confirmed' && !route.crowdD))) return;
     const o = !route.crowdO && route.originId > 0 ? route.originId : 0, d = !route.crowdD && route.destId > 0 && route.destConf !== 'landed' ? route.destId : 0;
     if (!o && !d) return;
@@ -7507,6 +7507,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   // ("Royal London Hospital Helipad", "Private site near Henley") instead of being left blank. Fetched once, the first
   // time one is needed, and kept on disk for three months (a compact copy, read only when needed).
   const SITES_URL = 'https://raw.githubusercontent.com/davidmegginson/ourairports-data/main/airports.csv';
+  // ==ROUTE-SITES== (to its end mark: run by the monitor too - monitor/central.cjs)
   const SITE_KIND = { heliport: 'H', small_airport: 'S', seaplane_base: 'W', medium_airport: 'M' };
   const sites = { grid: null, loading: null, n: 0 };
   function csvCells(s) {
@@ -7556,6 +7557,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     return best ? { row: best, dist: bd } : null;
   }
   const heliportNear = (lat, lon, km) => { const n = siteNear(lat, lon, km, 'H'); return n ? { lat: n.row[0], lon: n.row[1], dist: n.dist, name: n.row[3] } : null; };
+  // ==/ROUTE-SITES==
   // ---- places OurAirports does not have, from OpenStreetMap (Overpass): hospital helipads and offshore platforms ------
   // A helicopter down at Southmead Hospital was "a private site near Bristol" - the pad is in OpenStreetMap, not in
   // OurAirports. One small query per spot (0.001°), asked in the background and kept on disk; answers: a named helipad
@@ -7635,6 +7637,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   // helipad, an offshore platform - asked once, the route worked out again when it answers), else "Private site near
   // <town>". Its code is the site's ICAO code when it has one (London Heliport: EGLW), otherwise PVT; its time zone that
   // of the nearest airport.
+  // ==ROUTE-PLACE== (the monitor runs this too: monitor/central.cjs)
   function privatePlace(lat, lon, opts) {
     const heli = !!(opts && opts.heli), generic = !!(opts && opts.generic);
     const near = ENGINE.airportAt(lat, lon, 150), tzId = near ? near.airport.id : 0;
@@ -7646,7 +7649,8 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     // (cut at the first comma where it shows - Rotherham, South Yorkshire - with the whole name kept for telling places apart)
     const raw = s ? (s[2] === 'H' ? s[3] : ENGINE.fieldShortName(s[3])) : 'Private site' + (town ? ' near ' + town.row[5] : '');
     return { code: s && /^[A-Z]{4}$/.test(s[4]) ? s[4] : 'PVT', name: ENGINE.placeShort(raw), full: raw, lat: s ? s[0] : lat, lon: s ? s[1] : lon, alt: s ? s[6] : (near ? near.airport.alt || 0 : 0), tzId, known: s ? s[2] : '' };
-  }
+  }  // ==/ROUTE-PLACE==
+
   // ---- landing places learned: every spot an aircraft was seen down at away from FR24's airports - a strip FR24 does not
   // list, a pad, a farm field - gets a lasting id (9,000,001 on) and its name (as privatePlace gives it), the same each
   // time anything lands there again, kept for good. The page adds them to FR24's own airport list, so its boards, cards
@@ -9309,7 +9313,9 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     return v;
   }
   // (what to say of a helicopter's take-off from a site: its name when it has one - London Heliport, Southmead Hospital)
+  // ==ROUTE-NOTE== (the monitor runs this too: monitor/central.cjs)
   const siteTakeoffNote = sp => sp.known === 'platform' ? 'took off from an offshore platform' : sp.name && !/^Private site/.test(sp.name) ? 'took off from ' + sp.name : 'took off from a private site';
+  // ==/ROUTE-NOTE==
   // FR24's trail points as the engine reads them. FR24 leaves out a height it does not have, so the point reads 0 ft: on
   // the ground when slow, on the runway when at a field just after being low over it - but at speed away from every
   // airfield, or just after being heard far above the field it is over, it has no height at all. KSK16 (a Challenger 605,
@@ -9398,6 +9404,9 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     thin.gapInfo = thin.gapFrom && thin.length ? Object.assign({}, gapInfo, { bClimb: ENGINE.gapEnds([thin.gapFrom].concat(thin), 1).bClimb, gap: thin[0].t - thin.gapFrom.t }) : null;
     return thin;
   }
+  // ==ROUTE-CORE== (from here to its end mark: the route worked out from what is known - run by the monitor too, the same
+  // code, so every browser can be given one answer for a flight: monitor/central.cjs. Whatever it uses from outside is a
+  // name the monitor gives it.)
   // ETA from distance, phase and speed: cruise at the current speed, then a slower descent and approach.
   function estimateEta(pos, dest, cls) {
     if (!pos || !dest || pos.gnd) return 0;
@@ -9490,7 +9499,10 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     return cands.map((x, j) => Object.assign({}, x, { p: j === i ? want : x.p * k })).sort((a, b) => b.p - a.p);
   }
   function composeRoute(id, hex, opts) {
-    try { return composeRoute0(id, hex, opts); } catch (e) { const rr = live.get(id) || pubRecs.get(id); if (rr) rr.routeErr = String((e && e.message) || e).slice(0, 160); log('route failed', id, e); return null; }
+    let r;
+    try { r = composeRoute0(id, hex, opts); } catch (e) { const rr = live.get(id) || pubRecs.get(id); if (rr) rr.routeErr = String((e && e.message) || e).slice(0, 160); log('route failed', id, e); return null; }
+    // (a moment of its own - the log page's flight in progress: this browser's answer)
+    return opts && opts.pos ? r : centralOf(id, hex, r);
   }
   function composeRoute0(id, hex, opts) {
     const rec0 = live.get(id) || pubRecs.get(id) || null, rec = rec0 || {};
@@ -9799,6 +9811,81 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     r.ms = pred ? pred.ms : 0;
     return r;
   }
+  // ==/ROUTE-CORE==
+  // ---- (1.0.1) central calculation: the monitor works each flight's route out once, the same for every browser ----------
+  // Every flight shown here is sent to it as this browser sees it - its track so far (whole once, then what is new), FR24's
+  // plan, the flights of the day, the weather and closures at the airports in question - and the route it answers with is
+  // the one shown: every browser showing the flight gets that same one (monitor/central.cjs runs this script's own route
+  // code, ==ROUTE-CORE== above). The progress bar and the time to go are from where the aircraft is now.
+  // This browser's own answer stands where the monitor has none (not on, not answering, nothing of the flight, its answer
+  // over 90 s old), where the user confirmed a destination here, and while a landing or take-off seen here is not in the
+  // monitor's answer yet.
+  const calcGot = new Map();     // fr24 id -> { at (worked out there), until (good here until: 90 s from when it was worked out, by its own clock), r }
+  const calcSent = new Map();    // fr24 id -> { t0, lastT, at, full } - what of its track the monitor has from here
+  const calcAsk = new Set(); let calcT = 0, calcBusy = false;
+  const centralUp = () => !!(monOk && monBase && monStat && monStat.central && monStat.central.on);
+  // (a point as sent: numbers that are numbers, booleans, strings, nulls - nothing else)
+  const ptOut = p => { if (!p || typeof p !== 'object') return null; const o = {}; for (const k of Object.keys(p)) { const v = p[k]; if (typeof v === 'number' ? isFinite(v) : v === null || typeof v === 'boolean' || typeof v === 'string') o[k] = v; } return o; };
+  function centralOf(id, hex, r) {
+    if (!r || !(id > 0) || !centralUp()) return r;
+    calcWant(id);
+    const c = calcGot.get(id); if (!c || !c.r || now() > c.until) return r;
+    if (r.userConfirmed || !!r.landed !== !!c.r.landed || !!r.onGround !== !!c.r.onGround) return r;
+    const out = Object.assign({}, c.r, { computedAt: now(), quick: !!r.quick, central: c.at });
+    const pos = currentPos(id), destAp = apById(out.destId) || (out.destSite && fin(out.destSite.lat) ? out.destSite : null);
+    if (pos && destAp && !pos.gnd) {
+      const stage = out.phase === 'descent' ? 4 : out.phase === 'climb' && (pos.alt || 0) < 15000 ? 2 : 3;
+      out.progress = buildProgress(pos, apById(out.originId) || (out.originSite && fin(out.originSite.lat) ? out.originSite : null), destAp, out.departedAt, out.eta, stage);
+    }
+    return out;
+  }
+  function calcWant(id) { calcAsk.add(id); if (!calcT) calcT = setTimeout(calcFlush, 1500); }
+  // What this browser sees of a flight, for the monitor
+  function calcEvidence(id) {
+    const rec = live.get(id) || pubRecs.get(id); if (!rec || !rec.hex) return null;
+    const pos = currentPos(id); if (!pos) return null;
+    const hex = rec.hex, trail = trailFor(id, hex, pos), s = calcSent.get(id);
+    const t0 = trail.length ? trail[0].t : 0, full = !s || s.full || Math.abs(s.t0 - t0) > 60;
+    const st = routeState.get(id) || {}, td = todayCache.get(hex), lastLeg = td && td.sums ? td.sums.filter(l => l.ended && l.to).pop() || null : null;
+    const rr = st.route, ics = rr && Array.isArray(rr.cands) ? rr.cands.slice(0, 6).map(c => (apById(c[0]) || {}).icao).filter(Boolean) : [];
+    const wx = {}, closed = {}; for (const i of ics) { if (wxMap.has(i)) wx[i] = wxMap.get(i); if (closedMap.has(i)) closed[i] = closedMap.get(i); }
+    const fl = fleetVisits(hex, t0 || pos.t);
+    return { t0, lastT: trail.length ? trail[trail.length - 1].t : 0, x: { id, hex, kind: live.has(id) ? 'live' : 'pub', ac: acOf(rec), rec: { operatorName: String(rec.operatorName || ''), owner: String(rec.owner || ''), airline: String(rec.airline || '') }, pos: ptOut(pos),
+      trail: { full, pts: (full ? trail : trail.filter(p => p.t > s.lastT)).map(ptOut), cut: !!trail.cut, gapFrom: ptOut(trail.gapFrom), gapInfo: trail.gapInfo || null },
+      plan: (planState.get(id) || {}).plan || schedPlan(id) || null, st: { maxAlt: st.maxAlt || 0, landedAt: st.landedAt || 0 }, lastLeg,
+      rested: !!(lastLeg && restedAfter(hex, st.landedAt || lastLeg.tEnd)), fleet: fl ? [...fl] : null, today: td && td.sums ? td.sums.filter(l => l.ended) : [], wx, closed } };
+  }
+  // (the flights wanted, every second and a half: what is new of each - the one looked at every 10 s, the others every 30 s,
+  // 20 at a time - and the answers for the rest)
+  async function calcFlush() {
+    calcT = 0;
+    if (calcBusy || !centralUp()) { if (calcAsk.size && centralUp()) calcT = setTimeout(calcFlush, 3000); else calcAsk.clear(); return; }
+    const sel = currentId(), ids = [...calcAsk].sort((a, b) => (b === sel) - (a === sel)).slice(0, 60); for (const id of ids) calcAsk.delete(id);
+    const flights = [], ask = [], sent = new Map(); let npts = 0;
+    for (const id of ids) {
+      const s = calcSent.get(id), every = id === sel ? 10000 : 30000;
+      // (6,000 points a request at most - a whole track is ~150 bytes a point: the rest go with the next)
+      if (flights.length < 20 && npts < 6000 && (!s || s.full || now() - s.at >= every)) { const e = calcEvidence(id); if (e) { flights.push(e.x); sent.set(id, e); npts += e.x.trail.pts.length; continue; } }
+      ask.push(id);
+    }
+    if (!flights.length && !ask.length) return;
+    calcBusy = true;
+    try {
+      const j = await monPost('/calc', { v: 1, flights, ids: ask });
+      if (j && j.on) {
+        for (const [id, e] of sent) calcSent.set(id, { t0: e.t0, lastT: e.lastT, at: now(), full: false });
+        for (const id of Array.isArray(j.full) ? j.full : []) { const s = calcSent.get(+id); if (s) s.full = true; }
+        for (const [k, v] of Object.entries(j.routes && typeof j.routes === 'object' ? j.routes : {})) {
+          if (!v || !v.r || typeof v.r !== 'object') continue;
+          const id = +k, was = calcGot.get(id);
+          calcGot.set(id, { at: +v.at || 0, until: now() + Math.max(0, 90000 - (fin(v.age) ? v.age : 90000)), r: v.r });
+          if (!was || was.at !== +v.at) scheduleReplan(id, 10);
+        }
+        for (const m of [calcGot, calcSent]) if (m.size > 3000) for (const k of [...m.keys()].slice(0, 1000)) m.delete(k);
+      }
+    } catch (e) { log('central calculation', String(e && e.message || e)); }
+    finally { calcBusy = false; if (calcAsk.size && !calcT) calcT = setTimeout(calcFlush, 1500); }
+  }
   // (an airfield FR24 does not list goes to the page by its code and name only: FR24's own panel knows only its airports)
   const routeForPage = r => { const da = r.destId ? apById(r.destId) : null, oa = (r.originId && apById(r.originId)) || (r.originSite && fin(r.originSite.lat) ? r.originSite : null); return { originId: fr24Ap(r.originId), destId: fr24Ap(r.destId), originIata: r.originIata, destIata: r.destIata, originCity: r.originCity, destCity: r.destCity, progress: r.progress, std: r.std, sta: r.sta, atd: r.atd, ata: r.ata, eta: r.eta, etd: r.etd, groundAirportId: fr24Ap(r.groundAirportId), landed: r.landed, destConf: r.destConf, destP: r.destP || 0, destReason: r.destReason || '', confirmed: !!(r.confirmed || r.landed || r.destConf === 'confirmed'), quick: !!r.quick,
     // (where the destination is: a flight that goes quiet low beside it has landed, for the boards)
@@ -9898,6 +9985,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   // the airport it took off from (when that is known), sent no earlier than 12 hours before it took off (a position report:
   // during this flight), and the aircraft where a flight between those two airports would be - near the line between
   // them, not past the destination. The newest such route.
+  // ==ROUTE-DL== (to its end mark: run by the monitor too - monitor/central.cjs)
   const DL_PRE = ['fpn', 'fpl', 'filed', 'alert', 'pdc'];
   function datalinkPlan(id, rec, hex, pos, legStart, oAp) {
     const hx = hex ? store.getHex(hex) || {} : {}, reg = rec.reg || hx.reg;
@@ -9916,6 +10004,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   }
   const DL_WHAT = { fpn: 'flight plan uplinked to it', pos: 'its position reports', fpl: 'its filed flight plan', filed: 'its filed flight plan', alert: 'its flight-plan alerts', pdc: 'its departure clearance', eta: 'its arrival estimate', rep: 'its position reports' };
   const datalinkWhy = p => { const k = (p.kinds || [])[0], d = new Date((p.at || 0) * 1000); return `${DL_WHAT[k] || 'its own flight plan'} (datalink, ${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}Z)`; };
+  // ==/ROUTE-DL==
   function schedPlan(id) {
     if (live.has(id)) return null;
     const s = schedOf(id) || {}, p = pubRecs.get(id), m = p && p.fr24List;
@@ -15117,7 +15206,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true }); else start();
   }
   }
-  try { (pageWindow()).__tweeksLadd = { version: VERSION, msgCount, datalinkPlan, datalinkRoutes, surgeNow, morphHtml, photoJob, photosOut, monPhotos, routeSearch, onNeedNaRoutes, naFromTrail, naWanted, fr24Trail, schedOf, trailFor, get shownId() { return shownId; }, posStats, get bridgeV() { return bridgeV; }, hexOfId, currentPos, idHex, engine: ENGINE, live, pending, telemetry, store, routeState, planState, globalList, fr24, todayCache, sweep, resolveTargeted, routeFor, composeRoute, altsOf, holdTerminal, termHold, worldScan, refreshLists, quickRouteAll, historyPump, histPumped, learnedStore, regCountry, fr24Sched, pubRouted, pubRecs, privatePlace, loadSites, siteNear, sites, onSched, pubMem: () => pubMem, publishRoute, syncPanel, normalizeReadsb, telemOf, noteCands, csOfRec, warmHist, hostStat, loadT2, wantWx, wxMap, wantNotams, closedMap, estimateEta, nNumberHex, watchList, pollWatch, accStore, accNote, statsHtml, fleetList, checkHealth, health, exportCsv, predictForHex, verifyAgainstList, strikes, revokedIds, fr24Named, noteFr24Named, loadHistory, loadToday, readTrace, classifyTrace, fetchTrace, netState, NETS, sourcesHtml, logGaps, fetchJetphotos, loadRunways, knownLegs, areaCache, pollView, saveSnapshot, boardNoteLegs, boardNoteFlight, boardNoteSched, boardScrub, boardLoad, boardList, naRouteOf, pbWhere, noteNa, naFeed, matchParked, matchByTraces, boardDrain, boardMem, onNeedBoard, operatorOf, shownOwner, enrich, userConfirm, userDestOf, loadApprTable, monGet, monPost, monCheck, monLive, monUp, MON_DEFAULTS, get monBase() { return monBase; }, liveSources, tatSource: TAT_SOURCE, telOut, noteTelOut, reportTel, pbOut, srvIds, pullSrvIds, srvAdopt, reportToMonitor, syncSrvLearn, applyLearned, srvRoute, srvRec, crowdOf, routesOut, routesSent, noteRouteOut, learnFromLeg, learnOutTake, learnOutBack, get learnOutN() { return learnOut.length; }, srvCovers, get srvLearned() { return srvLearned; }, set srvLearned(v) { srvLearned = v; }, addSrvLearned, get feedHdr() { return feedHdr; }, boardMonFill, natRowOf, fnRows, buildSnapshot, bootHold, firAt, loadFir, onAirAsk, pb, onPbFeed, onPbFollow, onPbHex, pbRouteFor, pbMatch, pbFromMonitor, onNeedRoutes, onNeedAirportData, onNeedAirportPanel, liveBoardRows, runwaysOf, parseRunwayEnds, flightsOfCallsign, bootFlightPage, unlockExports, exportFile, rowWindow, hexOfFid, onNeedSearch, osmPick, wantOsmPlace, osmPlaceAt, learnSite, siteIdAt, siteBk, siteRow, apById, operatorIdOf, airlineIdByName, fr24Cat, onHistElsewhere, get viewBox() { return viewBox; }, get selectedId() { return currentId(); }, opt, setOpt, notify, openUnblockWindow, closeUnblockWindow, ensureBarButton, findBar, checkLatest, installKind, sayHello, helloSt, ubBanners, ubOffer, installId }; } catch (_) { /* ignore */ }
+  try { (pageWindow()).__tweeksLadd = { version: VERSION, msgCount, datalinkPlan, datalinkRoutes, surgeNow, morphHtml, photoJob, photosOut, monPhotos, routeSearch, onNeedNaRoutes, naFromTrail, naWanted, fr24Trail, schedOf, trailFor, get shownId() { return shownId; }, posStats, get bridgeV() { return bridgeV; }, hexOfId, currentPos, idHex, engine: ENGINE, live, pending, telemetry, store, routeState, planState, globalList, fr24, todayCache, sweep, resolveTargeted, routeFor, composeRoute, centralOf, calcGot, calcSent, calcAsk, calcFlush, calcEvidence, altsOf, holdTerminal, termHold, worldScan, refreshLists, quickRouteAll, historyPump, histPumped, learnedStore, regCountry, fr24Sched, pubRouted, pubRecs, privatePlace, loadSites, siteNear, sites, onSched, pubMem: () => pubMem, publishRoute, syncPanel, normalizeReadsb, telemOf, noteCands, csOfRec, warmHist, hostStat, loadT2, wantWx, wxMap, wantNotams, closedMap, estimateEta, nNumberHex, watchList, pollWatch, accStore, accNote, statsHtml, fleetList, checkHealth, health, exportCsv, predictForHex, verifyAgainstList, strikes, revokedIds, fr24Named, noteFr24Named, loadHistory, loadToday, readTrace, classifyTrace, fetchTrace, netState, NETS, sourcesHtml, logGaps, fetchJetphotos, loadRunways, knownLegs, areaCache, pollView, saveSnapshot, boardNoteLegs, boardNoteFlight, boardNoteSched, boardScrub, boardLoad, boardList, naRouteOf, pbWhere, noteNa, naFeed, matchParked, matchByTraces, boardDrain, boardMem, onNeedBoard, operatorOf, shownOwner, enrich, userConfirm, userDestOf, loadApprTable, monGet, monPost, monCheck, monLive, monUp, MON_DEFAULTS, get monBase() { return monBase; }, liveSources, tatSource: TAT_SOURCE, telOut, noteTelOut, reportTel, pbOut, srvIds, pullSrvIds, srvAdopt, reportToMonitor, syncSrvLearn, applyLearned, srvRoute, srvRec, crowdOf, routesOut, routesSent, noteRouteOut, learnFromLeg, learnOutTake, learnOutBack, get learnOutN() { return learnOut.length; }, srvCovers, get srvLearned() { return srvLearned; }, set srvLearned(v) { srvLearned = v; }, addSrvLearned, get feedHdr() { return feedHdr; }, boardMonFill, natRowOf, fnRows, buildSnapshot, bootHold, firAt, loadFir, onAirAsk, pb, onPbFeed, onPbFollow, onPbHex, pbRouteFor, pbMatch, pbFromMonitor, onNeedRoutes, onNeedAirportData, onNeedAirportPanel, liveBoardRows, runwaysOf, parseRunwayEnds, flightsOfCallsign, bootFlightPage, unlockExports, exportFile, rowWindow, hexOfFid, onNeedSearch, osmPick, wantOsmPlace, osmPlaceAt, learnSite, siteIdAt, siteBk, siteRow, apById, operatorIdOf, airlineIdByName, fr24Cat, onHistElsewhere, get viewBox() { return viewBox; }, get selectedId() { return currentId(); }, opt, setOpt, notify, openUnblockWindow, closeUnblockWindow, ensureBarButton, findBar, checkLatest, installKind, sayHello, helloSt, ubBanners, ubOffer, installId }; } catch (_) { /* ignore */ }
   log('loaded v' + VERSION);
 
 })();

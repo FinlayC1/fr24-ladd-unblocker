@@ -590,7 +590,7 @@
   const routesOut = new Map(), routesSent = new Map();
   function noteRouteOut(id, route) {
     const r = srvIds.rows.get(id), rec = live.get(id);
-    if (!r || !rec || !rec.hex || rec.hex !== String(r[1] || '').toLowerCase() || !route || route.quick || route.crowd) return;
+    if (!r || !rec || !rec.hex || rec.hex !== String(r[1] || '').toLowerCase() || !route || route.quick || route.crowd || route.central) return;
     if (!(route.legCount > 0 || (route.originConf === 'ground' && !route.crowdO) || (route.destConf === 'confirmed' && !route.crowdD))) return;
     const o = !route.crowdO && route.originId > 0 ? route.originId : 0, d = !route.crowdD && route.destId > 0 && route.destConf !== 'landed' ? route.destId : 0;
     if (!o && !d) return;
