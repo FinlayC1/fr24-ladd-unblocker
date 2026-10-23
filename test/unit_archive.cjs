@@ -86,7 +86,11 @@ const io = {
     const p1 = await A.partsOf(D, async u => P1[u] ? 206 : 404);
     check('... a day published again (-1): that one', p1.length === 1 && p1[0].includes(t1), p1);
     const p0 = await A.partsOf(D, async () => 404);
-    check('... none published: none', p0.length === 0); }
+    check('... none published: none', p0.length === 0);
+    // (1.0.1: a short day - adsb.lol's outage - published as one tar, not in parts: 5 and 7 May, 11 Jun 2026)
+    const PW = { [base + '.tar']: Buffer.alloc(1) }, gw = [];
+    const pw = await A.partsOf(D, async u => { gw.push(u); return PW[u] ? 206 : 404; });
+    check('... a day published as one tar (no parts): that tar - not taken for a day never published', pw.length === 1 && pw[0] === base + '.tar' && gw[0] === base + '.tar.aa', { pw, gw }); }
 
   // ---- the server first: the archive read one day at a time, waiting while the machine is busy (22.31.12) -------------
   { check('one day read at a time (two ran the 1 GB VM into swap: browsers took the monitor for gone)', M.CFG.archiveJobs === 1, M.CFG.archiveJobs);
@@ -185,6 +189,18 @@ const io = {
     else check('(the cut runs through no trace file: the joining checked on its own)', JSON.stringify(A.rangesOf([{ url: 'a', size: 100 }, { url: 'b', size: 50 }], 90, 30)) === JSON.stringify([{ url: 'a', from: 90, to: 99 }, { url: 'b', from: 0, to: 19 }]));
     const n404 = await M.answer(new URL(`http://x/atrace?hex=abcdef&day=${D}`), nowS()), n409 = await M.answer(new URL(`http://x/atrace?hex=a9ca9d&day=${dayOf(nowS() - 9 * 86400)}`), nowS()), n400 = await M.answer(new URL('http://x/atrace?hex=zz&day=x'), nowS());
     check('... not in that day\'s archive: 404 (adsb.lol heard nothing of it); a day with no index here: 409 (the browser asks adsb.lol\'s site); nonsense: 400', n404.status === 404 && /"none"/.test(n404.body) && n409.status === 409 && n400.status === 400 && M.ARC.none >= 1 && M.ARC.noidx >= 1);
+    // (1.0.1: a day adsb.lol never published - its outage of 6 May: nobody's file of it - said so, not "no index yet")
+    const dU = dayOf(nowS() - 11 * 86400); M.archDays.set(dU, false);
+    const nU = await M.answer(new URL(`http://x/atrace?hex=a9ca9d&day=${dU}`), nowS());
+    check('... a day adsb.lol never published: 404 saying so ("none", "unpub") - not 409, which sent browsers to the walled sites', nU.status === 404 && /"none"/.test(nU.body) && /"unpub"/.test(nU.body), nU);
+    M.archDays.delete(dU);
+    // (days given up as never published by a build before 1.0.1 - the one-tar days among them: looked for again at start;
+    // one given up by 1.0.1 stays given up)
+    { const st2 = fs.mkdtempSync(path.join(os.tmpdir(), 'monarch1-')), ad = path.join(st2, 'archive'); fs.mkdirSync(ad, { recursive: true });
+      fs.writeFileSync(path.join(ad, '2026-05-05.json'), JSON.stringify({ at: 1, published: false })); fs.writeFileSync(path.join(ad, '2026-05-06.json'), JSON.stringify({ at: 1, published: false, pv: 2 })); fs.writeFileSync(path.join(ad, '2026-05-04.json'), JSON.stringify({ at: 1, published: true }));
+      const out = require('child_process').execFileSync(process.execPath, ['-e', "const M = require(" + JSON.stringify(path.join(__dirname, '../monitor/monitor.cjs')) + "); console.log(JSON.stringify([...M.archDays])); process.exit(0)"], { env: Object.assign({}, process.env, { MON_STORE: st2 }) }).toString();
+      const days = new Map(JSON.parse(out.trim().split('\n').pop()));
+      check('... at start: a day given up before 1.0.1 looked for again (5 May, one tar), one given up by 1.0.1 not (6 May), one read kept', !days.has('2026-05-05') && days.get('2026-05-06') === false && days.get('2026-05-04') === true, [...days]); }
     M.setArcRange(async () => { throw new Error('archive range: HTTP 403'); });
     const bad = await M.answer(new URL(`http://x/atrace?hex=a9ca9d&day=${D}`), nowS());
     check('... GitHub not answering: 502, the reason kept for /status', bad.status === 502 && /403/.test(M.ARC.lastErr), M.ARC);

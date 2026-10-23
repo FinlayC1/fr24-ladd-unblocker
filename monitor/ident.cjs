@@ -79,7 +79,7 @@ function createIdent(env) {
   function near(g, lat, lon) { const out = [], la = Math.floor(lat), lo = Math.floor(lon); for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) { let L = lo + j; if (L < -180) L += 360; if (L >= 180) L -= 360; const c = g.get((la + i) * 1000 + L); if (c) out.push(...c); } return out; }
 
   // ---- scoring (the userscript's scoreCandidate / matchFlight) -----------------------------------------------------
-  const typeFamily = t => String(t || '').toUpperCase().slice(0, 3);
+  const typeFamily = t => E.typeFamily ? E.typeFamily(t) : String(t || '').toUpperCase().slice(0, 3);   // (a maker's line: GA7C and GLF6 alike)
   function typeRelation(a, b) { a = String(a || '').toUpperCase(); b = String(b || '').toUpperCase(); if (!a || !b) return 'unknown'; if (a === b) return 'same'; return typeFamily(a) === typeFamily(b) ? 'family' : 'different'; }
   function project(lat, lon, gsKt, trk, seconds) {
     if (!seconds || !(gsKt > 0) || !fin(trk)) return [lat, lon];

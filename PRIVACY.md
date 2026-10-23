@@ -66,7 +66,7 @@ Every copy connects to the project's shared monitor by default. You can change t
   - the routes it worked out for flights the monitor names (the airports, the chance, the times), so other browsers can show them;
   - the flights it learned from: an aircraft's take-off and landing airports and times, callsign and type, as rebuilt from public ADS-B, so every browser's route engine learns from them;
   - the pictures it found of blocked aircraft: the aircraft's ICAO address and the pictures' addresses on JetPhotos or Planespotters, with their photographers' credits, so other browsers show them without looking them up.
-- **Every 30 seconds:** the public ADS-B reports your browser fetched from adsb.lol and adsb.fi around your map, so other browsers need not fetch them again.
+- **Every 30 seconds:** the public ADS-B reports your browser fetched from adsb.lol, adsb.fi and TheAirTraffic around your map, so other browsers need not fetch them again.
 - **Once a day at most, the hello** described under [Counting installs](#counting-installs), unless you switched it off.
 
 **What it never receives:** your Flightradar24 account, cookies, password or e-mail address, anything typed into a page, or Flightradar24's device id for your browser. That id is sent only to a monitor of your own (one you gave a secret).

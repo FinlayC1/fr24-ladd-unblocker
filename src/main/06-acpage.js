@@ -362,11 +362,16 @@
   // The sources' state under the log, on a line of its own: a network putting a verification page in front of this browser
   // (with the way through - its site, opened once), the days not fully read, and how far the monitor has got with adsb.lol's
   // archives (the days it has for the log, whatever this browser is shown)
+  // (what the log page says under its flights of the days it could not read)
+  // (a verification page is said - in bold, with what to do about it - only where it costs this log days the monitor cannot
+  // give it: no monitor, or its archive not in use. 1.0.1: N811MK's log said so for days adsb.lol never published, or
+  // published as one tar the monitor did not read, while the monitor gave it every other day of 217)
   function logGaps(hex) {
-    const parts = [];
+    const parts = [], g = logGapsOf(hex);
     const walls = Object.keys(netState).filter(id => netState[id].wallAt && now() - netState[id].wallAt < 30 * 60000);
-    if (walls.length) parts.push(`<b>${walls.map(id => esc(NETS[id].name)).join(' and ')} ${walls.length > 1 ? 'are' : 'is'} showing this browser a verification page</b> - open ${walls.map(id => `<a href="${NETS[id].site}" target="_blank" rel="noopener">${esc(NETS[id].name)}</a>`).join(' and ')} once in a tab, then reload this page`);
-    const g = logGapsOf(hex); if (g) parts.push(g);
+    if (walls.length && g && g.walled && !arcUp()) parts.push(`<b>${walls.map(id => esc(NETS[id].name)).join(' and ')} ${walls.length > 1 ? 'are' : 'is'} showing this browser a verification page</b> - open ${walls.map(id => `<a href="${NETS[id].site}" target="_blank" rel="noopener">${esc(NETS[id].name)}</a>`).join(' and ')} once in a tab, then reload this page`);
+    if (g) parts.push(g.text);
+    const np = noPubOf(hex); if (np) parts.push(np);
     const m = monitorNote(); if (m) parts.push(m);
     return parts.length ? `<div class="tl-foot-note">${parts.join(' · ')}</div>` : '';
   }
@@ -376,14 +381,21 @@
     const a = monStat.archive;
     if (!a) return `the monitor${monStat.ver ? ' (' + esc(monStat.ver) + ')' : ''} runs an older version - <b>Update monitor</b> in the LADD Unblock window`;
     if (!a.on) return '';
-    return `the monitor has ${a.have != null ? a.have : a.days} of the last ${a.on} days from adsb.lol's archives${a.idx != null ? `, ${a.idx} of them for any aircraft` : ''}${a.running ? ' (reading ' + esc(a.running) + ')' : ''}${a.err && a.errAt && now() - a.errAt < 6 * 3600e3 ? ' - last error: ' + esc(a.err) : ''}`;
+    // (an archive download cut short is read again within the hour - the LADD Unblock window says so; not here)
+    return `the monitor has ${a.have != null ? a.have : a.days} of the last ${a.on} days from adsb.lol's archives${a.idx != null ? `, ${a.idx} of them for any aircraft` : ''}${a.running ? ' (reading ' + esc(a.running) + ')' : ''}`;
   }
+  // -> { text, walled } of the days not read at all (not one with adsb.lol's flights in it, airplanes.live's still to add)
   function logGapsOf(hex) {
-    const h = store.peekHist(hex); if (!h || !h.err) return '';
-    // (a day not read at all - not one with adsb.lol's flights in it, airplanes.live's still to add)
-    const ds = Object.keys(h.err).filter(d => !h.days[d]); if (!ds.length) return '';
+    const h = store.peekHist(hex); if (!h || !h.err) return null;
+    const ds = Object.keys(h.err).filter(d => !h.days[d]); if (!ds.length) return null;
     const why = [...new Set(ds.map(d => h.err[d]))].slice(0, 2).join('; ');
-    return `${ds.length} day${ds.length > 1 ? 's' : ''} not read yet (${esc(why)}) - read again next time`;
+    return { text: `${ds.length} day${ds.length > 1 ? 's' : ''} not read yet (${esc(why)}) - read again next time`, walled: ds.some(d => /verification page/.test(h.err[d] || '')) };
+  }
+  // (the days adsb.lol never published - no one's file of them: said as that)
+  function noPubOf(hex) {
+    const h = store.peekHist(hex), ds = h && h.nopub ? Object.keys(h.nopub).sort() : []; if (!ds.length) return '';
+    const fmt = d => new Date(d.replace(/\//g, '-') + 'T12:00:00Z').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+    return `${ds.length === 1 ? fmt(ds[0]) + ' is' : ds.length + ' days are'} in no public archive (adsb.lol published none${ds.length > 1 ? ' of ' + ds.slice(0, 3).map(fmt).join(', ') + (ds.length > 3 ? '…' : '') : ''})`;
   }
   const regOfRow = tr => { const a = tr && tr.querySelector('a[href*="/data/aircraft/"]'); return a ? decodeURIComponent(((a.getAttribute('href') || '').match(/\/data\/aircraft\/([^/?#]+)/i) || [])[1] || '').toUpperCase() : ''; };
   function flightPagePlayback(tbody, cs) {
@@ -658,16 +670,36 @@
   // the logs kept here (each aircraft's flights carry their callsigns) and the permanent monitor's flights.
   const FLIGHT_HEAD = '<thead><tr><th scope="col" class="visible-xs visible-sm" colspan="20">FLIGHTS HISTORY</th><th scope="col" class="w40 hidden-xs hidden-sm">&nbsp;</th><th scope="col" class="hidden-xs hidden-sm">DATE</th><th scope="col" class="hidden-xs hidden-sm">FROM</th><th scope="col" class="hidden-xs hidden-sm">TO</th><th scope="col" class="hidden-xs hidden-sm">AIRCRAFT</th><th scope="col" class="hidden-xs hidden-sm">FLIGHT TIME</th><th scope="col" class="hidden-xs hidden-sm" title="Scheduled Time Departure">STD</th><th scope="col" class="hidden-xs hidden-sm" title="Actual Time Departure">ATD</th><th scope="col" class="hidden-xs hidden-sm" title="Scheduled Time Arrival">STA</th><th scope="col" class="hidden-xs hidden-sm"></th><th scope="col" class="hidden-xs hidden-sm">STATUS</th><th class="text-right hidden-xs hidden-sm"></th><th scope="col" class="w40 hidden-xs hidden-sm">&nbsp;</th></tr></thead>';
   const csKey = s => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
-  // every flight known under the callsign: [{ leg, hex }] - the logs kept here first (instant), the monitor's as it answers
+  // every flight known under the callsign: [{ leg, hex }] - each aircraft's whole log as its log page has it (knownLegs: the
+  // days read, stitched and chained - a flight cut at midnight or by a hole in coverage is one flight), the monitor's flights
+  // (its logs, built the same way) for what is not read here yet. The logs kept here first (instant), the monitor's as it
+  // answers, then each aircraft's log as it loads. (1.0.1: N811MK's page had its day files' pieces - "Naples -> -" and "- ->
+  // Trenton" for one flight - beside the joined copies, and missed flights its log had.)
   async function flightsOfCallsign(cs, onMore) {
-    const out = new Map(), add = (hex, l) => { if (!l || csKey(l.cs) !== cs) return; const k = hex + ':' + Math.round((l.tOff || l.tStart) / 600); if (!out.has(k)) out.set(k, { hex, leg: l }); };
+    const hexes = new Set(), mon = [];
+    const known = l => !!l && (l.from || l.to || l.tEnd - l.tStart > 600);
+    const collect = () => {
+      const out = [];
+      for (const h of hexes) {
+        const own = knownLegs(h).filter(l => known(l) && csKey(l.cs) === cs);
+        for (const l of own) out.push({ hex: h, leg: l });
+        // (the monitor's flights of the aircraft that no flight read here overlaps)
+        for (const l of mon) if (l.hex === h && known(l) && !own.some(o => o.tStart < (l.tEnd || l.tStart) + 60 && (o.tEnd || o.tStart) > l.tStart - 60)) out.push({ hex: h, leg: l });
+      }
+      return out;
+    };
     await Promise.race([store.ready, sleep(2500)]);
-    const hexes = [...store.allHex()].filter(([, v]) => v && Array.isArray(v.recent) && v.recent.some(x => csKey(x[6]) === cs)).map(([h]) => h);
-    for (const h of hexes) { const hi = await store.getHist(h); for (const l of (hi && hi.legs) || []) add(h, l); for (const l of compactToLegs((store.getHex(h) || {}).recent || [])) add(h, l); }
-    if (onMore) onMore([...out.values()]);
+    for (const [h, v] of store.allHex()) if (v && Array.isArray(v.recent) && v.recent.some(x => csKey(x[6]) === cs)) hexes.add(h);
+    await Promise.all([...hexes].map(h => store.getHist(h).catch(() => null)));
+    if (onMore) onMore(collect());
     const j = await monGet('/flights?cs=' + encodeURIComponent(cs)).catch(() => null);
-    for (const l of (j && j.list) || []) { add(l.hex, l); if (l.reg && !store.getHex(l.hex)) store.mergeHex(l.hex, { reg: l.reg, type: l.type, ladd: !!l.ladd || undefined }); }
-    return [...out.values()];
+    for (const l of (j && j.list) || []) { if (!l || !/^[0-9a-f]{6}$/.test(l.hex || '')) continue; mon.push(l); hexes.add(l.hex); if (l.reg && !store.getHex(l.hex)) store.mergeHex(l.hex, { reg: l.reg, type: l.type, ladd: !!l.ladd || undefined }); }
+    if (onMore) onMore(collect());
+    // (each aircraft's log loaded as its log page loads it - eight at most; the page drawn again as days come in)
+    let t = 0; const redraw = () => { if (onMore && !t) t = setTimeout(() => { t = 0; onMore(collect()); }, 400); };
+    await Promise.all([...hexes].slice(0, 8).map(h => Promise.all([warmToday([h]).then(() => loadToday(h, 60000, { priority: true })).catch(() => null), loadHistory(h, HISTORY_DAYS, redraw, { front: true }).catch(() => null)])));
+    if (t) { clearTimeout(t); t = 0; }
+    return collect();
   }
   // ---- FR24's search box, on every page (map, playback, boards, logs): the blocked aircraft this script keeps logs of, as
   // FR24 lists aircraft (to the log page built here), and the callsigns they flew under, as FR24 lists flight numbers (to

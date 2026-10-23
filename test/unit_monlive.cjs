@@ -260,8 +260,9 @@ const sameDayFlights = l => `${l.from ? l.from.code : '?'}-${l.to ? l.to.code : 
     check(`M-ARNZ ${d}: the log from the monitor = the log the browser builds from adsb.lol itself`, a.length === 4 && a.join() === b.join(), { monitor: a, browser: b });
   }
   const one = hm.legs.find(l => l.day === '2026/10/07'), oneB = hb.legs.find(l => l.day === '2026/10/07' && Math.round(l.tStart) === Math.round(one.tStart));
-  const keys = o => Object.keys(o).filter(k => k !== 'lx').sort().join();
-  check('... the same fields (path, take-off and landing times...), no monitor-only field left in the log', !!oneB && keys(one) === keys(oneB) && !('lx' in one) && JSON.stringify(one.path) === JSON.stringify(oneB.path) && one.tOn === oneB.tOn && one.tOff === oneB.tOff, { m: keys(one), b: oneB && keys(oneB) });
+  // (mon: the browser's own mark of a flight that came from the monitor - kept when it reads such a day again itself)
+  const keys = o => Object.keys(o).filter(k => k !== 'lx' && k !== 'mon').sort().join();
+  check('... the same fields (path, take-off and landing times...), no monitor-only field left in the log - marked as the monitor\'s', !!oneB && keys(one) === keys(oneB) && !('lx' in one) && one.mon === 1 && !('mon' in oneB) && JSON.stringify(one.path) === JSON.stringify(oneB.path) && one.tOn === oneB.tOn && one.tOff === oneB.tOff, { m: keys(one), b: oneB && keys(oneB) });
   check('... and the days marked done, so not asked for again', hm.days['2026/10/06'] && hm.days['2026/10/07'] && hm.days['2026/10/05']);
   // ---- not used: another log version; a day whose flights did not all come -------------------------------------------
   hv = M.HIST_V - 1; net.asked.length = 0;

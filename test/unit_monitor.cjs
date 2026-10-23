@@ -31,6 +31,21 @@ for (const [hex, day, type] of [['3cdf15', '2026-10-02', 'E55P'], ['424c35', nul
   const lastTo = got.filter(l => l.to).pop();
   if (lastTo) { const b = M.boardLegs(lastTo.to.id, lastTo.tStart - 3600, lastTo.tEnd + 3600); check(`... the board of ${code(lastTo.to.id)} has it`, b.some(x => x.hex === hex), b.map(x => x.hex)); }
 }
+// (1.0.1) A flight the monitor lost the positions of while it crossed an ocean out of coverage - restarted meanwhile:
+// N1868M out of Teterboro on 19 Oct, last heard off Newfoundland at FL410 at 23:15, heard again over Spain after more than three
+// hours and down at Barcelona. The piece heard after is the same flight (as fast as it was going, no time over to have landed) -
+// not "Teterboro -> ?" and "? -> Barcelona". (N811MK, 23 Oct: "Trenton -> ?" and "? -> ?" on the monitor itself.)
+{ const hex = 'a15a72', rd = d => JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(__dirname, 'fixtures/legs', hex, d + '_lol.json.gz'))).toString());
+  const feed = j => { let next = 0; for (const p of j.trace) { const t = j.timestamp + p[0]; if (t < next) continue; next = t + 30; M.ingest({ hex, r: 'N1868M', t: 'GLF6', dbFlags: 8, flight: p[8] && p[8].flight, lat: p[1], lon: p[2], alt_baro: p[3], gs: p[4], track: p[5], baro_rate: p[7], seen_pos: 0 }, t); } return j.timestamp + j.trace[j.trace.length - 1][0]; };
+  const e1 = feed(rd('2026-10-19')); M.buildLegs(hex, e1 + 60);
+  const open1 = [...(M.legs.get(hex) || new Map()).values()].filter(l => l.open);
+  M.ac.delete(hex);   // (the monitor restarted: its positions of the flight gone, the open flight kept)
+  // (heard again from 02:20 only: 3 h 5 min unheard - more than the three hours the monitor allowed a flight before)
+  const j20 = rd('2026-10-20'), from20 = Date.parse('2026-10-20T02:20:00Z') / 1000; j20.trace = j20.trace.filter(p => j20.timestamp + p[0] >= from20);
+  const e2 = feed(j20); M.buildLegs(hex, e2 + 3 * 3600);
+  const got = [...(M.legs.get(hex) || new Map()).values()].sort((a, b) => a.tStart - b.tStart).map(l => `${l.from ? code(l.from.id) : '?'}-${l.to ? code(l.to.id) : '?'}`);
+  check('N1868M: Teterboro -> Barcelona heard again after the Atlantic and a restart - one flight, its take-off kept', open1.length === 1 && got[0] === 'TEB-BCN' && !got.includes('?-BCN') && !got.includes('TEB-?'), { open1: open1.length, got });
+  M.legs.delete(hex); }
 // A blocked aircraft the monitor never heard - M-ARNZ, parked at Barrow when it started - learned of from the userscript:
 // its days read back from adsb.lol's traces (the fixtures here): its shuttles on Barrow's board, the evening one from
 // Farnborough (not "Woking"), flagged as blocked

@@ -1141,6 +1141,10 @@
   const NETS = {
     lol: { name: 'adsb.lol', site: 'https://adsb.lol/', url: (hex, day) => `https://adsb.lol/${day ? 'globe_history/' + day : 'data'}/traces/${hex.slice(-2)}/trace_full_${hex}.json` },
     apl: { name: 'airplanes.live', site: 'https://globe.airplanes.live/', url: (hex, day) => `https://globe.airplanes.live/${day ? 'globe_history/' + day : 'data'}/traces/${hex.slice(-2)}/trace_full_${hex}.json` },
+    // (1.0.1) TheAirTraffic: a community aggregator with feeders of its own (it heard N811MK further out over the Atlantic
+    // than adsb.lol did) - the same files in the same format; its past days kept about five days back (older ones only
+    // now and then): an extra network merged in where it has the file, never one whose silence or refusal decides a day
+    tat: { name: 'TheAirTraffic', site: 'https://globe.theairtraffic.com/', url: (hex, day) => `https://globe.theairtraffic.com/${day ? 'globe_history/' + day : 'data'}/traces/${hex.slice(-2)}/trace_full_${hex}.json` },
     // (the monitor: today's positions of the aircraft it follows - from its own polling of adsb.lol's API, which has no
     // verification page - in the same format; today only)
     mon: { name: 'the monitor', site: '', url: hex => `${monUrl()}/trace?hex=${hex}`, hdr: () => monHdr() },
@@ -1151,7 +1155,8 @@
   };
   // (how each answered lately: the window's sources and the log page say it - a verification page above all)
   const netNew = () => ({ ok: 0, none: 0, wall: 0, err: 0, wallUntil: 0, wallAt: 0, okAt: 0, last: '', lastAt: 0, probe: null, bad: null, wallErr: '' });
-  const netState = { lol: netNew(), apl: netNew(), mon: netNew(), arc: netNew() };
+  const netState = { lol: netNew(), apl: netNew(), mon: netNew(), arc: netNew(), tat: netNew() };
+  const TAT_DAYS = 5;   // (TheAirTraffic's past days kept: about five)
   // (a verification page by what it is - adsb.lol's proof-of-work page, Cloudflare's challenge - not by any page saying
   // "verify": a 403 or a site's own error page is a refusal, said as one)
   const WALL_RE = /<title>\s*(?:verification|just a moment|attention required)|verifying connection|solving security challenge|proof[- ]of[- ]work|cf[-_]chl|challenge-platform|cf-browser-verification/i;
@@ -1226,6 +1231,8 @@
       // (the monitor has no index of that day yet: an answer, not a failure - the caller asks adsb.lol's site. A 404 is "not
       // in that day's archive" only when it says so: a monitor from before 1.0 answers 404 for a path it does not know)
       if (id === 'arc' && (r.status === 409 || (r.status === 404 && !/"none"/.test(String(r.text || ''))))) return out('noidx', {});
+      // (a day adsb.lol never published - its outage of 6 May 2026: nobody's file of it in its archive)
+      if (id === 'arc' && r.status === 404 && /"unpub"/.test(String(r.text || ''))) return out('none', { unpub: true });
       const c = classifyTrace(hex, r.status, r.text);
       if (c.state === 'rate' && attempt < 2) { await sleep(4000 * (attempt + 1)); continue; }
       if (c.state !== 'ok' && c.state !== 'none') noteBad(id, N.url(hex, day), r, c);
@@ -1244,6 +1251,9 @@
     if (day && arcUp()) { const a = await readTrace('arc', hex, day, opts); if (a.state === 'ok') return a.j; if (a.state === 'none') throw new Error('HTTP 404'); }
     const r = await readTrace(day && opts && opts.back > LOL_DAYS ? 'apl' : 'lol', hex, day, opts);
     if (r.state === 'ok') return r.j;
+    // (TheAirTraffic's file of it, when the other did not give one - a verification page, or none: its feeders may have it)
+    const back = day ? (opts && opts.back) || Math.round((now() - Date.parse(String(day).replace(/\//g, '-') + 'T12:00:00Z')) / 864e5) : 0;
+    if (!day || back <= TAT_DAYS) { const t = await readTrace('tat', hex, day, opts); if (t.state === 'ok') return t.j; }
     throw new Error(r.state === 'none' ? 'HTTP 404' : r.err || r.state);
   }
   // (both networks' points of a day, merged - each hears what the other's receivers miss: D-CRUX at Palma, adsb.lol lost
@@ -1279,21 +1289,28 @@
     return m.size ? m : null;
   }
   // A blocked aircraft's finished days as the monitor rebuilt them (/hist: adsb.lol's day traces through the same engine,
-  // in this log's format - and the days it was watched throughout and not heard flying, with no flights). Asked for
-  // together: the aircraft of the next 60 ms in one request (20 at most). null: no monitor, or nothing of it there. Only
-  // for blocked aircraft (the monitor keeps no others' days); right after the page opens, once its check has answered.
+  // in this log's format - and the days it was watched throughout and not heard flying, with no flights) - and, from a
+  // monitor with the world log (1.0.1: every aircraft's flights of every day of adsb.lol's archive), any aircraft's. Asked
+  // for together: the aircraft of the next 60 ms in one request (20 at most), from the oldest day wanted (since: the days
+  // not had here). null: no monitor, or nothing of it there. Right after the page opens, once its check has answered.
   const histAsk = { q: new Map(), t: 0 };
-  function monHist(hex) {
-    // (the monitor keeps the days of the blocked aircraft and, from adsb.lol's archives, of every LADD and military one)
-    const hx0 = store.getHex(hex) || {}; if (!hx0.ladd && !hx0.mil) return Promise.resolve(null);
-    const c = monCheck();
-    return Promise.resolve(c && c.catch(() => null)).then(() => !monUp() ? null : new Promise(res => { const l = histAsk.q.get(hex) || []; l.push(res); histAsk.q.set(hex, l); if (!histAsk.t) histAsk.t = setTimeout(flushMonHist, 60); }));
+  const worldUp = () => !!(monOk && monBase && monStat && monStat.archive && monStat.archive.world && monStat.archive.world.days > 0);
+  function monHist(hex, since) {
+    // (the monitor keeps the days of the blocked aircraft and, from adsb.lol's archives, of every LADD and military one -
+    // and with its world log, of every aircraft)
+    const hx0 = store.getHex(hex) || {}, c = monCheck();
+    return Promise.resolve(c && c.catch(() => null)).then(() => !monUp() || !(hx0.ladd || hx0.mil || worldUp()) ? null : new Promise(res => {
+      const e = histAsk.q.get(hex) || { rs: [], since: since || '' }; e.rs.push(res); if (!since || (e.since && since < e.since)) e.since = since || ''; histAsk.q.set(hex, e);
+      if (!histAsk.t) histAsk.t = setTimeout(flushMonHist, 60);
+    }));
   }
   function flushMonHist() {
     histAsk.t = 0; const all = [...histAsk.q]; histAsk.q.clear();
-    for (let i = 0; i < all.length; i += 20) {
-      const part = all.slice(i, i + 20), give = by => { for (const [h, rs] of part) for (const r of rs) r((by && by.get(h)) || null); };
-      monGet('/hist?hex=' + part.map(x => x[0]).join(',')).then(j => give(new Map(((j && j.hv === HIST_V && Array.isArray(j.list)) ? j.list : []).filter(x => x && x.hex && x.days).map(x => [x.hex, x]))), () => give(null));
+    // (the aircraft wanting days from the same one asked together)
+    const bySince = new Map(); for (const x of all) (bySince.get(x[1].since) || bySince.set(x[1].since, []).get(x[1].since)).push(x);
+    for (const [since, list] of bySince) for (let i = 0; i < list.length; i += 20) {
+      const part = list.slice(i, i + 20), give = by => { for (const [h, e] of part) for (const r of e.rs) r((by && by.get(h)) || null); };
+      monGet('/hist?hex=' + part.map(x => x[0]).join(',') + (since ? '&since=' + since.replace(/\//g, '-') : '')).then(j => give(new Map(((j && j.hv === HIST_V && Array.isArray(j.list)) ? j.list : []).filter(x => x && x.hex && x.days).map(x => [x.hex, x]))), () => give(null));
     }
   }
   const historyJobs = new Map();
@@ -1344,6 +1361,7 @@
         h.legs.sort((a, b) => b.tStart - a.tStart); h.legs = h.legs.slice(0, 1500);
         const oldest = dayStr(now() - (HISTORY_DAYS + 3) * 864e5); for (const k of Object.keys(h.days)) if (k < oldest) delete h.days[k];
         for (const o of [h.miss, h.err, h.rd]) for (const k of Object.keys(o)) if (k < oldest || (o !== h.rd && h.days[k] && h.days[k] !== 'p')) delete o[k];
+        if (h.nopub) for (const k of Object.keys(h.nopub)) if (k < oldest) delete h.nopub[k];
         h.savedAt = now(); store.setHist(hex, h);
         const chained = ENGINE.chainLegs(ENGINE.stitchLegs(h.legs.slice().reverse()));
         store.mergeHex(hex, { recent: legsToCompact(chained) });
@@ -1356,7 +1374,7 @@
       // airplanes.live had TC-ACN's London - Istanbul of 13 Sep and Larnaca - Istanbul of 26 Sep on days given as none. A
       // day it built with one network only - the other refusing it - is 'p': read again here, both networks, when looked at)
       if (todo.length) {
-        const mh = await monHist(hex).catch(() => null);
+        const mh = await monHist(hex, todo[todo.length - 1]).catch(() => null);
         if (mh && mh.days && typeof mh.days === 'object') {
           const byDay = new Map(); for (const l of Array.isArray(mh.legs) ? mh.legs : []) if (l && l.day && fin(l.tStart)) (byDay.get(l.day) || byDay.set(l.day, []).get(l.day)).push(l);
           const part = new Set(Array.isArray(mh.part) ? mh.part : []), lo = new Set(Array.isArray(mh.lo) ? mh.lo : []);
@@ -1367,7 +1385,9 @@
           // browsers are now, it is all there is - and never a hole in the log)
           const have = todo.filter(d => Number.isInteger(mh.days[d]) && (mh.days[d] > 0 ? (byDay.get(d) || []).length === mh.days[d] && !(h.days[d] === 'b' && part.has(d)) : mh.days[d] === 0 && !h.days[d]));
           for (const d of have) {
-            const legs = (byDay.get(d) || []).map(l => { const s = Object.assign({}, l), lx = s.lx; delete s.lx; s.day = d; learnFromLeg(hex, null, s, cls0, ac0.mil, lx); return s; });
+            // (mon: a flight of the monitor's - kept should a read of the day here not have it - not one of its world log, which
+            // is adsb.lol's file as the day's read here has it)
+            const legs = (byDay.get(d) || []).map(l => { const s = Object.assign({}, l), lx = s.lx; delete s.lx; s.day = d; if (s.src === 'world') delete s.src; else s.mon = 1; learnFromLeg(hex, null, s, cls0, ac0.mil, lx); return s; });
             h.days[d] = part.has(d) ? 'p' : lo.has(d) || !legs.length ? 'l' : 'm'; h.rd[d] = now(); delete h.miss[d]; h.legs = h.legs.filter(l => l.day !== d).concat(legs); dirty = true;
           }
           // (looked at: a day built with a network refusing is read again here, both networks, at once - and so is a day of
@@ -1394,14 +1414,23 @@
         // walls this browser; adsb.lol's from the archive, else its site (the last 40 days)
         const pApl = (lookedNow || old) && !aplWall ? readTrace('apl', hex, day, o) : null;
         let lolR = arcUp() ? await readTrace('arc', hex, day, o) : null;
-        if (lolR && lolR.state === 'noidx') lolR = null;
+        const noIdx = !!lolR && lolR.state === 'noidx';
+        if (noIdx) lolR = null;
         if (!lolR && !old) lolR = await readTrace('lol', hex, day, o);
         const res = [lolR, pApl ? await pApl : null].filter(Boolean);
         if (!res.length) res.push(await readTrace('apl', hex, day, o));       // (an old day, no index, airplanes.live walling: said why)
+        // (TheAirTraffic's file of a recent day merged in - for the aircraft looked at, or a day the others failed to give
+        // (a verification page, a refusal; not their "no file": the background is not sent to it for every aircraft on the
+        // map that did not fly) - its feeders hear what the others' miss; its "no file" or refusal decides nothing)
+        const tR = back <= TAT_DAYS && (lookedNow || res.every(r => r.state !== 'ok' && r.state !== 'none')) ? await readTrace('tat', hex, day, o) : null;
         done++;
-        const pts = mergeNets(res), bad = res.filter(r => r.state !== 'ok' && r.state !== 'none'), complete = !bad.length;
+        const pts = mergeNets(res.concat(tR && tR.state === 'ok' ? [tR] : [])), bad = res.filter(r => r.state !== 'ok' && r.state !== 'none'), complete = !bad.length;
         const hasL = res.some(r => r.id === 'arc' || r.id === 'lol'), hasA = res.some(r => r.id === 'apl');
-        if (!complete) { h.err[day] = bad.map(r => r.net + ': ' + r.err).join('; '); dirty = true; }
+        // (the monitor's copy of a day still to be indexed, the sites walling meanwhile: said so - it comes with the next
+        // read - not as a verification page to act on)
+        if (!complete) { h.err[day] = noIdx && !pts.length ? 'the monitor\'s copy of this day is not ready yet' : bad.map(r => r.net + ': ' + r.err).join('; '); dirty = true; }
+        // (a day adsb.lol never published: no one's file of it - noted, said on the log page as what it is)
+        if (lolR && lolR.unpub) { h.nopub = h.nopub && typeof h.nopub === 'object' ? h.nopub : {}; h.nopub[day] = 1; dirty = true; }
         // (nothing had, and a network not answering - or not asked: the background asks adsb.lol alone, and airplanes.live
         // can have what adsb.lol has no file of: not known - asked again later, the day's flights as they were kept. With
         // airplanes.live walling this browser, adsb.lol's "none" is all there is: a day without flights, as it knows it)
@@ -1411,9 +1440,12 @@
         // (a day read again keeps its flights should the new read find fewer from a network that did not answer this time)
         const had = h.legs.filter(l => l.day === day);
         if (!complete && had.length > legs.length) { h.rd[day] = now(); return; }
+        // (and the monitor's flights of it that this read has nothing of - heard by the monitor from the lists it polls,
+        // in no network's file: N811MK's Trenton - Valencia of 15 Oct)
+        const keep = had.filter(l => l.mon && !legs.some(n => n.tStart < l.tEnd && n.tEnd > l.tStart));
         h.days[day] = !complete ? 'p' : hasL && hasA ? 'b' : hasA ? 'a' : 'l';
         h.rd[day] = now(); delete h.miss[day]; if (complete) delete h.err[day];
-        h.legs = h.legs.filter(l => l.day !== day).concat(legs); dirty = true;
+        h.legs = h.legs.filter(l => l.day !== day).concat(legs, keep); dirty = true;
       };
       // newest days first, a few at a time; progress is flushed after every batch
       // (a background log's bookkeeping - joining legs, the copy kept on disk - waits for an idle moment too)
@@ -1476,7 +1508,9 @@
       await loadAirports();
       const [res] = await Promise.all([todayFiles(hex, opts), Promise.race([loadSites(), sleep(3000)])]);   // (unlisted fields known)
       // (neither network answering - a verification page, a refusal: the last good copy stays in use)
-      if (!res.some(r => r.state === 'ok' || r.state === 'none')) throw new Error(res.map(r => r.net + ': ' + r.err).join('; '));
+      // (TheAirTraffic's "no file" is not an answer: it hears less of the world than adsb.lol - an aircraft not there may well
+      // have flown)
+      if (!res.some(r => r.state === 'ok' || (r.state === 'none' && r.id !== 'tat'))) throw new Error(res.map(r => r.net + ': ' + (r.err || r.state)).join('; '));
       const pts = mergeNets(res);
       const cls0 = ENGINE.classify(acOfHex(hex)), heli = cls0 === 'heli', patrol = cls0 === 'fighter' || cls0 === 'milheavy';
       const ac0 = acOfHex(hex), legs = ENGINE.legsFromPoints(pts, { heli, patrol, cls: cls0, type: ac0.type, rangeKm: ENGINE.typeRangeKm(ac0) });   // (no dataEnd: today's file is rewritten now and then - it can end where the aircraft is still flying: HLE81 "landed at Gloucester" passing over it)
@@ -1498,10 +1532,13 @@
   async function todayFiles(hex, opts) {
     const o = { priority: !!opts.priority, bg: !!opts.bg, idle: !!opts.idle }, hx = store.getHex(hex) || {};
     const mon = monOk && !!monBase && !!(hx.ladd || hx.mil || hx.pia || hx.fr24Blocked);
-    if (opts.priority) return Promise.all(['lol', 'apl'].concat(mon ? ['mon'] : []).map(id => readTrace(id, hex, '', o)));
+    if (opts.priority) return Promise.all(['lol', 'apl', 'tat'].concat(mon ? ['mon'] : []).map(id => readTrace(id, hex, '', o)));
     const a = await readTrace('lol', hex, '', o);
-    if (a.state === 'ok' || a.state === 'none' || !mon) return [a];
-    return [a, await readTrace('mon', hex, '', o)];
+    if (a.state === 'ok' || a.state === 'none') return [a];
+    // (adsb.lol's file not coming - a verification page: TheAirTraffic's, and the monitor's positions of the aircraft it follows)
+    const t = await readTrace('tat', hex, '', o);
+    if (t.state === 'ok' || !mon) return [a, t];
+    return [a, t, await readTrace('mon', hex, '', o)];
   }
   // Parked since `since` (a landing): five minutes at a standstill, or a quarter of an hour unheard, on the ground after
   // it - in today's trace (taxiing in does neither)

@@ -8,7 +8,7 @@
 
 <br><br>
 
-<a href="CHANGELOG.md"><img alt="Version 1.0.0" src="https://img.shields.io/badge/version-1.0.0-1f6feb?style=flat&labelColor=23272e"></a>
+<a href="CHANGELOG.md"><img alt="Version 1.0.1" src="https://img.shields.io/badge/version-1.0.1-1f6feb?style=flat&labelColor=23272e"></a>
 <a href="PRIVACY.md#counting-installs"><img alt="Users" src="https://img.shields.io/endpoint?url=https%3A%2F%2F143-47-224-210.sslip.io%2Fbadge&style=flat&labelColor=23272e"></a>
 <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/actions/workflows/tests.yml"><img alt="Tests" src="https://github.com/FinlayC1/fr24-ladd-unblocker/actions/workflows/tests.yml/badge.svg"></a>
 <a href="LICENSE"><img alt="Licence: personal use" src="https://img.shields.io/badge/licence-personal%20use-1f6feb?style=flat&labelColor=23272e"></a>
@@ -48,7 +48,7 @@ Also:
   <img src="docs/assets/how-it-works-dark.svg" alt="Diagram: flightradar24.com in your browser tab exchanges data with the extension or userscript (a page interceptor and an engine). The extension exchanges reports, names and logs with the shared monitor. Public ADS-B networks (adsb.lol, adsb.fi, airplanes.live, OpenSky) feed both. The monitor also reads FR24's whole map every 2 minutes." width="100%">
 </picture>
 
-- **The monitor** is a small always-on server; every copy uses the shared one by default. It follows the worldwide LADD, military and PIA lists, reads FR24's whole map every two minutes to name every flight it shows without a callsign, logs every blocked aircraft's flights, and keeps the latest public ADS-B report of every aircraft it hears.
+- **The monitor** is a small always-on server; every copy uses the shared one by default. It follows the worldwide LADD, military and PIA lists, reads FR24's whole map every two minutes to name every flight it shows without a callsign, logs every blocked aircraft's flights, and keeps the latest public ADS-B report of every aircraft it hears. It also keeps a world log: every aircraft's flights of every day of the past year, from adsb.lol's daily archive, kept for good and added to each day, so any aircraft's log page fills at once.
 - **The extension** runs inside the FR24 tab. It takes the monitor's names the moment FR24 opens, works out destinations for what is on screen, and writes everything into FR24's own data before FR24 draws it. If the monitor is unreachable, it identifies flights on its own.
 - **The two share the work.** The view is polled from the monitor and from public ADS-B in turn, and what each browser fetches is shared, so no one hits the networks' rate limits.
 
@@ -265,6 +265,7 @@ Copyright © 2026 Finlay Clarke. Free to download and use for personal, non-comm
 | [adsb.fi](https://adsb.fi) | Backup positions and military list, area lookups | Free open-data API |
 | [OpenSky Network](https://opensky-network.org) | Backup worldwide positions | Anonymous API, limited credits |
 | [airplanes.live](https://airplanes.live) | History files for days another network missed | Public history files (not its REST API) |
+| [TheAirTraffic](https://theairtraffic.com) | Backup live positions (its map's whole-world file, read by the monitor once a minute), today's and the last days' files | Public map files (it has no query API) |
 | ADS-B Exchange | Optional backup | Only with **your own** API key |
 | Flightradar24 | The page you are looking at; the monitor's map scan | Public pages and feed, no account |
 | [OurAirports](https://ourairports.com) | Airfields, runways, radio frequencies | Public domain |
@@ -280,6 +281,6 @@ The project is built to be a **good citizen** of the free services it depends on
 
 Please use it for personal interest. Don't use it to track, follow or harass anyone. Every source, its terms and limits: [docs/data-sources.md](docs/data-sources.md).
 
-<sub>ADS-B data © <a href="https://adsb.lol">adsb.lol</a> contributors (ODbL), <a href="https://adsb.fi">adsb.fi</a>, <a href="https://opensky-network.org">OpenSky Network</a>, <a href="https://airplanes.live">airplanes.live</a>. Airport, runway and frequency data: <a href="https://ourairports.com">OurAirports</a> (public domain). Map features © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors. Aircraft types: <a href="https://github.com/wiedehopf/tar1090-db">tar1090-db</a>. Not legal advice; the software comes with no warranty.</sub>
+<sub>ADS-B data © <a href="https://adsb.lol">adsb.lol</a> contributors (ODbL), <a href="https://adsb.fi">adsb.fi</a>, <a href="https://opensky-network.org">OpenSky Network</a>, <a href="https://airplanes.live">airplanes.live</a>, <a href="https://theairtraffic.com">TheAirTraffic</a>. Airport, runway and frequency data: <a href="https://ourairports.com">OurAirports</a> (public domain). Map features © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors. Aircraft types: <a href="https://github.com/wiedehopf/tar1090-db">tar1090-db</a>. Not legal advice; the software comes with no warranty.</sub>
 
 <sub>The aircraft, registration and flight shown in this page's illustrations (DEMO01, N0DEMO) are made up.</sub>

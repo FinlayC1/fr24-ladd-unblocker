@@ -5,7 +5,14 @@
 //   env: ENGINE_SRC (another engine), DAYS (22), PER_AC (6), AIRLINER (2), EVERY (12 min), CLS=piston,.. (only these),
 //        HISTDAYS (history window, days), APL=<dir> (only the aircraft of <dir>/../apl_sample.json, with their older
 //        days from <dir>/<hex>/<day>.json.gz added before the archive's - 7 months of history), DROP=csr,flow (those
-//        population tables left out: what each is worth), T2FILE (another _t2 file, e.g. the trimmed one that ships)
+//        population tables left out: what each is worth), T2FILE (another _t2 file, e.g. the trimmed one that ships),
+//        LONGHIST=<dir> (the history of the aircraft with a file <dir>/<hex>.json - the monitor's /hist answer of it, up to
+//        220 days of its log - in place of the archive's three weeks: what a browser has for a LADD aircraft; only those
+//        aircraft evaluated), LONGONLY=1 (with LONGHIST: only the aircraft that have such a file), LONGSEL=1 (those aircraft
+//        only, with the archive's history - the same moments, to compare)
+//   the dump's rows: [hex, type, class, t, origin, truth, top, top p %, hit, minutes to go, trip km, flights of origin ->
+//        truth before, landings at truth before, destinations flown to from origin before, truth's rank (0: not among the
+//        candidates), truth's p %, landings at top before, flights before]
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
@@ -51,7 +58,11 @@ function doShard(shard, W) {
       if (process.env.MILBIZ && !(ac.mil && /^(heavybiz|bizjet)$/.test(E.classify(Object.assign({}, ac, { mil: false }))))) continue;
       const cls = E.classify(ac); if (ONLY && !ONLY.has(cls)) continue;
       const legs = E.legsFromPoints(pts, { heli: cls === 'heli', patrol: cls === 'fighter' || cls === 'milheavy' }), sums = legs.map(l => E.summarizeLeg(l, null));
-      const chained = E.chainLegs(E.stitchLegs(sums.map(x => Object.assign({}, x))));
+      // (LONGHIST: the monitor's log of it - its days rebuilt from adsb.lol's archives - for the history)
+      let longLegs = null;
+      if (W.longHist) { try { const j = JSON.parse(fs.readFileSync(path.join(W.longHist, ac.hex + '.json'), 'utf8')); longLegs = (j && Array.isArray(j.legs)) ? j.legs : null; } catch (e) { longLegs = null; } }
+      if (W.longOnly && !longLegs) continue;
+      const chained = E.chainLegs(E.stitchLegs((W.longSel ? sums : longLegs || sums).map(x => Object.assign({}, x))));
       let used = 0;
       for (let li = legs.length - 1; li >= 0 && used < (cls === 'airliner' ? AIRL : PER_AC); li--) {
         const leg = legs[li], s = sums[li];
@@ -78,7 +89,12 @@ function doShard(shard, W) {
           add('history ' + (hs.n === 0 ? 'a none' : hs.n < 10 ? 'b 1-9' : hs.n < 40 ? 'c 10-39' : 'd 40+'), v);
           { const pb = Math.min(9, Math.floor(r.cands[0].p * 10)); add('calib p' + pb + '0', v); }
           if (E.calibrated) { const pc = E.calibrated(r.cands[0].p, cls); if (pc !== r.cands[0].p) add('shown p' + Math.min(9, Math.floor(pc * 10)) + '0', Object.assign({}, v, { sp: pc })); }
-          if (W.dump) dump.push([ac.hex, ac.type, cls, Math.round(pos.t), O.code, D.code, top.code, Math.round(r.cands[0].p * 100), hit ? 1 : 0, Math.round(togo), Math.round(tripKm)]);
+          if (W.dump) {
+            const prior = chained.filter(h => h.tEnd < s.tStart - 60 && (!HD || h.tEnd > s.tStart - HD * 86400) && h.from && h.to);
+            const nRoute = prior.filter(h => h.from.id === O.id && h.to.id === D.id).length, nDest = prior.filter(h => h.to.id === D.id).length, nOut = new Set(prior.filter(h => h.from.id === O.id).map(h => h.to.id)).size;
+            const ti = r.cands.findIndex(c => near(c.airport)), nTop = prior.filter(h => h.to.id === top.id).length;
+            dump.push([ac.hex, ac.type, cls, Math.round(pos.t), O.code, D.code, top.code, Math.round(r.cands[0].p * 100), hit ? 1 : 0, Math.round(togo), Math.round(tripKm), nRoute, nDest, nOut, ti + 1, ti >= 0 ? Math.round(r.cands[ti].p * 100) : 0, nTop, prior.length]);
+          }
         }
       }
     }
@@ -91,7 +107,7 @@ if (isMainThread) {
   const todo = shardArg === 'all' ? A.SHARDS.slice() : shardArg.split(',');
   const total = {}, dumps = []; let done = 0; const t0 = Date.now();
   const run = () => new Promise(res => {
-    const w = new Worker(__filename, { workerData: { dataDir, tables, logit, engine: process.env.ENGINE_SRC ? path.resolve(process.env.ENGINE_SRC) : null, dump: !!process.env.DUMP, apl: process.env.APL || null }, resourceLimits: { maxOldGenerationSizeMb: 3500 } });
+    const w = new Worker(__filename, { workerData: { dataDir, tables, logit, engine: process.env.ENGINE_SRC ? path.resolve(process.env.ENGINE_SRC) : null, dump: !!process.env.DUMP, apl: process.env.APL || null, longHist: process.env.LONGHIST || null, longOnly: !!process.env.LONGONLY, longSel: !!process.env.LONGSEL }, resourceLimits: { maxOldGenerationSizeMb: 3500 } });
     const next = () => { const s = todo.shift(); if (!s) { w.terminate(); return res(); } w.postMessage(s); };
     w.on('message', m => { done++; for (const [k, s] of Object.entries(m.st)) { const t = total[k] = total[k] || { n: 0, hit: 0, near: 0, reg: 0, far: 0, top3: 0, sp: 0 }; for (const a of Object.keys(t)) t[a] += s[a]; } if (m.dump) dumps.push(...m.dump); if (done % 32 === 0) console.error(new Date().toISOString().slice(11, 19), 'shards', done, 'moments', (total.ALL || {}).n, Math.round((Date.now() - t0) / 1000) + ' s'); next(); });
     w.on('error', e => { console.error('worker error', e); res(); });

@@ -6,7 +6,9 @@
 // Every aircraft's own share of the population tables is taken out while its flights are scored (test/contrib.cjs) -
 // no flight is evidence for itself. Aircraft of the evaluation fold (hash % 10 == 0) are never used.
 // usage: node test/pipe_examples.cjs <dataDir> <p1Dir> <tablesPrefix> <logit.json> <outDir> [workers] [shards]
-//   env: ENGINE_SRC, MOMENTS (3), DAYS (22), AIRLINER (1 flight per airliner), PER_AC (6), TOP (40), TAIL (30)
+//   env: ENGINE_SRC, MOMENTS (3), DAYS (22), AIRLINER (1 flight per airliner), PER_AC (6), TOP (40), TAIL (30),
+//        LONGHIST=<dir> (the history of an aircraft with a file <dir>/<hex>.json - the monitor's /hist answer, up to 220
+//        days of its log - in place of the archive's three weeks, as browsers have it; the others as before)
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
@@ -83,7 +85,9 @@ function doShard(shard, W) {
       const c = process.env.NOLOO ? null : contrib(E, p1.ac[ac.hex], p1.legs[ac.hex], (p1.flow || {})[ac.hex]);
       if (c) looApply(E, W.TB, W.T2, c, -1);
       try {
-        const chained = E.chainLegs(E.stitchLegs(sums.map(x => Object.assign({}, x))));
+        let longLegs = null;
+        if (W.longHist) { try { const j = JSON.parse(fs.readFileSync(path.join(W.longHist, ac.hex + '.json'), 'utf8')); longLegs = j && Array.isArray(j.legs) ? j.legs : null; } catch (e) { longLegs = null; } }
+        const chained = E.chainLegs(E.stitchLegs((longLegs || sums).map(x => Object.assign({}, x))));
         let seed = parseInt(ac.hex, 16) || 1; const rnd = () => (seed = seed * 16807 % 2147483647) / 2147483647;
         for (const li of picks) {
           const leg = legs[li], s = sums[li], D = E.byId(s.to.id), O = E.byId(s.from.id);
@@ -130,7 +134,7 @@ if (isMainThread) {
   const todo = (shardArg === 'all' ? A.SHARDS : shardArg.split(',')).filter(s => process.env.REDO || !fs.existsSync(path.join(outDir, s + '.meta.json')));
   const t0 = Date.now(); let done = 0, ac = 0, fl = 0, ex = 0, by = 0;
   const run = () => new Promise(res => {
-    const w = new Worker(__filename, { workerData: { dataDir, p1Dir, tables, logit, outDir }, resourceLimits: { maxOldGenerationSizeMb: 3500 } });
+    const w = new Worker(__filename, { workerData: { dataDir, p1Dir, tables, logit, outDir, longHist: process.env.LONGHIST || null }, resourceLimits: { maxOldGenerationSizeMb: 3500 } });
     const next = () => { const s = todo.shift(); if (!s) { w.terminate(); return res(); } w.postMessage(s); };
     w.on('message', m => { done++; ac += m.nAc; fl += m.nFl; ex += m.nEx; by += m.bytes; if (done % 8 === 0 || !todo.length) console.log(new Date().toISOString().slice(11, 19), 'shards', done, 'aircraft', ac, 'flights', fl, 'moments', ex, (by / 1e6).toFixed(0) + ' MB', Math.round((Date.now() - t0) / 1000) + ' s'); next(); });
     w.on('error', e => { console.log('worker error', e); res(); });

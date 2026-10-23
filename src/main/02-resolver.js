@@ -45,6 +45,21 @@
       area: (lat, lon, r) => gmRequest(`https://${ADSBX_HOST}/v2/lat/${lat.toFixed(4)}/lon/${lon.toFixed(4)}/dist/${Math.min(250, Math.round(r))}/`, { headers: hdr() }).then(list),
       hex: hex => gmRequest(`https://${ADSBX_HOST}/v2/hex/${hex}/`, { headers: hdr(), timeout: 8000, priority: true }).then(j => list(j)[0] || null) };
   }
+  // (1.0.1) TheAirTraffic's whole-world file (globe.theairtraffic.com/data/aircraft.json: every aircraft its own feeders
+  // hear, readsb's format, ~1 MB compressed) - it has no query by area or address, so the file is read whole, at most
+  // every 30 s, and looked through here. A fallback, as ADS-B Exchange is: a flight the others could not name after two
+  // tries, or the selected aircraft when they have nothing of it. (The monitor reads it every minute for every browser.)
+  const TAT_HOST = 'globe.theairtraffic.com';
+  const tatSnap = { at: 0, list: [], job: null };
+  function tatWorld() {
+    if (now() - tatSnap.at < 30000) return Promise.resolve(tatSnap.list);
+    if (tatSnap.job) return tatSnap.job;
+    tatSnap.job = gmRequest(`https://${TAT_HOST}/data/aircraft.json`, { timeout: 30000 }).then(j => { const t = now(); tatSnap.list = readsbList(j).map(a => normalizeReadsb(a, 'TheAirTraffic', t)).filter(Boolean); tatSnap.at = t; return tatSnap.list; }).finally(() => { tatSnap.job = null; });
+    return tatSnap.job;
+  }
+  const TAT_SOURCE = { name: 'TheAirTraffic', host: TAT_HOST, fallback: true,
+    area: (lat, lon, r) => tatWorld().then(l => l.filter(c => ENGINE.dist(lat, lon, c.lat, c.lon) <= Math.min(250, r) * NM_KM)),
+    hex: hex => tatWorld().then(l => l.find(c => c.hex === String(hex).toLowerCase()) || null) };
   // The monitor, when it answers: every aircraft it heard around the point in the last two minutes - its live list, the
   // positions it keeps, a lookup of the area made through its own gates. Asked first, as well as the others: this
   // browser's own requests to adsb.lol and adsb.fi can be refused or rate-limited, and then a blocked jet in plain view
@@ -62,7 +77,8 @@
     readsbSource('adsb.fi', 'opendata.adsb.fi', (la, lo, r) => `https://opendata.adsb.fi/api/v3/lat/${la.toFixed(4)}/lon/${lo.toFixed(4)}/dist/${r}`, hex => `https://opendata.adsb.fi/api/v2/hex/${hex}`, (la, lo, r) => `https://opendata.adsb.fi/api/v2/lat/${la.toFixed(4)}/lon/${lo.toFixed(4)}/dist/${r}`),
     // ADS-B Exchange (its own feeder network - it sees aircraft the others miss): the official API, with the user's own
     // key (Settings); without one it is simply not asked
-    adsbxSource()
+    adsbxSource(),
+    TAT_SOURCE
   ].filter(Boolean);
   const usable = s => (!s.enabled || s.enabled()) && (deadHosts.get(s.host) || 0) < now();
   const liveSources = () => { const l = SOURCES.filter(s => !s.fallback && usable(s)); return l.length ? l : SOURCES.filter(s => s !== MONITOR_SOURCE).slice(0, 1); };
@@ -641,7 +657,7 @@
 
   // ---- matching -------------------------------------------------------------------------------------------------
   function fr24Age(f, t) { const base = f.serverTime && f.ts ? Math.max(0, f.serverTime / 1000 - f.ts) : 0; return base + Math.max(0, (t - f.receivedAt) / 1000); }
-  const typeFamily = t => clean(t).toUpperCase().slice(0, 3);
+  const typeFamily = t => ENGINE.typeFamily(clean(t));   // (a maker's line: GA7C and GLF6 alike - engine TYPE_LINES)
   function typeRelation(a, b) { a = clean(a).toUpperCase(); b = clean(b).toUpperCase(); if (!a || !b) return 'unknown'; if (a === b) return 'same'; return typeFamily(a) === typeFamily(b) ? 'family' : 'different'; }
   function scoreCandidate(f, c, flat, flon, t) {
     const cAge = c.ageS + Math.max(0, (t - c.receivedAt) / 1000);

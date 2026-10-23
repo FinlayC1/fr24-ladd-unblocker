@@ -217,6 +217,12 @@ A day can also be served as **"no flights"**, so the browser skips it entirely. 
 
 A day whose file never appears (retried every 2 hours for 36 hours), or whose rebuild fails, is marked unknown (`-1`). It is never claimed empty, and the browser reads it itself.
 
+### 4.3a The world log (1.0.1)
+
+adsb.lol publishes every finished day as an archive on GitHub: every aircraft it heard, each one's whole day. The monitor already reads each day once to index it, so it also builds every aircraft's flights from it in the same read, with the same engine as the logs (`legsFromPoints`, `summarizeLeg`). On 21 Oct 2026 that was 68,294 aircraft and 193,149 flights in a 21.8 MB file. The days of the last year are filled in newest first, one at a time (a day read before is read again for it), and each new day is added once adsb.lol publishes it. Nothing is ever deleted; while the disk has under 4 GB free, no more days are built.
+
+Each day is one file (`world/YYYY-MM-DD.wl`, `monitor/world.cjs`): aircraft in blocks of 32 by address, each block gzipped, with an index of the blocks at the start. One aircraft's day is a binary search of the index and one block read (0.17 ms here). `/hist` serves any aircraft from it: a day the day's index says the aircraft is not in has no flights; a day it is in has its flights from the world log. Browsers ask for an aircraft's missing days in one request instead of one per day.
+
 ### 4.4 State and persistence
 
 `state.json` holds:
