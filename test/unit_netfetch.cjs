@@ -60,14 +60,16 @@ const asked = [];
 const NET = { lol: { def: [404, ''] }, apl: { def: [404, ''] } };
 const MON = 'https://143-47-224-210.sslip.io';
 // (the monitor, when on: /status, /hist - MONH.hist(hex) -> its answer for the aircraft - and /trace - MONH.trace(hex))
-const MONH = { on: false, hist: null, trace: null, slow: false };
+const MONH = { on: false, hist: null, trace: null, slow: false, arc: null, idx: null };
 function answer(url) {
   if (/flightradar24\.com\/mobile\/airports\/format/.test(url)) return [200, AIRPORTS];
   if (url.startsWith(MON)) {
     if (!MONH.on) return [404, ''];
-    if (url.startsWith(MON + '/status')) return [200, JSON.stringify({ v: 3, since: Date.now() - 3600e3, public: true, ver: '22.31.11', archive: { on: 220, have: 39, days: 39, running: '' } })];
+    if (url.startsWith(MON + '/status')) return [200, JSON.stringify({ v: 3, since: Date.now() - 3600e3, public: true, ver: '22.31.11', archive: Object.assign({ on: 220, have: 39, days: 39, running: '' }, MONH.idx != null ? { idx: MONH.idx } : {}) })];
     let mm = url.match(/\/hist\?hex=([0-9a-f,]+)/); if (mm) { asked.push(['mon', 'hist', mm[1]]); return [200, JSON.stringify({ hv: Number((SRC.match(/const HIST_V = (\d+);/) || [])[1]), list: mm[1].split(',').map(h => Object.assign({ hex: h }, MONH.hist ? MONH.hist(h) : { days: {}, legs: [] })) })]; }
     mm = url.match(/\/trace\?hex=([0-9a-f]{6})/); if (mm) { asked.push(['mon', 'trace', mm[1]]); const t = MONH.trace && MONH.trace(mm[1]); return t ? [200, JSON.stringify(t)] : [404, '']; }
+    // (adsb.lol's archive through the monitor: MONH.arc(hex, 'YYYY-MM-DD') -> [status, body]; no index of any day without it)
+    mm = url.match(/\/atrace\?hex=([0-9a-f]{6})&day=(\d{4}-\d\d-\d\d)$/); if (mm) { asked.push(['mon', 'atrace', mm[1], mm[2]]); return MONH.arc ? MONH.arc(mm[1], mm[2]) : [409, '{"noindex":1}']; }
     return [404, ''];
   }
   const m = url.match(/^https:\/\/(adsb\.lol|globe\.airplanes\.live)\/(?:globe_history\/([\d/]+)|data)\/traces\/(\w\w)\/trace_full_(\w{6})\.json$/);
@@ -220,6 +222,44 @@ function makeWin() {
     await L.loadToday('4ca9e9', 60000, { bg: true }).catch(() => null);
     check('an ordinary aircraft in the background: the monitor not asked for its positions', !asked.some(a => a[0] === 'mon'), asked);
     MONH.on = false; }
+  // ---- 11. an ordinary aircraft's log, both sites walling this browser (23 Oct: an FR24 aircraft page had 82 days of its
+  // log "not read yet"): every past day from adsb.lol's archive through the monitor - any age, a day older than adsb.lol's
+  // site keeps too; its site only for a day the monitor has no index of
+  { const HX3 = 'c0a1b2', n = 50, dd = k => dayStr(Date.now() - k * 864e5), dk = k => dd(k).replace(/\//g, '-');
+    NET.lol.def = [403, POW]; NET.apl.def = [403, CF];
+    await L.readTrace('lol', 'abcdef', dd(31), {}); await L.readTrace('apl', 'abcdef', dd(31), {});
+    const dayS = k => Date.parse(dk(k) + 'T00:00:00Z') / 1000;
+    const file = k => JSON.stringify(Object.assign({}, REAL, { icao: HX3, r: 'G-ORDN', t: 'FA7X', dbFlags: 0, timestamp: dayS(k) }));
+    MONH.on = true; MONH.slow = false; await L.monCheck(true); await sleep(20);
+    // (a monitor from before 1.0 - no days indexed in its /status: its archive copy not asked)
+    MONH.idx = null; await L.monCheck(true); await sleep(20); asked.length = 0;
+    L.store.mergeHex('c0a1b3', { reg: 'G-OLDM', type: 'FA7X' }); await L.loadHistory('c0a1b3', 3, null, { front: true });
+    check('a monitor from before 1.0 (no days indexed in its /status): its archive copy not asked - the sites as before', !asked.some(a => a[1] === 'atrace'), asked);
+    MONH.idx = 49; await L.monCheck(true); await sleep(20);
+    const NONE = [404, '{"none":1}'];
+    MONH.arc = (hex, day) => { const k = Array.from({ length: n }, (_, i) => i + 1).find(i => dk(i) === day); return hex !== HX3 || !k ? NONE : k === 10 ? [409, '{"noindex":1}'] : k === 2 || k === 45 ? [200, file(k)] : NONE; };
+    L.store.mergeHex(HX3, { reg: 'G-ORDN', type: 'FA7X' });
+    asked.length = 0;
+    const h11 = await L.loadHistory(HX3, n, null, { front: true });
+    const marks = Array.from({ length: n }, (_, i) => h11.days[dd(i + 1)]), withFlights = [2, 45].map(k => (h11.legs || []).filter(l => l.day === dd(k)).length);
+    check('an ordinary aircraft, both sites walling: every past day from adsb.lol\'s archive through the monitor - the days it flew with their flights (one older than adsb.lol\'s site keeps), the rest without', marks.every((m, i) => i + 1 === 10 ? !m : m === 'l') && withFlights.every(x => x > 0), { marks, withFlights });
+    const arcAsks = asked.filter(a => a[0] === 'mon' && a[1] === 'atrace'), lolAsks = asked.filter(a => a[0] === 'lol'), aplAsks = asked.filter(a => a[0] === 'apl');
+    check('... each day asked of the monitor once; adsb.lol\'s site only for the day the monitor has no index of (walled: not even that); airplanes.live, walling, not asked', arcAsks.length === n && new Set(arcAsks.map(a => a[3])).size === n && lolAsks.every(a => a[1] === dd(10)) && aplAsks.length === 0, { arc: arcAsks.length, lol: lolAsks, apl: aplAsks.length });
+    const g11 = L.logGaps(HX3);
+    check('... the log page: one day not read yet (the one without an index, adsb.lol walling) - not fifty', /\b1 day not read yet \(adsb\.lol: verification page/.test(g11), g11);
+    // (the day's index made at the monitor: read next time, from the archive)
+    MONH.arc = (hex, day) => hex === HX3 && day === dk(10) ? [200, file(10)] : NONE;
+    asked.length = 0; const h11b = await L.loadHistory(HX3, n, null, { front: true });
+    check('... once the monitor has its index: that day read from the archive too, nothing else asked again', h11b.days[dd(10)] === 'l' && (h11b.legs || []).some(l => l.day === dd(10)) && asked.filter(a => a[1] === 'atrace').length === 1 && !/not read yet/.test(L.logGaps(HX3)), { mark: h11b.days[dd(10)], asked });
+    // (a single past file - playback, the panel's take-off: from the archive too)
+    asked.length = 0; MONH.arc = (hex, day) => hex === HX3 && day === dk(3) ? [200, file(3)] : NONE;
+    const one = await L.fetchTrace(HX3, dd(3), { back: 3 }).catch(e => String(e.message || e));
+    check('a single past day\'s file (playback, the take-off): from the archive through the monitor, the sites not asked', one && one.icao === HX3 && asked.every(a => a[0] === 'mon'), { one: one && one.icao, asked });
+    // (a plain 404 - the path unknown to a monitor from before 1.0 that still counts days: never "no flights")
+    MONH.arc = () => [404, '']; L.store.mergeHex('c0a1b4', { reg: 'G-PLNF', type: 'FA7X' });
+    asked.length = 0; const h11c = await L.loadHistory('c0a1b4', 5, null, { front: true });
+    check('... a 404 that does not say "none" (a path the monitor does not know): never a day without flights - no day marked, adsb.lol\'s site its source', asked.filter(a => a[1] === 'atrace').length === 5 && Object.keys(h11c.days || {}).length === 0 && Object.keys(h11c.err || {}).length === 5, { days: h11c.days, err: Object.values(h11c.err || {})[0] });
+    MONH.arc = null; MONH.idx = null; MONH.on = false; }
   // ---- 10. the monitor busy (reading adsb.lol's archives on the 1 GB VM): a late answer is not the monitor gone. One
   // slow answer took it for gone at once, for everything - logs, live figures, today's track (23 Oct)
   { MONH.on = true; MONH.slow = false; await L.monCheck(true); await sleep(20);

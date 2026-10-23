@@ -15,6 +15,14 @@ const { Worker, isMainThread, parentPort, workerData } = require('worker_threads
 const A = require('./arch.cjs');
 const { contrib } = require('./contrib.cjs');
 const hexHash = hex => (parseInt(hex, 16) * 2654435761 >>> 0) % 1000003;
+// (SURGE=<daily.json> from test/mksurge.cjs: the event-surge evidence each moment's day would have had - engine.surgeOf)
+function surgeAt(W, E, t) {
+  if (!process.env.SURGE || !E.surgeOf) return null;
+  if (!W.SG) W.SG = { daily: JSON.parse(fs.readFileSync(process.env.SURGE, 'utf8')), by: new Map() };
+  const d = new Date(t * 1000).toISOString().slice(0, 10); let m = W.SG.by.get(d);
+  if (!m) { m = E.surgeOf(W.SG.daily, d); W.SG.by.set(d, m); }
+  return m;
+}
 const CLS = ['bizjet', 'heavybiz', 'airliner', 'turboprop', 'piston', 'heli', 'fighter', 'milheavy', 'unknown'];
 
 // where an aircraft's fleet-mates (same owner) went in the 60 days before t0: airport id -> visits
@@ -71,8 +79,9 @@ function doShard(shard, W) {
       }
       if (!picks.length) continue;
       nAc++;
-      const c = contrib(E, p1.ac[ac.hex], p1.legs[ac.hex], (p1.flow || {})[ac.hex]);
-      looApply(E, W.TB, W.T2, c, -1);
+      // (NOLOO=1: tables built from other days - the shipped ones - hold nothing of this aircraft's flights to take out)
+      const c = process.env.NOLOO ? null : contrib(E, p1.ac[ac.hex], p1.legs[ac.hex], (p1.flow || {})[ac.hex]);
+      if (c) looApply(E, W.TB, W.T2, c, -1);
       try {
         const chained = E.chainLegs(E.stitchLegs(sums.map(x => Object.assign({}, x))));
         let seed = parseInt(ac.hex, 16) || 1; const rnd = () => (seed = seed * 16807 % 2147483647) / 2147483647;
@@ -86,7 +95,7 @@ function doShard(shard, W) {
             let idx = -1; for (let i = 0; i < all.length; i++) { if (all[i].t <= tt) idx = i; else break; }
             if (idx < 1 || all[idx].gnd) continue;
             const pos = all[idx], thin = []; for (const p of all.slice(0, idx + 1)) if (!thin.length || p.t - thin[thin.length - 1].t >= 20) thin.push(p);
-            const r = E.predict({ ac, pos, trail: thin, hs, now: pos.t, features: true, fleet: fleetMapOf(W.FLEET, E, ac.hex, ac.ownOp, s.tStart) });
+            const r = E.predict({ ac, pos, trail: thin, hs, now: pos.t, surge: surgeAt(W, E, pos.t), features: true, fleet: fleetMapOf(W.FLEET, E, ac.hex, ac.ownOp, s.tStart) });
             if (!r || !r.all || !r.all.length) continue;
             let yi = r.all.findIndex(x => x.id === D.id || (E.byId(x.id) && E.dist(E.byId(x.id).lat, E.byId(x.id).lon, D.lat, D.lon) < 4));
             const oid = r.origin && r.origin.airport ? r.origin.airport.id : 0, fixed = new Set(), tail = [];
@@ -107,7 +116,7 @@ function doShard(shard, W) {
             nEx++;
           }
         }
-      } finally { looApply(E, W.TB, W.T2, c, 1); }
+      } finally { if (c) looApply(E, W.TB, W.T2, c, 1); }
     }
   }
   fs.writeFileSync(path.join(W.outDir, shard + '.bin'), out.b.subarray(0, out.n));

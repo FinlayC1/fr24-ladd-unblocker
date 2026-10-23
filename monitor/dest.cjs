@@ -73,7 +73,7 @@ function createDest(env) {
       const g = E.landingInGap(trail.gapFrom, trail[0], Object.assign({ cls: E.classify(ac), type: ac.type }, trail.gapInfo));
       if (g) origin = { airport: g.airport, conf: 'low', note: `took off from ${g.airport.code}, out of ADS-B coverage`, departedAt: Math.round(trail[0].t - g.db / 500 * 3600 - 120) };
     }
-    const res = E.predict({ ac, pos, trail, hs, now: pos.t, origin });
+    const res = E.predict({ ac, pos, trail, hs, now: pos.t, origin, surge: env.surge ? env.surge() : null });
     const top = res && res.cands && res.cands[0];
     const o = res && res.origin && res.origin.airport ? { id: res.origin.airport.id, conf: res.origin.conf || '', t: Math.round(res.origin.departedAt || trail[0].t) } : null;
     // (when it was last heard before the hole this flight began after: a departure kept from before that is the flight before's)

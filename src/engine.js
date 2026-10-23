@@ -1667,7 +1667,9 @@ function createRouteEngine() {
   // test/fitlogit.cjs). Without a learned table the hand-tuned weights W apply everywhere.
   const FEAT = ['prior', 'orig', 'habit', 'pos', 'posL', 'hdg', 'close', 'vdesc', 'vlvl', 'vstep', 'phys', 'appr', 'low', 'cruise', 'cruiseL', 'climbf', 'range', 'emerg', 'luse', 'lsize', 'ldist', 'hvis', 'hbase', 'hub', 'ahead', 'rwyA', 'rwyF', 'rwyP', 'luseC', 'od', 'rwyI', 'rwyD', 'plen', 'hret', 'hself', 'hrev', 'haway', 'htrip', 'hlast', 'hhome', 'xc', 'hxc', 'sqTrip', 'fmsTrip', 'arrH', 'rshort', 'unpaved', 'fleet', 'fld',
     // 22.10
-    'odD', 'odR', 'odN', 'odT', 'odH', 'seqG', 'csOD', 'csD', 'aph', 'aps', 'pgu', 'pgNever', 'rwyT', 'flw', 'flw0', 'hshr', 'hseq', 'hseq3', 'hdow', 'hhour', 'hcz', 'htpl', 'htplX', 'hczd', 'tcz', 'tczc', 'ttod', 'tlate', 'fly', 'hcons', 'dark', 'rwyWT'];
+    'odD', 'odR', 'odN', 'odT', 'odH', 'seqG', 'csOD', 'csD', 'aph', 'aps', 'pgu', 'pgNever', 'rwyT', 'flw', 'flw0', 'hshr', 'hseq', 'hseq3', 'hdow', 'hhour', 'hcz', 'htpl', 'htplX', 'hczd', 'tcz', 'tczc', 'ttod', 'tlate', 'fly', 'hcons', 'dark', 'rwyWT',
+    // 1.0
+    'clbT', 'tasT', 'surge'];
   const altBand = alt => alt == null ? 1 : alt < 3000 ? 0 : alt < 10000 ? 1 : alt < 25000 ? 2 : 3;
   const dBand = d => d < 40 ? 0 : d < 200 ? 1 : 2;
   // (with a 36-row table the weights also differ by kind of aircraft: jets, light aircraft and helicopters, military)
@@ -1707,6 +1709,26 @@ function createRouteEngine() {
   function defaultWeight(k, alt) {
     const wv = alt != null && alt < 10000 ? W.vert * W.vlo : W.vert;
     return { prior: W.prior, orig: 0, habit: 1, pos: W.xt, posL: W.loc, hdg: W.hdg, close: W.prog, vdesc: wv, vlvl: wv, vstep: W.vstep * wv, phys: W.phys, appr: 1.5, low: W.low, cruise: W.cruise, cruiseL: W.lcr, climbf: W.cruise, range: 2, emerg: 4 }[k] || 0;
+  }
+  // (1.0) Event surges: from the business jets landing at each field per day ({ 'YYYY-MM-DD': { airportId: landings } }),
+  // for day `day`: the three days before it against its usual three days (the 28 before those, at least 7 of them known),
+  // as log((recent + 1) / (usual + 1)) - only for a field with 3 or more landings either way, and only where the two differ
+  // by a third or more. -> Map(airportId -> that). The monitor works it out from its blocked aircraft's landings and hands
+  // it to the browsers; the training pipeline from the archive's, the same way.
+  function surgeOf(daily, day) {
+    const out = new Map(), t = Date.parse(day + 'T00:00:00Z'); if (!daily || !(t > 0)) return out;
+    const dk = k => new Date(t - k * 864e5).toISOString().slice(0, 10);
+    const base = []; for (let k = 4; k <= 31; k++) if (daily[dk(k)]) base.push(daily[dk(k)]);
+    if (base.length < 7) return out;
+    const rec = new Map(), usual = new Map();
+    for (let k = 1; k <= 3; k++) for (const [id, n] of Object.entries(daily[dk(k)] || {})) rec.set(+id, (rec.get(+id) || 0) + n);
+    for (const m of base) for (const [id, n] of Object.entries(m)) usual.set(+id, (usual.get(+id) || 0) + n);
+    for (const id of new Set([...rec.keys(), ...usual.keys()])) {
+      const r = rec.get(id) || 0, u = 3 * (usual.get(id) || 0) / base.length;
+      if (r < 3 && u < 3) continue;
+      const v = Math.log((r + 1) / (u + 1)); if (Math.abs(v) >= 0.29) out.set(id, Math.round(v * 100) / 100);
+    }
+    return out;
   }
   function weightOf(ctx, k, alt) { if (LW) { const n = LW.w.length, row = LW.w[n >= 144 ? ctx : n >= 108 ? ctxOld(ctx) : n >= 36 ? ctxOld(ctx) % 36 : ctxOld(ctx) % 12]; const i = LIX.get(k); return row && i != null && fin(row[i]) ? row[i] : 0; } return defaultWeight(k, alt); }
   function globalWeight(a, cls, ac) {
@@ -2103,6 +2125,21 @@ function createRouteEngine() {
     const wxAt = (a, t) => { const w = wxOf(a); if (!w || !w.taf || !t || t - now < 3600) return w; let best = null; for (const p of w.taf) if (p.from <= t && t < p.to) best = p; return best || w; };
     const vfrLike = (cls === 'piston' || cls === 'heli') && (/^(7000|1200|2000)$/.test(String(pos.sq || '')) || (pos.alt != null && pos.alt < 9000));
     const XW_LIMIT = { piston: 15, turboprop: 25, bizjet: 25, heavybiz: 28, airliner: 30, fighter: 25, milheavy: 30 }[cls] || 25;
+    // ---- (1.0) how heavy it is - how far it is going - from how it flies, no history needed: a jet full of fuel climbs
+    // slower over its first ten minutes than its type usually does (on 1,443 business-jet flights of 21 Oct 2026 a slow
+    // climber's trip was over 3,000 km four times as often as a fast one's: 16% against 4%), and the speed it cruises at
+    // is chosen for the trip (long-range cruise is slower). Each against its type's own (perf.clb: feet a minute over the
+    // first ten airborne minutes, as the tables measure it; perf.tas: its cruise speeds), as a log ratio; the evidence
+    // for a candidate is that ratio times how much longer or shorter than this kind's usual trip going there would be
+    // (the weights, learned, say how much each is worth and which way)
+    const muTrip = qTrip && qTrip.length >= 19 ? qTrip[9] : null;
+    let rClb = null, rTas = null;
+    if (muTrip != null && perf && perf.clb > 300 && !onGround && origin && origin.departedAt) {
+      const a0 = trail.find(p => !p.gnd && fin(p.alt) && p.t >= origin.departedAt - 120);
+      const b0 = a0 && a0.t - origin.departedAt < 300 ? trail.find(p => fin(p.alt) && p.t - a0.t >= 600) : null;
+      if (b0 && b0.t - a0.t < 900) { const c = (b0.alt - a0.alt) / ((b0.t - a0.t) / 60); if (c > 100) rClb = clamp(Math.log(c / perf.clb), -1, 1); }
+    }
+    if (muTrip != null && perf && Array.isArray(perf.tas) && perf.tas[1] > 150 && cruiseKnown && air && fin(air.tas) && air.tas > 150) rTas = clamp(Math.log(air.tas / perf.tas[1]), -0.3, 0.3);
     for (const a of cands.values()) {
       const why = [], tm = inp.explain ? {} : null, fv = {};
       let fixed = 0;
@@ -2141,6 +2178,12 @@ function createRouteEngine() {
         if (O && regionOf(O) !== regionOf(a)) { F('xc', 1); if (hs.lastCross) F('hxc', 1); }
         if (sqKey) F('sqTrip', tripBinTbl('sq', sqKey, O.country, tripKm));
         if (fmsKey) F('fmsTrip', tripBinTbl('fms', fmsKey, O.country, tripKm));
+        if (rClb != null) F('clbT', rClb * (x - muTrip));
+        if (rTas != null) F('tasT', rTas * (x - muTrip));
+        // (1.0) a field busier with business jets these last days than it usually is - an event (a grand prix, a summit,
+        // a film festival): the monitor's count of blocked aircraft landing there over three days against its usual
+        // three days, as a log ratio (inp.surge: airport id -> that)
+        const sg = inp.surge && inp.surge.get(a.id); if (sg) F('surge', clamp(sg, -2, 3));
       }
       // can it land there at all: the longest runway against what this class needs, and whether it is paved
       if (a.rwl && cls !== 'heli' && !isO) { const need = RWY_NEED[cls] || 3000; F('rshort', Math.min(0, Math.log(a.rwl[0] / need))); if (!a.rwl[1] && (grp === 'jet' || cls === 'turboprop')) F('unpaved', 1); }
@@ -2379,7 +2422,7 @@ function createRouteEngine() {
     return res;
   }
 
-  return { setTables2, get T2() { return T2; }, trackState, offTrack, fieldShortName, placeShort, placeLabels, setApproach, approachCell, approachPath, apprGroup, apprKey, trackAgree, heatNear, heatMatch, reckon, trackErr, remotePath, flowKeysOf, pgrpOf, grp6, sunElev, airData, gsAlong, minutesTo, flowAt, pathOf, pathDev, ownerKey, parseRunwayLengths, setRunwayLengths, csvLine, SQ_NOINFO, tripBin, regionOf, learnLeg, learnRow, learnCollector, addLearnedOp, odAdd: (x, y, w) => { const k = odKey(String(x).toUpperCase(), String(y).toUpperCase()), v = (OD.get(k) || 0) + w; if (v > 1e-9) OD.set(k, v); else OD.delete(k); }, odWeight: (x, y) => OD.get(odKey(String(x).toUpperCase(), String(y).toUpperCase())) || 0, odCount: () => OD.size, setAirports, setUsage, addUsage, setRunways, parseRunwaysCsv, runwayFit, setWeights, setTables, setLogit, calibrated, mergePoints, finalTo, longFinal, typeRangeKm, FEAT, groupOf, W, classify, isStepClimb, rangeKm, parseTrace, legsFromPoints, summarizeLeg, stitchLegs, chainLegs, histStats, inferOrigin, predict, privateSite, rwyImpossible, typeDesc, heliSpots, heliAirportAt, landedSum, localFlew, climbedOut, approachTo, downAndUp, landingInGap, gapEnds, slowGap, idleHole, currentLeg, circuits, mergeCircuits, setFields, fieldAt, placeAt, isField, nearbyFields, fieldCount: () => FL.length, airportAt, departureFromClimb, arrivalFromDescent, nearby, dist, brg, xtat, destPoint, angDiff, get airports() { return AP; }, byId: id => byId.get(id), byIcao: c => byIcao.get(String(c || '').toUpperCase()) };
+  return { surgeOf, setTables2, get T2() { return T2; }, trackState, offTrack, fieldShortName, placeShort, placeLabels, setApproach, approachCell, approachPath, apprGroup, apprKey, trackAgree, heatNear, heatMatch, reckon, trackErr, remotePath, flowKeysOf, pgrpOf, grp6, sunElev, airData, gsAlong, minutesTo, flowAt, pathOf, pathDev, ownerKey, parseRunwayLengths, setRunwayLengths, csvLine, SQ_NOINFO, tripBin, regionOf, learnLeg, learnRow, learnCollector, addLearnedOp, odAdd: (x, y, w) => { const k = odKey(String(x).toUpperCase(), String(y).toUpperCase()), v = (OD.get(k) || 0) + w; if (v > 1e-9) OD.set(k, v); else OD.delete(k); }, odWeight: (x, y) => OD.get(odKey(String(x).toUpperCase(), String(y).toUpperCase())) || 0, odCount: () => OD.size, setAirports, setUsage, addUsage, setRunways, parseRunwaysCsv, runwayFit, setWeights, setTables, setLogit, calibrated, mergePoints, finalTo, longFinal, typeRangeKm, FEAT, groupOf, W, classify, isStepClimb, rangeKm, parseTrace, legsFromPoints, summarizeLeg, stitchLegs, chainLegs, histStats, inferOrigin, predict, privateSite, rwyImpossible, typeDesc, heliSpots, heliAirportAt, landedSum, localFlew, climbedOut, approachTo, downAndUp, landingInGap, gapEnds, slowGap, idleHole, currentLeg, circuits, mergeCircuits, setFields, fieldAt, placeAt, isField, nearbyFields, fieldCount: () => FL.length, airportAt, departureFromClimb, arrivalFromDescent, nearby, dist, brg, xtat, destPoint, angDiff, get airports() { return AP; }, byId: id => byId.get(id), byIcao: c => byIcao.get(String(c || '').toUpperCase()) };
 }
 /* ==/ENGINE== */
 if (typeof module !== 'undefined') module.exports = { createRouteEngine };

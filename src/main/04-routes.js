@@ -243,7 +243,7 @@
     const hist = knownLegs(hex, { excludeOpen: true }).filter(l => l.tEnd < legStart - 60 && l.tEnd > legStart - ENGINE_HIST_DAYS * 86400);
     const hs = ENGINE.histStats(hist, pos.t);
     // (an ordinary flight: the departure airport FR24 itself shows, when it has one, stands)
-    const plan = (planState.get(id) || {}).plan || schedPlan(id);
+    let plan = (planState.get(id) || {}).plan || schedPlan(id);
     const st = routeState.get(id) || {};
     let o0 = ENGINE.inferOrigin({ ac, pos, trail, hs, now: pos.t, plan });
     if (o0 && o0.conf === 'plan' && plan && plan.fr24) o0.note = plan.list ? `FR24's own schedule${plan.num ? ' (' + plan.num + ')' : ''}` : 'departure shown by FR24';
@@ -271,6 +271,8 @@
     const f0 = trail[0] || pos, unseen = { airport: null, conf: '', note: fin(f0.alt) ? `first seen at ${f0.alt >= 18000 ? 'FL' + Math.round(f0.alt / 100) : Math.round(f0.alt) + ' ft'}` : 'first seen airborne', departedAt: 0 };
     let origin = rememberOrigin(rec0, couldHave(o0) ? o0 : unseen, trail[0], !!trail.cut);
     if (!couldHave(origin)) origin = unseen;
+    // (no plan from FR24: the route the aircraft itself sent or was sent over its datalink - when it is this flight's)
+    if (!plan && !pos.gnd) { const dp = datalinkPlan(id, rec, hex, pos, legStart, origin && origin.airport); if (dp) plan = dp; }
     const maxAltSeen = Math.max(st.maxAlt || 0, ...trail.map(p => p.alt || 0));
     const r = { computedAt: now(), quick: !!(opts && opts.quick), onGround: !!pos.gnd, landed: false, originId: 0, destId: 0, destConf: '', destReason: '', originNote: '', originConf: '', alternatives: [], phase: '', std: 0, sta: 0, atd: 0, ata: 0, eta: 0, etd: 0, departedAt: 0, groundAirportId: 0, progress: null, legCount: hs.n, base: hs.base ? apCode(apById(hs.base)) : '' };
     const setO = (a, note, conf) => { if (!a) return; r.originId = a.id; r.originIata = apCode(a); r.originCity = a.city || a.name; r.originNote = note || ''; r.originConf = conf || ''; };
@@ -299,7 +301,7 @@
         if (pd && pd.id !== ap.id) setD(pd, 'filed', plan.list ? `FR24's own schedule${plan.num ? ' (' + plan.num + ')' : ''}` : 'destination shown by FR24');
         else {
           // (no airports anywhere in FR24's data yet: where it usually goes next from here, from its own log)
-          const pred = hs.n ? ENGINE.predict({ ac, pos, trail: [], hs, now: pos.t, origin: { airport: ap, conf: 'ground' } }) : null, c = pred && pred.cands && pred.cands[0];
+          const pred = hs.n ? ENGINE.predict({ surge: surgeNow(), ac, pos, trail: [], hs, now: pos.t, origin: { airport: ap, conf: 'ground' } }) : null, c = pred && pred.cands && pred.cands[0];
           if (c && c.p >= 0.3 && c.airport.id !== ap.id) { setD(c.airport, CONF_OF(c.p), 'next flight - ' + (whyOf(c) || 'its own log')); r.destP = Math.round(c.p * 100); r.alternatives = pred.cands.slice(1, 4).filter(x => x.p >= 0.04 && x.airport.id !== ap.id).map(x => ({ iata: apCode(x.airport), city: x.airport.city, p: Math.round(x.p * 100) })); }
         }
         if (lastLeg && lastLeg.to && lastLeg.to.id === ap.id) { r.arrivedFrom = lastLeg.from ? apCode(apById(lastLeg.from.id)) : ''; r.arrivedAt = lastLeg.tEnd; }
@@ -328,7 +330,7 @@
         // ground, or FR24 already shows the departure), otherwise as a hint
         const taxi = taxiOut || (fin(pos.gs) && pos.gs >= 4) || !!(plan && plan.fr24 && plan.originId === ap.id);
         if (taxiOut && !r.arrivedFrom && lastLeg && lastLeg.to && lastLeg.to.id === ap.id) { r.arrivedFrom = lastLeg.from ? apCode(apById(lastLeg.from.id)) : ''; r.arrivedAt = lastLeg.tEnd; }
-        const pred = hs.n || taxi ? ENGINE.predict({ ac, pos, trail: [], hs, now: pos.t, origin: { airport: ap, conf: 'ground' } }) : null;
+        const pred = hs.n || taxi ? ENGINE.predict({ surge: surgeNow(), ac, pos, trail: [], hs, now: pos.t, origin: { airport: ap, conf: 'ground' } }) : null;
         const cs2 = (pred && pred.cands) || [], c = cs2[0];
         if (taxi && c && c.p >= 0.3) {
           setD(c.airport, CONF_OF(c.p), 'taxiing out - ' + (c.airport.id === ap.id ? 'a local flight, back here' + (hs.n ? ' (its log)' : '') : whyOf(c) || 'its log'));
@@ -365,7 +367,7 @@
     r.departedAt = siteOrigin ? t0p.t - 60 : liftOff || (!heliFromSite && origin && origin.departedAt) || (trail[0] && !trail[0].gnd ? 0 : (trail[1] || {}).t || 0);
     r.atd = r.departedAt; r.std = (plan && plan.std) || 0; r.etd = (plan && plan.etd) || 0;
     if (rec.cs && !pos.cs) pos.cs = rec.cs;
-    const pred = ENGINE.predict({ ac, pos, trail, hs, now: pos.t, origin: siteOrigin || heliFromSite ? { airport: null, conf: heliFromSite ? 'ground' : 'low', note: '', departedAt: r.departedAt || t0p.t - 60 } : origin, plan, fleet: fleetVisits(hex, legStart), wx: wxMap, closed: closedMap });
+    const pred = ENGINE.predict({ surge: surgeNow(), ac, pos, trail, hs, now: pos.t, origin: siteOrigin || heliFromSite ? { airport: null, conf: heliFromSite ? 'ground' : 'low', note: '', departedAt: r.departedAt || t0p.t - 60 } : origin, plan, fleet: fleetVisits(hex, legStart), wx: wxMap, closed: closedMap });
     r.phase = pred ? pred.phase : '';
     const cands = holdTerminal(id, pos, pred, { heli, cls, planned: !!(plan && (plan.destId || plan.divertedToId)) });
     // (the weather and any closure at the likeliest fields of the aircraft being looked at - the route is worked out
@@ -432,7 +434,7 @@
     if (planDest) {
       const contradict = finalAp && finalAp.id !== planDest.id;
       if (contradict) setD(finalAp, 'confirmed', `${finalWhy(finalAp)} - not the filed ${apCode(planDest)}`);
-      else setD(planDest, finalAp ? 'confirmed' : 'filed', finalAp ? finalWhy(planDest) : plan.divertedToId ? 'diverted (FR24 flight plan)' : plan.list ? `FR24's own schedule${plan.num ? ' (' + plan.num + ')' : ''}` : plan.fr24 ? 'destination shown by FR24' : 'FR24 flight plan');
+      else setD(planDest, finalAp ? 'confirmed' : 'filed', finalAp ? finalWhy(planDest) : plan.divertedToId ? 'diverted (FR24 flight plan)' : plan.list ? `FR24's own schedule${plan.num ? ' (' + plan.num + ')' : ''}` : plan.fr24 ? 'destination shown by FR24' : plan.datalink ? datalinkWhy(plan) : 'FR24 flight plan');
     } else if (circSure) {
       setD(circ.airport, 'confirmed', circTxt + (finalAp && finalAp.id === circ.airport.id ? ', on final' : '')); r.destP = 100;
     } else if (finalAp) {
@@ -632,6 +634,29 @@
   }
   // FR24's own plan of an ordinary flight: the airports its live panel shows, else those of the same flight in FR24's
   // schedule for the registration (callsign and time matched), with the times and flight number
+  // The route the aircraft sent or was sent over its datalink (its flight plan uplinked, its flight-planning service's
+  // notice, its position reports naming where it is going) - taken for this flight only when it is this flight's: from
+  // the airport it took off from (when that is known), sent no earlier than 12 hours before it took off (a position report:
+  // during this flight), and the aircraft where a flight between those two airports would be - near the line between
+  // them, not past the destination. The newest such route.
+  const DL_PRE = ['fpn', 'fpl', 'filed', 'alert', 'pdc'];
+  function datalinkPlan(id, rec, hex, pos, legStart, oAp) {
+    const hx = hex ? store.getHex(hex) || {} : {}, reg = rec.reg || hx.reg;
+    const rs = reg ? datalinkRoutes(reg, () => scheduleReplan(id, 50)) : null; if (!rs || !rs.length) return null;
+    for (let i = rs.length - 1; i >= 0; i--) {
+      const x = rs[i], O = ENGINE.byIcao(x.o), D = ENGINE.byIcao(x.d); if (!O || !D || O.id === D.id) continue;
+      if (x.t > pos.t + 600 || x.t < legStart - 12 * 3600) continue;
+      const inFlight = x.t >= legStart - 600, pre = (x.kinds || []).some(k => DL_PRE.includes(k));
+      if (!inFlight && !pre) continue;                                     // (a report from an earlier flight)
+      if (oAp ? ENGINE.dist(oAp.lat, oAp.lon, O.lat, O.lon) > 5 : !inFlight) continue;
+      const dOD = ENGINE.dist(O.lat, O.lon, D.lat, D.lon), dOP = ENGINE.dist(O.lat, O.lon, pos.lat, pos.lon), dPD = ENGINE.dist(pos.lat, pos.lon, D.lat, D.lon);
+      if (dOP + dPD > dOD * 1.25 + 150) continue;                          // (nowhere near the way there)
+      return { originId: O.id, destId: D.id, datalink: true, at: x.t, kinds: x.kinds || [], num: x.cs || '' };
+    }
+    return null;
+  }
+  const DL_WHAT = { fpn: 'flight plan uplinked to it', pos: 'its position reports', fpl: 'its filed flight plan', filed: 'its filed flight plan', alert: 'its flight-plan alerts', pdc: 'its departure clearance', eta: 'its arrival estimate', rep: 'its position reports' };
+  const datalinkWhy = p => { const k = (p.kinds || [])[0], d = new Date((p.at || 0) * 1000); return `${DL_WHAT[k] || 'its own flight plan'} (datalink, ${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}Z)`; };
   function schedPlan(id) {
     if (live.has(id)) return null;
     const s = schedOf(id) || {}, p = pubRecs.get(id), m = p && p.fr24List;
@@ -768,7 +793,7 @@
     const circ = /^(piston|fighter|heli)$/.test(cls) ? ENGINE.circuits(trail, pos, { heli }) : null;
     if (circ && circ.airport.id < 1e7) return backOk(circ.airport) ? { originId: fromAp ? fromAp.id : circ.airport.id, originIata: apCode(fromAp || circ.airport), originCity: (fromAp || circ.airport).city, destId: circ.airport.id, destIata: apCode(circ.airport), destCity: circ.airport.city,
       destConf: 'confirmed', destP: 100, eta: 0, atd: departedAt, std: 0, sta: 0, landed: false, phase: 'circuits', circuits: circ.laps } : null;
-    const r = ENGINE.predict({ ac, pos, trail, hs, now: pos.t, origin, wx: wxMap, closed: closedMap }); if (!r || !r.cands.length) return null;
+    const r = ENGINE.predict({ surge: surgeNow(), ac, pos, trail, hs, now: pos.t, origin, wx: wxMap, closed: closedMap }); if (!r || !r.cands.length) return null;
     const top = r.cands[0], elapsed = departedAt ? (pos.t - departedAt) / 60 : null;
     const lfOk = !heli && !/^(piston|milheavy|fighter)$/.test(cls), rwyOk = a => !ENGINE.rwyImpossible(a, cls, ac.type);
     const pathOk = ap => !!ap && r.cands.some(c => c.airport.id === ap.airport.id && c.p >= 0.02) && rwyOk(ap.airport) && !(home && home.id === ap.airport.id && elapsed != null && elapsed < 15) ? ap : null;

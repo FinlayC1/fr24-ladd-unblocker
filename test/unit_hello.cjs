@@ -68,7 +68,7 @@ const text = el => (el ? el.textContent.replace(/\s+/g, ' ').trim() : '');
   const H = 3600e3, NOTICE = 'The shared monitor moves to a new server on Friday.';
   // ---- counting on (the default): the first hello, its answer
   {
-    const A = makeWin({ answer: { ok: 1, latest: '99.2.0', notice: NOTICE, minVer: '' } }), { win, doc, T } = A;
+    const A = makeWin({ answer: { ok: 1, latest: '9.2.0', notice: NOTICE, minVer: '' } }), { win, doc, T } = A;
     await until(() => doc.querySelector('.tl-ub-btn'), 4000);
     check('(no hello in the first seconds - after FR24 has opened)', A.hellos().length === 0);
     const h = await until(() => A.hellos()[0], 15000);
@@ -82,7 +82,7 @@ const text = el => (el ? el.textContent.replace(/\s+/g, ' ').trim() : '');
     check('... noted: when, for which version', Math.abs(A.st().at - Date.now()) < 30000 && A.st().ver === VERSION, A.st());
     // ---- its answer: a newer version - the banner
     const upd = await until(() => banner(doc, 'upd'), 3000);
-    check('the monitor\'s latest (99.2.0; GitHub says this one is the newest) puts the update banner on the map', !!upd && text(upd).includes(`LADD Unblocker v99.2.0 is out (you have v${VERSION})`) && !/required/.test(text(upd)), text(upd));
+    check('the monitor\'s latest (9.2.0; GitHub says this one is the newest) puts the update banner on the map', !!upd && text(upd).includes(`LADD Unblocker v9.2.0 is out (you have v${VERSION})`) && !/required/.test(text(upd)), text(upd));
     const wrap = doc.querySelector('.tl-bn-wrap');
     check('... at the top in the middle, below FR24\'s header (56 px), stacked as the header is - under FR24\'s pop-ups (z-index 60, not the window\'s 2147482000)', !!wrap && wrap.parentElement === doc.body && wrap.style.top === '64px' && wrap.style.zIndex === '60' && /\.tl-bn-wrap\{position:fixed;left:50%/.test(SRC), wrap && { top: wrap.style.top, z: wrap.style.zIndex });
     check('... FR24\'s style: its dark grey bar, white text, its yellow button, rounded, a small shadow', /\.tl-bn\{[^}]*background:#393939;color:#fff;border-radius:6px;box-shadow:/.test(SRC) && /\.tl-bn-b\{[^}]*background:#f8c023/.test(SRC));
@@ -90,7 +90,7 @@ const text = el => (el ? el.textContent.replace(/\s+/g, ' ').trim() : '');
     check('... "Update" and "Later" buttons - real buttons, reached with the keyboard', !!ub && !!lb && ub.tagName === 'BUTTON' && lb.tagName === 'BUTTON' && text(ub) === 'Update' && text(lb) === 'Later' && ub.tabIndex === 0);
     check('... one of each, no more', doc.querySelectorAll('.tl-bn-wrap [data-tl-bn="upd"]').length === 1 && doc.querySelectorAll('.tl-bn-wrap').length === 1);
     const btn = doc.querySelector('.tl-ub-btn');
-    check('... and the bar\'s button\'s tooltip naming the version - nothing drawn over its icon', !!btn && !btn.querySelector('.tl-ub-dot') && /99\.2\.0/.test(btn.getAttribute('title')));
+    check('... and the bar\'s button\'s tooltip naming the version - nothing drawn over its icon', !!btn && !btn.querySelector('.tl-ub-dot') && /9\.2\.0/.test(btn.getAttribute('title')));
     // ---- FR24's dialog up: out of sight
     doc.body.insertAdjacentHTML('beforeend', '<div id="fr24dlg" role="dialog" aria-modal="true">Sign in</div>'); T().ubBanners();
     check('FR24 showing a dialog: the banners are out of sight (never over FR24\'s pop-ups)', wrap.classList.contains('tl-bn-hid'));
@@ -119,10 +119,10 @@ const text = el => (el ? el.textContent.replace(/\s+/g, ' ').trim() : '');
     check('Update: does what the window\'s Update does for a userscript - opens the new .user.js for the manager to offer', A.opened.length === 1 && A.opened[0] === 'https://raw.githubusercontent.com/FinlayC1/fr24-ladd-unblocker/main/dist/fr24-ladd-unblocker.user.js' && /click Update there/.test(text(banner(doc, 'upd'))), A.opened);
     click(win, banner(doc, 'upd').querySelector('[data-bn-act="later"]'));
     const later = JSON.parse(win.localStorage.getItem(KEYS.later) || 'null');
-    check('Later: the banner is taken out of the page, hidden for 24 hours (kept)', !banner(doc, 'upd') && !!later && later.v === '99.2.0' && Math.abs(later.until - Date.now() - 24 * H) < 60000, later);
+    check('Later: the banner is taken out of the page, hidden for 24 hours (kept)', !banner(doc, 'upd') && !!later && later.v === '9.2.0' && Math.abs(later.until - Date.now() - 24 * H) < 60000, later);
     T().ubBanners();
-    check('... still hidden at the next look - the button\'s tooltip still says it', !banner(doc, 'upd') && /99\.2\.0/.test(btn.getAttribute('title')));
-    win.localStorage.setItem(KEYS.later, JSON.stringify({ v: '99.2.0', until: Date.now() - 1000 })); T().ubBanners();
+    check('... still hidden at the next look - the button\'s tooltip still says it', !banner(doc, 'upd') && /9\.2\.0/.test(btn.getAttribute('title')));
+    win.localStorage.setItem(KEYS.later, JSON.stringify({ v: '9.2.0', until: Date.now() - 1000 })); T().ubBanners();
     check('... back once the 24 hours are over', !!banner(doc, 'upd'));
     // ---- the switch in the window
     click(win, btn);
@@ -141,7 +141,7 @@ const text = el => (el ? el.textContent.replace(/\s+/g, ' ').trim() : '');
   }
   // ---- counting off from the start: nothing sent, no id made
   {
-    const B = makeWin({ ls: { [KEYS.opts]: { count: false } }, answer: { ok: 1, latest: '99.2.0' } });
+    const B = makeWin({ ls: { [KEYS.opts]: { count: false } }, answer: { ok: 1, latest: '9.2.0' } });
     await until(() => B.doc.querySelector('.tl-ub-btn'), 4000);
     await sleep(12500);
     check('counting off from the start: no hello at all (12 s and more after FR24 opened), no id made', B.hellos().length === 0 && !B.win.localStorage.getItem(KEYS.id), B.reqs.map(r => r.url.replace(/\?.*/, '')));
@@ -151,10 +151,10 @@ const text = el => (el ? el.textContent.replace(/\s+/g, ' ').trim() : '');
   }
   // ---- a required update (below minVer): Later only until the page is loaded again
   {
-    const ls = { [KEYS.id]: 'ab'.repeat(16), [KEYS.hello]: { at: Date.now() - H, ver: VERSION, ans: { latest: '99.3.0', minVer: '99.0.0', notice: '', at: Date.now() - H } } };
+    const ls = { [KEYS.id]: 'ab'.repeat(16), [KEYS.hello]: { at: Date.now() - H, ver: VERSION, ans: { latest: '9.3.0', minVer: '9.0.0', notice: '', at: Date.now() - H } } };
     const C = makeWin({ ls });
     const upd = await until(() => banner(C.doc, 'upd'), 4000);
-    check('below the lowest supported version (minVer, from the last hello\'s answer): the banner says the update is required', !!upd && text(upd).includes(`LADD Unblocker v99.3.0 is out (you have v${VERSION})`) && /this update is required/.test(text(upd)), text(upd));
+    check('below the lowest supported version (minVer, from the last hello\'s answer): the banner says the update is required', !!upd && text(upd).includes(`LADD Unblocker v9.3.0 is out (you have v${VERSION})`) && /this update is required/.test(text(upd)), text(upd));
     check('... no hello sent for it (one an hour ago)', C.hellos().length === 0);
     click(C.win, upd.querySelector('[data-bn-act="later"]'));
     check('... Later hides it for this page', !banner(C.doc, 'upd'));
@@ -167,21 +167,21 @@ const text = el => (el ? el.textContent.replace(/\s+/g, ' ').trim() : '');
   }
   // ---- Later kept across a reload (not required); a newer version than the one put off shows again
   {
-    const ls = { [KEYS.id]: 'cd'.repeat(16), [KEYS.hello]: { at: Date.now() - H, ver: VERSION, ans: { latest: '99.2.0', minVer: '', notice: '', at: Date.now() - H } }, [KEYS.later]: { v: '99.2.0', until: Date.now() + 20 * H } };
+    const ls = { [KEYS.id]: 'cd'.repeat(16), [KEYS.hello]: { at: Date.now() - H, ver: VERSION, ans: { latest: '9.2.0', minVer: '', notice: '', at: Date.now() - H } }, [KEYS.later]: { v: '9.2.0', until: Date.now() + 20 * H } };
     const D = makeWin({ ls });
     await until(() => D.doc.querySelector('.tl-ub-btn'), 4000); await sleep(1500);
     check('put off with Later, FR24 loaded again within 24 hours: no banner', !banner(D.doc, 'upd'));
-    D.setSt({ ans: Object.assign({}, D.st().ans, { latest: '99.4.0' }) }); D.T().ubBanners();
-    check('... a newer version than the one put off: shown again', text(banner(D.doc, 'upd')).includes('v99.4.0 is out'));
+    D.setSt({ ans: Object.assign({}, D.st().ans, { latest: '9.4.0' }) }); D.T().ubBanners();
+    check('... a newer version than the one put off: shown again', text(banner(D.doc, 'upd')).includes('v9.4.0 is out'));
     D.win.close();
   }
   // ---- GitHub's check alone
   {
-    const E = makeWin({ ls: { [KEYS.opts]: { count: false } }, latest: '99.1.0' });
+    const E = makeWin({ ls: { [KEYS.opts]: { count: false } }, latest: '9.1.0' });
     await until(() => E.doc.querySelector('.tl-ub-btn'), 4000);
     // (asked as FR24 opens - nothing called here: the banner is up the moment the answer is in)
     const upd = await until(() => banner(E.doc, 'upd'), 3000);
-    check('GitHub\'s version check alone (counting off), made as FR24 opens, puts the update banner up at once', !!upd && text(upd).includes(`LADD Unblocker v99.1.0 is out (you have v${VERSION})`) && E.hellos().length === 0, text(upd));
+    check('GitHub\'s version check alone (counting off), made as FR24 opens, puts the update banner up at once', !!upd && text(upd).includes(`LADD Unblocker v9.1.0 is out (you have v${VERSION})`) && E.hellos().length === 0, text(upd));
     E.win.close();
   }
   // ---- a version merged while FR24 is open: shown on coming back to the tab
@@ -191,18 +191,18 @@ const text = el => (el ? el.textContent.replace(/\s+/g, ' ').trim() : '');
     const gh = () => G.reqs.filter(r => /githubusercontent\.com\/.*\/main\/package\.json/.test(r.url)).length;
     await until(() => gh() >= 1, 3000); await sleep(100);
     check('(up to date as FR24 opens: no banner)', !banner(G.doc, 'upd'));
-    o.latest = '99.5.0';
+    o.latest = '9.5.0';
     G.win.dispatchEvent(new G.win.Event('focus')); await sleep(100);
     check('... back to the tab within two minutes of the last answer: not asked again', gh() === 1, gh());
     const real = G.win.Date.now.bind(G.win.Date); G.win.Date.now = () => real() + 3 * 60000;
     G.win.dispatchEvent(new G.win.Event('focus'));
     const upd = await until(() => banner(G.doc, 'upd'), 3000);
-    check('... later, a version merged meanwhile: asked again on coming back, the update banner up at once', gh() === 2 && !!upd && text(upd).includes('v99.5.0 is out'), { asked: gh(), b: text(upd) });
+    check('... later, a version merged meanwhile: asked again on coming back, the update banner up at once', gh() === 2 && !!upd && text(upd).includes('v9.5.0 is out'), { asked: gh(), b: text(upd) });
     G.win.close();
   }
   // ---- LADD Unblock switched off: no banner, no hello
   {
-    const F = makeWin({ ls: { [KEYS.opts]: { on: false }, [KEYS.hello]: { at: Date.now() - 13 * H, ver: VERSION, ans: { latest: '99.2.0', minVer: '', notice: NOTICE, at: Date.now() - H } } } });
+    const F = makeWin({ ls: { [KEYS.opts]: { on: false }, [KEYS.hello]: { at: Date.now() - 13 * H, ver: VERSION, ans: { latest: '9.2.0', minVer: '', notice: NOTICE, at: Date.now() - H } } } });
     await until(() => F.doc.querySelector('.tl-ub-btn'), 4000);
     await F.T().sayHello(); await sleep(1200);
     check('LADD Unblock switched off (FR24 left as it is): no banner on the map, no hello', !F.doc.querySelector('.tl-bn-wrap') && F.hellos().length === 0);

@@ -63,22 +63,22 @@ const click = (win, el) => el.dispatchEvent(new win.MouseEvent('click', { bubble
   }
   // ---- updated from an older version, and a newer one out
   {
-    const { win, doc, reqs } = makeWin({ latest: '99.1.0', seen: '22.20.0' });
+    const { win, doc, reqs } = makeWin({ latest: '9.1.0', seen: '22.20.0' });
     const btn = await until(() => doc.querySelector('.tl-ub-btn'), 4000);
-    check('after an update, a newer one out: the button\'s tooltip says so before the window is opened - nothing drawn over its icon', (await until(() => /99\.1\.0 is out/.test(btn.getAttribute('title') || ''), 2000)) && !btn.querySelector('.tl-ub-dot'));
+    check('after an update, a newer one out: the button\'s tooltip says so before the window is opened - nothing drawn over its icon', (await until(() => /9\.1\.0 is out/.test(btn.getAttribute('title') || ''), 2000)) && !btn.querySelector('.tl-ub-dot'));
     click(win, btn); const w = await until(() => doc.querySelector('.tl-ub'), 4000);
     const note = w.querySelector('.tl-ub-new');
     check('... the window opens with "Updated to v' + VERSION + '" and this version\'s headlines (at most 3), a link to all of them', !!note && note.textContent.includes('Updated to v' + VERSION) && note.querySelectorAll('li').length >= 1 && note.querySelectorAll('li').length <= 3 && !!note.querySelector('a[href*="CHANGELOG"]'), note && note.textContent.replace(/\s+/g, ' ').slice(0, 300));
     await until(() => w.querySelector('.tl-ub-alert'), 3000);
     const alert = w.querySelector('.tl-ub-alert');
-    check('a newer version out: a line in Updates says this one is out of date, with both versions', !!alert && alert.textContent.includes('99.1.0') && alert.textContent.includes(VERSION) && alert.closest('#tl-ub-upd'), alert && alert.textContent);
-    check('... and the button\'s tooltip names the new version (no dot on its icon)', !btn.querySelector('.tl-ub-dot') && /99\.1\.0/.test(btn.getAttribute('title')));
+    check('a newer version out: a line in Updates says this one is out of date, with both versions', !!alert && alert.textContent.includes('9.1.0') && alert.textContent.includes(VERSION) && alert.closest('#tl-ub-upd'), alert && alert.textContent);
+    check('... and the button\'s tooltip names the new version (no dot on its icon)', !btn.querySelector('.tl-ub-dot') && /9\.1\.0/.test(btn.getAttribute('title')));
     click(win, w.querySelector('[data-ub-act="seenNew"]'));
     check('dismissing the note takes it away for good', !doc.querySelector('.tl-ub .tl-ub-new') && win.localStorage.getItem('tweeks.fr24.ladd.seenver') === VERSION);
     // ---- the monitor, public: its figures, no controls
     const mon = await until(() => { const m = doc.querySelector('#tl-ub-mon'); return m && /Blocked aircraft/.test(m.textContent) ? m : null; }, 6000);
     const mt = mon ? mon.textContent.replace(/\s+/g, ' ') : '';
-    check('Monitor section: its version and commit, behind the latest, how long it has run', /v22\.27\.2/.test(mt) && /abc1234/.test(mt) && /behind v99\.1\.0/.test(mt) && /Running for ?3 h/.test(mt), mt.slice(0, 200));
+    check('Monitor section: its version (a beta: B22.27.2) and commit, behind the latest, how long it has run', /B22\.27\.2/.test(mt) && /abc1234/.test(mt) && /behind v9\.1\.0/.test(mt) && /Running for ?3 h/.test(mt), mt.slice(0, 200));
     check('... the live list, LADD list age, blocked aircraft, flights kept, FR24 scan, named, waiting, lookups served, owners, queues', /412 aircraft · LADD list 6 s old/.test(mt) && /10,151/.test(mt) && /119,212/.test(mt) && /ok 40 s ago/.test(mt) && /2,310 of 2,400/.test(mt) && /Waiting to be named ?86/.test(mt) && /12,345/.test(mt) && /9,000 · 12 to look up/.test(mt) && /rebuilds 2/.test(mt), mt);
     check('... errors by source and the paused hosts', /polls 3/.test(mt) && /weather 1/.test(mt) && /api\.adsb\.lol 30 s/.test(mt));
     check('... without the secret: no controls, a line saying the owner\'s secret adds them', !mon.querySelector('[data-ub-act="monUpdate"]') && /owner's secret/.test(mt));
@@ -94,7 +94,7 @@ const click = (win, el) => el.dispatchEvent(new win.MouseEvent('click', { bubble
     click(win, doc.querySelector('.tl-ub .tl-ub-x')); await sleep(300); check('(closed by its close button)', !doc.querySelector('.tl-ub')); click(win, btn);
     const upd = await until(() => doc.querySelector('#tl-ub-mon [data-ub-act="monUpdate"]'), 6000);
     const mt2 = doc.querySelector('#tl-ub-mon').textContent.replace(/\s+/g, ' ');
-    check('with the secret: Update, Restart and Log buttons; the update button names the newer version', !!upd && /Update to v99\.1\.0/.test(upd.textContent) && !!doc.querySelector('#tl-ub-mon [data-ub-act="monRestart"]') && !!doc.querySelector('#tl-ub-mon [data-ub-act="monLog"]'), mt2.slice(-300));
+    check('with the secret: Update, Restart and Log buttons; the update button names the newer version', !!upd && /Update to v9\.1\.0/.test(upd.textContent) && !!doc.querySelector('#tl-ub-mon [data-ub-act="monRestart"]') && !!doc.querySelector('#tl-ub-mon [data-ub-act="monLog"]'), mt2.slice(-300));
     check('... and the server\'s numbers: memory, load, requests a minute, browsers', /320 MB · load 0\.42/.test(mt2) && /52 a minute · 14 browsers/.test(mt2), mt2);
     const n0 = reqs.filter(r => /\/admin\/update/.test(r.url)).length;
     click(win, upd);

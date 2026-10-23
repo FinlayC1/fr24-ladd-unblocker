@@ -194,6 +194,8 @@
   // (1.0.0 and on are newer than every beta - the versions before it, numbered 20 and up)
   function verKey(v) { var s = String(v || ''), p = s.replace(/^[vB]/i, '').split('.').map(function (x) { return parseInt(x, 10) || 0; }); return [!/^B/i.test(s) && p[0] >= 1 && p[0] < 20 ? 1 : 0, p[0] || 0, p[1] || 0, p[2] || 0]; }
   function cmpVer(a, b) { var x = verKey(a), y = verKey(b); for (var i = 0; i < 4; i++) { var d = x[i] - y[i]; if (d) return d < 0 ? -1 : 1; } return 0; }
+  // (a version as shown: 1.0.0; a beta, B22.31.12)
+  function verLabel(v) { var s = String(v || ''); return /^\d+\.\d+\.\d+$/.test(s) && verKey(s)[0] === 0 ? 'B' + s : s; }
   function fillRows(box, rows) { box.textContent = ''; rows.forEach(function (r) { var d = el('div', null, 'row'); d.appendChild(el('span', r[0])); d.appendChild(el('span', r[1] == null ? '-' : String(r[1]), 'num ' + (r[2] || ''))); box.appendChild(d); }); }
   // (rows of cells: a value, or { t: text, c: class, node: an element })
   function fillTable(t, head, rows) {
@@ -307,7 +309,7 @@
     fillTable(t, ['', 'Installs', 'Share'], (rows || []).map(function (r) {
       var share = el('span'), b = el('span', null, 'share'); b.style.width = Math.max(2, Math.round(r[1] / (total || 1) * 60)) + 'px'; share.appendChild(b); share.appendChild(document.createTextNode(pct(r[1], total)));
       var older = latest && /^\d+\.\d+\.\d+$/.test(r[0]) ? cmpVer(r[0], latest) : null;
-      return [{ t: r[0] + (older === 0 ? ' (newest)' : ''), c: older < 0 ? 'warn' : older === 0 ? 'ok' : '' }, n(r[1]), { node: share }];
+      return [{ t: verLabel(r[0]) + (older === 0 ? ' (newest)' : ''), c: older < 0 ? 'warn' : older === 0 ? 'ok' : '' }, n(r[1]), { node: share }];
     }));
   }
   function showUsers(s) {
@@ -322,7 +324,7 @@
     breakdown($('t-browser'), by.browser, total); breakdown($('t-os'), by.os, total); breakdown($('t-handler'), (by.handler || []).map(function (r) { return [r[0] || '(none)', r[1]]; }), total);
     var latest = o.latest || v.latest;
     fillTable($('t-inst'), ['Install', 'Person', 'Version', 'Kind', 'Manager', 'Browser', 'System', 'First seen', 'Last seen', 'Hellos'], (s.recent || []).map(function (r) {
-      return [r.id, '#' + r.cluster + (r.size > 1 ? ' (' + r.size + ' installs)' : ''), { t: r.ver, c: latest && cmpVer(r.ver, latest) < 0 ? 'warn' : '' }, r.kind === 'ext' ? 'extension' : 'userscript', r.handler || '-', r.browser, r.os, ago(r.first), ago(r.last), r.n];
+      return [r.id, '#' + r.cluster + (r.size > 1 ? ' (' + r.size + ' installs)' : ''), { t: verLabel(r.ver), c: latest && cmpVer(r.ver, latest) < 0 ? 'warn' : '' }, r.kind === 'ext' ? 'extension' : 'userscript', r.handler || '-', r.browser, r.os, ago(r.first), ago(r.last), r.n];
     }));
   }
 

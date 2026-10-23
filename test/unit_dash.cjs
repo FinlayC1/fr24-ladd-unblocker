@@ -19,7 +19,7 @@ const HTML = fs.readFileSync(path.join(__dirname, '../monitor/dash.html'), 'utf8
 
 // (some installs, so the users page has something to draw - a handler name with markup in it: shown as text)
 const ver = M.MON_VER;
-for (const [c, ip, o] of [['a', '198.51.100.1', {}], ['b', '198.51.100.1', { kind: 'us', handler: '<b>x</b>Tampermonkey' }], ['c', '203.0.113.5', { ver: '1.0.0', browser: 'firefox', os: 'linux' }]])
+for (const [c, ip, o] of [['a', '198.51.100.1', {}], ['b', '198.51.100.1', { kind: 'us', handler: '<b>x</b>Tampermonkey' }], ['c', '203.0.113.5', { ver: '22.0.0', browser: 'firefox', os: 'linux' }]])
   M.helloAnswer(Object.assign({ id: c.repeat(32), ver, kind: 'ext', handler: 'chrome-ext', browser: 'chrome', os: 'windows' }, o), ip);
 M.log('a log line for the panel');
 const adminGet = p => Promise.resolve(M.adminAnswer(p.split('?')[0], 'GET', k => new URL('http://x' + p).searchParams.get(k)));
@@ -69,7 +69,7 @@ const nav = async (P, h) => { P.w.location.hash = h; await sleep(120); };
   await nav(P, '#users');
   { const bars = P.d.querySelectorAll('#ch-new rect.mark').length, line = P.d.querySelectorAll('#ch-act path.line').length + P.d.querySelectorAll('#ch-act circle.dot').length;
     const rows = P.d.querySelectorAll('#t-inst tbody tr').length, ver2 = P.d.getElementById('t-ver').textContent;
-    check('users: the cards, 60 days of new installs (bars), active people (line), breakdowns, the recent installs', shown(P.d, 'p-users') && !shown(P.d, 'p-overview') && bars === 60 && line > 0 && rows === 3 && ver2.includes('1.0.0') && /People/.test(P.d.getElementById('u-kpis').textContent), { bars, line, rows });
+    check('users: the cards, 60 days of new installs (bars), active people (line), breakdowns (a beta shown as B22.0.0), the recent installs', shown(P.d, 'p-users') && !shown(P.d, 'p-overview') && bars === 60 && line > 0 && rows === 3 && ver2.includes('B22.0.0') && /People/.test(P.d.getElementById('u-kpis').textContent), { bars, line, rows });
     check('... a manager name with markup in it shown as text, not HTML', P.d.getElementById('t-handler').textContent.includes('<b>x</b>Tampermonkey') && !P.d.querySelector('#t-handler b'));
     const hit = P.d.querySelectorAll('#ch-new rect.hit')[10]; hit.dispatchEvent(new P.w.MouseEvent('mouseenter'));
     check('... hovering a day: its figure in the readout', /new install/.test(P.d.getElementById('rd-new').textContent), P.d.getElementById('rd-new').textContent); }

@@ -165,6 +165,41 @@ const io = {
     check('/trace: the day\'s kept track and the positions held now, in time order, as an adsb.lol trace file (icao, absolute times)', !!tr2 && tr2.icao === hexT && tr2.timestamp === 0 && tr2.trace.length === 5 && tr2.trace[0][3] === 'ground' && ts.every((x, i) => !i || x > ts[i - 1]) && tr2.trace[4][3] === 22000, tr2 && tr2.trace.map(r => [r[0] - t, r[3]]));
     check('... an aircraft not heard: nothing (404)', none === null); }
 
+  // ---- the day's index, and any aircraft's file of it fetched alone (23 Oct: both sites wall browsers - an ordinary
+  // aircraft's FR24 page had 82 days of its log unread) ------------------------------------------------------------------
+  { // (where each file's bytes are in the whole tar - the parts one after another)
+    const at = name => { let o = 0; for (const e of entries) { if (e[0] === 'dir') { o += 512; continue; } if (e[1] === name) return { at: o + 512, size: e[2].length }; o += 512 + e[2].length + (512 - e[2].length % 512) % 512; } return null; };
+    const want = at(tr('a9ca9d')), f = M.idxLookup(D, 0xa9ca9d);
+    check('the day read: its index made as it went - every aircraft\'s file, where its bytes are in the whole tar', M.archIdx.has(D) && st.indexed === 6 && f && f.at === want.at && f.size === want.size && f.parts.length === 2 && f.parts[0].size === cut && f.parts[1].size === TAR.length - cut, { f, want, indexed: st.indexed });
+    check('... an aircraft not in that day\'s archive: null; a day with no index: undefined', M.idxLookup(D, 0xabcdef) === null && M.idxLookup(dayOf(nowS() - 9 * 86400), 0xa9ca9d) === undefined);
+    check('... and the day\'s note on disk without it (80,000 aircraft a day stay in the index file)', !('index' in JSON.parse(fs.readFileSync(M.archMark(D), 'utf8'))));
+    // (GitHub's parts, answering ranges)
+    const ranges = []; M.setArcRange(async (url, from, to) => { ranges.push([url.slice(-3), from, to]); if (!PARTS[url]) throw new Error('404'); return PARTS[url].subarray(from, to + 1); });
+    const a = await M.answer(new URL(`http://x/atrace?hex=a9ca9d&day=${D}`), nowS());
+    check('/atrace: an aircraft\'s file of the day, alone - one range of the part it is in, its bytes as adsb.lol published them (gzipped: sent as such)', a._bin && a.status === 200 && a.gz && Buffer.compare(a.body, gz(REAL)) === 0 && ranges.length === 1 && ranges[0][1] === want.at, { status: a.status, ranges });
+    check('... it reads as N73VR\'s day', JSON.parse(zlib.gunzipSync(a.body).toString()).icao === 'a9ca9d');
+    // (a file across the parts' boundary: both ranges, joined)
+    const across = entries.filter(e => e[0] === 'file').map(e => [e[1], at(e[1])]).find(([, x]) => x.at < cut && x.at + x.size > cut);
+    const hexA = across && (/trace_full_([0-9a-f]{6})/.exec(across[0]) || [])[1];
+    if (hexA) { ranges.length = 0; const b = await M.answer(new URL(`http://x/atrace?hex=${hexA}&day=${D}`), nowS()); check('... a file the parts are cut through: both ranges, joined - the file whole', b.status === 200 && ranges.length === 2 && Buffer.compare(b.body, entries.find(e => e[1] === across[0])[2]) === 0, ranges); }
+    else check('(the cut runs through no trace file: the joining checked on its own)', JSON.stringify(A.rangesOf([{ url: 'a', size: 100 }, { url: 'b', size: 50 }], 90, 30)) === JSON.stringify([{ url: 'a', from: 90, to: 99 }, { url: 'b', from: 0, to: 19 }]));
+    const n404 = await M.answer(new URL(`http://x/atrace?hex=abcdef&day=${D}`), nowS()), n409 = await M.answer(new URL(`http://x/atrace?hex=a9ca9d&day=${dayOf(nowS() - 9 * 86400)}`), nowS()), n400 = await M.answer(new URL('http://x/atrace?hex=zz&day=x'), nowS());
+    check('... not in that day\'s archive: 404 (adsb.lol heard nothing of it); a day with no index here: 409 (the browser asks adsb.lol\'s site); nonsense: 400', n404.status === 404 && /"none"/.test(n404.body) && n409.status === 409 && n400.status === 400 && M.ARC.none >= 1 && M.ARC.noidx >= 1);
+    M.setArcRange(async () => { throw new Error('archive range: HTTP 403'); });
+    const bad = await M.answer(new URL(`http://x/atrace?hex=a9ca9d&day=${D}`), nowS());
+    check('... GitHub not answering: 502, the reason kept for /status', bad.status === 502 && /403/.test(M.ARC.lastErr), M.ARC);
+    const sts = M.answer(new URL('http://x/status'), nowS());
+    check('/status: the days indexed for any aircraft', sts.archive && sts.archive.idx >= 1 && sts.archive.atrace && sts.archive.atrace.served >= 1, sts.archive && { idx: sts.archive.idx, atrace: sts.archive.atrace });
+    // (a day read before there were indexes: read again for its index alone - newest first, nothing taken from it)
+    fs.unlinkSync(M.idxFile(D)); M.archIdx.delete(D);
+    for (let k = 1; k < 3; k++) M.archDays.set(dayOf(nowS() - k * 86400), false);   // (the two newer days: never published)
+    const job = M.archiveJob(nowS());
+    check('a day read before there were indexes: next, for its index alone', job && job.d === D && job.index === true, job);
+    const takenBefore = M.AR.taken, hb = fs.statSync(M.histFile('a9ca9d')).mtimeMs, sx = await M.indexDay(D, io);
+    check('... read again for it: the same index, no file read, nothing built again', M.archIdx.has(D) && sx.indexed === 6 && M.AR.taken === takenBefore && fs.statSync(M.histFile('a9ca9d')).mtimeMs === hb && JSON.stringify(M.idxLookup(D, 0xa9ca9d)) === JSON.stringify(f), sx);
+    check('... and then nothing left to do for it', !(M.archiveJob(nowS()) && M.archiveJob(nowS()).d === D));
+    for (let k = 1; k < 3; k++) M.archDays.delete(dayOf(nowS() - k * 86400)); }
+
   // ---- a day not published ------------------------------------------------------------------------------------------
   { const D5 = dayOf(nowS() - 5 * 86400); PARTS = {};
     const s5 = await M.archiveDay(D5, io);

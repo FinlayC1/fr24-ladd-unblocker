@@ -3,8 +3,8 @@
 // the list of its files at its tag (files.json) and every file, checks each one's SHA-256, writes them into the folder,
 // deletes the old version's files the new one no longer has (and nothing else), and then "Refresh page" restarts the
 // extension from its folder, and the new version, once started, loads FR24 again - running in both worlds.
-// GitHub is answered here (a "v1.0.0" made from this build: the 1.0 line, newer than every beta - 22.x - though its
-// first number is smaller). Chrome's folder picker cannot be clicked in a test: the page is handed a folder of the
+// GitHub is answered here (a "v9.0.0" made from this build: newer than this one, and than every beta - 22.x - though
+// its first number is smaller). Chrome's folder picker cannot be clicked in a test: the page is handed a folder of the
 // browser's own private file system in its place (the same kind of handle, the same calls), and what was written there
 // is then copied to the extension's real folder before the restart.
 // Needs Playwright and Chromium (skipped without them).
@@ -23,7 +23,7 @@ const sha = b => crypto.createHash('sha256').update(b).digest('hex');
 const walk = (d, pre = '') => fs.readdirSync(d, { withFileTypes: true }).flatMap(e => e.isDirectory() ? walk(path.join(d, e.name), pre + e.name + '/') : [pre + e.name]);
 
 (async () => {
-  const built = JSON.parse(fs.readFileSync(path.join(src, 'manifest.json'), 'utf8')), OLDV = built.version, NEWV = '1.0.0';
+  const built = JSON.parse(fs.readFileSync(path.join(src, 'manifest.json'), 'utf8')), OLDV = built.version, NEWV = '9.0.0';
   const list = JSON.parse(fs.readFileSync(path.join(src, 'files.json'), 'utf8'));
   check('files.json: this version, every file of the folder but itself, each with the SHA-256 of the file as built', list.version === OLDV && walk(src).filter(n => n !== 'files.json').sort().join() === Object.keys(list.files).sort().join() && Object.entries(list.files).every(([n, h]) => sha(fs.readFileSync(path.join(src, n))) === h));
   const zipNames = (() => { const z = fs.readFileSync(path.join(root, 'dist', 'fr24-ladd-unblocker-extension.zip')), out = []; for (let o = z.readUInt32LE(z.length - 6), i = 0; i < z.readUInt16LE(z.length - 12); i++) { const nl = z.readUInt16LE(o + 28); out.push(z.toString('utf8', o + 46, o + 46 + nl)); o += 46 + nl + z.readUInt16LE(o + 30) + z.readUInt16LE(o + 32); } return out; })();
@@ -36,7 +36,7 @@ const walk = (d, pre = '') => fs.readdirSync(d, { withFileTypes: true }).flatMap
   fs.writeFileSync(path.join(ext, 'my-notes.txt'), 'mine\n');
   const oldList = Object.assign({}, list, { files: Object.assign({}, list.files, { 'old-only.js': sha(fs.readFileSync(path.join(ext, 'old-only.js'))) }) });
   fs.writeFileSync(path.join(ext, 'files.json'), JSON.stringify(oldList, null, 2) + '\n');
-  // the new one, as GitHub would serve it at v1.0.0
+  // the new one, as GitHub would serve it at v9.0.0
   const nu = fs.mkdtempSync(path.join(os.tmpdir(), 'tlnew-'));
   fs.cpSync(src, nu, { recursive: true });
   const sub = (f, a, b) => { const p = path.join(nu, f), s = fs.readFileSync(p, 'utf8'); if (!s.includes(a)) throw new Error(f + ': ' + a + ' not found'); fs.writeFileSync(p, s.split(a).join(b)); };
@@ -53,8 +53,8 @@ const walk = (d, pre = '') => fs.readdirSync(d, { withFileTypes: true }).flatMap
       const u = new URL(route.request().url()), p = u.pathname; gh.asked.push(p);
       if (p === '/FinlayC1/fr24-ladd-unblocker/main/package.json') return route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify({ version: NEWV }) });
       if (p === '/FinlayC1/fr24-ladd-unblocker/main/CHANGELOG.md') return route.fulfill({ status: 200, headers: { 'access-control-allow-origin': '*' }, body: `# Changelog\n\n## [${NEWV}] - 2026-10-30\n\n### Fixed\n- **The newest fix.** More words.\n\n### Tests\n- **Not a headline.**\n\n## [B${OLDV}] - 2026-10-21\n\n### Fixed\n- **What this one already has.**\n` });
-      if (p === '/FinlayC1/fr24-ladd-unblocker/v1.0.0/dist/fr24-ladd-unblocker-extension.zip') return route.fulfill({ status: 200, headers: { 'access-control-allow-origin': '*' }, body: fs.readFileSync(path.join(root, 'dist', 'fr24-ladd-unblocker-extension.zip')) });
-      const m = p.match(/^\/FinlayC1\/fr24-ladd-unblocker\/v1\.0\.0\/dist\/extension\/(.+)$/), f = m && path.join(nu, m[1]);
+      if (p === '/FinlayC1/fr24-ladd-unblocker/v9.0.0/dist/fr24-ladd-unblocker-extension.zip') return route.fulfill({ status: 200, headers: { 'access-control-allow-origin': '*' }, body: fs.readFileSync(path.join(root, 'dist', 'fr24-ladd-unblocker-extension.zip')) });
+      const m = p.match(/^\/FinlayC1\/fr24-ladd-unblocker\/v9\.0\.0\/dist\/extension\/(.+)$/), f = m && path.join(nu, m[1]);
       if (f && f.startsWith(nu + path.sep) && fs.existsSync(f)) return route.fulfill({ status: 200, headers: { 'access-control-allow-origin': '*' }, body: m[1] === gh.corrupt ? Buffer.from('not it') : fs.readFileSync(f) });
       return route.fulfill({ status: 404, headers: { 'access-control-allow-origin': '*' }, body: '' });
     });
@@ -69,10 +69,10 @@ const walk = (d, pre = '') => fs.readdirSync(d, { withFileTypes: true }).flatMap
       const dl = mp.waitForEvent('download', { timeout: 10000 }).catch(() => null);
       await mp.click('#dl');
       const d = await dl, file = d ? await d.path().catch(() => '') : '';
-      check('... Download saves v1.0.0\'s own zip (at its tag), named for the version', !!d && d.suggestedFilename() === 'fr24-ladd-unblocker-extension-v1.0.0.zip' && !!file && fs.readFileSync(file).equals(fs.readFileSync(path.join(root, 'dist', 'fr24-ladd-unblocker-extension.zip'))), d && d.suggestedFilename());
+      check('... Download saves v9.0.0\'s own zip (at its tag), named for the version', !!d && d.suggestedFilename() === 'fr24-ladd-unblocker-extension-v9.0.0.zip' && !!file && fs.readFileSync(file).equals(fs.readFileSync(path.join(root, 'dist', 'fr24-ladd-unblocker-extension.zip'))), d && d.suggestedFilename());
       await mp.waitForSelector('#news:not([hidden])', { timeout: 5000 }).catch(() => null);
       const nl = await mp.$$eval('#newsList li', ls => ls.map(l => l.textContent));
-      check('... and what\'s new since this version: v1.0.0\'s headlines only (not its tests, not what this one has)', nl.join('|') === 'The newest fix', nl);
+      check('... and what\'s new since this version: v9.0.0\'s headlines only (not its tests, not what this one has)', nl.join('|') === 'The newest fix', nl);
       await mp.close(); }
     const page = await ctx.newPage(), errors = [];
     page.on('pageerror', e => errors.push(String(e)));
@@ -81,7 +81,7 @@ const walk = (d, pre = '') => fs.readdirSync(d, { withFileTypes: true }).flatMap
     await page.addInitScript(v => { try { localStorage.setItem('tweeks.fr24.ladd.hello1', JSON.stringify({ ans: { latest: v, at: Date.now() } })); } catch (e) { /* none */ } }, NEWV);
     await page.goto('https://www.flightradar24.com/53.40,-2.60/9');
     const bn = await page.waitForSelector('[data-tl-bn="upd"]', { timeout: 15000 }).catch(() => null);
-    check('FR24: the banner says v1.0.0 is out', !!bn && (await bn.textContent()).includes('v' + NEWV), bn && await bn.textContent());
+    check('FR24: the banner says v9.0.0 is out', !!bn && (await bn.textContent()).includes('v' + NEWV), bn && await bn.textContent());
 
     // Update on the banner: the update page opens in the next tab, for this FR24 tab
     const opened = ctx.waitForEvent('page', { timeout: 10000 }).catch(() => null);
@@ -105,17 +105,17 @@ const walk = (d, pre = '') => fs.readdirSync(d, { withFileTypes: true }).flatMap
     for (const n of ['manifest.json', 'content.js', 'old-only.js', 'my-notes.txt', 'files.json', 'grant.js']) await put(n, fs.readFileSync(path.join(ext, n)).toString('base64'));
     const wrong = await up.evaluate(async () => {
       const root = await navigator.storage.getDirectory(), d = await root.getDirectoryHandle('wrong', { create: true });
-      const w = await (await d.getFileHandle('manifest.json', { create: true })).createWritable(); await w.write(JSON.stringify({ name: 'FR24 LADD Unblocker', version: '1.0.0' })); await w.close();
+      const w = await (await d.getFileHandle('manifest.json', { create: true })).createWritable(); await w.write(JSON.stringify({ name: 'FR24 LADD Unblocker', version: '22.0.0' })); await w.close();
       const e = await root.getDirectoryHandle('empty', { create: true });
       return [await __tlUpdate.checkFolder(d), await __tlUpdate.checkFolder(e), await __tlUpdate.checkFolder(await root.getDirectoryHandle('ext'))];
     });
     check('a folder of another version, or with no manifest, is refused; the extension\'s own is taken', /isn't the folder Chrome loads/.test(wrong[0]) && /doesn't hold FR24 LADD Unblocker/.test(wrong[1]) && wrong[2] === '', wrong);
 
     gh.corrupt = 'data-2.js';
-    const bad = await up.evaluate(() => __tlUpdate.getPlan('1.0.0').then(() => 'no error', e => e.message));
+    const bad = await up.evaluate(() => __tlUpdate.getPlan('9.0.0').then(() => 'no error', e => e.message));
     check('a file that does not match its SHA-256 stops the update before anything is written', /checksum is wrong/.test(bad), bad);
     gh.corrupt = '';
-    const notYet = await up.evaluate(() => __tlUpdate.getPlan('1.0.1').then(() => 'no error', e => e.message));
+    const notYet = await up.evaluate(() => __tlUpdate.getPlan('9.0.1').then(() => 'no error', e => e.message));
     check('a version whose release is not out yet: said so', /still being published/.test(notYet), notYet);
 
     // the click: Chrome's picker answered with that folder
@@ -123,7 +123,7 @@ const walk = (d, pre = '') => fs.readdirSync(d, { withFileTypes: true }).flatMap
     await up.click('#go');
     await up.waitForSelector('#restart:not([hidden])', { timeout: 30000 }).catch(() => null);
     const msg = await up.textContent('#msg');
-    check('Update: done, says the new version is installed, offers Refresh page', /Done: v1\.0\.0 is installed/.test(msg) && await up.isVisible('#restart') && !await up.isVisible('#go'), msg);
+    check('Update: done, says the new version is installed, offers Refresh page', /Done: v9\.0\.0 is installed/.test(msg) && await up.isVisible('#restart') && !await up.isVisible('#go'), msg);
     const out = await up.evaluate(async () => {
       const d = await (await navigator.storage.getDirectory()).getDirectoryHandle('ext'), files = {};
       const walk = async (h, pre) => { for await (const [n, e] of h.entries()) { if (e.kind === 'directory') await walk(e, pre + n + '/'); else { const b = new Uint8Array(await (await e.getFile()).arrayBuffer()); let s = ''; for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000)); files[pre + n] = btoa(s); } } };
@@ -131,12 +131,12 @@ const walk = (d, pre = '') => fs.readdirSync(d, { withFileTypes: true }).flatMap
     });
     const got = Object.fromEntries(Object.entries(out).map(([n, b]) => [n, Buffer.from(b, 'base64')]));
     const want = walk(nu);
-    check('... the folder holds every file of v1.0.0, byte for byte', want.every(n => got[n] && got[n].equals(fs.readFileSync(path.join(nu, n)))), want.filter(n => !(got[n] && got[n].equals(fs.readFileSync(path.join(nu, n))))));
+    check('... the folder holds every file of v9.0.0, byte for byte', want.every(n => got[n] && got[n].equals(fs.readFileSync(path.join(nu, n)))), want.filter(n => !(got[n] && got[n].equals(fs.readFileSync(path.join(nu, n))))));
     check('... the old version\'s file the new one has no more is deleted; the person\'s own file is kept', !('old-only.js' in got) && got['my-notes.txt'] && got['my-notes.txt'].toString() === 'mine\n', Object.keys(got).filter(n => !want.includes(n)));
-    check('... only this repository was asked, at the version\'s tag', gh.asked.every(p => p.startsWith('/FinlayC1/fr24-ladd-unblocker/main/package.json') || p.startsWith('/FinlayC1/fr24-ladd-unblocker/main/CHANGELOG.md') || p.startsWith('/FinlayC1/fr24-ladd-unblocker/v1.0.')), gh.asked.filter(p => !/^\/FinlayC1\/fr24-ladd-unblocker\/(main\/package\.json|v1\.0\.)/.test(p)));
+    check('... only this repository was asked, at the version\'s tag', gh.asked.every(p => p.startsWith('/FinlayC1/fr24-ladd-unblocker/main/package.json') || p.startsWith('/FinlayC1/fr24-ladd-unblocker/main/CHANGELOG.md') || p.startsWith('/FinlayC1/fr24-ladd-unblocker/v9.0.')), gh.asked.filter(p => !/^\/FinlayC1\/fr24-ladd-unblocker\/(main\/package\.json|v9\.0\.)/.test(p)));
     await page.waitForTimeout(300);
     const bnNow = await page.textContent('[data-tl-bn="upd"]').catch(() => '');
-    check('FR24\'s banner: v1.0.0 is installed, with Refresh page', /v1\.0\.0 is installed/.test(bnNow) && !!await page.$('[data-tl-bn="upd"] [data-bn-act="restart"]'), bnNow);
+    check('FR24\'s banner: v9.0.0 is installed, with Refresh page', /v9\.0\.0 is installed/.test(bnNow) && !!await page.$('[data-tl-bn="upd"] [data-bn-act="restart"]'), bnNow);
 
     // what Chrome's folder picker would have given: the extension's real folder, written the same
     for (const n of walk(ext)) if (!(n in got)) fs.rmSync(path.join(ext, n));

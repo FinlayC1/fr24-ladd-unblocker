@@ -112,6 +112,8 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   // 20 and up, so the first number counts only within its own line)
   const verParts = v => { const s = String(v || ''), p = s.replace(/^[vB]/i, '').split('.').map(x => parseInt(x, 10) || 0); return [!/^B/i.test(s) && p[0] >= 1 && p[0] < 20 ? 1 : 0].concat(p); };
   const newerThan = (a, b) => { const x = verParts(a), y = verParts(b); for (let i = 0; i < Math.max(x.length, y.length); i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); } return false; };
+  // (a version as shown: v1.0.0; a beta, B22.31.12)
+  const verLabel = v => { const s = String(v || '').replace(/^[vB]/i, ''); return (verParts(v)[0] === 0 && s ? 'B' : 'v') + s; };
   function installKind() {
     if (typeof TL_EXTENSION === 'boolean') {
       let m = null; try { m = chrome.runtime.getManifest(); } catch (e) { /* the extension was reloaded */ }
@@ -264,7 +266,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     const paused = Object.entries(S.paused || {}).map(([k, v]) => `${esc(k)} ${agoS(v)}`).join(', ');
     const errs = [S.fails ? `polls ${nf(S.fails)}` : '', f.fails ? `FR24 ${nf(f.fails)}` : '', x.fails ? `weather ${nf(x.fails)}` : '', o.fails ? `owners ${nf(o.fails)}` : ''].filter(Boolean).join(' · ');
     const rows = [
-      kv('Version', S.ver ? `v${esc(S.ver)}${S.commit ? ' <span class="tl-muted">' + esc(S.commit) + '</span>' : ''} ${behind ? `<span class="tl-warn">behind v${esc(L.v)}</span>` : L && L.v ? '<span class="tl-muted">(up to date)</span>' : ''}` : '<span class="tl-muted">older than 22.28</span>'),
+      kv('Version', S.ver ? `${esc(verLabel(S.ver))}${S.commit ? ' <span class="tl-muted">' + esc(S.commit) + '</span>' : ''} ${behind ? `<span class="tl-warn">behind v${esc(L.v)}</span>` : L && L.v ? '<span class="tl-muted">(up to date)</span>' : ''}` : '<span class="tl-muted">older than 22.28</span>'),
       kv('Running for', ubMon.up ? durS(ubMon.up) : '-'),
       kv('Live list', `${nf(S.live)} aircraft · LADD list ${agoS(la.ladd)} old`, 'Every blocked, LADD, military and PIA aircraft heard in the last 5 minutes; how long ago the LADD list last answered'),
       kv('Blocked aircraft', nf(S.blocked)),
