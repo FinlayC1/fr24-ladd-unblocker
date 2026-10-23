@@ -13,6 +13,14 @@ const os = require('os');
 const { Worker, isMainThread, parentPort, workerData } = require('worker_threads');
 const A = require('./arch.cjs');
 const hexHash = hex => (parseInt(hex, 16) * 2654435761 >>> 0) % 1000003;
+// (SURGE=<daily.json> from test/mksurge.cjs: the event-surge evidence each moment's day would have had - engine.surgeOf)
+function surgeAt(W, E, t) {
+  if (!process.env.SURGE || !E.surgeOf) return null;
+  if (!W.SG) W.SG = { daily: JSON.parse(fs.readFileSync(process.env.SURGE, 'utf8')), by: new Map() };
+  const d = new Date(t * 1000).toISOString().slice(0, 10); let m = W.SG.by.get(d);
+  if (!m) { m = E.surgeOf(W.SG.daily, d); W.SG.by.set(d, m); }
+  return m;
+}
 
 // where an aircraft's fleet-mates (same owner) went in the 60 days before t0: airport id -> visits
 function fleetMapOf(F, E, hex, ownOp, t0) { if (!F) return null; const k = E.ownerKey(ownOp), mates = k && F.owners[k]; if (!mates) return null; const m = new Map(); for (const h of mates) if (h !== hex) for (const [f, t, te] of F.legs[h] || []) if (te < t0 && t0 - te < 60 * 86400) { m.set(f, (m.get(f) || 0) + 1); m.set(t, (m.get(t) || 0) + 1); } return m.size ? m : null; }
@@ -55,7 +63,7 @@ function doShard(shard, W) {
           let idx = -1; for (let i = 0; i < all.length; i++) { if (all[i].t <= tt) idx = i; else break; }
           if (idx < 1 || all[idx].gnd) continue;
           const pos = all[idx], thin = []; for (const p of all.slice(0, idx + 1)) if (!thin.length || p.t - thin[thin.length - 1].t >= 20) thin.push(p);
-          const r = E.predict({ ac, pos, trail: thin, hs, now: pos.t, fleet: fleetMapOf(W.FLEET, E, ac.hex, ac.ownOp, s.tStart) });
+          const r = E.predict({ ac, pos, trail: thin, hs, now: pos.t, surge: surgeAt(W, E, pos.t), fleet: fleetMapOf(W.FLEET, E, ac.hex, ac.ownOp, s.tStart) });
           const top = r && r.cands[0] && r.cands[0].airport; if (!top) continue;
           const near = a => a.id === D.id || E.dist(a.lat, a.lon, D.lat, D.lon) < 4;
           const hit = near(top), dd = E.dist(top.lat, top.lon, D.lat, D.lon), t3 = r.cands.slice(0, 3).some(c => near(c.airport)) ? 1 : 0;

@@ -48,7 +48,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
 // ==UserScript==
 // @name         Flightradar24 LADD / N-A Unblocker (feed-level)
 // @namespace    tweeks.io
-// @version      22.31.12
+// @version      1.0.0
 // @description  Identifies every LADD / N/A / blocked military aircraft on Flightradar24 from public ADS-B, and injects callsign, registration, operator, age, country, MSN, squawk, vertical speed, GPS altitude, airspeeds, wind, photos, a reasoned origin/destination with a wind-corrected ETA (also for ordinary flights FR24 shows as N/A - military, private, GA, helicopters, with private landing sites; learned from 63 days of every aircraft worldwide, with live weather and closures), airport-board entries and a rebuilt 7-month flight log straight into FR24's own data - so it all renders like normal FR24 traffic.
 // @author       Finlay Clarke
 // @updateURL    https://raw.githubusercontent.com/FinlayC1/fr24-ladd-unblocker/main/dist/fr24-ladd-unblocker.user.js
@@ -137,7 +137,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "22.31.12";
+    var BRIDGE_V = "1.0.0";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed
@@ -4585,7 +4585,9 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     // test/fitlogit.cjs). Without a learned table the hand-tuned weights W apply everywhere.
     const FEAT = ['prior', 'orig', 'habit', 'pos', 'posL', 'hdg', 'close', 'vdesc', 'vlvl', 'vstep', 'phys', 'appr', 'low', 'cruise', 'cruiseL', 'climbf', 'range', 'emerg', 'luse', 'lsize', 'ldist', 'hvis', 'hbase', 'hub', 'ahead', 'rwyA', 'rwyF', 'rwyP', 'luseC', 'od', 'rwyI', 'rwyD', 'plen', 'hret', 'hself', 'hrev', 'haway', 'htrip', 'hlast', 'hhome', 'xc', 'hxc', 'sqTrip', 'fmsTrip', 'arrH', 'rshort', 'unpaved', 'fleet', 'fld',
       // 22.10
-      'odD', 'odR', 'odN', 'odT', 'odH', 'seqG', 'csOD', 'csD', 'aph', 'aps', 'pgu', 'pgNever', 'rwyT', 'flw', 'flw0', 'hshr', 'hseq', 'hseq3', 'hdow', 'hhour', 'hcz', 'htpl', 'htplX', 'hczd', 'tcz', 'tczc', 'ttod', 'tlate', 'fly', 'hcons', 'dark', 'rwyWT'];
+      'odD', 'odR', 'odN', 'odT', 'odH', 'seqG', 'csOD', 'csD', 'aph', 'aps', 'pgu', 'pgNever', 'rwyT', 'flw', 'flw0', 'hshr', 'hseq', 'hseq3', 'hdow', 'hhour', 'hcz', 'htpl', 'htplX', 'hczd', 'tcz', 'tczc', 'ttod', 'tlate', 'fly', 'hcons', 'dark', 'rwyWT',
+      // 1.0
+      'clbT', 'tasT', 'surge'];
     const altBand = alt => alt == null ? 1 : alt < 3000 ? 0 : alt < 10000 ? 1 : alt < 25000 ? 2 : 3;
     const dBand = d => d < 40 ? 0 : d < 200 ? 1 : 2;
     // (with a 36-row table the weights also differ by kind of aircraft: jets, light aircraft and helicopters, military)
@@ -4625,6 +4627,26 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     function defaultWeight(k, alt) {
       const wv = alt != null && alt < 10000 ? W.vert * W.vlo : W.vert;
       return { prior: W.prior, orig: 0, habit: 1, pos: W.xt, posL: W.loc, hdg: W.hdg, close: W.prog, vdesc: wv, vlvl: wv, vstep: W.vstep * wv, phys: W.phys, appr: 1.5, low: W.low, cruise: W.cruise, cruiseL: W.lcr, climbf: W.cruise, range: 2, emerg: 4 }[k] || 0;
+    }
+    // (1.0) Event surges: from the business jets landing at each field per day ({ 'YYYY-MM-DD': { airportId: landings } }),
+    // for day `day`: the three days before it against its usual three days (the 28 before those, at least 7 of them known),
+    // as log((recent + 1) / (usual + 1)) - only for a field with 3 or more landings either way, and only where the two differ
+    // by a third or more. -> Map(airportId -> that). The monitor works it out from its blocked aircraft's landings and hands
+    // it to the browsers; the training pipeline from the archive's, the same way.
+    function surgeOf(daily, day) {
+      const out = new Map(), t = Date.parse(day + 'T00:00:00Z'); if (!daily || !(t > 0)) return out;
+      const dk = k => new Date(t - k * 864e5).toISOString().slice(0, 10);
+      const base = []; for (let k = 4; k <= 31; k++) if (daily[dk(k)]) base.push(daily[dk(k)]);
+      if (base.length < 7) return out;
+      const rec = new Map(), usual = new Map();
+      for (let k = 1; k <= 3; k++) for (const [id, n] of Object.entries(daily[dk(k)] || {})) rec.set(+id, (rec.get(+id) || 0) + n);
+      for (const m of base) for (const [id, n] of Object.entries(m)) usual.set(+id, (usual.get(+id) || 0) + n);
+      for (const id of new Set([...rec.keys(), ...usual.keys()])) {
+        const r = rec.get(id) || 0, u = 3 * (usual.get(id) || 0) / base.length;
+        if (r < 3 && u < 3) continue;
+        const v = Math.log((r + 1) / (u + 1)); if (Math.abs(v) >= 0.29) out.set(id, Math.round(v * 100) / 100);
+      }
+      return out;
     }
     function weightOf(ctx, k, alt) { if (LW) { const n = LW.w.length, row = LW.w[n >= 144 ? ctx : n >= 108 ? ctxOld(ctx) : n >= 36 ? ctxOld(ctx) % 36 : ctxOld(ctx) % 12]; const i = LIX.get(k); return row && i != null && fin(row[i]) ? row[i] : 0; } return defaultWeight(k, alt); }
     function globalWeight(a, cls, ac) {
@@ -5021,6 +5043,21 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       const wxAt = (a, t) => { const w = wxOf(a); if (!w || !w.taf || !t || t - now < 3600) return w; let best = null; for (const p of w.taf) if (p.from <= t && t < p.to) best = p; return best || w; };
       const vfrLike = (cls === 'piston' || cls === 'heli') && (/^(7000|1200|2000)$/.test(String(pos.sq || '')) || (pos.alt != null && pos.alt < 9000));
       const XW_LIMIT = { piston: 15, turboprop: 25, bizjet: 25, heavybiz: 28, airliner: 30, fighter: 25, milheavy: 30 }[cls] || 25;
+      // ---- (1.0) how heavy it is - how far it is going - from how it flies, no history needed: a jet full of fuel climbs
+      // slower over its first ten minutes than its type usually does (on 1,443 business-jet flights of 21 Oct 2026 a slow
+      // climber's trip was over 3,000 km four times as often as a fast one's: 16% against 4%), and the speed it cruises at
+      // is chosen for the trip (long-range cruise is slower). Each against its type's own (perf.clb: feet a minute over the
+      // first ten airborne minutes, as the tables measure it; perf.tas: its cruise speeds), as a log ratio; the evidence
+      // for a candidate is that ratio times how much longer or shorter than this kind's usual trip going there would be
+      // (the weights, learned, say how much each is worth and which way)
+      const muTrip = qTrip && qTrip.length >= 19 ? qTrip[9] : null;
+      let rClb = null, rTas = null;
+      if (muTrip != null && perf && perf.clb > 300 && !onGround && origin && origin.departedAt) {
+        const a0 = trail.find(p => !p.gnd && fin(p.alt) && p.t >= origin.departedAt - 120);
+        const b0 = a0 && a0.t - origin.departedAt < 300 ? trail.find(p => fin(p.alt) && p.t - a0.t >= 600) : null;
+        if (b0 && b0.t - a0.t < 900) { const c = (b0.alt - a0.alt) / ((b0.t - a0.t) / 60); if (c > 100) rClb = clamp(Math.log(c / perf.clb), -1, 1); }
+      }
+      if (muTrip != null && perf && Array.isArray(perf.tas) && perf.tas[1] > 150 && cruiseKnown && air && fin(air.tas) && air.tas > 150) rTas = clamp(Math.log(air.tas / perf.tas[1]), -0.3, 0.3);
       for (const a of cands.values()) {
         const why = [], tm = inp.explain ? {} : null, fv = {};
         let fixed = 0;
@@ -5059,6 +5096,12 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
           if (O && regionOf(O) !== regionOf(a)) { F('xc', 1); if (hs.lastCross) F('hxc', 1); }
           if (sqKey) F('sqTrip', tripBinTbl('sq', sqKey, O.country, tripKm));
           if (fmsKey) F('fmsTrip', tripBinTbl('fms', fmsKey, O.country, tripKm));
+          if (rClb != null) F('clbT', rClb * (x - muTrip));
+          if (rTas != null) F('tasT', rTas * (x - muTrip));
+          // (1.0) a field busier with business jets these last days than it usually is - an event (a grand prix, a summit,
+          // a film festival): the monitor's count of blocked aircraft landing there over three days against its usual
+          // three days, as a log ratio (inp.surge: airport id -> that)
+          const sg = inp.surge && inp.surge.get(a.id); if (sg) F('surge', clamp(sg, -2, 3));
         }
         // can it land there at all: the longest runway against what this class needs, and whether it is paved
         if (a.rwl && cls !== 'heli' && !isO) { const need = RWY_NEED[cls] || 3000; F('rshort', Math.min(0, Math.log(a.rwl[0] / need))); if (!a.rwl[1] && (grp === 'jet' || cls === 'turboprop')) F('unpaved', 1); }
@@ -5297,7 +5340,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       return res;
     }
 
-    return { setTables2, get T2() { return T2; }, trackState, offTrack, fieldShortName, placeShort, placeLabels, setApproach, approachCell, approachPath, apprGroup, apprKey, trackAgree, heatNear, heatMatch, reckon, trackErr, remotePath, flowKeysOf, pgrpOf, grp6, sunElev, airData, gsAlong, minutesTo, flowAt, pathOf, pathDev, ownerKey, parseRunwayLengths, setRunwayLengths, csvLine, SQ_NOINFO, tripBin, regionOf, learnLeg, learnRow, learnCollector, addLearnedOp, odAdd: (x, y, w) => { const k = odKey(String(x).toUpperCase(), String(y).toUpperCase()), v = (OD.get(k) || 0) + w; if (v > 1e-9) OD.set(k, v); else OD.delete(k); }, odWeight: (x, y) => OD.get(odKey(String(x).toUpperCase(), String(y).toUpperCase())) || 0, odCount: () => OD.size, setAirports, setUsage, addUsage, setRunways, parseRunwaysCsv, runwayFit, setWeights, setTables, setLogit, calibrated, mergePoints, finalTo, longFinal, typeRangeKm, FEAT, groupOf, W, classify, isStepClimb, rangeKm, parseTrace, legsFromPoints, summarizeLeg, stitchLegs, chainLegs, histStats, inferOrigin, predict, privateSite, rwyImpossible, typeDesc, heliSpots, heliAirportAt, landedSum, localFlew, climbedOut, approachTo, downAndUp, landingInGap, gapEnds, slowGap, idleHole, currentLeg, circuits, mergeCircuits, setFields, fieldAt, placeAt, isField, nearbyFields, fieldCount: () => FL.length, airportAt, departureFromClimb, arrivalFromDescent, nearby, dist, brg, xtat, destPoint, angDiff, get airports() { return AP; }, byId: id => byId.get(id), byIcao: c => byIcao.get(String(c || '').toUpperCase()) };
+    return { surgeOf, setTables2, get T2() { return T2; }, trackState, offTrack, fieldShortName, placeShort, placeLabels, setApproach, approachCell, approachPath, apprGroup, apprKey, trackAgree, heatNear, heatMatch, reckon, trackErr, remotePath, flowKeysOf, pgrpOf, grp6, sunElev, airData, gsAlong, minutesTo, flowAt, pathOf, pathDev, ownerKey, parseRunwayLengths, setRunwayLengths, csvLine, SQ_NOINFO, tripBin, regionOf, learnLeg, learnRow, learnCollector, addLearnedOp, odAdd: (x, y, w) => { const k = odKey(String(x).toUpperCase(), String(y).toUpperCase()), v = (OD.get(k) || 0) + w; if (v > 1e-9) OD.set(k, v); else OD.delete(k); }, odWeight: (x, y) => OD.get(odKey(String(x).toUpperCase(), String(y).toUpperCase())) || 0, odCount: () => OD.size, setAirports, setUsage, addUsage, setRunways, parseRunwaysCsv, runwayFit, setWeights, setTables, setLogit, calibrated, mergePoints, finalTo, longFinal, typeRangeKm, FEAT, groupOf, W, classify, isStepClimb, rangeKm, parseTrace, legsFromPoints, summarizeLeg, stitchLegs, chainLegs, histStats, inferOrigin, predict, privateSite, rwyImpossible, typeDesc, heliSpots, heliAirportAt, landedSum, localFlew, climbedOut, approachTo, downAndUp, landingInGap, gapEnds, slowGap, idleHole, currentLeg, circuits, mergeCircuits, setFields, fieldAt, placeAt, isField, nearbyFields, fieldCount: () => FL.length, airportAt, departureFromClimb, arrivalFromDescent, nearby, dist, brg, xtat, destPoint, angDiff, get airports() { return AP; }, byId: id => byId.get(id), byIcao: c => byIcao.get(String(c || '').toUpperCase()) };
   }
   /* ==/ENGINE== */
 
@@ -5467,7 +5510,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '22.31.12';
+  const VERSION = '1.0.0';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
@@ -8240,6 +8283,42 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   const photoAsk = { q: new Map(), t: 0 }, photosOut = new Map();
   const photoSig3 = l => (l || []).slice(0, 3).map(p => p.large || p.medium || p.thumb || '').join('|');
   const blockedHex = hex => { const v = store.getHex(hex) || {}; return !!(v.ladd || v.fr24Blocked || v.pia); };
+  // (1.0) Event surges (engine.surgeOf): the monitor's - fields busier with blocked aircraft these last three days than
+  // usual - every three hours; an empty map until then (no evidence either way)
+  let surgeMap = new Map(), surgeAt = 0;
+  function surgeNow() {
+    if (now() - surgeAt > 3 * 3600e3 && monOk && monBase) {
+      surgeAt = now();
+      monGet('/surge', { idle: true }).then(j => { if (j && Array.isArray(j.list)) surgeMap = new Map(j.list.filter(x => Array.isArray(x) && fin(x[0]) && fin(x[1])).map(x => [x[0], x[1]])); }, () => { surgeAt = now() - 3 * 3600e3 + 10 * 60000; });
+    }
+    return surgeMap;
+  }
+  // The routes an aircraft sent or was sent over its datalink (the monitor's /datalink: adsb.lol's open ACARS / VDL2 /
+  // HFDL data, an hour or so behind): what is known now - asked of the monitor, fifty registrations at a time, at
+  // most every ten minutes each; onNew(reg) is called when an answer brings something new
+  const dlCache = new Map(), dlAsk = { q: new Set(), t: 0 }, dlWaiters = new Map();
+  function datalinkRoutes(reg, onNew) {
+    reg = String(reg || '').toUpperCase(); if (!/^[A-Z0-9-]{2,10}$/.test(reg) || !monOk || !monBase) return null;
+    const c = dlCache.get(reg);
+    if (onNew) { const w = dlWaiters.get(reg) || new Set(); w.add(onNew); if (w.size > 20) w.delete(w.values().next().value); dlWaiters.set(reg, w); }
+    if (!c || now() - c.at > 10 * 60000) { if (!c) dlCache.set(reg, { at: now(), routes: [] }); else c.at = now(); dlAsk.q.add(reg); if (!dlAsk.t) dlAsk.t = setTimeout(flushDatalink, 80); }
+    if (dlCache.size > 3000) dlCache.delete(dlCache.keys().next().value);
+    return c ? c.routes : null;
+  }
+  function flushDatalink() {
+    dlAsk.t = 0; const all = [...dlAsk.q]; dlAsk.q.clear();
+    for (let i = 0; i < all.length; i += 50) {
+      const part = all.slice(i, i + 50);
+      monGet('/datalink?reg=' + part.map(encodeURIComponent).join(','), { idle: true }).then(j => {
+        const by = new Map(((j && Array.isArray(j.list)) ? j.list : []).filter(x => x && x.reg && Array.isArray(x.routes)).map(x => [x.reg, x.routes]));
+        for (const reg of part) {
+          const rs = by.get(reg) || [], c = dlCache.get(reg) || {}, was = JSON.stringify(c.routes || []);
+          dlCache.set(reg, { at: now(), routes: rs });
+          if (JSON.stringify(rs) !== was) for (const f of dlWaiters.get(reg) || []) { try { f(reg); } catch (e) { log('datalink', e); } }
+        }
+      }, () => { /* the monitor did not answer: asked again in ten minutes */ });
+    }
+  }
   function monPhotos(hex) {
     if (!monUp() || !blockedHex(hex)) return Promise.resolve(null);
     return Promise.race([new Promise(res => { const l = photoAsk.q.get(hex) || []; l.push(res); photoAsk.q.set(hex, l); if (!photoAsk.t) photoAsk.t = setTimeout(flushMonPhotos, 40); }), sleep(1500).then(() => null)]);
@@ -8307,11 +8386,15 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     apl: { name: 'airplanes.live', site: 'https://globe.airplanes.live/', url: (hex, day) => `https://globe.airplanes.live/${day ? 'globe_history/' + day : 'data'}/traces/${hex.slice(-2)}/trace_full_${hex}.json` },
     // (the monitor: today's positions of the aircraft it follows - from its own polling of adsb.lol's API, which has no
     // verification page - in the same format; today only)
-    mon: { name: 'the monitor', site: '', url: hex => `${monUrl()}/trace?hex=${hex}`, hdr: () => monHdr() }
+    mon: { name: 'the monitor', site: '', url: hex => `${monUrl()}/trace?hex=${hex}`, hdr: () => monHdr() },
+    // (adsb.lol's file of any aircraft's past day as adsb.lol published it in that day's archive on GitHub, fetched alone
+    // by the monitor - no verification page in front of it, and every day back to the archives' start. 409: no index of
+    // that day at the monitor yet - adsb.lol's own site asked instead)
+    arc: { name: "adsb.lol's archive", site: '', url: (hex, day) => `${monUrl()}/atrace?hex=${hex}&day=${String(day).replace(/\//g, '-')}`, hdr: () => monHdr() }
   };
   // (how each answered lately: the window's sources and the log page say it - a verification page above all)
   const netNew = () => ({ ok: 0, none: 0, wall: 0, err: 0, wallUntil: 0, wallAt: 0, okAt: 0, last: '', lastAt: 0, probe: null, bad: null, wallErr: '' });
-  const netState = { lol: netNew(), apl: netNew(), mon: netNew() };
+  const netState = { lol: netNew(), apl: netNew(), mon: netNew(), arc: netNew() };
   // (a verification page by what it is - adsb.lol's proof-of-work page, Cloudflare's challenge - not by any page saying
   // "verify": a 403 or a site's own error page is a refusal, said as one)
   const WALL_RE = /<title>\s*(?:verification|just a moment|attention required)|verifying connection|solving security challenge|proof[- ]of[- ]work|cf[-_]chl|challenge-platform|cf-browser-verification/i;
@@ -8371,7 +8454,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   }
   async function readTrace1(id, hex, day, opts) {
     const N = NETS[id], S = netState[id], o = opts || {};
-    const out = (state, x) => { S[state] = (S[state] || 0) + 1; S.last = state === 'err' ? x.err : state; S.lastAt = now(); if (state === 'ok' || state === 'none') S.okAt = now(); else if (!x.cached) S.lastBadAt = now(); return Object.assign({ net: N.name, id, state, pts: [], j: null, err: '' }, x); };
+    const out = (state, x) => { S[state] = (S[state] || 0) + 1; S.last = state === 'err' ? x.err : state; S.lastAt = now(); if (state === 'ok' || state === 'none' || state === 'noidx') S.okAt = now(); else if (!x.cached) S.lastBadAt = now(); return Object.assign({ net: N.name, id, state, pts: [], j: null, err: '' }, x); };
     if (S.wallUntil > now()) return out('wall', { err: S.wallErr || 'verification page', cached: true });
     for (let attempt = 0; ; attempt++) {
       let r;
@@ -8383,6 +8466,9 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
         if (attempt < 1 && !/aborted|unavailable/.test(m)) { await sleep(o.priority ? 1500 : 6000); continue; }
         return out('err', { err: m });
       }
+      // (the monitor has no index of that day yet: an answer, not a failure - the caller asks adsb.lol's site. A 404 is "not
+      // in that day's archive" only when it says so: a monitor from before 1.0 answers 404 for a path it does not know)
+      if (id === 'arc' && (r.status === 409 || (r.status === 404 && !/"none"/.test(String(r.text || ''))))) return out('noidx', {});
       const c = classifyTrace(hex, r.status, r.text);
       if (c.state === 'rate' && attempt < 2) { await sleep(4000 * (attempt + 1)); continue; }
       if (c.state !== 'ok' && c.state !== 'none') noteBad(id, N.url(hex, day), r, c);
@@ -8394,7 +8480,11 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   }
   // (the file alone, as the rest of the script asks for it: adsb.lol's, airplanes.live's for a day older than adsb.lol
   // keeps; 'HTTP 404' when there is none)
+  // (the monitor's archive copy in use: a monitor of 1.0 or later - its /status counts the days it has indexed - with some)
+  const arcUp = () => !!(monOk && monBase && monStat && monStat.archive && monStat.archive.idx > 0);
   async function fetchTrace(hex, day, opts) {
+    // (a past day: adsb.lol's archive through the monitor first - no verification page in front of it)
+    if (day && arcUp()) { const a = await readTrace('arc', hex, day, opts); if (a.state === 'ok') return a.j; if (a.state === 'none') throw new Error('HTTP 404'); }
     const r = await readTrace(day && opts && opts.back > LOL_DAYS ? 'apl' : 'lol', hex, day, opts);
     if (r.state === 'ok') return r.j;
     throw new Error(r.state === 'none' ? 'HTTP 404' : r.err || r.state);
@@ -8487,7 +8577,8 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
         if (back <= 3 && (h.rd[d] || 0) < (dayEndS(d) + 6 * 3600) * 1000) return looked || now() - (h.rd[d] || 0) > 3 * 3600e3;
         // (a day read with one network, or one not answering: read again with both when looked at - not more than every
         // half hour, a verification page in front of one of them taking a while to clear)
-        return looked && back <= LOL_DAYS && (v === 'l' || v === 'p') && now() - (h.rd[d] || 0) > 30 * 60000;
+        // (not a day of adsb.lol's alone while airplanes.live walls this browser: nothing more to have)
+        return looked && back <= LOL_DAYS && (v === 'p' || (v === 'l' && !(netState.apl.wallUntil > now()))) && now() - (h.rd[d] || 0) > 30 * 60000;
       };
       let todo = []; const backOf = {}; for (let back = 1; back <= upTo; back++) { const d = dayStr(now() - back * 864e5); if (want(d, back)) { todo.push(d); backOf[d] = back; } }
       let done = 0, dirty = false, monDays = 0;
@@ -8529,26 +8620,41 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
           if (have.length) { const got = new Set(have.filter(d => !(looked && backOf[d] <= LOL_DAYS && (part.has(d) || (aplOpen && (lo.has(d) || !mh.days[d])))))); todo = todo.filter(d => !got.has(d)); monDays = have.length; flush(); }
         }
       }
+      // (the monitor's check answered first - its archive is where the days come from while the sites wall this browser; an
+      // ordinary aircraft's log asked nothing else of it before)
+      if (todo.length) { const mc = monCheck(); if (mc) await mc.catch(() => null); }
       const legsOf = (pts, day) => ENGINE.legsFromPoints(pts, { heli, patrol, cls: cls0, type: ac0.type, rangeKm: ENGINE.typeRangeKm(ac0), dataEnd: dayEndS(day) });
       // Each day: adsb.lol's file (the last 40 days) and airplanes.live's (the aircraft looked at - also when it is looked at
       // while this load runs - or older than adsb.lol keeps), merged
+      // (23 Oct: both sites wall browsers - an FR24 aircraft page of an ordinary aircraft had 82 days of its log "not read
+      // yet". adsb.lol's file of a past day now comes from its archive through the monitor, for every day of any age;
+      // adsb.lol's own site only where the monitor has no index of the day yet)
       const one = async day => {
         const back = backOf[day], old = back > LOL_DAYS, lookedNow = looked || st.front;
         const o = { bg: bgWork && !st.front, priority: st.front, back };
-        const ids = old ? ['apl'] : lookedNow ? ['lol', 'apl'] : ['lol'];
-        const res = await Promise.all(ids.map(id => readTrace(id, hex, day, o)));
+        const aplWall = netState.apl.wallUntil > now();
+        // airplanes.live's as well for the aircraft looked at - and for a day older than adsb.lol's site keeps - not while it
+        // walls this browser; adsb.lol's from the archive, else its site (the last 40 days)
+        const pApl = (lookedNow || old) && !aplWall ? readTrace('apl', hex, day, o) : null;
+        let lolR = arcUp() ? await readTrace('arc', hex, day, o) : null;
+        if (lolR && lolR.state === 'noidx') lolR = null;
+        if (!lolR && !old) lolR = await readTrace('lol', hex, day, o);
+        const res = [lolR, pApl ? await pApl : null].filter(Boolean);
+        if (!res.length) res.push(await readTrace('apl', hex, day, o));       // (an old day, no index, airplanes.live walling: said why)
         done++;
         const pts = mergeNets(res), bad = res.filter(r => r.state !== 'ok' && r.state !== 'none'), complete = !bad.length;
+        const hasL = res.some(r => r.id === 'arc' || r.id === 'lol'), hasA = res.some(r => r.id === 'apl');
         if (!complete) { h.err[day] = bad.map(r => r.net + ': ' + r.err).join('; '); dirty = true; }
         // (nothing had, and a network not answering - or not asked: the background asks adsb.lol alone, and airplanes.live
-        // can have what adsb.lol has no file of: not known - asked again later, the day's flights as they were kept)
-        if (!pts.length && (!complete || (!old && res.length < 2))) { h.miss[day] = now(); dirty = true; return; }
+        // can have what adsb.lol has no file of: not known - asked again later, the day's flights as they were kept. With
+        // airplanes.live walling this browser, adsb.lol's "none" is all there is: a day without flights, as it knows it)
+        if (!pts.length && (!complete || (hasL && !hasA && !aplWall && !old))) { h.miss[day] = now(); dirty = true; return; }
         const raws = legsOf(pts, day), legs = summarize(raws, hex).map(l => Object.assign(l, { day }));
         raws.forEach((r, i) => learnFromLeg(hex, r, legs[i], cls0, ac0.mil));
         // (a day read again keeps its flights should the new read find fewer from a network that did not answer this time)
         const had = h.legs.filter(l => l.day === day);
         if (!complete && had.length > legs.length) { h.rd[day] = now(); return; }
-        h.days[day] = !complete ? 'p' : old ? 'a' : res.length > 1 ? 'b' : 'l';
+        h.days[day] = !complete ? 'p' : hasL && hasA ? 'b' : hasA ? 'a' : 'l';
         h.rd[day] = now(); delete h.miss[day]; if (complete) delete h.err[day];
         h.legs = h.legs.filter(l => l.day !== day).concat(legs); dirty = true;
       };
@@ -9292,7 +9398,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     const hist = knownLegs(hex, { excludeOpen: true }).filter(l => l.tEnd < legStart - 60 && l.tEnd > legStart - ENGINE_HIST_DAYS * 86400);
     const hs = ENGINE.histStats(hist, pos.t);
     // (an ordinary flight: the departure airport FR24 itself shows, when it has one, stands)
-    const plan = (planState.get(id) || {}).plan || schedPlan(id);
+    let plan = (planState.get(id) || {}).plan || schedPlan(id);
     const st = routeState.get(id) || {};
     let o0 = ENGINE.inferOrigin({ ac, pos, trail, hs, now: pos.t, plan });
     if (o0 && o0.conf === 'plan' && plan && plan.fr24) o0.note = plan.list ? `FR24's own schedule${plan.num ? ' (' + plan.num + ')' : ''}` : 'departure shown by FR24';
@@ -9320,6 +9426,8 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     const f0 = trail[0] || pos, unseen = { airport: null, conf: '', note: fin(f0.alt) ? `first seen at ${f0.alt >= 18000 ? 'FL' + Math.round(f0.alt / 100) : Math.round(f0.alt) + ' ft'}` : 'first seen airborne', departedAt: 0 };
     let origin = rememberOrigin(rec0, couldHave(o0) ? o0 : unseen, trail[0], !!trail.cut);
     if (!couldHave(origin)) origin = unseen;
+    // (no plan from FR24: the route the aircraft itself sent or was sent over its datalink - when it is this flight's)
+    if (!plan && !pos.gnd) { const dp = datalinkPlan(id, rec, hex, pos, legStart, origin && origin.airport); if (dp) plan = dp; }
     const maxAltSeen = Math.max(st.maxAlt || 0, ...trail.map(p => p.alt || 0));
     const r = { computedAt: now(), quick: !!(opts && opts.quick), onGround: !!pos.gnd, landed: false, originId: 0, destId: 0, destConf: '', destReason: '', originNote: '', originConf: '', alternatives: [], phase: '', std: 0, sta: 0, atd: 0, ata: 0, eta: 0, etd: 0, departedAt: 0, groundAirportId: 0, progress: null, legCount: hs.n, base: hs.base ? apCode(apById(hs.base)) : '' };
     const setO = (a, note, conf) => { if (!a) return; r.originId = a.id; r.originIata = apCode(a); r.originCity = a.city || a.name; r.originNote = note || ''; r.originConf = conf || ''; };
@@ -9348,7 +9456,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
         if (pd && pd.id !== ap.id) setD(pd, 'filed', plan.list ? `FR24's own schedule${plan.num ? ' (' + plan.num + ')' : ''}` : 'destination shown by FR24');
         else {
           // (no airports anywhere in FR24's data yet: where it usually goes next from here, from its own log)
-          const pred = hs.n ? ENGINE.predict({ ac, pos, trail: [], hs, now: pos.t, origin: { airport: ap, conf: 'ground' } }) : null, c = pred && pred.cands && pred.cands[0];
+          const pred = hs.n ? ENGINE.predict({ surge: surgeNow(), ac, pos, trail: [], hs, now: pos.t, origin: { airport: ap, conf: 'ground' } }) : null, c = pred && pred.cands && pred.cands[0];
           if (c && c.p >= 0.3 && c.airport.id !== ap.id) { setD(c.airport, CONF_OF(c.p), 'next flight - ' + (whyOf(c) || 'its own log')); r.destP = Math.round(c.p * 100); r.alternatives = pred.cands.slice(1, 4).filter(x => x.p >= 0.04 && x.airport.id !== ap.id).map(x => ({ iata: apCode(x.airport), city: x.airport.city, p: Math.round(x.p * 100) })); }
         }
         if (lastLeg && lastLeg.to && lastLeg.to.id === ap.id) { r.arrivedFrom = lastLeg.from ? apCode(apById(lastLeg.from.id)) : ''; r.arrivedAt = lastLeg.tEnd; }
@@ -9377,7 +9485,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
         // ground, or FR24 already shows the departure), otherwise as a hint
         const taxi = taxiOut || (fin(pos.gs) && pos.gs >= 4) || !!(plan && plan.fr24 && plan.originId === ap.id);
         if (taxiOut && !r.arrivedFrom && lastLeg && lastLeg.to && lastLeg.to.id === ap.id) { r.arrivedFrom = lastLeg.from ? apCode(apById(lastLeg.from.id)) : ''; r.arrivedAt = lastLeg.tEnd; }
-        const pred = hs.n || taxi ? ENGINE.predict({ ac, pos, trail: [], hs, now: pos.t, origin: { airport: ap, conf: 'ground' } }) : null;
+        const pred = hs.n || taxi ? ENGINE.predict({ surge: surgeNow(), ac, pos, trail: [], hs, now: pos.t, origin: { airport: ap, conf: 'ground' } }) : null;
         const cs2 = (pred && pred.cands) || [], c = cs2[0];
         if (taxi && c && c.p >= 0.3) {
           setD(c.airport, CONF_OF(c.p), 'taxiing out - ' + (c.airport.id === ap.id ? 'a local flight, back here' + (hs.n ? ' (its log)' : '') : whyOf(c) || 'its log'));
@@ -9414,7 +9522,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     r.departedAt = siteOrigin ? t0p.t - 60 : liftOff || (!heliFromSite && origin && origin.departedAt) || (trail[0] && !trail[0].gnd ? 0 : (trail[1] || {}).t || 0);
     r.atd = r.departedAt; r.std = (plan && plan.std) || 0; r.etd = (plan && plan.etd) || 0;
     if (rec.cs && !pos.cs) pos.cs = rec.cs;
-    const pred = ENGINE.predict({ ac, pos, trail, hs, now: pos.t, origin: siteOrigin || heliFromSite ? { airport: null, conf: heliFromSite ? 'ground' : 'low', note: '', departedAt: r.departedAt || t0p.t - 60 } : origin, plan, fleet: fleetVisits(hex, legStart), wx: wxMap, closed: closedMap });
+    const pred = ENGINE.predict({ surge: surgeNow(), ac, pos, trail, hs, now: pos.t, origin: siteOrigin || heliFromSite ? { airport: null, conf: heliFromSite ? 'ground' : 'low', note: '', departedAt: r.departedAt || t0p.t - 60 } : origin, plan, fleet: fleetVisits(hex, legStart), wx: wxMap, closed: closedMap });
     r.phase = pred ? pred.phase : '';
     const cands = holdTerminal(id, pos, pred, { heli, cls, planned: !!(plan && (plan.destId || plan.divertedToId)) });
     // (the weather and any closure at the likeliest fields of the aircraft being looked at - the route is worked out
@@ -9481,7 +9589,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     if (planDest) {
       const contradict = finalAp && finalAp.id !== planDest.id;
       if (contradict) setD(finalAp, 'confirmed', `${finalWhy(finalAp)} - not the filed ${apCode(planDest)}`);
-      else setD(planDest, finalAp ? 'confirmed' : 'filed', finalAp ? finalWhy(planDest) : plan.divertedToId ? 'diverted (FR24 flight plan)' : plan.list ? `FR24's own schedule${plan.num ? ' (' + plan.num + ')' : ''}` : plan.fr24 ? 'destination shown by FR24' : 'FR24 flight plan');
+      else setD(planDest, finalAp ? 'confirmed' : 'filed', finalAp ? finalWhy(planDest) : plan.divertedToId ? 'diverted (FR24 flight plan)' : plan.list ? `FR24's own schedule${plan.num ? ' (' + plan.num + ')' : ''}` : plan.fr24 ? 'destination shown by FR24' : plan.datalink ? datalinkWhy(plan) : 'FR24 flight plan');
     } else if (circSure) {
       setD(circ.airport, 'confirmed', circTxt + (finalAp && finalAp.id === circ.airport.id ? ', on final' : '')); r.destP = 100;
     } else if (finalAp) {
@@ -9681,6 +9789,29 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   }
   // FR24's own plan of an ordinary flight: the airports its live panel shows, else those of the same flight in FR24's
   // schedule for the registration (callsign and time matched), with the times and flight number
+  // The route the aircraft sent or was sent over its datalink (its flight plan uplinked, its flight-planning service's
+  // notice, its position reports naming where it is going) - taken for this flight only when it is this flight's: from
+  // the airport it took off from (when that is known), sent no earlier than 12 hours before it took off (a position report:
+  // during this flight), and the aircraft where a flight between those two airports would be - near the line between
+  // them, not past the destination. The newest such route.
+  const DL_PRE = ['fpn', 'fpl', 'filed', 'alert', 'pdc'];
+  function datalinkPlan(id, rec, hex, pos, legStart, oAp) {
+    const hx = hex ? store.getHex(hex) || {} : {}, reg = rec.reg || hx.reg;
+    const rs = reg ? datalinkRoutes(reg, () => scheduleReplan(id, 50)) : null; if (!rs || !rs.length) return null;
+    for (let i = rs.length - 1; i >= 0; i--) {
+      const x = rs[i], O = ENGINE.byIcao(x.o), D = ENGINE.byIcao(x.d); if (!O || !D || O.id === D.id) continue;
+      if (x.t > pos.t + 600 || x.t < legStart - 12 * 3600) continue;
+      const inFlight = x.t >= legStart - 600, pre = (x.kinds || []).some(k => DL_PRE.includes(k));
+      if (!inFlight && !pre) continue;                                     // (a report from an earlier flight)
+      if (oAp ? ENGINE.dist(oAp.lat, oAp.lon, O.lat, O.lon) > 5 : !inFlight) continue;
+      const dOD = ENGINE.dist(O.lat, O.lon, D.lat, D.lon), dOP = ENGINE.dist(O.lat, O.lon, pos.lat, pos.lon), dPD = ENGINE.dist(pos.lat, pos.lon, D.lat, D.lon);
+      if (dOP + dPD > dOD * 1.25 + 150) continue;                          // (nowhere near the way there)
+      return { originId: O.id, destId: D.id, datalink: true, at: x.t, kinds: x.kinds || [], num: x.cs || '' };
+    }
+    return null;
+  }
+  const DL_WHAT = { fpn: 'flight plan uplinked to it', pos: 'its position reports', fpl: 'its filed flight plan', filed: 'its filed flight plan', alert: 'its flight-plan alerts', pdc: 'its departure clearance', eta: 'its arrival estimate', rep: 'its position reports' };
+  const datalinkWhy = p => { const k = (p.kinds || [])[0], d = new Date((p.at || 0) * 1000); return `${DL_WHAT[k] || 'its own flight plan'} (datalink, ${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}Z)`; };
   function schedPlan(id) {
     if (live.has(id)) return null;
     const s = schedOf(id) || {}, p = pubRecs.get(id), m = p && p.fr24List;
@@ -9817,7 +9948,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     const circ = /^(piston|fighter|heli)$/.test(cls) ? ENGINE.circuits(trail, pos, { heli }) : null;
     if (circ && circ.airport.id < 1e7) return backOk(circ.airport) ? { originId: fromAp ? fromAp.id : circ.airport.id, originIata: apCode(fromAp || circ.airport), originCity: (fromAp || circ.airport).city, destId: circ.airport.id, destIata: apCode(circ.airport), destCity: circ.airport.city,
       destConf: 'confirmed', destP: 100, eta: 0, atd: departedAt, std: 0, sta: 0, landed: false, phase: 'circuits', circuits: circ.laps } : null;
-    const r = ENGINE.predict({ ac, pos, trail, hs, now: pos.t, origin, wx: wxMap, closed: closedMap }); if (!r || !r.cands.length) return null;
+    const r = ENGINE.predict({ surge: surgeNow(), ac, pos, trail, hs, now: pos.t, origin, wx: wxMap, closed: closedMap }); if (!r || !r.cands.length) return null;
     const top = r.cands[0], elapsed = departedAt ? (pos.t - departedAt) / 60 : null;
     const lfOk = !heli && !/^(piston|milheavy|fighter)$/.test(cls), rwyOk = a => !ENGINE.rwyImpossible(a, cls, ac.type);
     const pathOk = ap => !!ap && r.cands.some(c => c.airport.id === ap.airport.id && c.p >= 0.02) && rwyOk(ap.airport) && !(home && home.id === ap.airport.id && elapsed != null && elapsed < 15) ? ap : null;
@@ -11305,7 +11436,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     const a = monStat.archive;
     if (!a) return `the monitor${monStat.ver ? ' (' + esc(monStat.ver) + ')' : ''} runs an older version - <b>Update monitor</b> in the LADD Unblock window`;
     if (!a.on) return '';
-    return `the monitor has ${a.have != null ? a.have : a.days} of the last ${a.on} days from adsb.lol's archives${a.running ? ' (reading ' + esc(a.running) + ')' : ''}${a.err && a.errAt && now() - a.errAt < 6 * 3600e3 ? ' - last error: ' + esc(a.err) : ''}`;
+    return `the monitor has ${a.have != null ? a.have : a.days} of the last ${a.on} days from adsb.lol's archives${a.idx != null ? `, ${a.idx} of them for any aircraft` : ''}${a.running ? ' (reading ' + esc(a.running) + ')' : ''}${a.err && a.errAt && now() - a.errAt < 6 * 3600e3 ? ' - last error: ' + esc(a.err) : ''}`;
   }
   function logGapsOf(hex) {
     const h = store.peekHist(hex); if (!h || !h.err) return '';
@@ -13063,7 +13194,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     const trail = []; for (const p of pts) if (!trail.length || p.t - trail[trail.length - 1].t >= 20) trail.push(p);
     const ac = acOfHex(hex), hs = ENGINE.histStats(knownLegs(hex, { excludeOpen: true }).filter(l => l.tEnd < pts[0].t - 60 && l.tEnd > pts[0].t - ENGINE_HIST_DAYS * 86400), pos.t);
     const origin = ENGINE.inferOrigin({ ac, pos, trail, hs, now: pos.t });
-    return ENGINE.predict({ ac, pos, trail, hs, now: pos.t, origin, fleet: fleetVisits(hex, pts[0].t) });
+    return ENGINE.predict({ surge: surgeNow(), ac, pos, trail, hs, now: pos.t, origin, fleet: fleetVisits(hex, pts[0].t) });
   }
   async function pollWatch(force) {
     const l = watchList(), hexes = Object.keys(l); if (!hexes.length || watchBusy || !airportsReady()) return;
@@ -13406,7 +13537,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // (the version whose "what's new" was put away, and the one whose dot on the button the window was opened for)
   const UB_SEEN_KEY = 'tweeks.fr24.ladd.seenver', UB_DOT_KEY = 'tweeks.fr24.ladd.dotver';
   // (the newest CHANGELOG section's headlines, written in by build.mjs: { v, items })
-  const UB_WHATS_NEW = {"v":"22.31.12","items":["Pages lost the monitor while it read adsb.lol's archives","A blocked flight's route stays in FR24's panel through a moment without data.","Ready for 1.0.0."]};
+  const UB_WHATS_NEW = {"v":"1.0.0","items":["Flight logs of any aircraft with both sites walling the browser.","Destinations from the aircraft's own datalink.","Event surges."]};
   // (an aircraft with an open padlock: FR24's outline style - 24 grid, 1.5 stroke in the text colour)
   const UB_ICON = '<svg data-tl-ub-icon="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
   const UB_X = '<svg viewBox="0 0 14 14" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5l11 11M12.5 1.5l-11 11"/></svg>';
@@ -13506,6 +13637,8 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   // 20 and up, so the first number counts only within its own line)
   const verParts = v => { const s = String(v || ''), p = s.replace(/^[vB]/i, '').split('.').map(x => parseInt(x, 10) || 0); return [!/^B/i.test(s) && p[0] >= 1 && p[0] < 20 ? 1 : 0].concat(p); };
   const newerThan = (a, b) => { const x = verParts(a), y = verParts(b); for (let i = 0; i < Math.max(x.length, y.length); i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); } return false; };
+  // (a version as shown: v1.0.0; a beta, B22.31.12)
+  const verLabel = v => { const s = String(v || '').replace(/^[vB]/i, ''); return (verParts(v)[0] === 0 && s ? 'B' : 'v') + s; };
   function installKind() {
     if (typeof TL_EXTENSION === 'boolean') {
       let m = null; try { m = chrome.runtime.getManifest(); } catch (e) { /* the extension was reloaded */ }
@@ -13658,7 +13791,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     const paused = Object.entries(S.paused || {}).map(([k, v]) => `${esc(k)} ${agoS(v)}`).join(', ');
     const errs = [S.fails ? `polls ${nf(S.fails)}` : '', f.fails ? `FR24 ${nf(f.fails)}` : '', x.fails ? `weather ${nf(x.fails)}` : '', o.fails ? `owners ${nf(o.fails)}` : ''].filter(Boolean).join(' · ');
     const rows = [
-      kv('Version', S.ver ? `v${esc(S.ver)}${S.commit ? ' <span class="tl-muted">' + esc(S.commit) + '</span>' : ''} ${behind ? `<span class="tl-warn">behind v${esc(L.v)}</span>` : L && L.v ? '<span class="tl-muted">(up to date)</span>' : ''}` : '<span class="tl-muted">older than 22.28</span>'),
+      kv('Version', S.ver ? `${esc(verLabel(S.ver))}${S.commit ? ' <span class="tl-muted">' + esc(S.commit) + '</span>' : ''} ${behind ? `<span class="tl-warn">behind v${esc(L.v)}</span>` : L && L.v ? '<span class="tl-muted">(up to date)</span>' : ''}` : '<span class="tl-muted">older than 22.28</span>'),
       kv('Running for', ubMon.up ? durS(ubMon.up) : '-'),
       kv('Live list', `${nf(S.live)} aircraft · LADD list ${agoS(la.ladd)} old`, 'Every blocked, LADD, military and PIA aircraft heard in the last 5 minutes; how long ago the LADD list last answered'),
       kv('Blocked aircraft', nf(S.blocked)),
@@ -14844,7 +14977,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true }); else start();
   }
   }
-  try { (pageWindow()).__tweeksLadd = { version: VERSION, msgCount, morphHtml, photoJob, photosOut, monPhotos, routeSearch, onNeedNaRoutes, naFromTrail, naWanted, fr24Trail, schedOf, trailFor, get shownId() { return shownId; }, posStats, get bridgeV() { return bridgeV; }, hexOfId, currentPos, idHex, engine: ENGINE, live, pending, telemetry, store, routeState, planState, globalList, fr24, todayCache, sweep, resolveTargeted, routeFor, composeRoute, altsOf, holdTerminal, termHold, worldScan, refreshLists, quickRouteAll, historyPump, histPumped, learnedStore, regCountry, fr24Sched, pubRouted, pubRecs, privatePlace, loadSites, siteNear, sites, onSched, pubMem: () => pubMem, publishRoute, syncPanel, normalizeReadsb, telemOf, noteCands, csOfRec, warmHist, hostStat, loadT2, wantWx, wxMap, wantNotams, closedMap, estimateEta, nNumberHex, watchList, pollWatch, accStore, accNote, statsHtml, fleetList, checkHealth, health, exportCsv, predictForHex, verifyAgainstList, strikes, revokedIds, fr24Named, noteFr24Named, loadHistory, loadToday, readTrace, classifyTrace, fetchTrace, netState, NETS, sourcesHtml, logGaps, fetchJetphotos, loadRunways, knownLegs, areaCache, pollView, saveSnapshot, boardNoteLegs, boardNoteFlight, boardNoteSched, boardScrub, boardLoad, boardList, naRouteOf, pbWhere, noteNa, naFeed, matchParked, matchByTraces, boardDrain, boardMem, onNeedBoard, operatorOf, shownOwner, enrich, userConfirm, userDestOf, loadApprTable, monGet, monPost, monCheck, monLive, monUp, MON_DEFAULTS, get monBase() { return monBase; }, liveSources, telOut, noteTelOut, reportTel, pbOut, srvIds, pullSrvIds, srvAdopt, reportToMonitor, syncSrvLearn, applyLearned, srvRoute, srvRec, crowdOf, routesOut, routesSent, noteRouteOut, learnFromLeg, learnOutTake, learnOutBack, get learnOutN() { return learnOut.length; }, srvCovers, get srvLearned() { return srvLearned; }, set srvLearned(v) { srvLearned = v; }, addSrvLearned, get feedHdr() { return feedHdr; }, boardMonFill, natRowOf, fnRows, buildSnapshot, bootHold, firAt, loadFir, onAirAsk, pb, onPbFeed, onPbFollow, onPbHex, pbRouteFor, pbMatch, pbFromMonitor, onNeedRoutes, onNeedAirportData, onNeedAirportPanel, liveBoardRows, runwaysOf, parseRunwayEnds, flightsOfCallsign, bootFlightPage, unlockExports, exportFile, rowWindow, hexOfFid, onNeedSearch, osmPick, wantOsmPlace, osmPlaceAt, learnSite, siteIdAt, siteBk, siteRow, apById, operatorIdOf, airlineIdByName, fr24Cat, onHistElsewhere, get viewBox() { return viewBox; }, get selectedId() { return currentId(); }, opt, setOpt, notify, openUnblockWindow, closeUnblockWindow, ensureBarButton, findBar, checkLatest, installKind, sayHello, helloSt, ubBanners, ubOffer, installId }; } catch (_) { /* ignore */ }
+  try { (pageWindow()).__tweeksLadd = { version: VERSION, msgCount, datalinkPlan, datalinkRoutes, surgeNow, morphHtml, photoJob, photosOut, monPhotos, routeSearch, onNeedNaRoutes, naFromTrail, naWanted, fr24Trail, schedOf, trailFor, get shownId() { return shownId; }, posStats, get bridgeV() { return bridgeV; }, hexOfId, currentPos, idHex, engine: ENGINE, live, pending, telemetry, store, routeState, planState, globalList, fr24, todayCache, sweep, resolveTargeted, routeFor, composeRoute, altsOf, holdTerminal, termHold, worldScan, refreshLists, quickRouteAll, historyPump, histPumped, learnedStore, regCountry, fr24Sched, pubRouted, pubRecs, privatePlace, loadSites, siteNear, sites, onSched, pubMem: () => pubMem, publishRoute, syncPanel, normalizeReadsb, telemOf, noteCands, csOfRec, warmHist, hostStat, loadT2, wantWx, wxMap, wantNotams, closedMap, estimateEta, nNumberHex, watchList, pollWatch, accStore, accNote, statsHtml, fleetList, checkHealth, health, exportCsv, predictForHex, verifyAgainstList, strikes, revokedIds, fr24Named, noteFr24Named, loadHistory, loadToday, readTrace, classifyTrace, fetchTrace, netState, NETS, sourcesHtml, logGaps, fetchJetphotos, loadRunways, knownLegs, areaCache, pollView, saveSnapshot, boardNoteLegs, boardNoteFlight, boardNoteSched, boardScrub, boardLoad, boardList, naRouteOf, pbWhere, noteNa, naFeed, matchParked, matchByTraces, boardDrain, boardMem, onNeedBoard, operatorOf, shownOwner, enrich, userConfirm, userDestOf, loadApprTable, monGet, monPost, monCheck, monLive, monUp, MON_DEFAULTS, get monBase() { return monBase; }, liveSources, telOut, noteTelOut, reportTel, pbOut, srvIds, pullSrvIds, srvAdopt, reportToMonitor, syncSrvLearn, applyLearned, srvRoute, srvRec, crowdOf, routesOut, routesSent, noteRouteOut, learnFromLeg, learnOutTake, learnOutBack, get learnOutN() { return learnOut.length; }, srvCovers, get srvLearned() { return srvLearned; }, set srvLearned(v) { srvLearned = v; }, addSrvLearned, get feedHdr() { return feedHdr; }, boardMonFill, natRowOf, fnRows, buildSnapshot, bootHold, firAt, loadFir, onAirAsk, pb, onPbFeed, onPbFollow, onPbHex, pbRouteFor, pbMatch, pbFromMonitor, onNeedRoutes, onNeedAirportData, onNeedAirportPanel, liveBoardRows, runwaysOf, parseRunwayEnds, flightsOfCallsign, bootFlightPage, unlockExports, exportFile, rowWindow, hexOfFid, onNeedSearch, osmPick, wantOsmPlace, osmPlaceAt, learnSite, siteIdAt, siteBk, siteRow, apById, operatorIdOf, airlineIdByName, fr24Cat, onHistElsewhere, get viewBox() { return viewBox; }, get selectedId() { return currentId(); }, opt, setOpt, notify, openUnblockWindow, closeUnblockWindow, ensureBarButton, findBar, checkLatest, installKind, sayHello, helloSt, ubBanners, ubOffer, installId }; } catch (_) { /* ignore */ }
   log('loaded v' + VERSION);
 
 })();

@@ -2,7 +2,71 @@
 
 All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PATCH`. The userscript and the monitor are released together.
 
-## [22.31.12] - 2026-10-23
+1.0.0 is the first release. The versions before it are the betas, labelled B: B22.31.12 is version 22.31.12.
+
+## [1.0.0] - 2026-10-23
+
+### Fixed
+- **Flight logs of any aircraft with both sites walling the browser.** On B22.31.12 an ordinary aircraft's FR24 page still said "82 days not read yet". The monitor's fix in B22.31.11 covered blocked, LADD and military aircraft only. Every other aircraft's earlier days were asked of adsb.lol's site (the last 40 days) and airplanes.live (older), and both put a verification page in front of the browser.
+  - **The monitor indexes each day of adsb.lol's archives** as it reads them: where every aircraft's file is in that day's tar. That's about 68,000 aircraft and 1.1 MB a day. A day read before 1.0 is read again for its index alone, newest first.
+  - **New `/atrace?hex=&day=`** returns any aircraft's file of that day, fetched alone from GitHub as a byte range of the part it is in, with no verification page in front of it. Checked live on 21 Oct: N73VR's file (43 KB) came in 207 ms.
+  - **The browser reads every past day of a log from there**, at any age. That covers days older than adsb.lol's site keeps, which used to go to airplanes.live alone. adsb.lol's site is asked only for a day the monitor has no index of yet. airplanes.live is skipped while it walls the browser, and adsb.lol's "no file" then counts as a day without flights.
+  - **The browser waits for the monitor's check before reading a log.** An ordinary aircraft's log didn't ask the monitor for anything before.
+  - **Only a 1.0 monitor is asked** (its `/status` counts the days it has indexed). A 404 counts as "no flights" only when it says so, because a monitor not yet updated answers 404 for a path it doesn't know.
+  - **The log page says how many days the monitor can give for any aircraft** ("…, 120 of them for any aircraft").
+  - A single past day's file (playback, an aircraft's take-off) comes from there too.
+
+### Added
+- **Destinations from the aircraft's own datalink.** Many business jets send their route over ACARS: a flight plan uplinked to the FMS ("DA:KCMH:AA:KTEB"), position reports naming origin and destination, a filed flight plan, a departure clearance. adsb.lol publishes what its receivers hear on ACARS, VDL2 and HFDL as open data (CC0), about an hour behind.
+  - The monitor reads each hour's files as they come out and keeps only the routes, for 36 hours.
+  - The browser asks the monitor about the aircraft on screen, fifty at a time.
+  - A route counts for a flight only when it is that flight's: from the airport it took off from, the aircraft on the way there, and either sent in flight or a plan sent up to 12 hours before take-off. The panel then says so: "flight plan uplinked to it (datalink, 14:05Z)".
+  - **Checked against the flights actually flown on 21 Oct** (481 messages about 172 business jets and LADD aircraft): where the message named the flight's own origin, its destination was the airport landed at **362 times in 367** (LADD aircraft 123 in 128).
+  - Operations messages ("OPSCTL … KHVN/KFLL") are not read: half named another leg.
+  - Coverage is small: a few percent of business jets are heard this way on any day.
+- **Event surges.** Fields busier with blocked aircraft these last three days than over the four weeks before (a race meeting, a summit) count for them, and quieter ones against. Served by the monitor as `/surge`.
+- **Climb rate and cruise speed** as evidence of trip length. A faster climb than usual for the type means a lighter aircraft, so a shorter trip. The weights learned this; cruise speed came out at nothing.
+
+### Changed
+- **Destination weights refitted** on adsb.lol's archives of 1-21 Oct: 219,085 moments of 19,094 aircraft, warm-started from the previous weights. Scored on aircraft held out of training, the same moments for both:
+  - business jets top choice 50.5% -> 50.9%, top three 66.6% -> 66.7%;
+  - large-cabin jets 43.6% -> 44.4%, no history at all 30.8% -> 31.9%, trips over 3,000 km 33.2% -> 34.0%;
+  - other LADD aircraft 67.9% -> 68.8% (pistons 71.5% -> 72.7%, turboprops 60.9% -> 60.6%).
+  - A fit without the three new terms scores the same (50.9%). The gain is the newer data; the new terms add almost nothing on these moments.
+- **The shown odds recalibrated** for business jets on held-out aircraft: stated against right off by 1.3 points on average (8.0 uncalibrated). Other classes keep theirs.
+- **Versions.** This is 1.0.0. The 22.x versions are the betas, labelled B: B22.31.12 in the changelog, the window and the dashboard. On GitHub, once 1.0.0 is out, the release workflow titles every earlier release "B<version> (beta)", marks it a pre-release, and marks 1.0.0 the latest. GitHub would otherwise rank 22.31.12 above 1.0.0, and the README's "latest" download links would stay on it.
+
+### Tests
+- `unit_archive`, the archive index:
+  - each file's place in the whole tar;
+  - an aircraft not in the day gives null, a day with no index gives undefined;
+  - the day's note keeps the list out;
+  - `/atrace` returns one range of the right part with the file's own bytes;
+  - a file the parts are cut through is fetched as both ranges, joined;
+  - 404 not in the archive, 409 no index, 400 nonsense, 502 when GitHub fails;
+  - `/status` counts the days indexed;
+  - a day read before the index existed is next in line, gets the same index, and nothing is read or built again.
+- `unit_netfetch`, an ordinary aircraft with both sites walling:
+  - all 50 days are asked of the monitor once each, including a day older than adsb.lol's site keeps;
+  - the sites aren't asked;
+  - the log page says 1 day not read yet (the one with no index), not 50;
+  - that day is read once its index exists;
+  - a single past file comes from the archive too;
+  - a monitor from before 1.0 isn't asked, and a bare 404 never makes a day without flights.
+- New `unit_datalink`:
+  - a line of each feed read the same;
+  - every message form read, but not operations messages, two codes in other text, an unknown airport, or the same airport twice;
+  - a route sent again merged, at most 8 per aircraft, gone after 36 hours;
+  - zstd read by Node's own and by the small decoder kept for Node 18;
+  - the day's new files listed;
+  - the monitor's round reads only new files, and skips an hour over 36 hours old without downloading it;
+  - `/datalink`, `/status` and `/surge` answer;
+  - in the browser: routes asked for together and kept ten minutes, and a route taken only when it is this flight's (wrong origin, off the way, an earlier flight's report, a plan over 12 hours old: not taken).
+  - It also runs on CI's Node 18 job, without the browser part.
+- `unit_dash`: a beta's installs shown as B22.0.0.
+- `fit2 --drop=`: a fit without chosen terms, to see what they add.
+
+## [B22.31.12] - 2026-10-23
 
 ### Fixed
 - **Pages lost the monitor while it read adsb.lol's archives**, so the log page, live figures and panels all fell back to the walled sites. On 22.31.11, HB-IXL's log page said "209 days not read yet". Panels lost their progress bar and time zones, and other flights read "N/A" until a page refresh.
@@ -37,7 +101,7 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 - `unit_selfupdate`: the extension updates itself from this beta to a "v1.0.0". The banner says it is out, the update page offers it, and the folder is updated and reloaded. The "what's new" list skips the beta's "B" heading.
 - `unit_native` and `unit_hello` use an older beta (22.0.0) as their "older version", in place of 1.0.0.
 
-## [22.31.11] - 2026-10-23
+## [B22.31.11] - 2026-10-23
 
 ### Fixed
 - **Flight logs work with both sites walled.** The user's browser is shown adsb.lol's proof-of-work page and Cloudflare's block page by airplanes.live ("Attention Required!"), so it can read neither site's files. The monitor already had 39 of the last 40 days from adsb.lol's archives, but the log still said "221 days not fully read". The monitor only served days the aircraft flew, so every other day was asked of the walled sites.
@@ -70,7 +134,7 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
   - an ordinary aircraft's positions not asked of the monitor in the background.
 - `unit_histgap`: "not asked again next time" allows for days that ended under 6 hours ago, which are read again by design. It failed between 00:00 and 06:00 UTC.
 
-## [22.31.10] - 2026-10-22
+## [B22.31.10] - 2026-10-22
 
 ### Fixed
 - **The flight log page's layout.** 22.31.9's notice under the log (a verification page, the days not fully read) was one long line in a table cell that FR24 keeps on one line, so it stretched the whole table far past FR24's page. The footer now wraps inside the table, and the notices are on a line of their own, shorter.
@@ -87,7 +151,7 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
   - the diagnostics handed to the page;
   - the footer notices in their own wrapping block.
 
-## [22.31.9] - 2026-10-22
+## [B22.31.9] - 2026-10-22
 
 ### Fixed
 - **Recent flights: FR24 now asks for the list at a new address.** The panel's "Recent <reg> flights" request moved from `api.flightradar24.com/common/v1/flight/list.json` to `www.flightradar24.com/common/v2/flight/list.json`, with the session's token. The script only recognised the old one, so it never saw the request and the list stayed "No flights available" for every aircraft. Both are now recognised, on any FR24 host and any version, with fetch and with XHR.
@@ -139,7 +203,7 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
   - adsb.lol's verification page pausing it for an hour and never making a day without flights.
 - `unit_recentlist`: FR24's v2 address on the www host, with fetch, XHR and a relative address; a flight number's list left alone; the token never kept.
 
-## [22.31.8] - 2026-10-22
+## [B22.31.8] - 2026-10-22
 
 ### Fixed
 - **The deletion of every saved log could be skipped if the tab was closed during it.** 22.31.7 noted "done" in the browser before the deletion had run, so a tab closed half way left the old logs saved, and the next start took them for already deleted. It is now noted once the deletion has finished. A second tab opened in those first seconds may delete again, which loses only what was built in them.
@@ -147,7 +211,7 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 ### Tests
 - `unit_recent` sets up its aircraft's logs only after the first-run deletion is done: it deleted the test's logs, and the test failed six times in eight.
 
-## [22.31.7] - 2026-10-22
+## [B22.31.7] - 2026-10-22
 
 ### Fixed
 - **Every saved flight log is deleted, once, and rebuilt from scratch**, in the browser and on the monitor. 22.31.6 made old logs unusable but left them saved until each aircraft's log was next loaded, so the log pages still showed what the old build had read.
@@ -160,7 +224,7 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 - New `unit_logreset`: a real IndexedDB with an older build's logs, today's tracks, learned data, boards and an aircraft record. The first run deletes the logs and tracks and empties the compact recent flights, and keeps the rest of the record, the learned data and the boards. The reset is noted, so the next start keeps a log built since. The window's button asks on the first click and deletes on the second.
 - `unit_monitor2`: the monitor's first start with an older (or no) reset note deletes `hist/` and keeps `learn/`; the next start keeps the logs built since; the owner's action deletes the files.
 
-## [22.31.6] - 2026-10-22
+## [B22.31.6] - 2026-10-22
 
 ### Fixed
 - **Panel photos: "Aircraft photo not available" for an aircraft JetPhotos has photos of** (HB-IGO: four on JetPhotos, two on its FR24 aircraft page). The lookup asks FR24's registration list first. For a blocked aircraft FR24 answers but holds the photos back, and that empty answer was taken for "JetPhotos has none"; JetPhotos itself was asked only when FR24's lookup failed outright. Now, when FR24's lookup has no photos:
@@ -183,7 +247,7 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 - `unit_histgap`: an older build's log is rebuilt from scratch, both networks. A day read from adsb.lol alone is read again with both once the aircraft is looked at. In the background, adsb.lol having no file is never taken for "no flights".
 - `unit_monitor2`: adsb.lol and airplanes.live both asked for a day. With airplanes.live refusing, adsb.lol's flights are kept and the day is marked partial; when it answers, the day is complete. An older build's log is not used. The fill covers 220 days. `unit_monlive` and `unit_store` use the new day builder.
 
-## [22.31.5] - 2026-10-22
+## [B22.31.5] - 2026-10-22
 
 ### Fixed
 - **A map click closed the window only after FR24 had redrawn it: the window went, came back, then closed.** FR24 redraws the open window a quarter of a second after every map click, and 22.31.4 pressed the window's X only once it had been still for most of a second after the click. Its X is now pressed the moment the mouse is let go, before FR24 hears of the click, so the window closes once, as its X closes it, and FR24 has nothing open to redraw.
@@ -193,7 +257,7 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 ### Tests
 - `unit_barlook`, on the test page built from the real FR24 recording: the window is gone within half a second of the click (its own closing fade) and is never drawn again. 22.31.4's code fails this: FR24 redraws the window and it closes only 1.6 s after the click.
 
-## [22.31.4] - 2026-10-22
+## [B22.31.4] - 2026-10-22
 
 ### Fixed
 - **A click on the map still did nothing to a bottom-bar window; it flashed and stayed open.** A recording on the real FR24 map showed two things. First, the flash is FR24's own: about a quarter of a second after a map click, FR24 draws the open window afresh (the old one removed, a new one added at the same moment). Second, this script pressed nothing at all. It decided a window was open from the bar's buttons, and only when exactly one of them looked unlike the rest. On FR24 that never held, so no window was ever found open. Now:
@@ -203,7 +267,7 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 ### Tests
 - `unit_barlook` has a test page with FR24's real title bar, the window drawn afresh a quarter of a second after the click, and a bar whose buttons' looks tell nothing. Filters, Weather, Settings and LADD Unblock are each put away by their X; a drag of the map or a click in the window leaves them open. 22.31.3's code leaves Filters open there and presses nothing, as on the real map.
 
-## [22.31.3] - 2026-10-22
+## [B22.31.3] - 2026-10-22
 
 ### Fixed
 - **A click on the map put a bottom-bar window away and it came straight back.** FR24 answers every click on its map by trying to select a flight; its aircraft layer asks for one that is not there ("Flight not found!" in the console, then "Missing parameters: flightId"). Selecting a flight puts the open window away, and the failed try brings it back a moment later. With LADD Unblock open, what came back was FR24's own Widgets window, which is why Widgets appeared when LADD Unblock closed. 22.31.2 looked at the window 0.6 s after the click, found FR24 had already put it away, did nothing, and FR24 then brought it back; spamming the map hid the gap.
@@ -215,7 +279,7 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 ### Tests
 - `unit_barlook` has a mode that behaves like FR24's real map: the window goes away at once and comes back 0.9 s later. For each window of the bar, and LADD Unblock, it must end away and stay away. A bar button pressed just after the click is left alone. 22.31.2's code fails this: the window comes back and stays, and FR24's Widgets appears in LADD Unblock's place.
 
-## [22.31.2] - 2026-10-22
+## [B22.31.2] - 2026-10-22
 
 ### Fixed
 - **A click on the map closed a bottom-bar window and opened it again, over and over, and could open Widgets from another window.** FR24 puts its window away itself on a map click. 22.31.0 then pressed the window's bar button, which opened it again. 22.31.1 pressed the window's X, but when it didn't recognise FR24's X it still pressed the bar button, or any picture-only button it found level with the title, even outside the window (one opened Widgets).
@@ -234,7 +298,7 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 - `unit_panelphoto`: photos known as the panel opens are drawn at once and FR24's slideshow takes over. While they are looked up, an empty frame at FR24's photo size shows, never the fallback, then the photos. Looked up with none found, FR24's fallback shows.
 - `unit_hello`: a version merged while FR24 is open. Coming back to the tab within two minutes of the last answer doesn't ask again; later, it does and the update banner comes up.
 
-## [22.31.1] - 2026-10-22
+## [B22.31.1] - 2026-10-22
 
 ### Fixed
 - **A click on the map put a bottom-bar window away and opened it again at once.** It was put away by pressing its bar button a moment after the click. FR24 was already putting it away itself and draws the button at rest only a while after, so that press opened it again. The click now presses the window's own X, which only ever closes, and does nothing to a window FR24 is already putting away. Should it come back a moment later with nothing pressed on the bar, its X is pressed once more. This applies to LADD Unblock and to FR24's Settings, Weather, Filters, Widgets and now Playback. Playback is left open when the click picks a flight on its map.
@@ -247,7 +311,7 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 - New `unit_recentlist`: FR24's usual empty answer, no list, a refusal, a page that isn't JSON, and FR24's own list of an ordinary aircraft, over both fetch and XHR.
 - `unit_histgap`: the monitor's days with a flight taken as they are, its days "without flights" read from both networks, and a log kept by 22.31.0 read again.
 
-## [22.31.0] - 2026-10-22
+## [B22.31.0] - 2026-10-22
 
 ### Added
 - **The monitor builds the logs of LADD aircraft and shares them.** When anyone looks at a blocked aircraft (its panel, its "Recent flights" list or its log page), the monitor builds any of its last 40 days it doesn't have yet. From then on every browser gets them at once from the monitor.
@@ -269,7 +333,7 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 - New `unit_photocache`: the monitor's picture store (sites accepted, stock pictures dropped, a browser's budget, kept on disk); the browser takes the monitor's pictures with no lookup, and sends pictures it finds.
 - `unit_monitor2`: days asked for to fill a log, airplanes.live refusing, old saved "no flights" days, `/hist` queueing the missing days, and `/report` with `/photos`. `unit_flightmsg`: FR24's stock picture dropped from a blocked aircraft's panel. `unit_mosttracked`: Most tracked over fetch. `unit_selfupdate`: the by-hand download and what's new. `unit_barlook`: the icon on an FR24 whose icons don't thicken. `unit_pbbuttons` / `unit_pbnative`: day-only playback links.
 
-## [22.30.3] - 2026-10-21
+## [B22.30.3] - 2026-10-21
 
 ### Added
 - **FR24's Most tracked flights list shows predicted destinations.** A flight that FR24 lists with no destination now shows the one worked out here, as it would on the flight's panel and the airport boards. For example, AF1 out of Andrews showed "ADW – N/A" and now shows GSP. A flight not yet worked out is worked out from FR24's own track of it, fetched in the background, wherever it is in the world, and appears the next time FR24 refreshes the list. FR24's own destinations are left as they are.
@@ -286,7 +350,7 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 - New `unit_barlook` (real Chromium, on the Vue page made like FR24's, with Google's map under it): a map click closes FR24's window and LADD Unblock's, but not after a drag, a click in the window, or with playback open. A switch slides part-way across on each frame and stays the same element. The icon at rest, on hover and open matches FR24's icons. A tooltip being read stays up.
 - New `unit_mosttracked` (the built userscript in jsdom, both halves): Most tracked (Feed/TopFlights and JSON) is filled, FR24's own destinations are kept, and unworked flights are requested and then worked out from FR24's track. Route searches are tested in IATA and ICAO codes, with FR24 failing, and are not listed after landing or for another route. FR24's own search row gets the destination.
 
-## [22.30.2] - 2026-10-17
+## [B22.30.2] - 2026-10-17
 
 ### Fixed
 - **A flight that came down in a hole in coverage and flew on is two flights, not one from where the first began.** N6012C (a Gulfstream G600) was heard at cruise over central Asia, not heard for hours, and heard again over the Black Sea: it had landed at Baku and flown on, and the panel said it took off from Hanoi, 8,000 km back. A hole at cruise is now a stop when the ground across it, at the slower of the aircraft's two speeds either side, leaves three quarters of an hour and a quarter more time than the flight needed (flying straight through leaves a few minutes: none of the holes in over 300,000 real trace points changes), or when the aircraft is found climbing from 8,000 ft or more below where it was lost, or was lost going down at 8,000 ft or more below where it is found. The aircraft's log no longer joins the flights either side of such a hole.
@@ -298,7 +362,7 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 ### Tests
 - New `unit_n6012c`: the hole rules (a stop, a hole flown straight through, climbing out and going down), with over 300,000 real trace points checked to keep their flights whole; the flight in progress cut at the hole in the userscript and the monitor; the built userscript on N6012C as FR24 and adsb.lol could have given it (FR24's first point on the ground at Baku, climbing, at 26,400 ft, none; one flight id from Hanoi; today's trace only), its log, its own route standing over another's and being sent to the monitor, and the departures of the flight before dropped from the browser's record, the shared route and the monitor's rows.
 
-## [22.30.1] - 2026-10-16
+## [B22.30.1] - 2026-10-16
 
 ### Fixed
 - **Playback on a blocked flight opens its track on airplanes.live again**, in a new tab - from the flight cards on airport boards, the aircraft panel (its Playback button and the one in More), search results and the rows of the panel's recent flights - not FR24's map playback, which 22.30.0 used by mistake. The track runs from five minutes before take-off to five minutes after landing (or until now). FR24's own playback is opened only by the Playback button on the bottom bar, and every flight FR24 knows keeps FR24's Playback.
@@ -308,7 +372,7 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 ### Tests
 - `unit_native` checks, in every layout of the mock page, that the button is on the bar in the first frame of a bar built late and drawn with FR24's buttons in no frame apart while the playback opens and closes; `unit_pbbuttons`, `unit_pbnative` and `e2e` check the airplanes.live address.
 
-## [22.30.0] - 2026-10-16
+## [B22.30.0] - 2026-10-16
 
 ### Fixed
 - **A predicted destination has to fit the way the aircraft is flying.** An airport far behind or off to the side of a steady, level aircraft that isn't getting closer to it is marked down hard, so the past record of an airframe no longer wins over where it is heading (SE-RLZ shown going to Angelholm while flying towards Warsaw). Aircraft turning, climbing out, near an airport or squawking an emergency are not judged this way, nor are helicopters, light aircraft or military flights other than business jets.
@@ -322,7 +386,7 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 ### Tests
 - New: `unit_heading` (destinations off the aircraft's track), `unit_pbbuttons` and `unit_pbnative` (Playback buttons, the last in Chromium on a Vue page), `unit_logos` and `unit_panelphoto` (the picture in FR24's panel, in Chromium).
 
-## [22.29.0] - 2026-10-16
+## [B22.29.0] - 2026-10-16
 
 ### Added
 - **Update is one click for the extension (Chrome, Edge), with nothing to download or unzip by hand.** Update opens the extension's own update page next to Flightradar24. It downloads the new version's files from this repository's release, checks each against the SHA-256 the release lists (`files.json`), writes them over the old ones and deletes the old version's files the new one no longer has, touching nothing else in the folder. It then says it's done and offers **Refresh page**, which restarts the extension and loads Flightradar24 again with the new version. The first time, Chrome asks you to choose the extension's folder and allow it to be edited; it never lets an extension write files without that. Browsers that don't allow it (Brave) get the zip as before.
@@ -336,22 +400,22 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
   - Options: whether the monitor is public, its rate limit, counting installs, the notice shown on every map, and the lowest version still supported.
 - Tests: `unit_selfupdate` runs the whole update in Chromium, from the banner to the new version running. `unit_installs` and `unit_dash` cover the monitor's count and admin panel.
 
-## [22.28.9] - 2026-10-15
+## [B22.28.9] - 2026-10-15
 
 ### Fixed
 - **The bottom of the LADD Unblock window is no longer cut off once it has finished opening.** The window was held above the bottom bar's top edge, a few moments after it opened, although FR24's windows reach lower, beside the bar (which is in the middle). It now ends where FR24's own windows end, such as Settings and Weather.
 
-## [22.28.8] - 2026-10-15
+## [B22.28.8] - 2026-10-15
 
 ### Fixed
 - **The LADD Unblock window no longer turns into FR24's Widgets list by itself.** When FR24 redrew its window while LADD Unblock was open (its data refreshing), the new window came up as plain Widgets and LADD Unblock vanished without being closed. The redrawn window is now given the title and content as it comes in, so the window stays, with FR24's own movement for the swap. Pressing another button, a flight, Widgets or the close button still puts it away.
 
-## [22.28.7] - 2026-10-15
+## [B22.28.7] - 2026-10-15
 
 ### Fixed
 - **The LADD Unblock window's colours are FR24's again.** In FR24's own window its body was dark, the grey of the title bar, so the dark words on it could not be seen. It now has the light grey body of FR24's other windows (Weather, Filters) under the dark text.
 
-## [22.28.6] - 2026-10-15
+## [B22.28.6] - 2026-10-15
 
 ### Changed
 - **LADD Unblock now opens in FR24's own window, like every other option on the bar.** Pressing it opens FR24's Widgets window under the name "LADD Unblock", with the script's switches in it: so it is FR24's size, title bar, text and movement at any zoom, whatever window was open drops back with FR24's own animation, and only LADD Unblock is lit on the bar. Opening a flight, an airport or another option closes it the way FR24 closes its own, and pressing Widgets brings Widgets back. If FR24's window is ever not found, a copy of it is used instead.
@@ -362,7 +426,7 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 - **The empty bar between "Disruptions" and "Airport statistics" on airport panels is gone.** It was the box the latest events sat in, still counted as showing something because of an empty box FR24 keeps beside them. Any box in that list with nothing in it to see is hidden before it is drawn, and comes back when FR24 puts something in it.
 - **FR24's Bookmarks widget is switched off in FR24's own Widgets list**, so FR24 no longer puts it on the map at all; anywhere it would still be put in, it is hidden before the page is drawn, never for a moment.
 
-## [22.28.5] - 2026-10-15
+## [B22.28.5] - 2026-10-15
 
 ### Changed
 - **The LADD Unblock window's text is now as large as FR24's own, and its title bar matches theirs.** The text, which was about three quarters of the size of the bottom bar's, is now the same size; the grey title bar has FR24's lettering and a larger, thinner close button.
@@ -373,12 +437,12 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 - **FR24's Bookmarks widget, completely:** its panel on the map and its entry in the Widgets window.
 - **The empty space left under "Disruptions" on every airport's panel.** It comes back by itself if there is ever something in it.
 
-## [22.28.4] - 2026-10-15
+## [B22.28.4] - 2026-10-15
 
 ### Fixed
 - **A LADD aircraft's slideshow no longer opens on a short picture with "© name - JetPhotos" burnt into its bottom.** JVW739 (OE-GAB) showed it on first click. When FR24 has its own pictures of a blocked airframe, it sends them in the panel's first answer, and they were passed on as FR24 sent them, in JetPhotos' credit-bar size. They are now given to the slideshow the same way the script's own pictures are: the clean large picture, drawn like every other slide. As a second guard, any JetPhotos picture in its credit-bar size that reaches the page by any other route is switched to the clean size as it is drawn.
 
-## [22.28.3] - 2026-10-15
+## [B22.28.3] - 2026-10-15
 
 ### Fixed
 - **One row for a flight that was planned again, and its card filled in.** Liverpool's departures showed Cranwell FTU's CWL52 to Glasgow twice: FR24's own row at 15:30 (estimated 15:40) with an empty card - airline N/A, aircraft N/A - and the schedule's at 16:15 (16:25) with a filled card. The two were exactly 45 minutes apart, and a flight counted as the same one only when its times were *less than* 45 minutes apart. Now the same callsign to the same airport within two hours is one row (FR24's own), when the flight has not been flown yet; two flights already flown 45 minutes apart (circuits, shuttles) are still two. The kept row's operator and aircraft go into the card FR24 leaves empty - and a card is filled from what is kept of a flight even when its aircraft is not known.
@@ -389,13 +453,13 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 - `ENGINE.placeShort` (and `ENGINE.placeLabels` for a list) is the one cut for place names; the page half has the same three lines and `test/unit_places.cjs` checks they agree.
 - Tests: `unit_dupes`, `unit_places`.
 
-## [22.28.2] - 2026-10-15
+## [B22.28.2] - 2026-10-15
 
 ### Changed
 - **The LADD Unblock window now copies FR24's own windows instead of guessing at them.** It is the width of Widgets and sits where Widgets does, its title bar is as tall as FR24's on screen (so its text and switches are the same size as theirs, whatever zoom FR24's page uses), and it opens and closes with the same movement as FR24's windows. It learns all of this by watching the first FR24 window you open from the bottom bar, and keeps it. Before then, it uses the size of Widgets as it appears in a screenshot and simply appears.
 - Its section titles, dividers, corners and switches are drawn in Widgets' colours and sizes.
 
-## [22.28.1] - 2026-10-15
+## [B22.28.1] - 2026-10-15
 
 ### Fixed
 - **A flight FR24 has no destination for, in map playback, gets one where FR24's own track ended.** CAPTR33, a Hawk out of Leeming on 15 Oct, was heard only by multilateration and lost out over the Irish Sea, so its public track had no landing and the panel said "QKG → N/A". Where the public track has no end, FR24's own track of the flight (its free playback) is read at the same time, and an end of it down at a field (low and slow, within 7 km of an airport or 2 km of a strip; a landing site for a helicopter or light aircraft) is the destination or origin. It goes into FR24's panel answer, which now waits for the route as well as the track (1.5 s at most). One that comes after FR24 has drawn the panel is written into its own "N/A" boxes, with the city under the code.
@@ -404,7 +468,7 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 - **"Private Site" is shown in the playback header of an aircraft's page.** G-FRGP's row read Liverpool → Private Site, but the header of its playback said "To: -". FR24 builds that panel when Play is pressed and fills it from its own request, after the page's checks had run. The header's "-" ends are now checked as the playback runs, and are read from the row itself when needed.
 - **A LADD aircraft's pictures in playback come in about a second instead of tens of seconds.** They were asked for only after the register lookups had finished, and then at the back of the queue. They are now asked for the moment the flight is opened or named, at the front of the queue, in parallel with the registers. FR24's panel answer waits for them (2.5 s at most), and pictures that come later are put into the slideshow. Blocked aircraft named on the playback map have theirs fetched in the background (40 at most), so the one clicked usually has them already.
 
-## [22.28.0] - 2026-10-15
+## [B22.28.0] - 2026-10-15
 
 ### Added
 - **The LADD Unblock window says when this version is out of date.** A small amber dot appears on the bottom bar's LADD Unblock button when a newer version is out, and the window's **Updates** says so in a line of its own. The newest version is looked up a little after FR24 opens and every 6 hours.
@@ -416,17 +480,17 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 ### Monitor
 - `POST /admin/update`, `POST /admin/restart` and `GET /admin/log`, only with the secret (never on a monitor without one). `/status` and `/stats` give the monitor's version and commit.
 
-## [22.27.2] - 2026-10-15
+## [B22.27.2] - 2026-10-15
 
 ### Changed
 - **The Firefox add-on's id is now `ladd-unblocker@finlayc1.github.io`.** Firefox Add-ons would not take the old id (`fr24-ladd-unblocker@finlayc1.github.io`) for a new listing ("Duplicate add-on ID found"), because the self-distributed upload of 22.27.0 holds it. With a new id the Firefox build goes on as a new, listed add-on. Nothing else changes, and Chrome and Edge are not affected.
 
-## [22.27.1] - 2026-10-15
+## [B22.27.1] - 2026-10-15
 
 ### Changed
 - The same as 22.27.0, under a new version number, so the Firefox build can go on Firefox Add-ons as a listed add-on (the site takes each version number only once, and 22.27.0 went up as a self-distributed one).
 
-## [22.27.0] - 2026-10-15
+## [B22.27.0] - 2026-10-15
 
 ### Added
 - **A Firefox build of the extension, ready for Firefox Add-ons.** The extension zip failed addons.mozilla.org's check with three errors: its background was a service worker only (Firefox runs a background script instead), it had no add-on id, and its script, at 8 MB, was too large for the check to read. Each release now also has `fr24-ladd-unblocker-firefox.zip`, which passes Mozilla's own check (addons-linter) with no errors:
@@ -438,7 +502,7 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 ### Changed
 - **The extension's learned tables are in files of their own** (`data-1.js` and so on, beside `content.js`), each well under the 5 MB Firefox's check reads; `content.js` is now about 1 MB. The Chrome and Edge extension works as before. To update an unpacked one, unzip the new zip over the old folder as usual (the new files are added) and click **Reload extension**.
 
-## [22.26.1] - 2026-10-15
+## [B22.26.1] - 2026-10-15
 
 ### Fixed
 - **Made-up flights on the airport boards: both ends are checked now, for every jet FR24 shows itself.**
@@ -451,7 +515,7 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 - **The wrong airline logo on a row.** G-NBCA, a PC-12 flying as GNBCA, showed easyJet's logo on Liverpool's arrivals. A row's operator came from the last callsign the aircraft's record had, not from the flight's own callsign. It now comes from the flight's own callsign, and an airline's from its callsign as before.
 - **A glider shown as a "Business jet"** with no type when its type code was not known. A glider is now shown as FR24 shows one, as type GLID in the glider category, going by its model (DG-1000S, ASK 21, Discus and so on).
 
-## [22.26.0] - 2026-10-15
+## [B22.26.0] - 2026-10-15
 
 ### Added
 - **LADD Unblock on FR24's bottom bar.** A new button after Playback, with its own icon (an aircraft with an open padlock), opens a window drawn like FR24's own Widgets and Weather windows. It holds every setting in one place:
@@ -461,18 +525,18 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
   - **Data sources**: which feeds are answering, the monitor, and the ADS-B Exchange and FAA NOTAM keys. These used to be behind **sources** on the strip, which is gone; the version number on the strip now opens this window.
 - The button is found by the bar's labels and copies one of FR24's own buttons, so it takes the bar's look. If FR24 draws the bar again, the button is put back. The window takes the place and width of FR24's own windows once one of them has been opened.
 - The userscript names its update address (`@updateURL`, `@downloadURL`), so userscript managers check for new versions on their own.
-## [22.25.2] - 2026-10-15
+## [B22.25.2] - 2026-10-15
 
 ### Fixed
 - **A take-off seen by FR24 was lost, and the departure shown as "unknown, first seen at FL368".** KSK16, a Challenger 605 out of Ankara (Etimesgut) for Nairobi, had FR24's own trail from the runway climbing out south-west of Ankara, yet the panel had no departure. FR24 leaves out a height it does not have, so such a point of its trail reads 0 ft. One of them after the climb was taken for the aircraft down low, the hole in coverage after it for a landing, and the take-off before it for an earlier flight, which was cut off. A point of FR24's trail at 0 ft is now read as having no height when the aircraft is moving at speed away from every airfield, or was heard more than 3,000 ft above the field under it within the previous three minutes. A take-off or landing roll at 0 ft on a runway is read as before, at fields high up too (Etimesgut is at 2,600 ft). This is worked out in the browser, so the monitor does not need updating for it.
 - **A helicopter "took off from Manchester" eleven minutes into a flight FR24 was already showing in Wales.** G-IOOS, an A109 at 137 kt over Swansea Bay at 08:33Z, was shown as "took off from MAN, 08:09Z": 230 km in 24 minutes. A departure the aircraft cannot have made is now neither kept for the flight nor shown. The test is whether, at any speed the aircraft has flown (half as fast again, plus 30 km), it could have got from that airport at that time to where it is now. A departure worked out once for a flight is kept for it and stands over weaker answers later, so a wrong one stayed. How Manchester came in the first place could not be traced from here. One sign is that the panel's true airspeed (414 kt) cannot be an A109's, so public ADS-B reports from another aircraft were likely mixed in under G-IOOS's address. Reports placing it at Manchester in the middle of the flight are already dropped from its track (checked in the test). This is worked out in the browser too.
 
-## [22.25.1] - 2026-10-15
+## [B22.25.1] - 2026-10-15
 
 ### Fixed
 - **Made-up flights on the airport boards, again.** Luton's arrivals had easyJets and Wizz jets "from Stansted" and a Ryanair "from Liverpool", none of which flew those routes. Each was a real landing at Luton given an origin nobody saw it leave. These jets were first heard in the air near Stansted, in the hold the two airports share, and the place they were first heard was taken for where they took off. 22.24.0's fix covered only an end close by, and it trusted any row whose landing was seen. Now a row the script makes of an airline's jet flying its own flight number (a flight FR24 shows itself, with its real route) is kept only when its other end was seen: the take-off there on the ground for an arrival (or FR24's own origin, for one followed live), and the landing there on the ground for a departure. A departure "to Palma" whose landing nobody saw goes too. Business jets, light aircraft, and blocked or military aircraft are not affected. Rows already kept are removed when a board is opened, and rows the monitor sends are checked the same way, so the monitor does not need updating for this.
 
-## [22.25.0] - 2026-10-15
+## [B22.25.0] - 2026-10-15
 
 The monitor keeps working on a flight until it can name it, and what one browser works out reaches every other. Update the monitor with this release: an older monitor ignores what browsers share, and nothing breaks.
 
@@ -491,14 +555,14 @@ The monitor keeps working on a flight until it can name it, and what one browser
 ### Fixed
 - The monitor's rough destination showed its chance as under 1% on the page: it was sent as a fraction where the page expects a percentage.
 
-## [22.24.1] - 2026-10-15
+## [B22.24.1] - 2026-10-15
 
 ### Fixed
 - **The flight an aircraft is flying now showed up in its own "Recent flights" list** as a past flight, "Manchester -> N/A, Unknown" (N212AP as WWI21 to Teterboro, VQ-BXF as PEX28F to London City). For a flight FR24 routes itself, the script has no route of its own, so it took the aircraft to be on the ground. It now goes by FR24's own plan of the flight (departed, not arrived) or by where the aircraft is (in the air within the last 20 minutes). Where the aircraft is wins: one on the ground after landing still has its last flight listed first, even when FR24's plan never says it arrived.
 - In the same list, an older flight last heard high (lost from hearing in the air) was left out while the aircraft was flying. Only the flight on screen is left out now.
 - **A short picture with a second credit burnt into it** opened an aircraft's slideshow the first time ("© Boltushkina Anastasia - Kazakhstan Spotting Club - JetPhotos" under FR24's own credit). It was FR24's own picture of the blocked airframe in JetPhotos' credit-bar size: arriving while the script waited for Planespotters, it was taken for Planespotters' answer and shown uncleaned while JetPhotos was still slow. It is no longer taken for that answer, every picture is cleaned before it is shown or kept, and the page strips the credit-bar size as well.
 
-## [22.24.0] - 2026-10-15
+## [B22.24.0] - 2026-10-15
 
 Playback names flights at once with no N/A or padlocks, and the airport boards lose their made-up flights.
 
@@ -524,7 +588,7 @@ Playback names flights at once with no N/A or padlocks, and the airport boards l
 - The monitor now keeps each flight's end height, how it ended and the rules it was built with (`endAlt`, `how`, `endRules`), so browsers can tell its new flights from the ones it kept before this version.
 - Tests: `unit_tracks` failed when it ran in the hour or so after midnight UTC.
 
-## [22.23.0] - 2026-10-14
+## [B22.23.0] - 2026-10-14
 
 Playback names blocked flights the moment they are shown, and the monitor keeps 90 days of tracks and learns from them.
 
@@ -545,7 +609,7 @@ Playback names blocked flights the moment they are shown, and the monitor keeps 
 - The browser sent the monitor's own airspeed figures, estimates included, back to it as its own poll, where they were kept without their mark.
 - Tests: `unit_public`'s rate check failed when it ran across a minute's turn. `unit_extension` now runs in CI.
 
-## [22.22.1] - 2026-10-14
+## [B22.22.1] - 2026-10-14
 
 ### Added
 - **Airspeeds, Mach, wind and temperature over the US and the oceans.** Public ADS-B has them only where radars ask aircraft for them (Mode S EHS: Europe), so over the US those fields stayed "N/A" (JCO55 over South Dakota). The monitor now works them out (`monitor/wx.cjs`):
@@ -555,7 +619,7 @@ Playback names blocked flights the moment they are shown, and the monitor keeps 
   - The weather requests keep under Open-Meteo's free limits a minute, an hour and a day (450, 4,000 and 7,000 weighted calls; 20 cells a request), so a busy moment no longer earns a refusal and an hour's pause. A cell answered without usable levels is let go for an hour instead of being asked for again at once. Tested in `unit_wx`.
 - The browser keeps the monitor's airspeed figures for two minutes when its own newer poll has none, instead of blanking them every other poll.
 
-## [22.22.0] - 2026-10-14
+## [B22.22.0] - 2026-10-14
 
 Every copy now shares one monitor, padlocks are gone, and airport boards no longer invent flights.
 
@@ -602,7 +666,7 @@ Every copy now shares one monitor, padlocks are gone, and airport boards no long
 - The monitor's check of a browser's name used a list of aircraft up to 10 s old, so an aircraft heard in between was not checked at all. Each name is now checked against the aircraft as heard at that moment.
 - Owner findings waiting for a second browser were never let go. They are now dropped after 6 hours.
 
-## [22.21.0] - 2026-10-14
+## [B22.21.0] - 2026-10-14
 
 ### Added
 - **A permanent log of every blocked aircraft's departures and arrivals.**
@@ -635,7 +699,7 @@ Every copy now shares one monitor, padlocks are gone, and airport boards no long
   - an aircraft named before its flag was known gets it at once, in the browser and in the monitor's names.
 - OurAirports rows with commas inside quoted fields (10 runways) were split wrongly by the engine's CSV reader.
 
-## [22.20.0] - 2026-10-14
+## [B22.20.0] - 2026-10-14
 
 The monitor names every blocked flight FR24 draws, anywhere in the world, and hands every name to a browser the moment FR24 opens.
 
@@ -657,7 +721,7 @@ The monitor names every blocked flight FR24 draws, anywhere in the world, and ha
 ### Removed
 - The local `127.0.0.1` monitor: the userscript uses the shared monitor only (no `@connect 127.0.0.1` / `localhost`).
 
-## [22.19.1] - 2026-10-14
+## [B22.19.1] - 2026-10-14
 
 ### Added
 - **Backup data sources for the monitor**, each used only when the one before it fails:
@@ -669,7 +733,7 @@ The monitor names every blocked flight FR24 draws, anywhere in the world, and ha
 ### Changed
 - Area queries to adsb.fi use its current `v3` endpoint, falling back to the deprecated `v2` one.
 
-## [22.19.0] - 2026-10-14
+## [B22.19.0] - 2026-10-14
 
 The monitor becomes the primary worldwide identifier and the source of flight history.
 
@@ -692,13 +756,13 @@ The monitor becomes the primary worldwide identifier and the source of flight hi
 - The monitor saves its state on `SIGTERM`. Previously a `systemctl restart` could lose up to 2 minutes of data.
 - An aircraft that leaves the LADD programme moves to address lookups instead of going unwatched.
 
-## [22.18.3] - 2026-10-13
+## [B22.18.3] - 2026-10-13
 ### Added
 - Shared monitor on a server: an HTTPS address and a secret in the strip's *sources* pop-over.
 - Monitor secret (`X-Monitor-Token`) and per-client rate limit.
 - `/dash` dashboard and `/stats`.
 
-## [22.17.0] - 2026-10-11
+## [B22.17.0] - 2026-10-11
 ### Added
 - Free runway data on airport pages.
 - Search results for blocked aircraft and their callsigns.
@@ -708,7 +772,7 @@ The monitor becomes the primary worldwide identifier and the source of flight hi
 ### Fixed
 - Tables built by the script were hidden by FR24's stylesheet on old data pages.
 
-## [22.16.0] - 2026-10-10
+## [B22.16.0] - 2026-10-10
 ### Added
 - Airport data pages: boards, statistics and routes include blocked flights.
 - Playback telemetry synchronised to FR24's frame time.
@@ -718,7 +782,7 @@ The monitor becomes the primary worldwide identifier and the source of flight hi
 - Learned private landing sites are never drawn as map pins (22.16.2).
 - No data-source credit on the strip (22.16.1).
 
-## [22.15.0] - 2026-10-10
+## [B22.15.0] - 2026-10-10
 ### Added
 - Identification in FR24's map **playback**, from adsb.lol's heatmaps.
 - Logos for operators FR24 lacks.
@@ -727,27 +791,27 @@ The monitor becomes the primary worldwide identifier and the source of flight hi
 ### Changed
 - Playback links go to airplanes.live's globe.
 
-## [22.14.0] - 2026-10-08
+## [B22.14.0] - 2026-10-08
 ### Added
 - **Ocean identification**: FR24's trail laid against adsb.lol traces and heatmaps (22.14.2–22.14.3).
 - Identification of parked aircraft from the monitor's `/parked` (22.14.4).
 - Approach-path table v3 (99.85% right on held-out jets).
 - Swiss register.
 
-## [22.13.0] - 2026-10-07
+## [B22.13.0] - 2026-10-07
 ### Added
 - **Permanent monitor** (`monitor/monitor.cjs`): adsb.lol polling, flights per day, `/board`, `/legs`, `/last`.
 - Airport boards merged into one ±3-day list.
 - Links strip for N/A flights.
 
-## [22.12.0] - 2026-10-02
+## [B22.12.0] - 2026-10-02
 ### Added
 - Split flights rejoined.
 - Trustee owners replaced by operators.
 - 90-day log rows and airport-board archive.
 - Learned arrival paths (22.12.2).
 
-## [22.10.0] - 2026-10-01
+## [B22.10.0] - 2026-10-01
 ### Changed
 - Route engine retrained on 63 days of worldwide traffic. Accuracy on held-out aircraft rose from 60.4% to 67.6%; for LADD aircraft from 52.2% to 56.3%.
 
@@ -755,11 +819,11 @@ The monitor becomes the primary worldwide identifier and the source of flight hi
 - Weather and NOTAM evidence.
 - Odds calibration.
 
-## [22.9.0] - 2026-09-27
+## [B22.9.0] - 2026-09-27
 ### Added
 - Advertisements and the advert sidebar removed seamlessly.
 
-## [22.8.0] - 2026-09-25
+## [B22.8.0] - 2026-09-25
 ### Added
 - Destination prediction for every N/A flight (military, private, GA, helicopters), with private landing sites.
 

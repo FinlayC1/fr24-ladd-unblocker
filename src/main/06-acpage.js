@@ -376,7 +376,7 @@
     const a = monStat.archive;
     if (!a) return `the monitor${monStat.ver ? ' (' + esc(monStat.ver) + ')' : ''} runs an older version - <b>Update monitor</b> in the LADD Unblock window`;
     if (!a.on) return '';
-    return `the monitor has ${a.have != null ? a.have : a.days} of the last ${a.on} days from adsb.lol's archives${a.running ? ' (reading ' + esc(a.running) + ')' : ''}${a.err && a.errAt && now() - a.errAt < 6 * 3600e3 ? ' - last error: ' + esc(a.err) : ''}`;
+    return `the monitor has ${a.have != null ? a.have : a.days} of the last ${a.on} days from adsb.lol's archives${a.idx != null ? `, ${a.idx} of them for any aircraft` : ''}${a.running ? ' (reading ' + esc(a.running) + ')' : ''}${a.err && a.errAt && now() - a.errAt < 6 * 3600e3 ? ' - last error: ' + esc(a.err) : ''}`;
   }
   function logGapsOf(hex) {
     const h = store.peekHist(hex); if (!h || !h.err) return '';

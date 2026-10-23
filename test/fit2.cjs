@@ -2,7 +2,7 @@
 // L2 pull towards the starting table, full-batch Adam, the gradient computed in parallel worker threads over shared
 // memory. Situations: phase x kind x height x distance (108 rows); rare evidence shares one weight per elapsed band.
 // Aircraft with hash % 10 == 1 are held out of the fit as a validation set (reported every 50 iterations).
-// usage: node test/fit2.cjs <examplesDir> <init logit.json> <out.json> [--iters=400] [--lambda=0.002] [--lr=0.03]
+// usage: node test/fit2.cjs <examplesDir> <init logit.json> <out.json> [--iters=400] [--lambda=0.002] [--lr=0.03] [--drop=f1,f2]
 //        [--workers=12] [--shared=a,b,..] [--maxEx=N]
 const fs = require('fs');
 const path = require('path');
@@ -44,6 +44,8 @@ if (!isMainThread) {
   // ---- worker: holds its slice of the moments; computes nll and gradient for the weights in shared memory ----------------
   const { dir, files, NF, shared, maxPer } = workerData;
   const D = loadShards(dir, files, (h) => h !== 0);
+  // (--drop: features left out - their values taken as 0 - to see what they add)
+  if (workerData.drop && workerData.drop.length) { const dr = new Set(workerData.drop); for (let k = 0; k < D.fIdx.length; k++) if (dr.has(D.fIdx[k])) D.fVal[k] = 0; }
   const W = new Float64Array(workerData.wBuf), SH = Uint8Array.from(shared);
   const nEx = D.exY.length;
   const row = (c, i) => SH[i] ? c - (c % 12) : c;   // (shared: one weight per elapsed band and kind)
@@ -81,8 +83,9 @@ if (!isMainThread) {
   const ITERS = +opt('iters', 400), LAMBDA = +opt('lambda', 0.002), LR = +opt('lr', 0.03), NW = +opt('workers', Math.max(2, os.cpus().length - 4));
   const files = fs.readdirSync(dir).filter(f => f.endsWith('.meta.json')).map(f => f.replace('.meta.json', '')).sort();
   const FEAT = JSON.parse(fs.readFileSync(path.join(dir, files[0] + '.meta.json'), 'utf8')).feat, NF = FEAT.length;
-  const DEFAULT_SHARED = 'hret,hself,hrev,haway,htrip,hlast,hhome,xc,hxc,sqTrip,fmsTrip,od,luseC,hvis,hbase,habit,arrH,rshort,unpaved,fleet,odT,odH,seqG,csOD,csD,aps,pgNever,rwyT,hseq,hseq3,hdow,hhour,hcz,htplX,hczd,dark';
+  const DEFAULT_SHARED = 'hret,hself,hrev,haway,htrip,hlast,hhome,xc,hxc,sqTrip,fmsTrip,od,luseC,hvis,hbase,habit,arrH,rshort,unpaved,fleet,odT,odH,seqG,csOD,csD,aps,pgNever,rwyT,hseq,hseq3,hdow,hhour,hcz,htplX,hczd,dark,clbT,tasT,surge';
   const SHARED = new Set(opt('shared', DEFAULT_SHARED).split(',').filter(Boolean)), shared = FEAT.map(k => SHARED.has(k) ? 1 : 0);
+  const DROP = opt('drop', '').split(',').filter(Boolean).map(k => FEAT.indexOf(k)).filter(i => i >= 0);
   const row = (c, i) => shared[i] ? c - (c % 12) : c;
   // start (and L2 anchor): the earlier table, by feature name; new evidence starts at 0
   const init = JSON.parse(fs.readFileSync(initFile, 'utf8')), ix = new Map(init.feat.map((k, i) => [k, i])), nInit = init.w.length;
@@ -93,7 +96,7 @@ if (!isMainThread) {
   const workers = [];
   let nEx = 0, nVal = 0, nCand = 0;
   const t0 = Date.now();
-  Promise.all(parts.map(p => new Promise(res => { const w = new Worker(__filename, { workerData: { dir, files: p, NF, shared, wBuf }, resourceLimits: { maxOldGenerationSizeMb: 6000 } }); w.once('message', m => { nEx += m.nEx; nVal += m.nVal; nCand += m.nCand; res(w); }); w.on('error', e => console.log('worker error', e)); workers.push(w); })))
+  Promise.all(parts.map(p => new Promise(res => { const w = new Worker(__filename, { workerData: { dir, files: p, NF, shared, wBuf, drop: DROP }, resourceLimits: { maxOldGenerationSizeMb: 6000 } }); w.once('message', m => { nEx += m.nEx; nVal += m.nVal; nCand += m.nCand; res(w); }); w.on('error', e => console.log('worker error', e)); workers.push(w); })))
     .then(async () => {
       console.log('moments', nEx, '(validation', nVal + ')', 'candidates', nCand, 'features', NF, 'loaded in', Math.round((Date.now() - t0) / 1000), 's');
       const m = new Float64Array(W.length), v = new Float64Array(W.length), b1 = 0.9, b2 = 0.999;

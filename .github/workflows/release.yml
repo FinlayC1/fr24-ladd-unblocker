@@ -56,7 +56,8 @@ jobs:
         run: |
           node -e "
             const s = require('fs').readFileSync('CHANGELOG.md', 'utf8'), v = process.argv[1].replace(/^v/, '');
-            const i = s.indexOf('## [' + v + ']'); if (i < 0) { console.log('Version ' + v); process.exit(0); }
+            // (the betas, before 1.0.0, are headed B<version>: B22.31.12)
+            let i = s.indexOf('## [' + v + ']'); if (i < 0) i = s.indexOf('## [B' + v + ']'); if (i < 0) { console.log('Version ' + v); process.exit(0); }
             const j = s.indexOf('\n## [', i + 1); console.log(s.slice(s.indexOf('\n', i) + 1, j < 0 ? undefined : j).trim());
           " "$TAG" > notes.md
           printf '\n\n---\n**Install:** Chrome / Edge - download `fr24-ladd-unblocker-extension.zip`, unzip it, then *Load unpacked* in `chrome://extensions` (Developer mode). Firefox - `fr24-ladd-unblocker-firefox.zip` is the build for Firefox Add-ons (or *Load Temporary Add-on* in `about:debugging`). Tampermonkey - open `fr24-ladd-unblocker.user.js`.\n' >> notes.md
@@ -69,9 +70,26 @@ jobs:
         run: |
           # (a release already made on GitHub's page for this tag: the files and notes added to it; otherwise made here,
           # its tag on the commit that was tested)
+          # (a beta - 22.x and earlier, numbered 20 and up - is titled B<version> and marked a pre-release; 1.0.0 and on are
+          # the releases, and the one made from main is the latest: GitHub would otherwise rank 22.31.12 above 1.0.0)
+          V="${TAG#v}"; MAJ="${V%%.*}"
+          if [ "$MAJ" -ge 20 ]; then TITLE="FR24 LADD Unblocker B$V (beta)"; KIND="--prerelease"; else TITLE="FR24 LADD Unblocker v$V"; KIND="--latest"; fi
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" dist/fr24-ladd-unblocker-extension.zip dist/fr24-ladd-unblocker-firefox.zip dist/fr24-ladd-unblocker.user.js --clobber
-            gh release edit "$TAG" --title "FR24 LADD Unblocker $TAG" --notes-file notes.md
+            gh release edit "$TAG" --title "$TITLE" --notes-file notes.md
           else
-            gh release create "$TAG" dist/fr24-ladd-unblocker-extension.zip dist/fr24-ladd-unblocker-firefox.zip dist/fr24-ladd-unblocker.user.js --target "$SHA" --title "FR24 LADD Unblocker $TAG" --notes-file notes.md
+            gh release create "$TAG" dist/fr24-ladd-unblocker-extension.zip dist/fr24-ladd-unblocker-firefox.zip dist/fr24-ladd-unblocker.user.js --target "$SHA" --title "$TITLE" --notes-file notes.md $KIND
           fi
+      - name: The betas labelled as such
+        if: steps.v.outputs.skip != '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.v.outputs.tag }}
+        run: |
+          # (once 1.0.0 and on are released: every earlier release - v22.31.12 and before - titled B<version> (beta) and
+          # marked a pre-release; one already labelled is left alone)
+          V="${TAG#v}"; MAJ="${V%%.*}"; [ "$MAJ" -ge 20 ] && exit 0
+          gh release list --limit 500 --json tagName,name,isPrerelease --jq '.[] | select(.tagName | test("^v([2-9][0-9])\\.[0-9]+\\.[0-9]+$")) | select((.name | startswith("FR24 LADD Unblocker B")) | not) | .tagName' | while read -r T; do
+            gh release edit "$T" --title "FR24 LADD Unblocker B${T#v} (beta)" --prerelease && echo "labelled $T as B${T#v}"
+          done
+          gh release edit "$TAG" --latest

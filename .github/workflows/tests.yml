@@ -36,6 +36,8 @@ jobs:
           for t in unit_monitor unit_monitor2 unit_fr24 unit_store unit_merge unit_public unit_installs unit_wx unit_tracks unit_waiting; do node test/$t.cjs monitor/data > out.txt 2>&1 || { tail -30 out.txt; exit 1; }; grep -q '^FAIL' out.txt && { grep '^FAIL' out.txt; exit 1; }; echo "$t: $(grep -c '^PASS' out.txt) passed"; done
           node test/unit_registry.cjs > out.txt 2>&1 || { tail -30 out.txt; exit 1; }; echo "unit_registry: $(grep -c '^PASS' out.txt) passed"
           node test/unit_deploy.cjs > out.txt 2>&1 || { tail -30 out.txt; exit 1; }; echo "unit_deploy: $(grep -c '^PASS' out.txt) passed"
+          # (the datalink's zstd on Node 18: the small decoder kept with the monitor - no browser part here)
+          node test/unit_datalink.cjs none monitor/data > out.txt 2>&1 || { tail -30 out.txt; exit 1; }; grep -q '^FAIL' out.txt && { grep '^FAIL' out.txt; exit 1; }; echo "unit_datalink: $(grep -c '^PASS' out.txt) passed"
   # The browser extension as built, loaded in a real Chromium (Playwright's): the service worker, both worlds, requests
   # through the worker, the health check and the page that asks to allow a monitor of the user's own. And the userscript
   # in FR24's own windows, frame by frame, on a page made with Vue as FR24's is.

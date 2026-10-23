@@ -73,7 +73,7 @@
     const trail = []; for (const p of pts) if (!trail.length || p.t - trail[trail.length - 1].t >= 20) trail.push(p);
     const ac = acOfHex(hex), hs = ENGINE.histStats(knownLegs(hex, { excludeOpen: true }).filter(l => l.tEnd < pts[0].t - 60 && l.tEnd > pts[0].t - ENGINE_HIST_DAYS * 86400), pos.t);
     const origin = ENGINE.inferOrigin({ ac, pos, trail, hs, now: pos.t });
-    return ENGINE.predict({ ac, pos, trail, hs, now: pos.t, origin, fleet: fleetVisits(hex, pts[0].t) });
+    return ENGINE.predict({ surge: surgeNow(), ac, pos, trail, hs, now: pos.t, origin, fleet: fleetVisits(hex, pts[0].t) });
   }
   async function pollWatch(force) {
     const l = watchList(), hexes = Object.keys(l); if (!hexes.length || watchBusy || !airportsReady()) return;

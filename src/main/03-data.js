@@ -1040,6 +1040,42 @@
   const photoAsk = { q: new Map(), t: 0 }, photosOut = new Map();
   const photoSig3 = l => (l || []).slice(0, 3).map(p => p.large || p.medium || p.thumb || '').join('|');
   const blockedHex = hex => { const v = store.getHex(hex) || {}; return !!(v.ladd || v.fr24Blocked || v.pia); };
+  // (1.0) Event surges (engine.surgeOf): the monitor's - fields busier with blocked aircraft these last three days than
+  // usual - every three hours; an empty map until then (no evidence either way)
+  let surgeMap = new Map(), surgeAt = 0;
+  function surgeNow() {
+    if (now() - surgeAt > 3 * 3600e3 && monOk && monBase) {
+      surgeAt = now();
+      monGet('/surge', { idle: true }).then(j => { if (j && Array.isArray(j.list)) surgeMap = new Map(j.list.filter(x => Array.isArray(x) && fin(x[0]) && fin(x[1])).map(x => [x[0], x[1]])); }, () => { surgeAt = now() - 3 * 3600e3 + 10 * 60000; });
+    }
+    return surgeMap;
+  }
+  // The routes an aircraft sent or was sent over its datalink (the monitor's /datalink: adsb.lol's open ACARS / VDL2 /
+  // HFDL data, an hour or so behind): what is known now - asked of the monitor, fifty registrations at a time, at
+  // most every ten minutes each; onNew(reg) is called when an answer brings something new
+  const dlCache = new Map(), dlAsk = { q: new Set(), t: 0 }, dlWaiters = new Map();
+  function datalinkRoutes(reg, onNew) {
+    reg = String(reg || '').toUpperCase(); if (!/^[A-Z0-9-]{2,10}$/.test(reg) || !monOk || !monBase) return null;
+    const c = dlCache.get(reg);
+    if (onNew) { const w = dlWaiters.get(reg) || new Set(); w.add(onNew); if (w.size > 20) w.delete(w.values().next().value); dlWaiters.set(reg, w); }
+    if (!c || now() - c.at > 10 * 60000) { if (!c) dlCache.set(reg, { at: now(), routes: [] }); else c.at = now(); dlAsk.q.add(reg); if (!dlAsk.t) dlAsk.t = setTimeout(flushDatalink, 80); }
+    if (dlCache.size > 3000) dlCache.delete(dlCache.keys().next().value);
+    return c ? c.routes : null;
+  }
+  function flushDatalink() {
+    dlAsk.t = 0; const all = [...dlAsk.q]; dlAsk.q.clear();
+    for (let i = 0; i < all.length; i += 50) {
+      const part = all.slice(i, i + 50);
+      monGet('/datalink?reg=' + part.map(encodeURIComponent).join(','), { idle: true }).then(j => {
+        const by = new Map(((j && Array.isArray(j.list)) ? j.list : []).filter(x => x && x.reg && Array.isArray(x.routes)).map(x => [x.reg, x.routes]));
+        for (const reg of part) {
+          const rs = by.get(reg) || [], c = dlCache.get(reg) || {}, was = JSON.stringify(c.routes || []);
+          dlCache.set(reg, { at: now(), routes: rs });
+          if (JSON.stringify(rs) !== was) for (const f of dlWaiters.get(reg) || []) { try { f(reg); } catch (e) { log('datalink', e); } }
+        }
+      }, () => { /* the monitor did not answer: asked again in ten minutes */ });
+    }
+  }
   function monPhotos(hex) {
     if (!monUp() || !blockedHex(hex)) return Promise.resolve(null);
     return Promise.race([new Promise(res => { const l = photoAsk.q.get(hex) || []; l.push(res); photoAsk.q.set(hex, l); if (!photoAsk.t) photoAsk.t = setTimeout(flushMonPhotos, 40); }), sleep(1500).then(() => null)]);
@@ -1107,11 +1143,15 @@
     apl: { name: 'airplanes.live', site: 'https://globe.airplanes.live/', url: (hex, day) => `https://globe.airplanes.live/${day ? 'globe_history/' + day : 'data'}/traces/${hex.slice(-2)}/trace_full_${hex}.json` },
     // (the monitor: today's positions of the aircraft it follows - from its own polling of adsb.lol's API, which has no
     // verification page - in the same format; today only)
-    mon: { name: 'the monitor', site: '', url: hex => `${monUrl()}/trace?hex=${hex}`, hdr: () => monHdr() }
+    mon: { name: 'the monitor', site: '', url: hex => `${monUrl()}/trace?hex=${hex}`, hdr: () => monHdr() },
+    // (adsb.lol's file of any aircraft's past day as adsb.lol published it in that day's archive on GitHub, fetched alone
+    // by the monitor - no verification page in front of it, and every day back to the archives' start. 409: no index of
+    // that day at the monitor yet - adsb.lol's own site asked instead)
+    arc: { name: "adsb.lol's archive", site: '', url: (hex, day) => `${monUrl()}/atrace?hex=${hex}&day=${String(day).replace(/\//g, '-')}`, hdr: () => monHdr() }
   };
   // (how each answered lately: the window's sources and the log page say it - a verification page above all)
   const netNew = () => ({ ok: 0, none: 0, wall: 0, err: 0, wallUntil: 0, wallAt: 0, okAt: 0, last: '', lastAt: 0, probe: null, bad: null, wallErr: '' });
-  const netState = { lol: netNew(), apl: netNew(), mon: netNew() };
+  const netState = { lol: netNew(), apl: netNew(), mon: netNew(), arc: netNew() };
   // (a verification page by what it is - adsb.lol's proof-of-work page, Cloudflare's challenge - not by any page saying
   // "verify": a 403 or a site's own error page is a refusal, said as one)
   const WALL_RE = /<title>\s*(?:verification|just a moment|attention required)|verifying connection|solving security challenge|proof[- ]of[- ]work|cf[-_]chl|challenge-platform|cf-browser-verification/i;
@@ -1171,7 +1211,7 @@
   }
   async function readTrace1(id, hex, day, opts) {
     const N = NETS[id], S = netState[id], o = opts || {};
-    const out = (state, x) => { S[state] = (S[state] || 0) + 1; S.last = state === 'err' ? x.err : state; S.lastAt = now(); if (state === 'ok' || state === 'none') S.okAt = now(); else if (!x.cached) S.lastBadAt = now(); return Object.assign({ net: N.name, id, state, pts: [], j: null, err: '' }, x); };
+    const out = (state, x) => { S[state] = (S[state] || 0) + 1; S.last = state === 'err' ? x.err : state; S.lastAt = now(); if (state === 'ok' || state === 'none' || state === 'noidx') S.okAt = now(); else if (!x.cached) S.lastBadAt = now(); return Object.assign({ net: N.name, id, state, pts: [], j: null, err: '' }, x); };
     if (S.wallUntil > now()) return out('wall', { err: S.wallErr || 'verification page', cached: true });
     for (let attempt = 0; ; attempt++) {
       let r;
@@ -1183,6 +1223,9 @@
         if (attempt < 1 && !/aborted|unavailable/.test(m)) { await sleep(o.priority ? 1500 : 6000); continue; }
         return out('err', { err: m });
       }
+      // (the monitor has no index of that day yet: an answer, not a failure - the caller asks adsb.lol's site. A 404 is "not
+      // in that day's archive" only when it says so: a monitor from before 1.0 answers 404 for a path it does not know)
+      if (id === 'arc' && (r.status === 409 || (r.status === 404 && !/"none"/.test(String(r.text || ''))))) return out('noidx', {});
       const c = classifyTrace(hex, r.status, r.text);
       if (c.state === 'rate' && attempt < 2) { await sleep(4000 * (attempt + 1)); continue; }
       if (c.state !== 'ok' && c.state !== 'none') noteBad(id, N.url(hex, day), r, c);
@@ -1194,7 +1237,11 @@
   }
   // (the file alone, as the rest of the script asks for it: adsb.lol's, airplanes.live's for a day older than adsb.lol
   // keeps; 'HTTP 404' when there is none)
+  // (the monitor's archive copy in use: a monitor of 1.0 or later - its /status counts the days it has indexed - with some)
+  const arcUp = () => !!(monOk && monBase && monStat && monStat.archive && monStat.archive.idx > 0);
   async function fetchTrace(hex, day, opts) {
+    // (a past day: adsb.lol's archive through the monitor first - no verification page in front of it)
+    if (day && arcUp()) { const a = await readTrace('arc', hex, day, opts); if (a.state === 'ok') return a.j; if (a.state === 'none') throw new Error('HTTP 404'); }
     const r = await readTrace(day && opts && opts.back > LOL_DAYS ? 'apl' : 'lol', hex, day, opts);
     if (r.state === 'ok') return r.j;
     throw new Error(r.state === 'none' ? 'HTTP 404' : r.err || r.state);
@@ -1287,7 +1334,8 @@
         if (back <= 3 && (h.rd[d] || 0) < (dayEndS(d) + 6 * 3600) * 1000) return looked || now() - (h.rd[d] || 0) > 3 * 3600e3;
         // (a day read with one network, or one not answering: read again with both when looked at - not more than every
         // half hour, a verification page in front of one of them taking a while to clear)
-        return looked && back <= LOL_DAYS && (v === 'l' || v === 'p') && now() - (h.rd[d] || 0) > 30 * 60000;
+        // (not a day of adsb.lol's alone while airplanes.live walls this browser: nothing more to have)
+        return looked && back <= LOL_DAYS && (v === 'p' || (v === 'l' && !(netState.apl.wallUntil > now()))) && now() - (h.rd[d] || 0) > 30 * 60000;
       };
       let todo = []; const backOf = {}; for (let back = 1; back <= upTo; back++) { const d = dayStr(now() - back * 864e5); if (want(d, back)) { todo.push(d); backOf[d] = back; } }
       let done = 0, dirty = false, monDays = 0;
@@ -1329,26 +1377,41 @@
           if (have.length) { const got = new Set(have.filter(d => !(looked && backOf[d] <= LOL_DAYS && (part.has(d) || (aplOpen && (lo.has(d) || !mh.days[d])))))); todo = todo.filter(d => !got.has(d)); monDays = have.length; flush(); }
         }
       }
+      // (the monitor's check answered first - its archive is where the days come from while the sites wall this browser; an
+      // ordinary aircraft's log asked nothing else of it before)
+      if (todo.length) { const mc = monCheck(); if (mc) await mc.catch(() => null); }
       const legsOf = (pts, day) => ENGINE.legsFromPoints(pts, { heli, patrol, cls: cls0, type: ac0.type, rangeKm: ENGINE.typeRangeKm(ac0), dataEnd: dayEndS(day) });
       // Each day: adsb.lol's file (the last 40 days) and airplanes.live's (the aircraft looked at - also when it is looked at
       // while this load runs - or older than adsb.lol keeps), merged
+      // (23 Oct: both sites wall browsers - an FR24 aircraft page of an ordinary aircraft had 82 days of its log "not read
+      // yet". adsb.lol's file of a past day now comes from its archive through the monitor, for every day of any age;
+      // adsb.lol's own site only where the monitor has no index of the day yet)
       const one = async day => {
         const back = backOf[day], old = back > LOL_DAYS, lookedNow = looked || st.front;
         const o = { bg: bgWork && !st.front, priority: st.front, back };
-        const ids = old ? ['apl'] : lookedNow ? ['lol', 'apl'] : ['lol'];
-        const res = await Promise.all(ids.map(id => readTrace(id, hex, day, o)));
+        const aplWall = netState.apl.wallUntil > now();
+        // airplanes.live's as well for the aircraft looked at - and for a day older than adsb.lol's site keeps - not while it
+        // walls this browser; adsb.lol's from the archive, else its site (the last 40 days)
+        const pApl = (lookedNow || old) && !aplWall ? readTrace('apl', hex, day, o) : null;
+        let lolR = arcUp() ? await readTrace('arc', hex, day, o) : null;
+        if (lolR && lolR.state === 'noidx') lolR = null;
+        if (!lolR && !old) lolR = await readTrace('lol', hex, day, o);
+        const res = [lolR, pApl ? await pApl : null].filter(Boolean);
+        if (!res.length) res.push(await readTrace('apl', hex, day, o));       // (an old day, no index, airplanes.live walling: said why)
         done++;
         const pts = mergeNets(res), bad = res.filter(r => r.state !== 'ok' && r.state !== 'none'), complete = !bad.length;
+        const hasL = res.some(r => r.id === 'arc' || r.id === 'lol'), hasA = res.some(r => r.id === 'apl');
         if (!complete) { h.err[day] = bad.map(r => r.net + ': ' + r.err).join('; '); dirty = true; }
         // (nothing had, and a network not answering - or not asked: the background asks adsb.lol alone, and airplanes.live
-        // can have what adsb.lol has no file of: not known - asked again later, the day's flights as they were kept)
-        if (!pts.length && (!complete || (!old && res.length < 2))) { h.miss[day] = now(); dirty = true; return; }
+        // can have what adsb.lol has no file of: not known - asked again later, the day's flights as they were kept. With
+        // airplanes.live walling this browser, adsb.lol's "none" is all there is: a day without flights, as it knows it)
+        if (!pts.length && (!complete || (hasL && !hasA && !aplWall && !old))) { h.miss[day] = now(); dirty = true; return; }
         const raws = legsOf(pts, day), legs = summarize(raws, hex).map(l => Object.assign(l, { day }));
         raws.forEach((r, i) => learnFromLeg(hex, r, legs[i], cls0, ac0.mil));
         // (a day read again keeps its flights should the new read find fewer from a network that did not answer this time)
         const had = h.legs.filter(l => l.day === day);
         if (!complete && had.length > legs.length) { h.rd[day] = now(); return; }
-        h.days[day] = !complete ? 'p' : old ? 'a' : res.length > 1 ? 'b' : 'l';
+        h.days[day] = !complete ? 'p' : hasL && hasA ? 'b' : hasA ? 'a' : 'l';
         h.rd[day] = now(); delete h.miss[day]; if (complete) delete h.err[day];
         h.legs = h.legs.filter(l => l.day !== day).concat(legs); dirty = true;
       };

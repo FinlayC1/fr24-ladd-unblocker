@@ -140,17 +140,17 @@ const storeText = () => { let s = ''; const walk = d => { for (const e of fs.rea
     check('the key the networks are hashed with: made once, 32 random bytes, readable by the owner only (600)', st && fs.readFileSync(salt, 'utf8').trim().length === 64 && (process.platform === 'win32' || (st.mode & 0o777) === 0o600), st && (st.mode & 0o777).toString(8)); }
 
   // ---- restarted - and GitHub answering --------------------------------------------------------------------------
-  M = await start('99.1.0');
+  M = await start('9.1.0');
   { const o = (await req('GET', '/admin/options', own)).body || {};
     check('the options kept across a restart', o.notice === 'New version out - please update.' && o.minVer === '22.20.0' && o.counting === false && o.public === false && o.rate === 7 && o.overridden.public === true, o);
     const l = await req('GET', '/live');
     check('... public off still', l.status === 401, l.status);
     c = await counts();
     check('the installs read back: 7 installs, 5 people', c.installs === 7 && c.people === 5, [c.installs, c.people]);
-    check('latest from GitHub: the monitor is behind; every install runs an older version', c.versions.latest === '99.1.0' && c.versions.monitorBehind === true && c.outdated.installs === 7 && c.outdated.of === 7, [c.versions, c.outdated]);
+    check('latest from GitHub: the monitor is behind; every install runs an older version', c.versions.latest === '9.1.0' && c.versions.monitorBehind === true && c.outdated.installs === 7 && c.outdated.of === 7, [c.versions, c.outdated]);
     await post('/admin/options', { public: true, rate: 3, counting: true }, own);
     const h = await post('/hello', hello({ id: id('8') }), { ip: IPS[9] });
-    check('/hello gives the newest version from GitHub', h.status === 200 && h.body.latest === '99.1.0', h.body);
+    check('/hello gives the newest version from GitHub', h.status === 200 && h.body.latest === '9.1.0', h.body);
     const got = []; for (let i = 0; i < 6; i++) got.push((await req('GET', '/live', { ip: IPS[9] })).status);
     const h2 = await post('/hello', hello({ id: id('8') }), { ip: IPS[9] });
     check('public on and rate 3 at once: past 3 a minute an address gets 429 - /hello too; the owner never', got[0] === 200 && got.includes(429) && h2.status === 429 && (await req('GET', '/live', Object.assign({ ip: IPS[9] }, own))).status === 200, got.concat(h2.status));

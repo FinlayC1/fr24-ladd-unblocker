@@ -23,7 +23,7 @@ const check = (name, ok, extra) => { if (!ok) fails++; console.log(`${ok ? 'PASS
 const ICON = l => `<svg data-v-7a1 class="h-6 w-6" width="24" height="24" viewBox="0 0 24 24"><path d="M1 1h${l.length}"/></svg>`;
 const BTN = (l, on) => `<button data-v-7a1 type="button" class="bar-btn${on ? ' bar-btn--active' : ''}" data-testid="map-bar__${l.toLowerCase()}" aria-pressed="${on ? 'true' : 'false'}">${ICON(l)}<span data-v-7a1 class="bar-label">\n  <!---->${l}</span></button>`;
 const BAR = open => `<div data-v-7a1 class="bar-wrap"><nav data-v-7a1 class="bar">${['Settings', 'Weather', 'Filters', 'Widgets', 'Playback'].map(l => BTN(l, l === open)).join('')}</nav></div>`;
-const LATEST = '99.1.0';
+const LATEST = '9.1.0';
 const opened = [], notes = [];
 function makeWin(opts, body) {
   const dom = new JSDOM(`<!doctype html><html><head></head><body><div id="map"></div>${body || BAR('Weather')}</body></html>`, { url: 'https://www.flightradar24.com/53.40,-2.60/9', runScripts: 'dangerously', pretendToBeVisual: true });
@@ -101,7 +101,7 @@ function actFR24(win) {
   check('... a switch for LADD Unblock itself and for every feature, all on by default', ['on', 'strip', 'boards', 'search', 'acPages', 'alerts', 'noAds'].every(k => sw(k) && sw(k).getAttribute('aria-checked') === 'true' && sw(k).getAttribute('role') === 'switch'));
   check('... the data sources moved here: the feeds, the monitor, the ADS-B Exchange and FAA keys', !!w.querySelector('#tl-ub-sources #tl-mon-url') && !!w.querySelector('#tl-adsbx-key') && !!w.querySelector('#tl-faa-id') && /adsb\.lol/.test(w.querySelector('#tl-ub-sources').textContent));
   check('... and nowhere else: the strip\'s "sources" link is gone, its version opens this window', !SRC.includes('data-tl-act="sources"') && SRC.includes('data-tl-act="ladd"'));
-  await until(() => /Update to v99\.1\.0/.test(w.textContent), 3000);
+  await until(() => /Update to v9\.1\.0/.test(w.textContent), 3000);
   const upd = w.querySelector('#tl-ub-upd');
   check('updates: the version installed, the latest (main\'s package.json), the kind of install', upd.textContent.includes('v' + VERSION) && upd.textContent.includes('Update to v' + LATEST) && /Tampermonkey userscript/.test(upd.textContent), upd.textContent.replace(/\s+/g, ' '));
   click(win, w.querySelector('[data-ub-act="update"]'));
