@@ -89,7 +89,7 @@ Measured on aircraft held out of training: 66,679 moments of 2,073 aircraft, 1-2
   - shown under 40% 36.2% -> 26.0%;
   - flights to places never visited 54% -> 29% of moments.
 - **A landing guessed across a night is not made.** N811MK, 7 Oct, was lost coming down over Spain, and heard climbing 85 km away the next morning before Trenton. Reading a landing into that night the way a hole within one day is read gave Valladolid. Tried on 3,143 real stops of business jets and airliners with both ends out of coverage, such a guess was right 25% of the time and a neighbouring field 43% of it (Teterboro read as Newark). A wrong field is a visit in the aircraft's history: with it, N811MK's guess on 23 Oct was "Valladolid 73%", and it landed at Madrid. Those ends stay "-".
-- **The weights were fitted on three-week histories.** With long logs a route flown before is right 77.7% of the time, below the 84-93% above. The next step is refitting them on long histories, as browsers have them (`pipe_eval` `LONGHIST` measures it).
+- **The weights refitted on long histories** (3,991 aircraft's monitor logs, warm-started from 1.0.0's): on the same 28,270 held-out moments, right 57.2% -> 57.5%, top three 73.5% -> 73.6%, better in every group; with three-week histories unchanged (52.3%). The calibration of the odds is kept from 1.0.0.
 
 ### Tests
 - `unit_legs`, on the aircraft's real traces:
