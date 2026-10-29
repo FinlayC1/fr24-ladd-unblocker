@@ -290,6 +290,35 @@ function makeWin() {
     check('... nothing asked day by day (the archive, the sites)', !asked.some(a => (a[1] === 'atrace' && a[2] === HX5) || ((a[0] === 'lol' || a[0] === 'apl') && a[2] === HX5)), asked.filter(a => a[2] === HX5));
     check('... its flight kept as the day\'s read has it: not marked the monitor\'s own (kept over a read of the day here), no field of the monitor\'s left', l3.length === 1 && !l3[0].mon && !('src' in l3[0]) && !('lx' in l3[0]), l3[0]);
     MONH.world = 0; MONH.arc = null; MONH.idx = null; MONH.hist = null; MONH.on = false; }
+  // ---- 11d. (1.0.2) M-PORT: FR24 lists none of its flights, the sites wall this browser (its six-day proof cannot be had):
+  // the monitor's word - it holds the aircraft as blocked (blk) - tags it; one it does not hold, without a flight of the
+  // last six days anywhere: not tagged. And N162GB: a day the monitor built with FR24's track of the flight (fr) replaces
+  // the browser's own read of it, when looked at again
+  { const HXP = 'c0a1c1', HXQ = 'c0a1c2', HXR = 'c0a1c3';
+    NET.lol.def = [403, POW]; NET.apl.def = [403, CF];
+    MONH.hist = h => h === HXP ? { days: {}, legs: [], blk: 2 } : { days: {}, legs: [], blk: 0 };
+    MONH.on = true; MONH.slow = false; MONH.world = 0; await L.monCheck(true); await sleep(20);
+    L.store.mergeHex(HXP, { reg: 'M-PORT', type: 'GLF6' }); L.store.mergeHex(HXQ, { reg: 'M-QQQQ', type: 'GLF6' });
+    await L.noteFr24Blocked(HXP, 'M-PORT'); await L.noteFr24Blocked(HXQ, 'M-QQQQ');
+    const p1 = L.store.getHex(HXP) || {}, q1 = L.store.getHex(HXQ) || {};
+    check('M-PORT: FR24 lists none of its flights, the sites walling - the monitor holds it as blocked: tagged LADD (search, log page)', p1.ladd === true && p1.fr24Blocked === true, p1);
+    check('... one the monitor does not hold, no flight of it in the last six days anywhere: not tagged', !q1.ladd && !q1.fr24Blocked, q1);
+    // (N162GB) a day read here from adsb.lol alone, then the monitor's build of it with FR24's track: taken over
+    const los = L.engine.byIcao('DNMM'), fab = L.engine.byIcao('EGLF'), dd = k => dayStr(Date.now() - k * 864e5), D2 = dd(2), t2 = Date.parse(D2.replace(/\//g, '-') + 'T10:56:00Z') / 1000;
+    const adsbOnly = { day: D2, tStart: t2 + 4 * 3600 + 1400, tEnd: t2 + 7 * 3600 + 2280, from: null, to: { id: fab.id, code: 'FAB', conf: 'ground' }, ended: true, startedOnGround: false, cs: '', maxAlt: 40000, src: 'world', lx: ['', '', ''] };
+    const withFr24 = Object.assign({}, adsbOnly, { tStart: t2 - 300, tOff: t2, from: { id: los.id, code: 'LOS', conf: 'ground' }, startedOnGround: true, src: undefined, lx: ['', '', ''] });
+    // (the day read here before - adsb.lol alone, "- Farnborough" - as this browser keeps it)
+    const HV = Number((SRC.match(/const HIST_V = (\d+);/) || [])[1]), own = Object.assign({}, adsbOnly); delete own.src; delete own.lx;
+    await L.store.setHist(HXR, { v: HV, legs: [own], days: { [D2]: 'l' }, rd: { [D2]: Date.now() }, miss: {}, err: {}, savedAt: Date.now() });
+    MONH.world = 300; MONH.hist = h => h === HXR ? { days: { [D2]: 1 }, legs: [withFr24], part: [], lo: [D2], fr: { [D2]: Math.round(Date.now() / 1000) } } : { days: {}, legs: [] };
+    await L.monCheck(true); await sleep(20);
+    L.store.mergeHex(HXR, { reg: 'N162GB', type: 'GALX' }); asked.length = 0;
+    const l1 = [own];
+    await L.loadHistory(HXR, 3, null, { front: true });
+    const r2 = ((await L.store.getHist(HXR)) || {}), l2 = (r2.legs || []).filter(l => l.day === D2);
+    check('N162GB: a day read before from adsb.lol alone ("- Farnborough"), the monitor\'s build of it with FR24\'s track (fr): taken over, the monitor\'s mark - Lagos - Farnborough', l1.length === 1 && !l1[0].from && l2.length === 1 && l2[0].from && l2[0].from.code === 'LOS' && r2.days[D2] === 'm', { before: l1.map(l => l.from && l.from.code), after: l2.map(l => l.from && l.from.code), mark: r2.days[D2] });
+    check('... in one request to the monitor', asked.filter(a => a[1] === 'hist' && a[2].includes(HXR)).length === 1, asked.filter(a => a[2] === HXR));
+    MONH.world = 0; MONH.hist = null; MONH.on = false; }
   // ---- 10. the monitor busy (reading adsb.lol's archives on the 1 GB VM): a late answer is not the monitor gone. One
   // slow answer took it for gone at once, for everything - logs, live figures, today's track (23 Oct)
   { MONH.on = true; MONH.slow = false; await L.monCheck(true); await sleep(20);

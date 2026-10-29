@@ -27,7 +27,7 @@ function createIdent(env) {
   const cache = new Map();     // hex -> candidate from a targeted lookup (5 minutes)
   const gone = [];             // { id, at } withdrawn or expired (for the browsers' "since" updates)
   const trailQ = [];           // FR24 ids waiting for their trail
-  const stats = { observed: 0, matched: { list: 0, lookup: 0, reckon: 0, trail: 0, parked: 0, client: 0 }, revoked: 0, lookups: 0, trails: 0 };
+  const stats = { observed: 0, matched: { list: 0, lookup: 0, reckon: 0, trail: 0, parked: 0, handover: 0, client: 0 }, revoked: 0, lookups: 0, trails: 0 };
 
   // ---- FR24's flights ------------------------------------------------------------------------------------------------
   // (the ones that need naming: FR24 has neither callsign nor registration for them; not its ground vehicles)
@@ -203,12 +203,39 @@ function createIdent(env) {
     }
     return found.length === 1 ? found[0] : null;
   }
+  // (1.0.2) A flight FR24 draws afresh, under a new number, after a hole in its coverage: the named flight it stopped
+  // drawing three minutes to half an hour before, where that one would be by now (carried on along its track at its speed
+  // - 2.5 km a minute of the hole either way, 20 km at least; its height within 3,000 ft and 1,500 ft a minute of the hole),
+  // of a type not unlike it, not heard by ADS-B elsewhere meanwhile - one alone, the name carried over. The aircraft is
+  // known to this side from its first ping and stays so through the holes: ADS-B need not have heard it again.
+  // (lost: the named flights FR24 stopped drawing in the air three to 35 minutes ago - worked out once a round)
+  function lostNamed(nowMs) {
+    const out = [];
+    for (const [id, R] of ids) { if (byHex.get(R.hex) !== id) continue; const G = flights.get(id); if (G && !G.gnd && fin(G.lat) && fin(G.ts) && nowMs - G.seen >= 180000 && nowMs - G.seen <= 35 * 60000) out.push([id, R, G]); }
+    return out;
+  }
+  function handover(F, nowMs, lost) {
+    if (!fin(F.lat) || !fin(F.lon) || !fin(F.alt) || F.alt < 1000 || !fin(F.ts)) return null;
+    const nowS = nowMs / 1000, found = [];
+    for (const [id, R, G] of lost) {
+      if (id === F.id || byHex.get(R.hex) !== id || !ids.has(id)) continue;
+      const gap = F.ts - G.ts; if (gap < 120 || gap > 1800) continue;
+      if (typeRelation(G.type, F.type) === 'different') continue;
+      const [la, lo] = project(G.lat, G.lon, G.spd, G.trk, gap), d = E.dist(F.lat, F.lon, la, lo);
+      if (d > Math.max(20, gap / 60 * 2.5)) continue;
+      if (fin(G.alt) && Math.abs(F.alt - G.alt) > 3000 + gap / 60 * 1500) continue;
+      const c = candOf(R.hex, nowS); if (c && nowS - c.t < 180 && E.dist(c.lat, c.lon, F.lat, F.lon) > 20) continue;
+      found.push({ hex: R.hex, R, d });
+    }
+    return found.length === 1 ? found[0] : null;
+  }
   const infoOf = (hex, x, c) => { const m = (x && x.meta) || {}, b = env.blocked.get(hex) || {}; return { reg: (c && c.reg) || String(m.reg || b.reg || '').toUpperCase(), type: (c && c.type) || String(m.type || b.type || '').toUpperCase(), cs: (c && c.cs) || m.cs || '', ladd: (c && c.ladd) || !!b.faa, mil: (c && c.mil) || !!m.mil, pia: (c && c.pia) || !!m.pia }; };
 
   // ---- one round over every flight ---------------------------------------------------------------------------------
   // returns the flights still unnamed within public coverage (for targeted lookups)
   function match(nowMs) {
     const nowS = nowMs / 1000, cands = candidates(nowS), g = grid(cands), unmatched = [];
+    let lost = null;
     for (const F of flights.values()) {
       if (nowMs - F.seen > 10 * 60000) continue;
       const R = ids.get(F.id);
@@ -223,6 +250,7 @@ function createIdent(env) {
       if (F.src === 4) continue;                                              // (FR24's estimated positions: not to be matched on)
       const b = best(F, near(g, F.lat, F.lon), nowMs);
       if (b) { assign(F, b.c.hex, infoOf(b.c.hex, env.ac.get(b.c.hex), b.c), cache.has(b.c.hex) ? 'lookup' : 'list', nowMs); continue; }
+      if (!F.gnd) { const h = handover(F, nowMs, lost || (lost = lostNamed(nowMs))); if (h) { assign(F, h.hex, infoOf(h.hex, env.ac.get(h.hex), { reg: h.R.reg, type: h.R.type || F.type, cs: h.R.cs, ladd: !!(h.R.flags & FLAG.ladd), mil: !!(h.R.flags & FLAG.mil), pia: !!(h.R.flags & FLAG.pia) }), 'handover', nowMs); continue; } }
       if (outOfCoverage(F) && F.alt > 10000) {
         const r = reckon(F, nowMs); if (r) { assign(F, r.hex, infoOf(r.hex, r.x), 'reckon', nowMs); continue; }
         const t = trailMatch(F, nowMs); if (t) { assign(F, t.hex, infoOf(t.hex, t.x), 'trail', nowMs); continue; }

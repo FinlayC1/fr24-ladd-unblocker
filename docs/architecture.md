@@ -231,12 +231,21 @@ Every browser used to work each route out itself, from what it alone had seen, s
 - **The evidence.** Browsers send what they see of each flight they show (`POST /calc`): its track as their `trailFor` has it (whole once, then what is new), FR24's plan, the flights of the day, the weather and closures they have for the airports in question. The monitor keeps the longest track any of them sent, adds its own logs of the aircraft (its days and the world log), and works the flight out again when there is more to go on, at most every 15 s.
 - **What stays in the browser.** The user's own confirmation of a destination; a landing or take-off it has seen before the monitor's answer has; the progress bar and time to go, from where the aircraft is now. Without the monitor's answer (not on, not answering, over 90 s old by its own clock), the browser's own is shown, as before.
 - **Its cost.** About 150 MB of memory for the tables, and some 65 ms of work per flight. It is on only when the machine has room, within a budget of work a minute.
+- **All the time (1.0.2).** Not only when a browser asks: every flight the monitor has named, in the air, is worked out each round - LADD aircraft first, then the answer worked out longest ago - within the same budget. A route is ready from the first ping.
+
+### 4.3c Airport counts (1.0.2)
+
+As each day of the world log is built, the monitor counts every airport's take-offs and landings (ends seen on the ground or low over the field) and works out the runway each used (`airport.cjs` `runwayOf`, from the flight's track). One small file a day, kept for good (`monitor/apstats.cjs`, `STORE/apstats/`). A world day built before 1.0.2 is counted from its file in the background, without runways. `/airport` answers the map's airport panel at once: each counted day from its counts, today from the flights the monitor tracks.
+
+### 4.3d FR24's track first (1.0.2)
+
+FR24's positions of every flight the monitor has named go into that aircraft's track as they come (and its whole trail since take-off, once fetched), wherever ADS-B has nothing within two minutes. Each day is built from that track with ADS-B filling in, so take-offs and landings only FR24 saw are in the logs. A day built so is marked (`/hist` `fr`), and browsers keep the monitor's build of it over their own read of the networks.
 
 ### 4.4 State and persistence
 
 `state.json` holds:
 
-- the blocked aircraft (registration, type, known since, last heard, FAA flag, last seen with the LADD flag);
+- the blocked aircraft (registration, type, known since, last heard, FAA flag, last seen with the LADD flag, last drawn by FR24 as a flight it hides);
 - the areas;
 - the watch record per day;
 - the days still to rebuild;

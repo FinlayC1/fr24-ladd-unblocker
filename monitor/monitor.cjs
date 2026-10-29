@@ -73,6 +73,7 @@ const { createTel } = require('./tel.cjs');
 const { createTracks } = require('./tracks.cjs');
 const ARCH = require('./archive.cjs');
 const W = require('./world.cjs');
+const { createApStats } = require('./apstats.cjs');
 const { createCentral } = require('./central.cjs');
 const DL = require('./datalink.cjs');
 const { createWaiting } = require('./waiting.cjs');
@@ -117,7 +118,8 @@ const slashDay = d => d.replace(/-/g, '/');           // (the userscript's day k
 const daysBetween = (a, b) => { const out = []; for (let d = dayOf(a), z = dayOf(b); d <= z; d = dayOf(dayStart(d) + 86400)) out.push(d); return out; };
 
 // ---- the blocked aircraft (kept on disk: the FAA list's and every one the userscript has identified) ----------------
-const blocked = new Map();   // hex -> { reg, type, at: known since, heard: last heard, faa: on the LADD list, lad: last seen with the LADD flag }
+const blocked = new Map();   // hex -> { reg, type, at: known since, heard: last heard, faa: on the LADD list, lad: last seen with the LADD flag,
+                             //   fr: last drawn by FR24 as a flight it hides - identified here (1.0.2) }
 let laddNow = new Set();     // hexes in the LADD list as last polled (those need no asking by address)
 const userAreas = [];        // [lat, lon, radius nm, last asked]
 let lastRun = 0, stateDirty = false;
@@ -149,14 +151,14 @@ const flewAdd = (hex, d) => { let s = flew.get(d); if (!s) flew.set(d, s = new S
 function saveState() {
   fs.mkdirSync(STORE, { recursive: true });
   const f = path.join(STORE, 'state.json'), tmp = f + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify({ v: 2, lastRun, blocked: Object.fromEntries([...blocked].map(([h, b]) => [h, [b.reg, b.type, b.at, b.heard, b.faa ? 1 : 0, b.lad || 0]])), areas: userAreas,
+  fs.writeFileSync(tmp, JSON.stringify({ v: 2, lastRun, blocked: Object.fromEntries([...blocked].map(([h, b]) => [h, [b.reg, b.type, b.at, b.heard, b.faa ? 1 : 0, b.lad || 0, b.fr || 0]])), areas: userAreas,
     watch, lastW, closed, flew: Object.fromEntries([...flew].map(([d, s]) => [d, [...s]])), histQ: histQ.map(j => [j.hex, j.day, j.tries, j.at, j.fill ? 1 : 0]),
     fr24: { dev: fr24.st.deviceId, hdr: fr24.st.hdr, ua: fr24.st.ua, hdrAt: fr24.st.hdrAt } }));
   fs.renameSync(tmp, f); stateDirty = false;
 }
 function loadState() {
   let s = null; try { s = JSON.parse(fs.readFileSync(path.join(STORE, 'state.json'), 'utf8')); } catch (e) { return null; }
-  for (const [h, b] of Object.entries(s.blocked || {})) blocked.set(h, { reg: b[0] || '', type: b[1] || '', at: b[2] || 0, heard: b[3] || 0, faa: !!b[4], lad: b[5] || 0 });
+  for (const [h, b] of Object.entries(s.blocked || {})) blocked.set(h, { reg: b[0] || '', type: b[1] || '', at: b[2] || 0, heard: b[3] || 0, faa: !!b[4], lad: b[5] || 0, fr: b[6] || 0 });
   for (const a of s.areas || []) if (Array.isArray(a) && a.length === 4) userAreas.push(a);
   Object.assign(watch, s.watch || {}); Object.assign(lastW, s.lastW || {}); closed = s.closed || '';
   for (const [d, l] of Object.entries(s.flew || {})) for (const h of l) flewAdd(h, d);
@@ -238,7 +240,7 @@ function buildLegs(hex, nowS) {
     // its strip stayed "open", no destination, for the 14 hours before)
     const lostLow = last && !s.ended && nowS - x.last > 1200 && !!s.to && /^(ground|low)$/.test(s.to.conf || '');
     const done = !last || (s.ended && nowS - x.last > 1200) || lostLow || nowS - x.last > 14 * 3600;
-    const leg = { hex, reg: info.reg, type: info.type, cs: s.cs || info.cs, ladd: !!bl, from: s.from, to: done || s.ended ? s.to : null, tStart: s.tStart, tEnd: s.tEnd, tOff: s.tOff, tOn: s.tOn, ended: !!s.ended || lostLow, open: !done, startedOnGround: s.startedOnGround, startLat: s.startLat, startLon: s.startLon, startAlt: s.startAlt, startGs: s.startGs, endLat: s.endLat, endLon: s.endLon, maxAlt: s.maxAlt || 0, pathKm: s.pathKm || 0, endAlt: s.endAlt, endGs: s.endGs, how: s.how, endRules: s.endRules };
+    const leg = { hex, reg: info.reg, type: info.type, cs: s.cs || info.cs, ladd: !!bl, from: s.from, to: done || s.ended ? s.to : null, tStart: s.tStart, tEnd: s.tEnd, tOff: s.tOff, tOn: s.tOn, ended: !!s.ended || lostLow, open: !done, startedOnGround: s.startedOnGround, startLat: s.startLat, startLon: s.startLon, startAlt: s.startAlt, startGs: s.startGs, startTrk: s.startTrk, endLat: s.endLat, endLon: s.endLon, maxAlt: s.maxAlt || 0, pathKm: s.pathKm || 0, endAlt: s.endAlt, endGs: s.endGs, how: s.how, endRules: s.endRules };
     legRunways(leg, l);
     let m = legs.get(hex); if (!m) legs.set(hex, m = new Map());
     // (a flight already under way when the monitor last stopped: its take-off as kept then)
@@ -270,9 +272,9 @@ const histStats = { built: 0, empty: 0, merged: 0, part: 0, fails: 0, fromArchiv
 function histRead(hex) {
   try {
     const h = JSON.parse(fs.readFileSync(histFile(hex), 'utf8'));
-    if (h && HIST_KEEP.has(h.hv) && h.days && Array.isArray(h.legs)) { h.part = h.part && typeof h.part === 'object' ? h.part : {}; h.lo = h.lo && typeof h.lo === 'object' ? h.lo : {}; return h; }
+    if (h && HIST_KEEP.has(h.hv) && h.days && Array.isArray(h.legs)) { h.part = h.part && typeof h.part === 'object' ? h.part : {}; h.lo = h.lo && typeof h.lo === 'object' ? h.lo : {}; h.fr = h.fr && typeof h.fr === 'object' ? h.fr : {}; return h; }
   } catch (e) { /* none yet */ }
-  return { hv: HIST_V, days: {}, legs: [], part: {}, lo: {} };
+  return { hv: HIST_V, days: {}, legs: [], part: {}, lo: {}, fr: {} };
 }
 // Every saved flight log deleted, once, the first time a monitor with this reset id starts (and when the owner asks): the
 // files of STORE/hist - nothing else; what the monitor learned (learn/, learn-crowd/), its tracks and its names are kept.
@@ -387,7 +389,7 @@ async function histDay(hex, day, lol, apl, batch) {
   const cls = E.classify(info), opt = { heli: cls === 'heli', patrol: cls === 'fighter' || cls === 'milheavy', cls, type: info.type, rangeKm: E.typeRangeKm(info), dataEnd: Math.min(Date.now() / 1000, dayStart(day) + 86400) };
   const h = histRead(hex);
   // (its home and usual fields, from its flights before that day - as the userscript's summary has them from its log)
-  const before = E.chainLegs(E.stitchLegs(h.legs.filter(l => l.day < hd).map(l => Object.assign({}, l)))).slice(-60);
+  const before = E.chainLegs(E.stitchLegs(h.legs.filter(l => l.day < hd).map(l => Object.assign({}, l))), { cls, type: info.type }).slice(-60);
   const hs = E.histStats(before, Date.now() / 1000), ctx = { visits: hs.visits, base: hs.base, mil: info.mil, grp: E.groupOf(cls), cls, type: info.type };
   const raws = E.legsFromPoints(pts, opt), sums = raws.map(l => E.summarizeLeg(l, ctx));
   if (pts.length) tracks.put(hex, pts);   // (the whole day, both networks: its track filled in)
@@ -398,6 +400,10 @@ async function histDay(hex, day, lol, apl, batch) {
   h2.days[hd] = sums.length;
   if (complete) delete h2.part[hd]; else { h2.part[hd] = 1; histStats.part++; }
   if (apl.state === 'later') h2.lo[hd] = 1; else delete h2.lo[hd];
+  // (1.0.2) a day with five minutes and more of its track from what was heard here - FR24's positions of the flight among
+  // them (fr24Track) - that the networks' files have not: the day as built here is the one the browsers keep (their own
+  // read of the networks has none of it: N162GB's take-off from Lagos, only FR24 saw)
+  if (heard.length >= 5) h2.fr[hd] = Math.round(Date.now() / 1000); else delete h2.fr[hd];
   histWrite(hex, h2);
   const lrows = sums.map(s => learnRow(hex, s, h2.legs.find(l => l.day === hd && l.tStart === s.tStart), cls, info)).filter(Boolean);
   // (a whole day's archive: its rows written once at the end - one file rewritten per aircraft would be thousands)
@@ -675,6 +681,8 @@ function archiveNext(nowS) {
 // aircraft builds it too; a day read before, read again for it (and its index, if it has none). Newest first. Not while the
 // disk has less than CFG.worldFreeGb free (4 GB) - nothing is deleted to make room: said in /status
 const WORLD = W.createWorld(path.join(STORE, 'world'));
+// (every airport's movements and runway use, each day of the world log - apstats.cjs)
+const AS = createApStats({ store: STORE });
 const worldTried = new Map(), WS = { running: '', days: 0, aircraft: 0, legs: 0, bad: 0, ms: 0, full: false, freeGb: null, err: '', last: null };
 let freeAt = 0;
 function worldRoom() {
@@ -684,7 +692,7 @@ function worldRoom() {
 function worldStatus() {
   const nw = +CFG.worldDays || 0, nowS = Date.now() / 1000; let have = 0;
   for (let k = 1; k <= nw; k++) if (WORLD.has(dayOf(nowS - k * 86400), W.WORLD_V)) have++;
-  return { on: nw, v: W.WORLD_V, days: WORLD.days.size, have, gb: Math.round(WORLD.stats.bytes / 1e8) / 10, lookups: WORLD.stats.lookups, lookupMs: WORLD.stats.ms, running: WS.running, built: WS.days, last: WS.last, bad: WS.bad, full: WS.full, freeGb: WS.freeGb, minFreeGb: +CFG.worldFreeGb || 4, err: WS.err, cut: WS.cut || 0 };
+  return { on: nw, v: W.WORLD_V, days: WORLD.days.size, have, gb: Math.round(WORLD.stats.bytes / 1e8) / 10, lookups: WORLD.stats.lookups, lookupMs: WORLD.stats.ms, running: WS.running, built: WS.days, last: WS.last, bad: WS.bad, full: WS.full, freeGb: WS.freeGb, minFreeGb: +CFG.worldFreeGb || 4, err: WS.err, cut: WS.cut || 0, airports: { days: AS.stats.days, counted: AS.stats.counted, written: AS.stats.written, err: AS.stats.err } };
 }
 // (a day of the last worldDays the world log has no file of - or one an older build made - and could read now)
 function worldWants(d, nowS) {
@@ -736,6 +744,7 @@ async function archiveDay(d, io, world) {
   archRunning.add(d); AR.running = [...archRunning].join(', '); const nowS = Date.now() / 1000, rows = [];
   // (the world log of the day built in the same read - every aircraft's trace read, not only the blocked ones')
   const wb = (world === undefined ? worldWants(d, nowS) : world) ? WORLD.writer(d) : null; let taken = 0, wDone = false;
+  if (wb) wb.aps = AS.acc();
   try {
     const st = await ARCH.importDay(d, (hex, hd) => !!wb || blocked.has(hex) || (hd.flags & 9) !== 0, async (hex, j) => {
       if (wb) await worldAdd(wb, hex, j, d, io);
@@ -774,7 +783,10 @@ async function worldAdd(wb, hex, j, d, io) {
   try {
     const pts = E.parseTrace(j), info = { hex, type: String(j.t || '').toUpperCase(), reg: String(j.r || '').toUpperCase(), mil: !!(j.dbFlags & 1), cat: (pts.find(p => p.cat) || {}).cat || '' };
     const cls = E.classify(info), opt = { heli: cls === 'heli', patrol: cls === 'fighter' || cls === 'milheavy', cls, type: info.type, rangeKm: E.typeRangeKm(info), dataEnd: Math.min(Date.now() / 1000, dayStart(d) + 86400) };
-    sums = pts.length ? E.legsFromPoints(pts, opt).map(l => E.summarizeLeg(l, { visits: worldCtx.visits, base: worldCtx.base, mil: info.mil, grp: E.groupOf(cls), cls, type: info.type })) : [];
+    const raws = pts.length ? E.legsFromPoints(pts, opt) : [];
+    sums = raws.map(l => E.summarizeLeg(l, { visits: worldCtx.visits, base: worldCtx.base, mil: info.mil, grp: E.groupOf(cls), cls, type: info.type }));
+    // (1.0.2) every airport's take-offs and landings of the day, and the runway each used (apstats.cjs)
+    if (wb.aps) for (let i = 0; i < sums.length; i++) { const r = {}; legRunways(Object.assign(r, { from: sums[i].from, to: sums[i].to }), raws[i]); wb.aps.add(sums[i], r.rwyOff || null, r.rwyOn || null); }
   } catch (e) { WS.bad++; }
   if (sums) { try { wb.add(hex, sums); } catch (e) { wb.failed = e; } }
   if (Date.now() - worldYield > 30) { await (io && io.breath ? io.breath() : new Promise(r => setImmediate(r))); worldYield = Date.now(); }
@@ -782,6 +794,7 @@ async function worldAdd(wb, hex, j, d, io) {
 function worldFinish(wb, d, st) {
   if (wb.failed) throw wb.failed;
   const t0 = Date.now(), h = wb.finish();
+  if (wb.aps) { try { AS.write(d, wb.aps, true); } catch (e) { log('airport counts', d, String(e.message || e)); } }
   WS.days++; WS.aircraft = h.n; WS.legs = h.legs; WS.ms = (st && st.ms || 0) + Date.now() - t0; WS.last = Object.assign({ day: d }, WORLD.stats.last); WS.err = ''; worldTried.delete(d);
   log('world log', d, '-', h.n, 'aircraft,', h.legs, 'flights,', WORLD.stats.last && WORLD.stats.last.mb, 'MB');
 }
@@ -811,6 +824,7 @@ async function indexDay(d, io) {
   } finally { archRunning.delete(d); AR.running = [...archRunning].join(', '); }
 }
 // (archiveJobs days read at once - one: on the 1 GB VM two ran it into swap)
+const asTried = new Set();
 async function archiveLoop() {
   for (;;) {
     const j = archiveJob(Date.now() / 1000);
@@ -818,7 +832,14 @@ async function archiveLoop() {
       try { await (j.index ? indexDay(j.d) : j.only ? worldDay(j.d) : archiveDay(j.d, null, j.world)); }
       catch (e) { AR.err = String(e && e.message || e).slice(0, 120); AR.errAt = Date.now(); (j.index ? idxTried : j.only ? worldTried : archTried).set(j.d, Date.now()); if (j.world) worldTried.set(j.d, Date.now()); log('archive', j.d, AR.err); }
     }
-    await sleep(j ? 2000 : 10 * 60000);
+    // (1.0.2) nothing to read: a world day built before every airport's movements were counted, counted from its file -
+    // the newest first, one at a time (its runways not: the tracks are not kept)
+    const c = j ? null : [...WORLD.days.keys()].sort().reverse().find(d => !AS.has(d) && !archRunning.has(d) && !asTried.has(d));
+    if (c) {
+      try { const t0 = Date.now(), n = await AS.countWorld(WORLD, c, () => archBreath()); log('airport counts', c, '-', n, 'airports,', Math.round((Date.now() - t0) / 1000), 's'); }
+      catch (e) { asTried.add(c); AS.stats.err = String(e && e.message || e).slice(0, 120); log('airport counts', c, AS.stats.err); }
+    }
+    await sleep(j || c ? 2000 : 10 * 60000);
   }
 }
 // One aircraft's file of a day as adsb.lol published it in that day's archive - fetched alone, a range of the part it is
@@ -889,7 +910,11 @@ function histOf(hex, since) {
   // (1.0.1) and the flights heard here live that a day's files do not have - N811MK's Trenton - Valencia of 15 Oct: adsb.lol's
   // archive has it parked at Trenton that evening and nothing of it the next day; the monitor heard it take off and land
   for (const l of liveExtra(hex, served, days)) { days[l.day] = (days[l.day] || 0) + 1; served.push(l); }
-  return { hex, days, legs: served, part: Object.keys(h.part || {}).filter(d => days[d] > 0), lo: [...lo].filter(d => d in days && !(h.part && h.part[d])) };
+  // (1.0.2) blk: held here as blocked - 2 when FR24 has been seen hiding it (identified here) or it is on the FAA's list
+  // now, 1 otherwise (known as blocked once - the userscript's word, the archive's LADD flag): a browser that FR24 lists no
+  // flights of the aircraft to takes it as blocked on this (M-PORT, whose six-day proof read adsb.lol, which walls browsers)
+  const blk = b ? (b.faa || b.fr ? 2 : 1) : 0;
+  return { hex, days, legs: served, part: Object.keys(h.part || {}).filter(d => days[d] > 0), lo: [...lo].filter(d => d in days && !(h.part && h.part[d])), fr: Object.fromEntries(Object.entries(h.fr || {}).filter(([d]) => days[d] > 0)), blk };
 }
 // The flights of the monitor's live log (heard from the lists it polls) on the days served, that no flight of those days
 // covers - most of their time not within one (pieces of a flight cut at midnight count together). In the days' form, the
@@ -904,7 +929,7 @@ function liveExtra(hex, served, days) {
     if (over.length && Math.min(...over.map(s => s.tStart)) <= l.tStart + 900 && Math.max(...over.map(s => s.tEnd)) >= l.tEnd - 900) continue;
     if (out.some(o => o.tStart < l.tEnd && o.tEnd > l.tStart)) continue;
     const o = { day: hd, src: 'live', lx: ['', '', ''] };
-    for (const k of ['tStart', 'tEnd', 'tOff', 'tOn', 'tOffEst', 'tOnEst', 'from', 'to', 'cs', 'ended', 'how', 'startedOnGround', 'startLat', 'startLon', 'startAlt', 'endLat', 'endLon', 'endAlt', 'endTrk', 'endGs', 'startGs', 'maxAlt', 'pathKm', 'endRules', 'rwyOff', 'rwyOn']) if (l[k] != null) o[k] = l[k];
+    for (const k of ['tStart', 'tEnd', 'tOff', 'tOn', 'tOffEst', 'tOnEst', 'from', 'to', 'cs', 'ended', 'how', 'startedOnGround', 'startLat', 'startLon', 'startAlt', 'startTrk', 'endLat', 'endLon', 'endAlt', 'endTrk', 'endGs', 'startGs', 'maxAlt', 'pathKm', 'endRules', 'rwyOff', 'rwyOn']) if (l[k] != null) o[k] = l[k];
     out.push(o); histStats.live++;
   }
   return out;
@@ -915,7 +940,8 @@ function logOf(hex) {
   const h = histOf(hex), m = legs.get(hex);
   // (the live log's flights of the days not served: today's, and those of days not rebuilt yet)
   const later = m ? [...m.values()].filter(l => !(slashDay(dayOf(l.tStart)) in h.days)) : [];
-  return E.chainLegs(E.stitchLegs(h.legs.concat(later).map(l => Object.assign({}, l))));
+  const b = blocked.get(hex), x = ac.get(hex), type = String(((x && x.meta) || {}).type || (b && b.type) || '').toUpperCase();
+  return E.chainLegs(E.stitchLegs(h.legs.concat(later).map(l => Object.assign({}, l))), type ? { cls: E.classify({ type }), type } : null);
 }
 
 // An aircraft's positions heard here over the last 26 hours - its track as kept (a point a minute in the air, the moments
@@ -1234,10 +1260,16 @@ const fr24 = FR.createClient();
 const names = createNames({ store: STORE, log: (...a) => log('names', ...a) });
 const flagsOfInfo = info => (info.ladd ? 1 : 0) | (info.mil ? 2 : 0) | (info.pia ? 4 : 0);
 const ident = createIdent({ E, cfg: CFG.ident, live, ac, blocked, legs, ownerOf: hex => owners.short(hex),
-  onIdentified: (hex, info, F) => { if (!info.mil && !info.pia) markBlocked(hex, { reg: info.reg, type: info.type }, Date.now() / 1000); owners.want(hex, info.reg, true); if (F) names.add(F.id, { hex, reg: info.reg, type: info.type, cs: info.cs, flags: flagsOfInfo(info) }, Date.now() / 1000); },
+  onIdentified: (hex, info, F) => { if (!info.mil && !info.pia) { const b = markBlocked(hex, { reg: info.reg, type: info.type }, Date.now() / 1000), t = Math.round(Date.now() / 1000); if (t - (b.fr || 0) > 3600) { b.fr = t; stateDirty = true; } } owners.want(hex, info.reg, true); if (F) names.add(F.id, { hex, reg: info.reg, type: info.type, cs: info.cs, flags: flagsOfInfo(info) }, Date.now() / 1000); },
   // (a name withdrawn - the aircraft turned out elsewhere, or another took its place: not served to a playback; a flight
   // that simply ended keeps its name)
-  onUnassign: (id, R, why) => { if (why !== 'expired') names.drop(id, Date.now() / 1000); } });
+  onUnassign: (id, R, why) => {
+    if (why === 'expired') return;
+    names.drop(id, Date.now() / 1000);
+    // (a name found wrong - another aircraft's after all, or its positions parted from the flight's: FR24's positions of it
+    // put into that aircraft's track taken out again; not a flight FR24 numbered afresh - the same aircraft)
+    const F = (why === 'replaced' || why === 'diverged') && ident.flights.get(id); if (F && F.trkPts && F.trkPts.length && F.trkHex === R.hex) { F24T.dropped += tracks.drop(R.hex, F.trkPts); F.trkPts = []; F.trkPut = 0; F.trkTrailAt = 0; F.trkHex = ''; }
+  } });
 // The owners and operators of the blocked aircraft (owners.cjs): looked up once, kept for good; a name in the names table
 // whose owner is newly known goes to the browsers again
 const owners = createOwners({ createRegistry, cfg: CFG.owners, fetch: (u, o) => global.fetch(u, o), log: (...a) => log('owners', ...a), onChange: hex => ident.touch(hex) });
@@ -1245,6 +1277,28 @@ async function ownersLoop() { for (;;) { await sleep(owners.C.every); try { awai
 const dest = createDest({ E, cfg: CFG.dest, ac, legs, surge: () => surgeNow().map, fromCentral: id => centralFor(id) });
 // (a named flight's route as central calculation has it, worked out in the last two minutes - in the rough destinations'
 // form, for the table every browser gets as FR24 opens: the same answer from the first moment)
+// (1.0.2) Every flight named here, in the air, worked out by central calculation all the time - not only when a browser
+// asks: LADD aircraft first, then the rest, the answer worked out longest ago first - within its minute's allowance (the
+// rest wait for the next round), the server answering between flights. Each one's route is there from its first ping,
+// the same for every browser that opens it.
+const CR = { rounds: 0, named: 0, asked: 0, ms: 0 };
+async function centralRound(nowMs) {
+  if (!central.stats.on) return 0;
+  const list = [];
+  for (const [id, R] of ident.ids) {
+    const F = ident.flights.get(id); if (!F || F.gnd || !R.hex || nowMs - F.seen > 10 * 60000) continue;
+    const c = central.flights.get(id); list.push([id, R.flags & 1 ? 0 : 1, c ? c.routeAt : 0]);
+  }
+  list.sort((a, b) => a[1] - b[1] || a[2] - b[2]);
+  const t0 = Date.now(); let n = 0, slice = Date.now();
+  for (const [id] of list) {
+    if (Date.now() - t0 > 20000 || central.overBudget()) break;
+    try { central.routeOf(id); n++; } catch (e) { log('central round', String(e && e.message || e)); }
+    if (Date.now() - slice > 30) { await new Promise(r => setImmediate(r)); slice = Date.now(); }
+  }
+  CR.rounds++; CR.named = list.length; CR.asked += n; CR.ms += Date.now() - t0;
+  return n;
+}
 function centralFor(id) {
   const F = central.flights.get(id), r = F && F.route;
   if (!r || Date.now() - F.routeAt > 120000 || r.onGround || r.landed) return null;
@@ -1318,9 +1372,11 @@ async function identRound() {
       for (const x of list) if ((x.dbFlags & 13) || blocked.has(String(x.hex || '').toLowerCase().replace(/^~/, ''))) ingest(x, nowS);
     }
     if (areas.length) ident.match(Date.now());
+    fr24Track(Date.now());
     fr24Legs(Date.now());
     ident.prune(Date.now());
     dest.round(ident, Date.now());
+    await centralRound(Date.now());
     F24.rounds++;
   } finally { F24.busy = false; }
 }
@@ -1361,6 +1417,33 @@ function fr24Legs(nowMs) {
   }
   F24.logged += n;
   return n;
+}
+// (1.0.2) FR24's positions of every flight named here, into its aircraft's track as they come - its whole trail since
+// take-off too, once asked for - wherever ADS-B has nothing of the aircraft within two minutes: the logs are built from
+// FR24's track, ADS-B filling in between (FR24 hears what the public networks do not - satellite, its own receivers over
+// Africa: N162GB's Lagos - Farnborough of 25 Oct, heard by ADS-B from Algeria on, was "- Farnborough" in its log). A name
+// held a quarter of an hour first (a wrong one is let go by then, as a rule); its points taken out again should the name
+// be withdrawn after all (onUnassign).
+const F24T = { put: 0, dropped: 0, flights: 0 };
+function fr24Track(nowMs) {
+  const nowS = nowMs / 1000;
+  for (const [id, R] of ident.ids) {
+    const F = ident.flights.get(id); if (!F || !R.hex || !(nowS - (R.at || nowS) >= 900)) continue;
+    // (the scans' positions newer than those put already; a trail fetched since the last time, whole - it goes back to
+    // the take-off, before the positions the scans had put)
+    const from = F.trkPut || 0, src = [], trailNew = !!(F.trail && F.trail.length && (F.trailAt || 0) > (F.trkTrailAt || 0));
+    if (trailNew) { for (const p of F.trail) src.push({ t: p.t, lat: p.lat, lon: p.lon, alt: p.alt, gnd: !(p.alt > 0) && !(p.gs > 50) }); F.trkTrailAt = F.trailAt; }
+    for (const p of F.pts || []) if (p.t > from) src.push({ t: p.t, lat: p.lat, lon: p.lon, alt: p.alt, gnd: !!p.gnd });
+    if (!src.length) continue;
+    src.sort((a, b) => a.t - b.t); F.trkPut = Math.max(from, src[src.length - 1].t);
+    const kept = new Map(), timesOf = d => { if (!kept.has(d)) kept.set(d, tracks.of(R.hex, d).map(p => p[0])); return kept.get(d); };
+    const near = (ts, t) => { let lo = 0, hi = ts.length; while (lo < hi) { const m = (lo + hi) >> 1; if (ts[m] < t) lo = m + 1; else hi = m; } return (lo < ts.length && ts[lo] - t < 120) || (lo > 0 && t - ts[lo - 1] < 120); };
+    const add = src.filter(p => typeof p.t === 'number' && isFinite(p.t) && !near(timesOf(dayOf(p.t)), p.t));
+    if (!add.length) continue;
+    tracks.put(R.hex, add);
+    (F.trkPts || (F.trkPts = [])).push(...add.map(p => Math.round(p.t))); if (F.trkPts.length > 3000) F.trkPts.splice(0, F.trkPts.length - 3000);
+    F.trkHex = R.hex; F24T.put += add.length; F24T.flights++;
+  }
 }
 // (one flight's track from FR24 - its trail, then the scans' positions - as a trace; its flight read from it)
 function fr24Leg(R, F, nowS) {
@@ -1778,14 +1861,14 @@ function monStatus() {
   return { polls: stats.polls, hexPolls: stats.hexPolls, fails: stats.fails, lastErr: stats.lastErr, laddAt: lastLadd.at, aircraft: ac.size, blocked: blocked.size, withLegs: legs.size, legs: [...legs.values()].reduce((n, m) => n + m.size, 0), backfillQueue: backQ.length,
     live: live.size, listAge: { ladd: age('ladd'), mil: age('mil'), fi: age('fi'), pia: age('pia'), hex: age('hex'), area: age('area'), fiArea: age('fiArea'), adsbx: age('adsbx'), osky: age('osky'), tat: age('tat') }, tat: { polls: TAT.polls, fails: TAT.fails, last: TAT.last, aircraft: TAT.aircraft, taken: TAT.taken, every: +CFG.tatEvery || 0 }, listPolls: stats.listPolls, adsbx: { key: !!CFG.adsbxKey, today: adsbxUse.n, cap: CFG.adsbxDaily }, apiLastMin: gate.sent.filter(t => now - t < 60000).length,
     hist: Object.assign({ queue: histQ.length, closed }, histStats),
-    central: Object.assign({}, central.stats), nets: netSt, archive: Object.assign({ on: +CFG.archiveDays || 0, have: archHave(), idx: idxHave(), atrace: ARC }, AR, { world: worldStatus() }),
+    central: Object.assign({}, central.stats, { round: CR }), nets: netSt, archive: Object.assign({ on: +CFG.archiveDays || 0, have: archHave(), idx: idxHave(), atrace: ARC }, AR, { world: worldStatus() }),
     datalink: Object.assign({ on: !!CFG.datalink, aircraft: datalink.byReg.size }, datalink.stats),
     tracks: Object.assign({ days: tracks.days }, tracks.stats), playback: PB,
     waiting: { flights: waiting.size, playback: waiting.count('pb'), live: waiting.count('live'), named: waiting.stats.named, tries: waiting.stats.tries, expired: waiting.stats.expired, rounds: WAIT.rounds, lastMs: WAIT.lastMs },
     learned: learnedOut ? { ver: learnedOut.ver, from: learnedOut.from, asOf: learnedOut.asOf, days: learnedOut.days, flights: learnedOut.flights, fromBrowsers: learnedOut.crowd || 0, ops: learnedOut.ops, mb: Math.round(learnedOut.json.length / 1e5) / 10 } : null, backfillWaits: backWaits.n,
     shared: { routes: ident.stats.routes || 0, routesRefused: ident.stats.routeRefused || 0, routesShown: [...ident.ids.values()].filter(R => R.crowd).length, destsDropped: (ident.stats.routeAged || 0) + (ident.stats.routeContra || 0), learnRows: LC },
     fr24: { scanning: !!CFG.fr24Scan, headersFrom: fr24.st.hdr ? 'browser' : 'default', ok: fr24.st.ok, fails: fr24.st.fails, lastErr: fr24.st.lastErr, lastOkAgo: fr24.st.lastOkAt ? Math.round((now - fr24.st.lastOkAt) / 1000) : null, paused: fr24.st.pauseUntil > now ? Math.round((fr24.st.pauseUntil - now) / 1000) : 0, scans: F24.scans, last: F24.last,
-      flights: ident.flights.size, named: ident.ids.size, unnamed: [...ident.flights.values()].filter(F => !ident.ids.has(F.id) && now - F.seen < 600000).length, matched: ident.stats.matched, revoked: ident.stats.revoked, lookups: ident.stats.lookups, trails: ident.stats.trails, trailQueue: ident.trailQ.length, dest: dest.stats, logged: F24.logged,
+      flights: ident.flights.size, named: ident.ids.size, unnamed: [...ident.flights.values()].filter(F => !ident.ids.has(F.id) && now - F.seen < 600000).length, matched: ident.stats.matched, revoked: ident.stats.revoked, lookups: ident.stats.lookups, trails: ident.stats.trails, trailQueue: ident.trailQ.length, dest: dest.stats, logged: F24.logged, fr24Track: F24T,
       archive: { names: names.size, added: names.stats.added, withdrawn: names.stats.dropped, servedToPlayback: names.stats.served }, crowd: { public: PUBLIC, refused: ident.stats.crowdRefused || 0, waiting: ident.stats.crowdPending || 0 } },
     wx: { cells: wx.stats.cells, requests: wx.stats.requests, today: wx.stats.used, fails: wx.stats.fails, lastErr: wx.stats.lastErr, estimated: wx.stats.estimated, waiting: wx.want.size },
     tel: { aircraft: tel.size, added: tel.stats.added, fromBrowsers: tel.stats.crowd || 0, refused: tel.stats.crowdBad || 0, served: tel.stats.served, asked: tel.stats.asked, missed: tel.stats.missed },
@@ -1968,7 +2051,7 @@ function answer(u, nowS, ctx) {
     const hs = hexList(q('hex'), 50), one = h => { const m = legs.get(h); return { hex: h, legs: m ? chained(m) : [] }; };
     return hs.length > 1 ? { list: hs.map(one) } : one(hs[0] || String(q('hex') || '').toLowerCase());
   }
-  if (p === '/airport') return APT.answer(+q('ap'), legs, nowS, Math.min(14, Math.max(1, +(q('days') || 7))));
+  if (p === '/airport') return APT.answer(+q('ap'), legs, nowS, Math.min(14, Math.max(1, +(q('days') || 7))), AS, Math.min(31, Math.max(0, +(q('hist') || 0))));
   if (p === '/owners') return { list: owners.rows(hexList(q('hex'), 500), { public: !admin && PUBLIC }) };
   if (p === '/learn') return Object.assign({ v: 1 }, learnSince(String(q('from') || '')));
   if (p === '/surge') { const sc = surgeNow(nowS); return { v: 1, day: sc.day, list: sc.list }; }
@@ -2100,5 +2183,5 @@ if (require.main === module) {
   ownersLoop();
   setInterval(() => { wx.pump().catch(e => log('wx', String(e))); }, 2000);
 }
-module.exports = { central, centralStart, WORLD, WS, worldDay, worldWants, worldRoom, worldStatus, worldRecheck: () => { freeAt = 0; }, pollTat, TAT, TAT_HOST, carriesOn, liveExtra, logOf, heardPts, archBreath, memAvail, archTrace, archiveJob, indexDay, idxLookup, idxHave, archIdx, idxFile, ARC, setArcRange: f => { arcRange = f; }, surgeNow, datalink, datalinkRound, dlSeen, classifyTrace, traceGet, netSt, archiveDay, archiveState, archiveNext, archMark, archTried, archDays, archRunning, traceOf, AR, apliveTrace, HIST_V, HIST_RESET, resetHistLogs, histResetMark, get histResetN() { return histResetN; }, adminAnswer, ctl, logRing, log, MON_VER, learnCheck, learnFromCrowd, crowdLearnSave, crowdRows, LC, tracks, waiting, waitRound, waitLive, waitNamed, waitClaims, WAIT, saveWaiting, loadWaiting, pbMatch, learnedBuild, learnedDue, learnedLoad, learnedRef: () => learnedOut, liveBusy, backWaits, E, CFG, loadEngine, ingest, buildLegs, fr24Legs, fr24Leg, F24ref: () => F24, owners, ownersLoop, APT, legRunways, names, nearAnswer, telAnswer, tel, wx, pbNames, get PUBLIC() { return PUBLIC; }, get RATE() { return RATE; }, limited, tokenOk, installs, opts, optionsSet, optionsLoad, latestCheck, latestVer, helloAnswer, badge, wakeQuiet, parkedAt, boardLegs, flightsOfCs, lastHeard, legs, ac, backfillOne, backQ, blocked, markBlocked, seed, gapFill, addArea, userAreas,
+module.exports = { central, centralStart, centralRound, CR, WORLD, WS, AS, fr24Track, F24T, worldDay, worldWants, worldRoom, worldStatus, worldRecheck: () => { freeAt = 0; }, pollTat, TAT, TAT_HOST, carriesOn, liveExtra, logOf, heardPts, archBreath, memAvail, archTrace, archiveJob, indexDay, idxLookup, idxHave, archIdx, idxFile, ARC, setArcRange: f => { arcRange = f; }, surgeNow, datalink, datalinkRound, dlSeen, classifyTrace, traceGet, netSt, archiveDay, archiveState, archiveNext, archMark, archTried, archDays, archRunning, traceOf, AR, apliveTrace, HIST_V, HIST_RESET, resetHistLogs, histResetMark, get histResetN() { return histResetN; }, adminAnswer, ctl, logRing, log, MON_VER, learnCheck, learnFromCrowd, crowdLearnSave, crowdRows, LC, tracks, waiting, waitRound, waitLive, waitNamed, waitClaims, WAIT, saveWaiting, loadWaiting, pbMatch, learnedBuild, learnedDue, learnedLoad, learnedRef: () => learnedOut, liveBusy, backWaits, E, CFG, loadEngine, ingest, buildLegs, fr24Legs, fr24Leg, F24ref: () => F24, owners, ownersLoop, APT, legRunways, names, nearAnswer, telAnswer, tel, wx, pbNames, get PUBLIC() { return PUBLIC; }, get RATE() { return RATE; }, limited, tokenOk, installs, opts, optionsSet, optionsLoad, latestCheck, latestVer, helloAnswer, badge, wakeQuiet, parkedAt, boardLegs, flightsOfCs, lastHeard, legs, ac, backfillOne, backQ, blocked, markBlocked, seed, gapFill, addArea, userAreas,
   serve, fr24, ident, dest, F24, report, identRound, fr24Round, saveIdent, loadIdent, histUnknown, learnSince, learnWrite, diskLegs, KEEP_LADD, save, loadStore, dirtyDays, pollOpenSky, adsbxUse, live, liveList, answer, step, P, piaState, apiGet, gate, stats, lastOk, noteWatch, watch, watchedAll, flew, closeDays, histQ, histPend, histOne, histDay, histOf, histRead, histWrite, histFile, fillHist, fillAsked, queueHist, photos, nextHist, saveState, loadState, lastW, get closed() { return closed; }, set closed(v) { closed = v; }, pause };

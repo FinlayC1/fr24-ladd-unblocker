@@ -4,6 +4,39 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 
 1.0.0 is the first release. The versions before it are the betas, labelled B: B22.31.12 is version 22.31.12.
 
+## [1.0.2] - 2026-10-29
+
+### Fixed
+- **G-LOBY "landed in Milan" when it landed at St. Moritz.** 25 Oct, Bedford (MA) to Samedan: lost at 10,550 ft coming down the Engadin valley, heard again an hour later climbing out of the same valley, on to Luton. The log had it landing at Sondrio and taking off from Mollis (a browser's log: Milan, then St. Moritz).
+  - A guessed landing or take-off is never at a field whose runway is too short for the aircraft (unless it has used that field before). Sondrio's strip is 3,445 ft; a Global 5000 needs 3,900.
+  - A stop neither end of which was seen is one stop. The landing leads (the descent is the better guess): its field is the take-off's too when it explains the climb about as well; otherwise the field that explains both, if one does nearly as well as two different ones.
+  - Measured on 921 real stops of business jets, turboprops and airliners, both ends cut out of coverage at random heights: the take-off's field right 52% of the time (34% before), the landing's as before (52%), both right 52% (25%).
+  - A guessed landing followed by a take-off seen on the runway of a field it could have been coming down to is that field: on 977 real stops, right 90% (53% before). (Of 92 cases with an unseen short hop in between, 7 now take the hop's far end.)
+- **N162GB "Lagos 95%" while descending into London.** A G200 (GALX) out of Lagos, heard by ADS-B from Algeria on. The engine had no range for its type and used a light jet's (2,200 nm): over France it was "beyond range" of every field ahead, and only its origin, never range-checked, was left.
+  - G200 (3,400 nm) and a few other types added; the Citation Latitude's range corrected (2,700 nm).
+  - A range the flight itself has already flown beyond is not believed (what it has flown, a fifth to spare).
+  - A return to the origin is ruled out too when the way back on top of what was flown is beyond range (civil aircraft, 300 km+ out).
+- **Flight logs from FR24's track first.** N162GB's log was "- -> Farnborough": the take-off from Lagos was only seen by FR24.
+  - The monitor now keeps FR24's positions of every flight it has named in that aircraft's track as they come, and the whole trail since take-off when it is fetched. A name is held a quarter of an hour first, and the points are taken out again if the name is withdrawn as wrong.
+  - Each day is built from FR24's track, with ADS-B filling in between (where ADS-B has nothing within two minutes, FR24's points count): Lagos -> Farnborough.
+  - A day built with such positions is marked; browsers keep the monitor's build of it over their own read of the networks, and take it over a day they read before.
+- **M-PORT had no LADD tag in search or on its log page.** The tag needed proof the aircraft had flown in the last six days, read from adsb.lol, which walls browsers.
+  - The monitor's `/hist` now says whether it holds the aircraft as blocked (and whether FR24 has been seen hiding it). Its word is the proof.
+  - The log page now asks too when FR24's page lists no flights of an aircraft it knows.
+- **The airport panel's padlock flashed for half a second.** FR24's locked "Movements per day" and "Runway usage" pictures are hidden from the first frame; their room is kept, so nothing moves. An airport opened in the last few days is filled at once from what this browser kept.
+
+### Added
+- **Every airport's movements and runway use, every day, counted on the monitor.** As each day of the world log is built (every aircraft adsb.lol heard), the monitor counts every airport's take-offs and landings and works out the runway each used. It keeps them for good, one small file a day, and `/airport` answers at once with the last two weeks. Older world days are counted in the background (movements only; their tracks are not kept for runways). The panel shows each finished day's counts; today's are FR24's own schedule as before.
+- **Every flight the monitor has named is worked out continuously.** Central calculation now runs every round for every named flight in the air, LADD aircraft first, then the least recently worked out, within its minute's allowance. Each route is ready from the first ping, the same for every browser.
+- **A flight FR24 numbers afresh after a hole in its coverage is recognised.** When FR24 starts drawing a new flight within half an hour where a named flight it stopped drawing would be by now, the name carries over:
+  - position within 2.5 km per minute of the hole (20 km at least);
+  - height within reason;
+  - type not unlike;
+  - not heard elsewhere on ADS-B;
+  - only one candidate.
+- **The weights refitted on long histories** (3,991 aircraft's monitor logs, warm-started from 1.0.0's): on the same 28,270 held-out moments, right 57.2% -> 57.5%, top three 73.5% -> 73.6%, better in every group; with three-week histories unchanged (52.3%). The calibration of the odds is kept from 1.0.0.
+
+
 ## [1.0.1] - 2026-10-23
 
 ### Fixed
@@ -89,7 +122,6 @@ Measured on aircraft held out of training: 66,679 moments of 2,073 aircraft, 1-2
   - shown under 40% 36.2% -> 26.0%;
   - flights to places never visited 54% -> 29% of moments.
 - **A landing guessed across a night is not made.** N811MK, 7 Oct, was lost coming down over Spain, and heard climbing 85 km away the next morning before Trenton. Reading a landing into that night the way a hole within one day is read gave Valladolid. Tried on 3,143 real stops of business jets and airliners with both ends out of coverage, such a guess was right 25% of the time and a neighbouring field 43% of it (Teterboro read as Newark). A wrong field is a visit in the aircraft's history: with it, N811MK's guess on 23 Oct was "Valladolid 73%", and it landed at Madrid. Those ends stay "-".
-- **The weights refitted on long histories** (3,991 aircraft's monitor logs, warm-started from 1.0.0's): on the same 28,270 held-out moments, right 57.2% -> 57.5%, top three 73.5% -> 73.6%, better in every group; with three-week histories unchanged (52.3%). The calibration of the odds is kept from 1.0.0.
 
 ### Tests
 - `unit_legs`, on the aircraft's real traces:

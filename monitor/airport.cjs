@@ -79,16 +79,47 @@ function createAirportInfo(env) {
     return best[0][0];
   }
   // /airport: its runways and frequencies; which runways the flights tracked there used, the last `days` days
-  function answer(apId, legs, nowS, days) {
+  // (1.0.2) With the day counts kept (apstats.cjs: st): the window's days counted there - every aircraft adsb.lol heard -
+  // from them, the rest (today, a day not built yet) from the flights tracked here; runway use likewise, from a day's
+  // counts where its runways were worked out. And each of the last `hist` days' take-offs and landings (daily, UTC days:
+  // [day, take-offs, landings, 'all' every aircraft heard | 'live' the flights tracked here]).
+  const utcDay = t => new Date(t * 1000).toISOString().slice(0, 10);
+  function answer(apId, legs, nowS, days, st, hist) {
     const a = E.byId(apId); if (!a) return { ap: apId, known: false };
-    const icao = String(a.icao || '').toUpperCase(), from = nowS - days * 86400, use = new Map();
+    const icao = String(a.icao || '').toUpperCase(), from = nowS - days * 86400, use = new Map(), key = String(apId);
     let moves = 0, withRwy = 0;
-    const add = (r, k) => { let u = use.get(r); if (!u) use.set(r, u = [0, 0]); u[k]++; withRwy++; };
-    for (const m of legs.values()) for (const l of m.values()) {
-      if (l.from && l.from.id === apId && (l.tOff || l.tStart) >= from && (l.tOff || l.tStart) <= nowS) { moves++; if (l.rwyOff) add(l.rwyOff, 0); }
-      if (l.to && l.to.id === apId && !l.open && (l.tOn || l.tEnd) >= from && (l.tOn || l.tEnd) <= nowS) { moves++; if (l.rwyOn) add(l.rwyOn, 1); }
+    const add = (r, k, n) => { let u = use.get(r); if (!u) use.set(r, u = [0, 0]); u[k] += n || 1; withRwy += n || 1; };
+    const win = new Set(); for (let k = 0; k < days; k++) win.add(utcDay(nowS - k * 86400));
+    const dayStat = d => (st && st.has(d) ? st.read(d) : null);
+    const counted = new Set(), rwCounted = new Set();
+    for (const d of win) {
+      const o = dayStat(d); if (!o) continue;
+      counted.add(d); if (o.rw) rwCounted.add(d);
+      const x = o.ap[key]; if (!x) continue;
+      moves += (x[0] || 0) + (x[1] || 0);
+      if (o.rw && x[2]) for (const [r, u] of Object.entries(x[2])) { if (u[0]) add(r, 0, u[0]); if (u[1]) add(r, 1, u[1]); }
     }
-    return { ap: apId, icao, known: true, days, runways: info[icao] || [], freqs: freqs[icao] || [], usage: [...use].map(([r, u]) => [r, u[0], u[1]]).sort((x, y) => (y[1] + y[2]) - (x[1] + x[2]) || x[0].localeCompare(y[0])), moves, withRunway: withRwy };
+    const live = new Map();   // day -> [take-offs, landings] of the flights tracked here
+    const lv = d => live.get(d) || live.set(d, [0, 0]).get(d);
+    const hFrom = hist > 0 ? nowS - hist * 86400 : from;
+    for (const m of legs.values()) for (const l of m.values()) {
+      const tO = l.tOff || l.tStart, tL = l.tOn || l.tEnd;
+      if (l.from && l.from.id === apId && tO >= Math.min(from, hFrom) && tO <= nowS) {
+        const d = utcDay(tO); lv(d)[0]++;
+        if (tO >= from && win.has(d)) { if (!counted.has(d)) moves++; if (l.rwyOff && !rwCounted.has(d)) add(l.rwyOff, 0); }
+      }
+      if (l.to && l.to.id === apId && !l.open && tL >= Math.min(from, hFrom) && tL <= nowS) {
+        const d = utcDay(tL); lv(d)[1]++;
+        if (tL >= from && win.has(d)) { if (!counted.has(d)) moves++; if (l.rwyOn && !rwCounted.has(d)) add(l.rwyOn, 1); }
+      }
+    }
+    const daily = [];
+    for (let k = 0; k < (hist || 0); k++) {
+      const d = utcDay(nowS - k * 86400), o = dayStat(d), x = o && o.ap[key];
+      if (o) daily.push([d, x ? x[0] || 0 : 0, x ? x[1] || 0 : 0, 'all']);
+      else if (live.has(d)) daily.push([d, live.get(d)[0], live.get(d)[1], 'live']);
+    }
+    return { ap: apId, icao, known: true, days, runways: info[icao] || [], freqs: freqs[icao] || [], usage: [...use].map(([r, u]) => [r, u[0], u[1]]).sort((x, y) => (y[1] + y[2]) - (x[1] + x[2]) || x[0].localeCompare(y[0])), moves, withRunway: withRwy, daily, allDays: counted.size };
   }
   return { load, endsOf, runwayOf, answer, get size() { return Object.keys(info).length; } };
 }

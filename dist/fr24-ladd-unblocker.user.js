@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Flightradar24 LADD / N-A Unblocker (feed-level)
 // @namespace    tweeks.io
-// @version      1.0.1
+// @version      1.0.2
 // @description  Identifies every LADD / N/A / blocked military aircraft on Flightradar24 from public ADS-B, and injects callsign, registration, operator, age, country, MSN, squawk, vertical speed, GPS altitude, airspeeds, wind, photos, a reasoned origin/destination with a wind-corrected ETA (also for ordinary flights FR24 shows as N/A - military, private, GA, helicopters, with private landing sites; learned from 63 days of every aircraft worldwide, with live weather and closures), airport-board entries and a rebuilt 7-month flight log straight into FR24's own data - so it all renders like normal FR24 traffic.
 // @author       Finlay Clarke
 // @updateURL    https://raw.githubusercontent.com/FinlayC1/fr24-ladd-unblocker/main/dist/fr24-ladd-unblocker.user.js
@@ -91,7 +91,7 @@
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "1.0.1";
+    var BRIDGE_V = "1.0.2";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed
@@ -2051,12 +2051,18 @@
       });
       return out;
     }
-    // (the movements of each of the last days: FR24's own counts and the blocked flights the userscript knows)
+    // (the movements of each of the last days: FR24's own counts and the blocked flights the userscript knows - and, 1.0.2,
+    // every finished day the monitor has counted: every aircraft public ADS-B heard take off or land there, its world log)
     function panelMoves(code, d) {
       var c = code.toLowerCase(), tz = d.tz || 'UTC', today = dayOf(Date.now() / 1000, tz);
       var days = mvKept(c).days || {}, add = {}, inc = function (t, k) { var x = dayOf(t, tz); (add[x] = add[x] || { off: 0, on: 0 })[k]++; };
       (routesAdd.get(d.apId) || []).forEach(function (m) { if (m.from.id === d.apId) (m.offs || []).forEach(function (t) { inc(t, 'off'); }); if (m.to.id === d.apId) (m.ons || []).forEach(function (t) { inc(t, 'on'); }); });
-      return Object.keys(days).sort().reverse().slice(0, 7).map(function (k) { var x = days[k], e = add[k] || { off: 0, on: 0 }; return { day: k, today: k === today, off: x.takeoffs + e.off, on: x.landings + e.on, blocked: e.off + e.on }; });
+      var mon = {}; (Array.isArray(d.daily) ? d.daily : []).forEach(function (x) { if (Array.isArray(x) && x[3] === 'all' && /^\d{4}-\d\d-\d\d$/.test(String(x[0])) && x[0] !== today) mon[x[0]] = { off: +x[1] || 0, on: +x[2] || 0 }; });
+      var keys = Object.keys(days).concat(Object.keys(mon)).filter(function (k, i, a) { return a.indexOf(k) === i; }).sort().reverse().slice(0, 7);
+      return keys.map(function (k) {
+        if (mon[k]) return { day: k, today: false, off: mon[k].off, on: mon[k].on, blocked: 0, all: true };
+        var x = days[k], e = add[k] || { off: 0, on: 0 }; return { day: k, today: k === today, off: x.takeoffs + e.off, on: x.landings + e.on, blocked: e.off + e.on };
+      });
     }
     var TL_OFF = '#3d7be0', TL_ON = '#f0b429';
     function bar(parts, max) {
@@ -2087,8 +2093,9 @@
       if (!rows.length) { var p = document.createElement('div'); p.className = 'px-1.5 py-2 text-sm text-gray-900'; p.textContent = 'Counting this airport\'s flights of the last days…'; box.appendChild(p); return 'none'; }
       var max = Math.max.apply(null, rows.map(function (r) { return r.off + r.on; }));
       grid(box, rows.map(function (r) { return { label: dayLabel(r.day) + (r.today ? ' (so far)' : ''), off: r.off, on: r.on }; }), max);
-      var bl = rows.reduce(function (s, r) { return s + r.blocked; }, 0);
-      legend(box, 'Take-offs / landings by the airport\'s local day - FR24\'s own schedule' + (bl ? ', with ' + bl + ' blocked flight' + (bl > 1 ? 's' : '') + ' it does not show' : '') + '.');
+      var bl = rows.reduce(function (s, r) { return s + r.blocked; }, 0), all = rows.filter(function (r) { return r.all; }).length;
+      legend(box, all === rows.length ? 'Take-offs / landings each day (UTC) - every aircraft public ADS-B heard there, counted by the monitor.'
+        : (all ? 'Finished days (UTC): every aircraft public ADS-B heard there, counted by the monitor; the others: ' : 'Take-offs / landings by the airport\'s local day - ') + 'FR24\'s own schedule' + (bl ? ', with ' + bl + ' blocked flight' + (bl > 1 ? 's' : '') + ' it does not show' : '') + '.');
       return JSON.stringify(rows);
     }
     function usageBlock(box, d) {
@@ -2100,7 +2107,7 @@
       if (!rows.length) { p = document.createElement('div'); p.className = 'px-1.5 py-2 text-sm text-gray-900'; p.textContent = 'No runways known for this airport.'; box.appendChild(p); return 'none'; }
       var max = Math.max(1, Math.max.apply(null, rows.map(function (r) { return r.off + r.on; })));
       grid(box, rows, max);
-      legend(box, d.moves ? 'Take-offs / landings of the ' + d.moves + ' movement' + (d.moves > 1 ? 's' : '') + ' the monitor tracked here in the last ' + (d.days || 7) + ' days (blocked aircraft worldwide, all traffic in its areas - not every flight); the runway was clear from the track for ' + (d.withRunway || 0) + '.' : 'The monitor tracked no flights here in the last ' + (d.days || 7) + ' days.');
+      legend(box, d.moves ? 'Take-offs / landings of the ' + d.moves + ' movement' + (d.moves > 1 ? 's' : '') + (d.allDays ? ' public ADS-B heard here in the last ' + (d.days || 7) + ' days (every aircraft on the ' + d.allDays + ' day' + (d.allDays > 1 ? 's' : '') + ' the monitor has counted; the rest, the flights it tracks)' : ' the monitor tracked here in the last ' + (d.days || 7) + ' days (blocked aircraft worldwide, all traffic in its areas - not every flight)') + '; the runway was clear from the track for ' + (d.withRunway || 0) + '.' : 'No take-offs or landings heard here in the last ' + (d.days || 7) + ' days.');
       return JSON.stringify(rows) + d.moves;
     }
     function panelBlock(slot, code, d) {
@@ -2119,7 +2126,7 @@
       var code = panelCode(); if (!code) return;
       if (panelOpen.code !== code) { panelOpen.code = code; panelOpen.at = Date.now(); }
       panelWant(code); rwyPanel();
-      var d = panelData[code];
+      var d = panelData[code] || panelFromKept(code);
       // (FR24's own counts of the last days: once the panel has been open a moment - a click through airports asks nothing)
       if (d && Date.now() - panelOpen.at > 2500) mvCount(code.toLowerCase(), d.tz || 'UTC');
       // (the panel as it was last done, unchanged: nothing to do)
@@ -2131,9 +2138,20 @@
     function panelSig(panel, code, d) { return [panel.getElementsByTagName('*').length, textOf(panel).length, d ? d.at : 0, (lsGet('tl.mv.' + code.toLowerCase()) || '').length, ((d && routesAdd.get(d.apId)) || []).length, Math.floor(Date.now() / 60000)].join(':'); }
     function acceptAirportPanel(d) {
       var code = rwyKey(d.code); if (!code) return;
-      panelData[code] = { at: Date.now(), apId: Number(d.apId) || 0, tz: String(d.tz || ''), days: Number(d.days) || 7, runways: Array.isArray(d.runways) ? d.runways : null, freqs: Array.isArray(d.freqs) ? d.freqs : null, usage: Array.isArray(d.usage) ? d.usage : null, moves: Number(d.moves) || 0, withRunway: Number(d.withRunway) || 0, monitor: !!d.monitor, ends: Array.isArray(d.ends) ? d.ends : null };
+      panelData[code] = { at: Date.now(), apId: Number(d.apId) || 0, tz: String(d.tz || ''), days: Number(d.days) || 7, runways: Array.isArray(d.runways) ? d.runways : null, freqs: Array.isArray(d.freqs) ? d.freqs : null, usage: Array.isArray(d.usage) ? d.usage : null, moves: Number(d.moves) || 0, withRunway: Number(d.withRunway) || 0, monitor: !!d.monitor, ends: Array.isArray(d.ends) ? d.ends : null, daily: Array.isArray(d.daily) ? d.daily : null, allDays: Number(d.allDays) || 0 };
+      panelKeep(code, panelData[code]);
       panelSigs[code] = ''; panelTick();
     }
+    // (1.0.2) the last 40 airports' panels kept in this browser: one opened again is filled the moment it shows, the
+    // monitor's fresh answer replacing it when it comes
+    function panelKept() { try { var o = JSON.parse(lsGet('tl.apc') || 'null'); return o && typeof o === 'object' ? o : {}; } catch (e) { return {}; } }
+    function panelKeep(code, d) {
+      if (!d || !d.monitor) return;
+      var o = panelKept(); delete o[code]; o[code] = d;
+      var ks = Object.keys(o); while (ks.length > 40) delete o[ks.shift()];
+      lsSet('tl.apc', JSON.stringify(o));
+    }
+    function panelFromKept(code) { var d = panelKept()[code]; if (!d || typeof d !== 'object' || !(Date.now() - (d.at || 0) < 3 * 86400e3)) return null; d.kept = true; panelData[code] = d; return d; }
     setInterval(function () { try { panelTick(); } catch (e) { stats.errors++; stats.lastError = String(e); } }, 400);
     // an airport page's runway table: FR24's runways, each end's elevation where the userscript knows it, else the airport's
     function unlockRunways(p, apId) {
@@ -2960,7 +2978,7 @@
 
     // ---- aircraft knowledge ------------------------------------------------------------------------------------
     // Ranges in nm (typical max with reserves). Unknown types fall back to their class.
-    const RANGE = { GLF6: 7000, GL7T: 7700, GL8T: 8000, GLF5: 6500, GLF4: 4200, G280: 3600, GL5T: 5200, GLEX: 6000, GLF3: 3600, GA5C: 5200, GA6C: 6500, GA7C: 7500, GA8C: 7900, CL60: 3500, CL64: 3800, CL65: 4000, CL35: 3200, CL30: 3100, C68A: 1700, C56X: 2000, C25A: 1300, C25B: 1600, C25C: 2000, C25M: 1100, C700: 3500, C750: 3300, C510: 1000, C525: 1200, C550: 1500, C560: 1800, C650: 2000, C680: 2700, E50P: 1100, E55P: 2000, E545: 2400, E550: 3000, E35L: 3900, E135: 1700, LJ31: 1400, LJ35: 2000, LJ40: 1700, LJ45: 1700, LJ55: 2000, LJ60: 2400, LJ70: 2000, LJ75: 2000, H25B: 2500, H25C: 2600, HA4T: 2500, HDJT: 1200, F2TH: 3300, FA7X: 5900, FA8X: 6400, F900: 4700, FA50: 3100, FA6X: 5500, FA10: 1500, FA20: 2000, ASTR: 3000, G150: 2900, WW24: 2000, PRM1: 1200, BE40: 1500, PC12: 1800, PC24: 2000, TBM7: 1400, TBM8: 1500, TBM9: 1700, B350: 1800, BE20: 1500, BE9L: 1300, BE58: 1400, BE36: 900, C208: 1000, SF50: 1200, EA50: 1100, C172: 650, C182: 900, C206: 800, C210: 1000, SR22: 1000, SR20: 800, S22T: 1000, PA46: 1300, P46T: 1300, M600: 1500, DA62: 1200, DA42: 1100, DA40: 900, PA31: 1000, PA32: 800, PA28: 650, PA34: 800, PA44: 700, BE55: 900, BE76: 700, C150: 400, C152: 400, P28A: 650, BBJ1: 6000, BBJ2: 5500, B737: 3000, B738: 3000, B739: 3000, B38M: 3500, A319: 3700, A320: 3300, A20N: 3500, A21N: 4700, A318: 4200, B752: 3900, B763: 5900, B764: 5600, B772: 7000, B77L: 8500, B77W: 7400, B78X: 6400, B762: 6600, B39M: 3500, B37M: 3500, B3XM: 3300, B753: 3400, A35K: 8700, A388: 8000, A339: 7200, A338: 8100, A346: 7900, A343: 7400, A342: 7800, MD11: 6700, A306: 4000, B788: 7300, B789: 7600, B744: 7200, B748: 7700, A332: 7200, A333: 6000, A359: 8000, E190: 2400, E195: 2300, CRJ2: 1700, CRJ7: 1500, CRJ9: 1600, AT72: 800, AT76: 800, DH8D: 1100, DHC6: 800, C130: 2000, C30J: 3000, A400: 4500, C17: 4500, K35R: 5000, KC46: 6000, R135: 5000, E3TF: 5000, E3CF: 5000, P8: 4500, MRTT: 7200, A310: 5000, C5M: 5500, C160: 2500, CN35: 2000, C295: 2300, B703: 5000, E6: 6000, E4: 6000, C40: 3000, C37A: 6500, C37B: 6500, C32: 3900, VC25: 7000, EUFI: 1500, F35: 1200, F15: 2000, F16: 1500, F18: 1200, FA18: 1200, F18S: 1200, F22: 1600, A10: 700, T38: 900, HAWK: 1300, TEX2: 900, PC21: 700, M346: 1000, TOR: 1500, RFAL: 2000, GRIF: 1500, F5: 900, B52: 7000, B1: 5000, B2: 6000, U2: 6000, RQ4: 12000, MQ9: 1000, Q9: 1000, EH10: 750, H47: 400, H60: 320, S70: 320, NH90: 450, EC35: 350, EC30: 330, EC45: 350, EC55: 400, EC75: 450, H160: 450, A139: 500, A169: 450, A109: 450, AW09: 450, S76: 400, S92: 500, B429: 400, B407: 330, B412: 400, B505: 300, B06: 330, R44: 300, R66: 350, R22: 200, AS50: 350, AS55: 380, AS65: 450, AS32: 450, EC20: 330, PUMA: 350, LYNX: 320, WILD: 400, APAC: 250, H64: 250, AH64: 250, UH1: 250, V22: 900 };
+    const RANGE = { GLF6: 7000, GL7T: 7700, GL8T: 8000, GLF5: 6500, GLF4: 4200, G280: 3600, GALX: 3400, G200: 3400, GL5T: 5200, GLEX: 6000, GLF3: 3600, GA5C: 5200, GA6C: 6500, GA7C: 7500, GA8C: 7900, CL60: 3500, CL64: 3800, CL65: 4000, CL35: 3200, CL30: 3100, C68A: 2700, C56X: 2000, C25A: 1300, C25B: 1600, C25C: 2000, C25M: 1100, C700: 3500, C750: 3300, C510: 1000, C500: 1300, C501: 1300, MU30: 1300, SBR1: 1700, SBR2: 2000, C525: 1200, C550: 1500, C560: 1800, C650: 2000, C680: 2700, E50P: 1100, E55P: 2000, E545: 2400, E550: 3000, E35L: 3900, E135: 1700, LJ31: 1400, LJ35: 2000, LJ40: 1700, LJ45: 1700, LJ55: 2000, LJ60: 2400, LJ70: 2000, LJ75: 2000, H25B: 2500, H25C: 2600, HA4T: 2500, HDJT: 1200, F2TH: 3300, FA7X: 5900, FA8X: 6400, F900: 4700, FA50: 3100, FA6X: 5500, FA10: 1500, FA20: 2000, ASTR: 3000, G150: 2900, WW24: 2000, PRM1: 1200, BE40: 1500, PC12: 1800, PC24: 2000, TBM7: 1400, TBM8: 1500, TBM9: 1700, B350: 1800, BE20: 1500, BE9L: 1300, BE58: 1400, BE36: 900, C208: 1000, SF50: 1200, EA50: 1100, C172: 650, C182: 900, C206: 800, C210: 1000, SR22: 1000, SR20: 800, S22T: 1000, PA46: 1300, P46T: 1300, M600: 1500, DA62: 1200, DA42: 1100, DA40: 900, PA31: 1000, PA32: 800, PA28: 650, PA34: 800, PA44: 700, BE55: 900, BE76: 700, C150: 400, C152: 400, P28A: 650, BBJ1: 6000, BBJ2: 5500, B737: 3000, B738: 3000, B739: 3000, B38M: 3500, A319: 3700, A320: 3300, A20N: 3500, A21N: 4700, A318: 4200, B752: 3900, B763: 5900, B764: 5600, B772: 7000, B77L: 8500, B77W: 7400, B78X: 6400, B762: 6600, B39M: 3500, B37M: 3500, B3XM: 3300, B753: 3400, A35K: 8700, A388: 8000, A339: 7200, A338: 8100, A346: 7900, A343: 7400, A342: 7800, MD11: 6700, A306: 4000, B788: 7300, B789: 7600, B744: 7200, B748: 7700, A332: 7200, A333: 6000, A359: 8000, E190: 2400, E195: 2300, CRJ2: 1700, CRJ7: 1500, CRJ9: 1600, AT72: 800, AT76: 800, DH8D: 1100, DHC6: 800, C130: 2000, C30J: 3000, A400: 4500, C17: 4500, K35R: 5000, KC46: 6000, R135: 5000, E3TF: 5000, E3CF: 5000, P8: 4500, MRTT: 7200, A310: 5000, C5M: 5500, C160: 2500, CN35: 2000, C295: 2300, B703: 5000, E6: 6000, E4: 6000, C40: 3000, C37A: 6500, C37B: 6500, C32: 3900, VC25: 7000, EUFI: 1500, F35: 1200, F15: 2000, F16: 1500, F18: 1200, FA18: 1200, F18S: 1200, F22: 1600, A10: 700, T38: 900, HAWK: 1300, TEX2: 900, PC21: 700, M346: 1000, TOR: 1500, RFAL: 2000, GRIF: 1500, F5: 900, B52: 7000, B1: 5000, B2: 6000, U2: 6000, RQ4: 12000, MQ9: 1000, Q9: 1000, EH10: 750, H47: 400, H60: 320, S70: 320, NH90: 450, EC35: 350, EC30: 330, EC45: 350, EC55: 400, EC75: 450, H160: 450, A139: 500, A169: 450, A109: 450, AW09: 450, S76: 400, S92: 500, B429: 400, B407: 330, B412: 400, B505: 300, B06: 330, R44: 300, R66: 350, R22: 200, AS50: 350, AS55: 380, AS65: 450, AS32: 450, EC20: 330, PUMA: 350, LYNX: 320, WILD: 400, APAC: 250, H64: 250, AH64: 250, UH1: 250, V22: 900 };
     const HELI = /^(?:H\d|EC\d|AS[3-6]|A1[0-6]9|A139|AW\d|S\d{2}|B0[5-7]|B4\d\d|B2\d\d|B505|R22|R44|R66|NH90|EH10|PUMA|LYNX|WILD|APAC|AH64|H64|UH1|MI\d|KA\d|B47G|H500|MD[56]\d\d|EXPL|GAZL|ALO[23]|SA3\d|CABR|G2CA|HUCO|BK17|EN\d{2})/;
     const FIGHTER = /^(?:EUFI|F35|F15|F16|F18|FA18|F18S|F22|A10|T38|HAWK|TEX2|PC21|PC9|PC7|M346|TOR|RFAL|GRIF|F5|MIR2|M2000|J8|SU\d{2}|MG29|F4|T6|T45|L39|ALJ|AJET|G120|G12T|TUCA|T7|K8)$/;
     const MIL_HEAVY = /^(?:C130|C30J|A400|C17|K35R|KC46|R135|E3TF|E3CF|P8|MRTT|C5M|C160|CN35|C295|B703|E6|E4|C40|C32|VC25|B52|B1|B2|E2|C2|KC10|DC10|P3|ATLA|ME3|E7WW|E737|B762|RQ4|U2|MQ9|Q9|V22|A332|A330|A310)$/;
@@ -3932,17 +3950,25 @@
       return s;
     }
     // Where a flight that was last seen descending most likely landed.
+    // (1.0.2) not on a runway too short for it - unless it has been there before: G-LOBY, a Global 5000 lost at 10,550 ft
+    // coming down the Engadin into Samedan, was read as landing on Sondrio's 3,445 ft strip)
+    const tooShort = (a, ctx) => !!ctx && !!ctx.cls && rwyImpossible(a, ctx.cls, ctx.type) && !(ctx.visits && ctx.visits.get(a.id));
+    const descentReach = p => clamp(p.alt / 250 * NM * 1.4 + 10, 12, 150);
+    // how well a descent seen at p fits a landing at a (arrivalFromDescent's score; null: out of reach)
+    function descentFit(p, a, ctx) {
+      if (!p || p.alt == null || !a) return null;
+      const d = dist(p.lat, p.lon, a.lat, a.lon), agl = p.alt - a.alt; if (agl < -300 || d > descentReach(p) || tooShort(a, ctx)) return null;
+      const expNm = Math.max(1, agl / 300), dNm = d / NM;
+      let s = -Math.abs(Math.log((dNm + 2) / (expNm + 2))) * 2;
+      if (fin(p.trk) && d > 6) { const off = angDiff(p.trk, brg(p.lat, p.lon, a.lat, a.lon)); s -= off > 50 ? (off - 50) / 15 : 0; }
+      return s + priorBonus(a, ctx) + Math.log10(2 + a.size) * 0.3;
+    }
     function arrivalFromDescent(p, ctx) {
       if (!p || p.alt == null) return null;
-      let best = null, bs = -Infinity;
-      const maxKm = clamp(p.alt / 250 * NM * 1.4 + 10, 12, 150);
-      nearby(p.lat, p.lon, maxKm, (a, d) => {
-        const agl = p.alt - a.alt; if (agl < -300) return;
-        const expNm = Math.max(1, agl / 300), dNm = d / NM;
-        let s = -Math.abs(Math.log((dNm + 2) / (expNm + 2))) * 2;
-        if (fin(p.trk) && d > 6) { const off = angDiff(p.trk, brg(p.lat, p.lon, a.lat, a.lon)); s -= off > 50 ? (off - 50) / 15 : 0; }
-        s += priorBonus(a, ctx) + Math.log10(2 + a.size) * 0.3;
-        if (s > bs) { bs = s; best = { airport: a, dist: d, score: s }; }
+      let best = null;
+      nearby(p.lat, p.lon, descentReach(p), (a, d) => {
+        const s = descentFit(p, a, ctx);
+        if (s != null && (!best || s > best.score)) best = { airport: a, dist: d, score: s };
       });
       return best;
     }
@@ -4004,7 +4030,7 @@
       const ap = e => e ? { id: e.airport.id, code: e.airport.code, conf: e.conf } : null;
       const on = to ? touchdownOf(leg, to.airport) : null, off = from ? takeoffOf(leg, from.airport) : null;
       // (endRules: built with the rules above - a board need not check its ends again: climbedOut)
-      const sum = { endRules: 2, tStart: leg.start.t, tEnd: leg.end.t, startLat: leg.start.lat, startLon: leg.start.lon, startAlt: leg.start.alt, endLat: leg.end.lat, endLon: leg.end.lon, endAlt: leg.end.alt, endTrk: leg.end.trk, endGs: fin(leg.end.gs) ? Math.round(leg.end.gs) : null, startGs: fin(leg.start.gs) ? Math.round(leg.start.gs) : null, startedOnGround: !!leg.startGnd, ended: !!leg.ended, how: leg.how, maxAlt: leg.maxAlt || 0, cs: leg.cs || '', pathKm: Math.round(pathKm), from: ap(from), to: ap(to), laps: leg.laps > 1 ? leg.laps : 0, path: pathOf(leg),
+      const sum = { endRules: 2, tStart: leg.start.t, tEnd: leg.end.t, startLat: leg.start.lat, startLon: leg.start.lon, startAlt: leg.start.alt, endLat: leg.end.lat, endLon: leg.end.lon, endAlt: leg.end.alt, endTrk: leg.end.trk, endGs: fin(leg.end.gs) ? Math.round(leg.end.gs) : null, startGs: fin(leg.start.gs) ? Math.round(leg.start.gs) : null, startTrk: !leg.startGnd && fin(leg.start.trk) ? Math.round(leg.start.trk) : null, startedOnGround: !!leg.startGnd, ended: !!leg.ended, how: leg.how, maxAlt: leg.maxAlt || 0, cs: leg.cs || '', pathKm: Math.round(pathKm), from: ap(from), to: ap(to), laps: leg.laps > 1 ? leg.laps : 0, path: pathOf(leg),
         tOn: on ? on.t : null, tOnEst: !!(on && on.est), tOff: off ? off.t : null, tOffEst: !!(off && off.est) };
       return sum;
     }
@@ -4060,8 +4086,11 @@
     }
     // An aircraft that departs an airport must have arrived there, and one that lands somewhere departs from there
     // next: chaining consecutive legs fills in the ends that ADS-B coverage missed.
-    function chainLegs(legs) {
+    // (ctx: { cls, type } of the aircraft - fields with runways too short for it left out of the guesses below; else its
+    // flights' own type, where they carry one)
+    function chainLegs(legs, ctx) {
       const out = legs.slice().sort((a, b) => a.tStart - b.tStart);
+      if (!ctx || !ctx.cls) { const ty = (out.find(l => l && l.type) || {}).type; ctx = ty ? { cls: classify({ type: ty }), type: ty } : null; }
       const reach = (lat, lon, a, h) => !a || !fin(lat) || dist(lat, lon, a.lat, a.lon) <= Math.max(120, Math.abs(h) * 950);
       for (let i = 0; i < out.length - 1; i++) {
         const a = out[i], b = out[i + 1], gapH = (b.tStart - a.tEnd) / 3600;
@@ -4078,6 +4107,46 @@
         // out of coverage: right 25% of the time, a neighbouring field 43% (Teterboro read as Newark, Zurich as a strip beside
         // it) - and a field guessed wrongly is a visit in the aircraft's history: N811MK's "Valladolid" of 7 Oct made it
         // "Valladolid 73%" on 23 Oct, and it landed at Madrid. Those ends stay unknown.)
+        // (1.0.2) Common sense across a stop neither end of which was seen: a landing guessed from the descent and the next
+        // take-off guessed from the climb, within hours of each other, are one stop. The landing leads (the descent is the
+        // better guess): its field is the take-off's too when it explains the climb about as well as the field guessed for
+        // it; when it does not, the field that explains both best, if one does nearly as well as the two apart. On 921 real
+        // stops of business jets, turboprops and airliners, both ends cut out of coverage at random heights (2,500 - 11,500
+        // ft coming down, 2,500 - 16,500 ft going up): the take-off's field right 52% of the time (34% before), the landing's
+        // as before (52%), both right 52% (25%). G-LOBY, 25 Oct: lost at 10,550 ft coming down the Engadin into Samedan,
+        // heard again an hour later climbing out of the same valley - its log had it landing at Sondrio, taking off from
+        // Mollis (and a browser's, at Milan, then from St. Moritz)
+        const guessed = e => !e || e.conf === 'near';
+        if (guessed(a.to) && guessed(b.from) && (a.to || b.from) && !b.startedOnGround && gapH >= 0.15 && gapH < 8 && fin(a.endAlt) && a.endAlt < 15000 && fin(b.startAlt) && b.startAlt < 22000 && fin(a.endLat) && fin(b.startLat)) {
+          const pe = { lat: a.endLat, lon: a.endLon, alt: a.endAlt, trk: a.endTrk }, ps = { lat: b.startLat, lon: b.startLon, alt: b.startAlt, trk: b.startTrk };
+          const FLOOR = -3.5, orFloor = v => v == null ? FLOOR : Math.max(FLOOR, v);
+          const sepA = a.to ? orFloor(descentFit(pe, byId.get(a.to.id), ctx)) : FLOOR, sepB = b.from ? orFloor(climbFit(ps, byId.get(b.from.id), ctx)) : FLOOR;
+          const A = a.to && byId.get(a.to.id), sbA = A ? climbFit(ps, A, ctx) : null;
+          let best = null;
+          if (A && sbA != null && sbA >= sepB - 3) { if (!b.from || b.from.id !== A.id) best = { ap: A, on: null, off: fieldTimeOfSum(b, A, true) }; }
+          else {
+            nearby(pe.lat, pe.lon, descentReach(pe), ap => {
+              if (ap.id >= 1e7) return;
+              const sa = descentFit(pe, ap, ctx), sb = sa == null ? null : climbFit(ps, ap, ctx); if (sb == null || sa < FLOOR || sb < FLOOR) return;
+              // (down before it is up again: its landing there, ten minutes on the ground, its take-off)
+              const on = fieldTimeOfSum(a, ap, false), off = fieldTimeOfSum(b, ap, true);
+              if ((on ? on.t : a.tEnd) + 600 > (off ? off.t : b.tStart)) return;
+              if (!best || sa + sb > best.s) best = { ap, s: sa + sb, sa, on, off };
+            });
+            if (best && !(best.s >= sepA + sepB - 1 && best.sa >= sepA - 0.5)) best = null;
+          }
+          if (best && !(a.to && b.from && a.to.id === best.ap.id && b.from.id === best.ap.id)) {
+            const e = { id: best.ap.id, code: best.ap.code, conf: 'near' };
+            if (!a.to || a.to.id !== e.id) { a.to = Object.assign({}, e); if (best.on && (!a.tOn || a.tOnEst)) { a.tOn = best.on.t; a.tOnEst = best.on.est; } }
+            if (!b.from || b.from.id !== e.id) { b.from = Object.assign({}, e); if (best.off && (!b.tOff || b.tOffEst)) { b.tOff = best.off.t; b.tOffEst = best.off.est; } }
+          }
+        }
+        // (1.0.2) and a landing guessed from the descent before a take-off seen from a field it could have been coming down
+        // to: that field (the take-off seen - on its runway, or low over it - is the stronger word)
+        if (a.to && a.to.conf === 'near' && b.from && b.from.id !== a.to.id && (b.startedOnGround || ['ground', 'low'].includes(b.from.conf)) && gapH >= 0.15 && gapH < 8) {
+          const ap = byId.get(b.from.id), sa = ap && fin(a.endAlt) ? descentFit({ lat: a.endLat, lon: a.endLon, alt: a.endAlt, trk: a.endTrk }, ap, null) : null;
+          if (sa != null && sa > -3.5) { a.to = Object.assign({}, b.from, { conf: 'chain' }); if (!a.tOn || a.tOnEst) { const e = fieldTimeOfSum(a, ap, false); if (e && e.t < b.tStart) { a.tOn = e.t; a.tOnEst = e.est; } } }
+        }
         // (an end known but its time not: the way left from the last point heard)
         if (a.to && !a.tOn) { const ap = byId.get(a.to.id), e = ap && fieldTimeOfSum(a, ap, false); if (e && e.t < b.tStart) { a.tOn = e.t; a.tOnEst = e.est; } }
       }
@@ -4470,7 +4539,7 @@
     function climbFit(p, a, ctx) {
       if (!p || p.alt == null || !a) return null;
       const grp = ctx && ctx.grp || 'jet', q = tq('clb', grp, 0), d = dist(p.lat, p.lon, a.lat, a.lon);
-      const agl = p.alt - a.alt; if (agl < -200 || d > clamp(p.alt / 150 * NM, 15, 200)) return null;
+      const agl = p.alt - a.alt; if (agl < -200 || d > clamp(p.alt / 150 * NM, 15, 200) || tooShort(a, ctx)) return null;
       const dNm = d / NM, r = Math.log((dNm + 1) / (Math.max(0, agl) / 300 + 1));
       let s = q ? ld(q, r, -4, 3) - Math.log(dNm + 1) - Math.log(2 * Math.PI * Math.max(1, d)) : -Math.abs(Math.log((dNm + 2) / (agl / 420 + 2))) * 2.2;
       if (fin(p.trk) && d > 4) { const off = angDiff(p.trk, brg(a.lat, a.lon, p.lat, p.lon)); s -= off > 100 ? (off - 100) / 20 : 0; }
@@ -4907,6 +4976,11 @@
       const desc = describe(trail, pos);
       const dOP = O ? dist(O.lat, O.lon, pos.lat, pos.lon) : NaN;
       const flownKm = O ? Math.max(dOP, desc.path * 0.9) : desc.path;
+      // (1.0.2) what it has flown since it took off it can fly, a fifth to spare: a range from the type's table - or its
+      // class's, where the table has no figure - that the flight itself has gone beyond is too short. N162GB, a G200 (no
+      // figure: a light jet's 2,200 nm), 4,500 km out of Lagos over France, had every field ahead "beyond its range" and
+      // Lagos left alone - 95%)
+      const rngEff = Math.max(rng, flownKm * 1.2);
       const emergency = SQ_EMERG.test(String(pos.sq || ''));
       const onGround = !!pos.gnd;
       // How often this airframe comes back to where it started: its class, updated with its own record.
@@ -4917,7 +4991,7 @@
       const add = a => { if (a && !cands.has(a.id)) cands.set(a.id, a); };
       for (const id of hs.visits.keys()) add(byId.get(id));
       if (O) add(O);
-      let reachKm = onGround ? Math.min(rng, 4000) : clamp(rng - flownKm * 0.9, 150, rng);
+      let reachKm = onGround ? Math.min(rng, 4000) : clamp(rngEff - flownKm * 0.9, 150, rngEff);
       if (!onGround && phase === 'descent' && pos.alt != null) reachKm = Math.min(reachKm, pos.alt / 300 * NM * 3.5 + 150);
       if (!onGround && pos.alt != null && pos.alt < 6000 && phase !== 'climb') reachKm = Math.min(reachKm, 200);
       if (cls === 'heli') reachKm = Math.min(reachKm, 450);
@@ -4942,7 +5016,7 @@
         for (let i = 0; i < preF.length && i < (W.fcand || 150); i++) add(preF[i][1]);
       }
       // where business jets from this origin actually go, however far
-      if (O && O.icao) for (const [ic] of (ODN.get(O.icao.toUpperCase()) || []).slice(0, 40)) { const b = byIcao.get(ic); if (b && (onGround || flownKm + dist(pos.lat, pos.lon, b.lat, b.lon) < rng * 1.08)) add(b); }
+      if (O && O.icao) for (const [ic] of (ODN.get(O.icao.toUpperCase()) || []).slice(0, 40)) { const b = byIcao.get(ic); if (b && (onGround || flownKm + dist(pos.lat, pos.lon, b.lat, b.lon) < rngEff * 1.08)) add(b); }
       if (!onGround && (phase === 'descent' || (pos.alt != null && pos.alt < 9000) || emergency)) nearby(pos.lat, pos.lon, emergency ? 250 : 100, a => add(a));
       if (fieldsToo && !onGround && (phase === 'descent' || (pos.alt != null && pos.alt < 6000))) nearbyFields(pos.lat, pos.lon, 25, a => add(a));
 
@@ -5224,8 +5298,11 @@
         }
         if (!onGround) {
           const agl = (pos.alt != null ? pos.alt : 0) - a.alt;
-          if (!isO && flownKm + d > rng * 1.08) continue;
-          if (!isO && flownKm + d > rng * 0.85) F('range', -((flownKm + d) / rng - 0.85) / 0.23);
+          if (!isO && flownKm + d > rngEff * 1.08) continue;
+          if (!isO && flownKm + d > rngEff * 0.85) F('range', -((flownKm + d) / rngEff - 0.85) / 0.23);
+          // (1.0.2) nor back to where it took off when the way back on top of what it has flown is beyond it - far out,
+          // a civil aircraft (a military one may be refuelled on the way)
+          if (isO && !ac.mil && dOP > 300 && flownKm + d > rngEff * 1.08) continue;
           // --- where it is. Both hypotheses are scored as a density per km² at the current position, so a local
           // sortie and a trip compete on equal terms: a trip spreads its probability evenly along the route and across
           // it by the learned cross-track spread; a local sortie by the learned distance-from-home over the ring.
@@ -5519,7 +5596,7 @@
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '1.0.1';
+  const VERSION = '1.0.2';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
@@ -7370,13 +7447,28 @@
   // An aircraft FR24 knows but lists no flight of: hidden by FR24 (LADD and the like) - only if it has flown in the last
   // six days (FR24 lists a week of flights; one parked longer is listed with none as well: NASA's retired 747SP N747NA).
   // Flown: a flight of it kept here, or a track of it on adsb.lol today or yesterday.
-  const blkAsked = new Map();
+  // (1.0.2) Or the monitor's word, asked first: it holds the aircraft as blocked (FR24 seen hiding it, the FAA's list, the
+  // archive's LADD flag), or its log has a flight of the last six days - M-PORT, with its flights listed by FR24 as none,
+  // went untagged in search and on its log page while adsb.lol walled the browser and the proof could not be had
+  const blkAsked = new Map(), monBlk = new Map();   // monBlk: hex -> the monitor's blk (2 hidden by FR24 / on the FAA list, 1 held as blocked)
+  function noteMonBlk(hex, blk, reg) {
+    if (!(blk > 0)) return; monBlk.set(hex, blk); if (monBlk.size > 5000) monBlk.delete(monBlk.keys().next().value);
+    const hx = store.getHex(hex) || {};
+    if (blk >= 2 && !(hx.ladd && hx.fr24Blocked)) store.mergeHex(hex, Object.assign({ ladd: true, fr24Blocked: true }, !hx.reg && reg ? { reg: clean(reg).toUpperCase() } : {}));
+  }
   function noteFr24Blocked(hex, reg) {
     hex = clean(hex).toLowerCase(); const hx = store.getHex(hex) || {};
     if (!/^[0-9a-f]{6}$/.test(hex) || hx.fr24Blocked || now() - (blkAsked.get(hex) || 0) < 6 * 3600e3) return Promise.resolve();
     blkAsked.set(hex, now()); if (blkAsked.size > 2000) blkAsked.delete(blkAsked.keys().next().value);
     return (async () => {
-      let flew = (hx.recent || []).some(x => nowS() - (x[1] || 0) < 6 * 86400);
+      let flew = monBlk.has(hex) || (hx.recent || []).some(x => nowS() - (x[1] || 0) < 6 * 86400);
+      if (!flew) {
+        const c = monCheck(); if (c) await c.catch(() => null);
+        if (monUp()) try {
+          const j = await monGet('/hist?hex=' + hex + '&since=' + dayStr(now() - 7 * 864e5).replace(/\//g, '-'), {}), x = j && Array.isArray(j.list) ? j.list.find(e => e && e.hex === hex) : null;
+          if (x) flew = x.blk > 0 || (Array.isArray(x.legs) && x.legs.some(l => l && fin(l.tEnd) && nowS() - l.tEnd < 6 * 86400));
+        } catch (e) { /* the sites, then */ }
+      }
       for (const d of flew ? [] : ['', dayStr(now() - 864e5)]) { try { const j = await fetchTrace(hex, d, { bg: true, back: d ? 1 : 0 }); if (j && Array.isArray(j.trace) && j.trace.length) { flew = true; break; } } catch (e) { /* not that day */ } }
       if (flew) store.mergeHex(hex, { reg: clean(reg).toUpperCase() || hx.reg, ladd: true, fr24Blocked: true });
     })().catch(() => {});
@@ -8535,6 +8627,8 @@
     const hx = store.getHex(hex) || {}, c = countryOfHex(hex), g = globalList.byHex.get(hex);
     return { hex, type: hx.type || (g && g.type) || '', reg: hx.reg || (g && g.reg) || '', mil: !!(hx.mil || (g && g.mil)), cat: hx.cat || (g && g.cat) || '', country: c ? c.name : '' };
   }
+  // (its class and type, for the stops chainLegs works out - no field with a runway too short for it)
+  const legCtx = hex => { const ac = acOfHex(hex); return { cls: ENGINE.classify(ac), type: ac.type }; };
   function summarize(legs, hex) {
     const hs0 = ENGINE.histStats(compactToLegs((store.getHex(hex) || {}).recent || []), nowS());
     const ac = acOfHex(hex), cls = ENGINE.classify(ac), ctx = { visits: hs0.visits, base: hs0.base, mil: ac.mil, grp: ENGINE.groupOf(cls), cls, type: ac.type };
@@ -8582,10 +8676,10 @@
     const bySince = new Map(); for (const x of all) (bySince.get(x[1].since) || bySince.set(x[1].since, []).get(x[1].since)).push(x);
     for (const [since, list] of bySince) for (let i = 0; i < list.length; i += 20) {
       const part = list.slice(i, i + 20), give = by => { for (const [h, e] of part) for (const r of e.rs) r((by && by.get(h)) || null); };
-      monGet('/hist?hex=' + part.map(x => x[0]).join(',') + (since ? '&since=' + since.replace(/\//g, '-') : '')).then(j => give(new Map(((j && j.hv === HIST_V && Array.isArray(j.list)) ? j.list : []).filter(x => x && x.hex && x.days).map(x => [x.hex, x]))), () => give(null));
+      monGet('/hist?hex=' + part.map(x => x[0]).join(',') + (since ? '&since=' + since.replace(/\//g, '-') : '')).then(j => { const list = ((j && j.hv === HIST_V && Array.isArray(j.list)) ? j.list : []).filter(x => x && x.hex && x.days); for (const x of list) noteMonBlk(x.hex, x.blk); give(new Map(list.map(x => [x.hex, x]))); }, () => give(null));
     }
   }
-  const historyJobs = new Map();
+  const historyJobs = new Map(), monFrAsked = new Map();
   // Loads today's trace and up to `maxDays` of history (newest first, several days in parallel), keeps the full log in
   // IndexedDB and a compact recent summary in memory. onProgress fires as days arrive.
   // opts.bg: background backfill for an aircraft nobody is looking at (never takes the last free request slots)
@@ -8635,7 +8729,7 @@
         for (const o of [h.miss, h.err, h.rd]) for (const k of Object.keys(o)) if (k < oldest || (o !== h.rd && h.days[k] && h.days[k] !== 'p')) delete o[k];
         if (h.nopub) for (const k of Object.keys(h.nopub)) if (k < oldest) delete h.nopub[k];
         h.savedAt = now(); store.setHist(hex, h);
-        const chained = ENGINE.chainLegs(ENGINE.stitchLegs(h.legs.slice().reverse()));
+        const chained = ENGINE.chainLegs(ENGINE.stitchLegs(h.legs.slice().reverse()), legCtx(hex));
         store.mergeHex(hex, { recent: legsToCompact(chained) });
         try { boardNoteLegs(hex, chained.filter(l => l.tStart > nowS() - 3 * 86400)); } catch (e) { log('board legs', e); }
         for (const f of st.prog) { try { f(h, done, todo.length); } catch (e) { log('history progress', e); } }
@@ -8645,28 +8739,37 @@
       // never one it has no flights for: it says so of a day it watched the aircraft all day and did not hear it fly, and
       // airplanes.live had TC-ACN's London - Istanbul of 13 Sep and Larnaca - Istanbul of 26 Sep on days given as none. A
       // day it built with one network only - the other refusing it - is 'p': read again here, both networks, when looked at)
-      if (todo.length) {
-        const mh = await monHist(hex, todo[todo.length - 1]).catch(() => null);
+      // (1.0.2) and, the aircraft looked at with every day read here already, every half hour: the monitor's days built
+      // with FR24's track of the flights (fr) replace this browser's own read of them - N162GB's Lagos - Farnborough of
+      // 25 Oct, only FR24 saw it leave Lagos)
+      if (todo.length || (looked && now() - (monFrAsked.get(hex) || 0) > 30 * 60000)) {
+        monFrAsked.set(hex, now()); if (monFrAsked.size > 500) monFrAsked.delete(monFrAsked.keys().next().value);
+        const mh = await monHist(hex, todo.length ? todo[todo.length - 1] : dayStr(now())).catch(() => null);
         if (mh && mh.days && typeof mh.days === 'object') {
           const byDay = new Map(); for (const l of Array.isArray(mh.legs) ? mh.legs : []) if (l && l.day && fin(l.tStart)) (byDay.get(l.day) || byDay.set(l.day, []).get(l.day)).push(l);
           const part = new Set(Array.isArray(mh.part) ? mh.part : []), lo = new Set(Array.isArray(mh.lo) ? mh.lo : []);
+          const frD = mh.fr && typeof mh.fr === 'object' && !Array.isArray(mh.fr) ? mh.fr : {};
           // (a day of flights: all of them with it. A day with none - adsb.lol's archive read and the aircraft not in it, or
           // the monitor's lists watched all day and it not heard: no flights as adsb.lol knows it - taken as a day read from
           // adsb.lol alone, 'l', for a day not known here yet: airplanes.live heard flights adsb.lol missed (TC-ACN, 13 Sep),
           // so it is read again with both when the aircraft is looked at and airplanes.live answers; walled from both, as
           // browsers are now, it is all there is - and never a hole in the log)
-          const have = todo.filter(d => Number.isInteger(mh.days[d]) && (mh.days[d] > 0 ? (byDay.get(d) || []).length === mh.days[d] && !(h.days[d] === 'b' && part.has(d)) : mh.days[d] === 0 && !h.days[d]));
-          for (const d of have) {
+          const complete = d => mh.days[d] > 0 && (byDay.get(d) || []).length === mh.days[d];
+          const have = todo.filter(d => Number.isInteger(mh.days[d]) && (mh.days[d] > 0 ? complete(d) && !(h.days[d] === 'b' && part.has(d)) : mh.days[d] === 0 && !h.days[d]));
+          const richer = Object.keys(frD).filter(d => !todo.includes(d) && h.days[d] && complete(d) && !part.has(d) && (h.days[d] !== 'm' || (h.rd[d] || 0) < (+frD[d] || 0) * 1000));
+          for (const d of have.concat(richer)) {
             // (mon: a flight of the monitor's - kept should a read of the day here not have it - not one of its world log, which
             // is adsb.lol's file as the day's read here has it)
             const legs = (byDay.get(d) || []).map(l => { const s = Object.assign({}, l), lx = s.lx; delete s.lx; s.day = d; if (s.src === 'world') delete s.src; else s.mon = 1; learnFromLeg(hex, null, s, cls0, ac0.mil, lx); return s; });
-            h.days[d] = part.has(d) ? 'p' : lo.has(d) || !legs.length ? 'l' : 'm'; h.rd[d] = now(); delete h.miss[d]; h.legs = h.legs.filter(l => l.day !== d).concat(legs); dirty = true;
+            h.days[d] = part.has(d) ? 'p' : (lo.has(d) && !frD[d]) || !legs.length ? 'l' : 'm'; h.rd[d] = now(); delete h.miss[d]; h.legs = h.legs.filter(l => l.day !== d).concat(legs); dirty = true;
           }
+          if (richer.length && !have.length) flush();
           // (looked at: a day built with a network refusing is read again here, both networks, at once - and so is a day of
           // adsb.lol's alone, flights or none, while airplanes.live answers this browser; one that has shown it a
           // verification page within the hour is not asked: the day stays as the monitor has it, read again later)
           const aplOpen = !(netState.apl.wallAt && now() - netState.apl.wallAt < 3600e3);
-          if (have.length) { const got = new Set(have.filter(d => !(looked && backOf[d] <= LOL_DAYS && (part.has(d) || (aplOpen && (lo.has(d) || !mh.days[d])))))); todo = todo.filter(d => !got.has(d)); monDays = have.length; flush(); }
+          // (a day with FR24's track in it: kept as the monitor built it - a read of the networks here has none of that)
+          if (have.length) { const got = new Set(have.filter(d => frD[d] || !(looked && backOf[d] <= LOL_DAYS && (part.has(d) || (aplOpen && (lo.has(d) || !mh.days[d])))))); todo = todo.filter(d => !got.has(d)); monDays = have.length; flush(); }
         }
       }
       // (the monitor's check answered first - its archive is where the days come from while the sites wall this browser; an
@@ -8832,7 +8935,7 @@
     if (h && h.v === HIST_V && h.legs && h.legs.length) legs = h.legs.slice();
     else legs = compactToLegs((store.getHex(hex) || {}).recent || []);
     if (t && t.sums) legs = legs.concat(t.sums.filter(l => !(excludeOpen && !l.ended)));
-    return ENGINE.chainLegs(ENGINE.stitchLegs(legs));
+    return ENGINE.chainLegs(ENGINE.stitchLegs(legs), legCtx(hex));
   }
 
   // ---- the population tables (22.10): packed into the script at build time (gzip, base64), unpacked once at start ------
@@ -10060,7 +10163,7 @@
   function naHistStats(hex, t) {
     if (!hex) return null; const c = naHs.get(hex); if (c && now() - c.at < 600000) return c.hs;
     const h = store.peekHist(hex); let hs = null;
-    if (h && h.legs && h.legs.length) { try { hs = ENGINE.histStats(ENGINE.chainLegs(ENGINE.stitchLegs(h.legs.slice())).filter(l => l.tEnd < t - 60), t); } catch (e) { hs = null; } }
+    if (h && h.legs && h.legs.length) { try { hs = ENGINE.histStats(ENGINE.chainLegs(ENGINE.stitchLegs(h.legs.slice()), legCtx(hex)).filter(l => l.tEnd < t - 60), t); } catch (e) { hs = null; } }
     naHs.set(hex, { at: now(), hs }); if (naHs.size > 500) naHs.delete(naHs.keys().next().value);
     return hs;
   }
@@ -10548,7 +10651,9 @@ aside.tl-pred .tl-pred-text b{font-weight:700}
 .tl-pop .tl-spin{display:inline-block;width:9px;height:9px;border:2px solid #327db6;border-right-color:transparent;border-radius:50%;animation:tl-spin .8s linear infinite}`;
   function addStyle() { if (document.getElementById('tl-style')) return; const s = document.createElement('style'); s.id = 'tl-style'; s.textContent = STYLE; (document.head || document.documentElement).appendChild(s); }
   // FR24's adverts and upsell banners (the sidebar, the carousel promo and the free-trial pop-up are switched off in
-  // the page itself, see the bridge). In place from the first paint, on every FR24 page. The advert slots are hidden,
+  // the page itself, see the bridge). In place from the first paint, on every FR24 page. (1.0.2: and the airport panel's
+  // locked "Movements per day" and "Runway usage" pictures - never seen, not even for the moment before the real figures
+  // take their place; their room kept, nothing moves.) The advert slots are hidden,
   // not removed: their scripts still run, so FR24's ad-blocker check has nothing to find. (:has() rules stand alone -
   // a browser without it drops only that rule.)
   const AD_STYLE = `
@@ -10558,7 +10663,9 @@ div:has(>[id^="pb-slot-fr24-"]:only-child){display:none!important}
 div:has(>[id^="div-gpt-ad-"]:only-child){display:none!important}
 #aside-main-menu div:has(>[data-testid="aside-main-menu__try-for-free-btn"]){display:none!important}
 div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:none!important}
-[data-testid="airport-panel"] div:has(>button[data-testid^="airport-panel__schedules__"][data-testid$="-flights"]:disabled){display:none!important}`;
+[data-testid="airport-panel"] div:has(>button[data-testid^="airport-panel__schedules__"][data-testid$="-flights"]:disabled){display:none!important}
+[data-testid="airport-panel"] [data-testid^="airport-panel__promo-movement"],[data-testid="airport-panel"] [data-testid^="airport-panel__promo-runway_usage"],[data-testid="airport-panel"] img[alt="Movements per day" i],[data-testid="airport-panel"] img[alt="Runway usage" i]{visibility:hidden!important}
+[data-testid="airport-panel"] button:has(img[alt="Movements per day" i]),[data-testid="airport-panel"] button:has(img[alt="Runway usage" i]),[data-testid="airport-panel"] button:has([data-testid^="airport-panel__promo-movement"]),[data-testid="airport-panel"] button:has([data-testid^="airport-panel__promo-runway_usage"]){visibility:hidden!important}`;
   function addAdStyle() { if (document.getElementById('tl-noads')) return; const s = document.createElement('style'); s.id = 'tl-noads'; s.textContent = AD_STYLE; (document.head || document.documentElement).appendChild(s); }
 
   const q = (root, sel) => root.querySelector(sel);
@@ -11811,6 +11918,9 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       let hx = Object.assign({ hex, reg }, (await store.hexAsync(hex)) || {}, { otherAirframe: other });
       if (!hx.msn && titleMsn && !other) hx.msn = titleMsn;   // (FR24's title names its register's airframe)
       fillAircraftHeader(hx, reg);
+      // (1.0.2) FR24's page knows the aircraft and shows none of its flights: blocked, if it has flown lately (the monitor's
+      // word first) - its LADD tag here and in search from then on (M-PORT's log page had none)
+      if (!other && !(hx.ladd || hx.pia || hx.mil)) noteFr24Blocked(hex, reg).then(() => { if (current === run) { hx = Object.assign(hx, store.getHex(hex) || {}); fillAircraftHeader(hx, reg); } });
       const shell = Object.assign({ id: 0 }, hx, { hex, reg, photoLevel: 0, photoV: 0 });
       // photos in parallel with the identity lookups; each fills its part of the header as soon as it arrives
       fetchPhotos(shell, true).then(ph => {
@@ -12643,10 +12753,12 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     if (now() - (panelAsked.get(code) || 0) < 60000) return; panelAsked.set(code, now());
     await loadAirports();
     const ap = (code.length === 4 && ENGINE.byIcao(code)) || airports.byIata.get(code); if (!ap || !boardOk(ap.id)) return;
-    const full = apById(ap.id) || ap, out = { code, apId: ap.id, tz: (full.timezone && full.timezone.name) || '', days: 7, runways: null, freqs: null, usage: null, moves: 0, withRunway: 0, monitor: false };
+    const full = apById(ap.id) || ap, out = { code, apId: ap.id, tz: (full.timezone && full.timezone.name) || '', days: 7, runways: null, freqs: null, usage: null, moves: 0, withRunway: 0, monitor: false, daily: null, allDays: 0 };
     routesOf(ap.id).then(list => postToPage('routesAdd', { apId: ap.id, list })).catch(e => log('routes', e));
-    const j = monUp() ? await monGet(`/airport?ap=${ap.id}&days=7`).catch(() => null) : null;
-    if (j && j.known) Object.assign(out, { runways: Array.isArray(j.runways) ? j.runways : [], freqs: Array.isArray(j.freqs) ? j.freqs : [], usage: Array.isArray(j.usage) ? j.usage : [], moves: j.moves || 0, withRunway: j.withRunway || 0, monitor: true });
+    // (1.0.2) and every one of the last two weeks' take-offs and landings there - every aircraft public ADS-B heard, counted
+    // by the monitor as each day's world log is built (daily)
+    const j = monUp() ? await monGet(`/airport?ap=${ap.id}&days=7&hist=14`).catch(() => null) : null;
+    if (j && j.known) Object.assign(out, { runways: Array.isArray(j.runways) ? j.runways : [], freqs: Array.isArray(j.freqs) ? j.freqs : [], usage: Array.isArray(j.usage) ? j.usage : [], moves: j.moves || 0, withRunway: j.withRunway || 0, monitor: true, daily: Array.isArray(j.daily) ? j.daily : null, allDays: j.allDays || 0 });
     else out.ends = await runwaysOf(ap).catch(() => []);
     postToPage('airportPanel', out);
   }
@@ -13724,7 +13836,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // (the version whose "what's new" was put away, and the one whose dot on the button the window was opened for)
   const UB_SEEN_KEY = 'tweeks.fr24.ladd.seenver', UB_DOT_KEY = 'tweeks.fr24.ladd.dotver';
   // (the newest CHANGELOG section's headlines, written in by build.mjs: { v, items })
-  const UB_WHATS_NEW = {"v":"1.0.1","items":["Flights cut in two by a day's end and an ocean.","The monitor's flights cut by a restart.","Flights adsb.lol's archive doesn't have."]};
+  const UB_WHATS_NEW = {"v":"1.0.2","items":["G-LOBY \"landed in Milan\" when it landed at St. Moritz.","N162GB \"Lagos 95%\" while descending into London.","Flight logs from FR24's track first."]};
   // (an aircraft with an open padlock: FR24's outline style - 24 grid, 1.5 stroke in the text colour)
   const UB_ICON = '<svg data-tl-ub-icon="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
   const UB_X = '<svg viewBox="0 0 14 14" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5l11 11M12.5 1.5l-11 11"/></svg>';
@@ -15164,7 +15276,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true }); else start();
   }
   }
-  try { (pageWindow()).__tweeksLadd = { version: VERSION, msgCount, datalinkPlan, datalinkRoutes, surgeNow, morphHtml, photoJob, photosOut, monPhotos, routeSearch, onNeedNaRoutes, naFromTrail, naWanted, fr24Trail, schedOf, trailFor, get shownId() { return shownId; }, posStats, get bridgeV() { return bridgeV; }, hexOfId, currentPos, idHex, engine: ENGINE, live, pending, telemetry, store, routeState, planState, globalList, fr24, todayCache, sweep, resolveTargeted, routeFor, composeRoute, centralOf, calcGot, calcSent, calcAsk, calcFlush, calcEvidence, altsOf, holdTerminal, termHold, worldScan, refreshLists, quickRouteAll, historyPump, histPumped, learnedStore, regCountry, fr24Sched, pubRouted, pubRecs, privatePlace, loadSites, siteNear, sites, onSched, pubMem: () => pubMem, publishRoute, syncPanel, normalizeReadsb, telemOf, noteCands, csOfRec, warmHist, hostStat, loadT2, wantWx, wxMap, wantNotams, closedMap, estimateEta, nNumberHex, watchList, pollWatch, accStore, accNote, statsHtml, fleetList, checkHealth, health, exportCsv, predictForHex, verifyAgainstList, strikes, revokedIds, fr24Named, noteFr24Named, loadHistory, loadToday, readTrace, classifyTrace, fetchTrace, netState, NETS, sourcesHtml, logGaps, fetchJetphotos, loadRunways, knownLegs, areaCache, pollView, saveSnapshot, boardNoteLegs, boardNoteFlight, boardNoteSched, boardScrub, boardLoad, boardList, naRouteOf, pbWhere, noteNa, naFeed, matchParked, matchByTraces, boardDrain, boardMem, onNeedBoard, operatorOf, shownOwner, enrich, userConfirm, userDestOf, loadApprTable, monGet, monPost, monCheck, monLive, monUp, MON_DEFAULTS, get monBase() { return monBase; }, liveSources, tatSource: TAT_SOURCE, telOut, noteTelOut, reportTel, pbOut, srvIds, pullSrvIds, srvAdopt, reportToMonitor, syncSrvLearn, applyLearned, srvRoute, srvRec, crowdOf, routesOut, routesSent, noteRouteOut, learnFromLeg, learnOutTake, learnOutBack, get learnOutN() { return learnOut.length; }, srvCovers, get srvLearned() { return srvLearned; }, set srvLearned(v) { srvLearned = v; }, addSrvLearned, get feedHdr() { return feedHdr; }, boardMonFill, natRowOf, fnRows, buildSnapshot, bootHold, firAt, loadFir, onAirAsk, pb, onPbFeed, onPbFollow, onPbHex, pbRouteFor, pbMatch, pbFromMonitor, onNeedRoutes, onNeedAirportData, onNeedAirportPanel, liveBoardRows, runwaysOf, parseRunwayEnds, flightsOfCallsign, bootFlightPage, unlockExports, exportFile, rowWindow, hexOfFid, onNeedSearch, osmPick, wantOsmPlace, osmPlaceAt, learnSite, siteIdAt, siteBk, siteRow, apById, operatorIdOf, airlineIdByName, fr24Cat, onHistElsewhere, get viewBox() { return viewBox; }, get selectedId() { return currentId(); }, opt, setOpt, notify, openUnblockWindow, closeUnblockWindow, ensureBarButton, findBar, checkLatest, installKind, sayHello, helloSt, ubBanners, ubOffer, installId }; } catch (_) { /* ignore */ }
+  try { (pageWindow()).__tweeksLadd = { version: VERSION, msgCount, datalinkPlan, datalinkRoutes, surgeNow, morphHtml, photoJob, photosOut, monPhotos, routeSearch, onNeedNaRoutes, naFromTrail, naWanted, fr24Trail, schedOf, trailFor, get shownId() { return shownId; }, posStats, get bridgeV() { return bridgeV; }, hexOfId, currentPos, idHex, engine: ENGINE, live, pending, telemetry, store, routeState, planState, globalList, fr24, todayCache, sweep, resolveTargeted, routeFor, composeRoute, centralOf, calcGot, calcSent, calcAsk, calcFlush, calcEvidence, altsOf, holdTerminal, termHold, worldScan, refreshLists, quickRouteAll, historyPump, histPumped, learnedStore, regCountry, fr24Sched, pubRouted, pubRecs, privatePlace, loadSites, siteNear, sites, onSched, pubMem: () => pubMem, publishRoute, syncPanel, normalizeReadsb, telemOf, noteCands, csOfRec, warmHist, hostStat, loadT2, wantWx, wxMap, wantNotams, closedMap, estimateEta, nNumberHex, watchList, pollWatch, accStore, accNote, statsHtml, fleetList, checkHealth, health, exportCsv, predictForHex, verifyAgainstList, strikes, revokedIds, fr24Named, noteFr24Named, loadHistory, loadToday, readTrace, classifyTrace, fetchTrace, netState, NETS, sourcesHtml, logGaps, fetchJetphotos, loadRunways, knownLegs, areaCache, pollView, saveSnapshot, boardNoteLegs, boardNoteFlight, boardNoteSched, boardScrub, boardLoad, boardList, naRouteOf, pbWhere, noteNa, naFeed, matchParked, matchByTraces, boardDrain, boardMem, onNeedBoard, operatorOf, shownOwner, enrich, userConfirm, userDestOf, loadApprTable, monGet, monPost, monCheck, noteFr24Blocked, monLive, monUp, MON_DEFAULTS, get monBase() { return monBase; }, liveSources, tatSource: TAT_SOURCE, telOut, noteTelOut, reportTel, pbOut, srvIds, pullSrvIds, srvAdopt, reportToMonitor, syncSrvLearn, applyLearned, srvRoute, srvRec, crowdOf, routesOut, routesSent, noteRouteOut, learnFromLeg, learnOutTake, learnOutBack, get learnOutN() { return learnOut.length; }, srvCovers, get srvLearned() { return srvLearned; }, set srvLearned(v) { srvLearned = v; }, addSrvLearned, get feedHdr() { return feedHdr; }, boardMonFill, natRowOf, fnRows, buildSnapshot, bootHold, firAt, loadFir, onAirAsk, pb, onPbFeed, onPbFollow, onPbHex, pbRouteFor, pbMatch, pbFromMonitor, onNeedRoutes, onNeedAirportData, onNeedAirportPanel, liveBoardRows, runwaysOf, parseRunwayEnds, flightsOfCallsign, bootFlightPage, unlockExports, exportFile, rowWindow, hexOfFid, onNeedSearch, osmPick, wantOsmPlace, osmPlaceAt, learnSite, siteIdAt, siteBk, siteRow, apById, operatorIdOf, airlineIdByName, fr24Cat, onHistElsewhere, get viewBox() { return viewBox; }, get selectedId() { return currentId(); }, opt, setOpt, notify, openUnblockWindow, closeUnblockWindow, ensureBarButton, findBar, checkLatest, installKind, sayHello, helloSt, ubBanners, ubOffer, installId }; } catch (_) { /* ignore */ }
   log('loaded v' + VERSION);
 
 })();

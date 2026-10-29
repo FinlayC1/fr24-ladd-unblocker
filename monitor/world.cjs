@@ -26,14 +26,14 @@ const apD = a => Array.isArray(a) ? { id: a[0], code: a[1], conf: a[2] } : null;
 function encodeLeg(s) {
   const fl = (s.startedOnGround ? 1 : 0) | (s.ended ? 2 : 0) | (s.tOnEst ? 4 : 0) | (s.tOffEst ? 8 : 0);
   return [r2(s.tStart), r2(s.tEnd - s.tStart), r4(s.startLat), r4(s.startLon), ri(s.startAlt), r4(s.endLat), r4(s.endLon), ri(s.endAlt), ri(s.endTrk), ri(s.endGs), ri(s.startGs), fl,
-    s.how || 0, ri(s.maxAlt) || 0, s.cs || '', ri(s.pathKm) || 0, apE(s.from), apE(s.to), s.laps || 0, s.path || 0, fin(s.tOn) ? r2(s.tOn - s.tEnd) : null, fin(s.tOff) ? r2(s.tOff - s.tStart) : null];
+    s.how || 0, ri(s.maxAlt) || 0, s.cs || '', ri(s.pathKm) || 0, apE(s.from), apE(s.to), s.laps || 0, s.path || 0, fin(s.tOn) ? r2(s.tOn - s.tEnd) : null, fin(s.tOff) ? r2(s.tOff - s.tStart) : null, ri(s.startTrk)];
 }
 function decodeLeg(a, day) {
   const tStart = a[0], tEnd = r2(a[0] + a[1]), o = { endRules: 2, tStart, tEnd, startLat: a[2], startLon: a[3], startAlt: a[4], endLat: a[5], endLon: a[6], endAlt: a[7], endTrk: a[8], endGs: a[9], startGs: a[10],
     startedOnGround: !!(a[11] & 1), ended: !!(a[11] & 2) };
   if (a[12]) o.how = a[12];
   Object.assign(o, { maxAlt: a[13], cs: a[14], pathKm: a[15], from: apD(a[16]), to: apD(a[17]), laps: a[18] || 0, path: a[19] || null,
-    tOn: fin(a[20]) ? r2(tEnd + a[20]) : null, tOnEst: !!(a[11] & 4), tOff: fin(a[21]) ? r2(tStart + a[21]) : null, tOffEst: !!(a[11] & 8) });
+    tOn: fin(a[20]) ? r2(tEnd + a[20]) : null, tOnEst: !!(a[11] & 4), tOff: fin(a[21]) ? r2(tStart + a[21]) : null, tOffEst: !!(a[11] & 8), startTrk: fin(a[22]) ? a[22] : null });
   if (day) o.day = day;
   return o;
 }
@@ -123,7 +123,26 @@ function createWorld(dir) {
       return JSON.parse(line).map(a => decodeLeg(a, day.replace(/-/g, '/')));
     } finally { fs.closeSync(fd); stats.ms += Date.now() - t0; }
   }
-  return { dir, days, has, writer, lookup, scan, stats, fileOf };
+  // (1.0.2) Every aircraft's flights of a day, block by block: cb(hex, legs) for each; breath() awaited between blocks
+  async function each(day, cb, breath) {
+    const h = days.get(day); if (!h) return 0;
+    let fd; try { fd = fs.openSync(fileOf(day), 'r'); } catch (e) { days.delete(day); stats.days = days.size; return 0; }
+    let n = 0;
+    try {
+      const base = 4 + h.len, recs = Buffer.alloc(h.nb * REC); fs.readSync(fd, recs, 0, recs.length, base);
+      for (let k = 0; k < h.nb; k++) {
+        const off = recs.readUInt32LE(k * REC + 4), len = recs.readUInt32LE(k * REC + 8), z = Buffer.alloc(len);
+        fs.readSync(fd, z, 0, len, base + h.nb * REC + off);
+        for (const line of zlib.gunzipSync(z).toString('utf8').split('\n')) {
+          const i = line.indexOf('\t'); if (i < 0) continue;
+          cb(line.slice(0, i), JSON.parse(line.slice(i + 1)).map(a => decodeLeg(a, day.replace(/-/g, '/')))); n++;
+        }
+        if (breath) await breath();
+      }
+    } finally { fs.closeSync(fd); }
+    return n;
+  }
+  return { dir, days, has, writer, lookup, each, scan, stats, fileOf };
 }
 
 // Free space where the store is, in bytes (Infinity: not known)

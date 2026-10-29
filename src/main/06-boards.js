@@ -653,10 +653,12 @@
     if (now() - (panelAsked.get(code) || 0) < 60000) return; panelAsked.set(code, now());
     await loadAirports();
     const ap = (code.length === 4 && ENGINE.byIcao(code)) || airports.byIata.get(code); if (!ap || !boardOk(ap.id)) return;
-    const full = apById(ap.id) || ap, out = { code, apId: ap.id, tz: (full.timezone && full.timezone.name) || '', days: 7, runways: null, freqs: null, usage: null, moves: 0, withRunway: 0, monitor: false };
+    const full = apById(ap.id) || ap, out = { code, apId: ap.id, tz: (full.timezone && full.timezone.name) || '', days: 7, runways: null, freqs: null, usage: null, moves: 0, withRunway: 0, monitor: false, daily: null, allDays: 0 };
     routesOf(ap.id).then(list => postToPage('routesAdd', { apId: ap.id, list })).catch(e => log('routes', e));
-    const j = monUp() ? await monGet(`/airport?ap=${ap.id}&days=7`).catch(() => null) : null;
-    if (j && j.known) Object.assign(out, { runways: Array.isArray(j.runways) ? j.runways : [], freqs: Array.isArray(j.freqs) ? j.freqs : [], usage: Array.isArray(j.usage) ? j.usage : [], moves: j.moves || 0, withRunway: j.withRunway || 0, monitor: true });
+    // (1.0.2) and every one of the last two weeks' take-offs and landings there - every aircraft public ADS-B heard, counted
+    // by the monitor as each day's world log is built (daily)
+    const j = monUp() ? await monGet(`/airport?ap=${ap.id}&days=7&hist=14`).catch(() => null) : null;
+    if (j && j.known) Object.assign(out, { runways: Array.isArray(j.runways) ? j.runways : [], freqs: Array.isArray(j.freqs) ? j.freqs : [], usage: Array.isArray(j.usage) ? j.usage : [], moves: j.moves || 0, withRunway: j.withRunway || 0, monitor: true, daily: Array.isArray(j.daily) ? j.daily : null, allDays: j.allDays || 0 });
     else out.ends = await runwaysOf(ap).catch(() => []);
     postToPage('airportPanel', out);
   }
