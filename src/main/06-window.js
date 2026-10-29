@@ -195,7 +195,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   }
   function whatsNewHtml() {
     if (!whatsNewDue()) return '';
-    const W = UB_WHATS_NEW && typeof UB_WHATS_NEW === 'object' && UB_WHATS_NEW.v === VERSION ? UB_WHATS_NEW : null, items = W ? (W.items || []).slice(0, 3) : [];
+    const W = UB_WHATS_NEW && typeof UB_WHATS_NEW === 'object' && UB_WHATS_NEW.v === VERSION ? UB_WHATS_NEW : null, items = W ? (W.items || []).slice(0, 6) : [];
     return `<div class="tl-ub-new"><b>Updated to v${esc(VERSION)}</b>${items.length ? '<ul>' + items.map(t => `<li>${esc(t)}</li>`).join('') + '</ul>' : ' '}<a href="${UB_CHANGES_URL}" target="_blank" rel="noopener">What's new</a>
       <button type="button" class="tl-ub-x" data-ub-act="seenNew" aria-label="Dismiss" title="Dismiss">${UB_X}</button></div>`;
   }

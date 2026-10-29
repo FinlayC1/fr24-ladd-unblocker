@@ -6,6 +6,15 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 
 ## [1.0.2] - 2026-10-29
 
+### In short
+- An aircraft lost in a mountain valley is no longer logged as landing on a strip too short for it. G-LOBY now shows St. Moritz, not Milan.
+- A flight far from home is no longer predicted to be flying back where it came from when it never could have. N162GB over France no longer says Lagos.
+- Logs now include take-offs that only FR24 saw, so a flight reads Lagos to Farnborough, not a blank to Farnborough.
+- Blocked aircraft whose flights FR24 lists as none, like M-PORT, now get their LADD tag in search and on their log page.
+- Opening an airport shows its movements per day and runway usage at once, for every airport, with no padlock flashing first.
+- Blocked aircraft are now worked out all the time, and one that FR24 loses and finds again keeps its identity.
+- The destination odds were retuned on longer flight histories and are slightly more accurate.
+
 ### Fixed
 - **G-LOBY "landed in Milan" when it landed at St. Moritz.** 25 Oct, Bedford (MA) to Samedan: lost at 10,550 ft coming down the Engadin valley, heard again an hour later climbing out of the same valley, on to Luton. The log had it landing at Sondrio and taking off from Mollis (a browser's log: Milan, then St. Moritz).
   - A guessed landing or take-off is never at a field whose runway is too short for the aircraft (unless it has used that field before). Sondrio's strip is 3,445 ft; a Global 5000 needs 3,900.
@@ -38,6 +47,14 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 
 
 ## [1.0.1] - 2026-10-23
+
+### In short
+- Flights cut in two by a day's end or an ocean crossing are joined again, so they stop reading "Teterboro to N/A" and "N/A to Barcelona".
+- The monitor's own log no longer breaks a flight when it restarts mid-ocean, and it keeps flights adsb.lol's archive lacks.
+- TC-MAA and other jets FR24 and adsb.lol name differently are now recognised as the same aircraft.
+- Fixed "N/A to N/A" on ordinary flights and missing time zones or progress bars on LADD panels.
+- Every browser now shows the same route for a flight, worked out once on the monitor.
+- Every aircraft's flights for every day are kept on the monitor, so logs fill in at once.
 
 ### Fixed
 - **Flights cut in two by a day's end and an ocean.** N1868M, 19 Oct, Teterboro to Barcelona, was "Teterboro -> N/A" and "N/A -> Barcelona" in its log and in the panel's recent flights.

@@ -155,7 +155,10 @@ async function news(from, to) {
       const v = sec.slice(0, sec.indexOf(']'));
       if (!/^B?\d+(\.\d+)+$/.test(v) || !newerThan(v, from) || newerThan(v, to)) continue;
       vers.push(v);
-      for (const m of sec.split(/^### Tests/m)[0].matchAll(/^- \*\*(.+?)\*\*/gm)) items.push(m[1].replace(/\.$/, ''));
+      // (the section's "In short" sentences; failing that, the bold lead of each item)
+      const body = sec.split(/^### Tests/m)[0], short = (body.match(/^### In short\n([\s\S]*?)(?=^### |$(?![\s\S]))/m) || [])[1] || '', lead = [...short.matchAll(/^- (.+)$/gm)].map(m => m[1].trim());
+      if (lead.length) items.push(...lead);
+      else for (const m of body.matchAll(/^- \*\*(.+?)\*\*/gm)) items.push(m[1].replace(/\.$/, ''));
       if (vers.length >= 3) break;
     }
     if (!items.length) return;

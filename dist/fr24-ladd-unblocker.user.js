@@ -13836,7 +13836,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // (the version whose "what's new" was put away, and the one whose dot on the button the window was opened for)
   const UB_SEEN_KEY = 'tweeks.fr24.ladd.seenver', UB_DOT_KEY = 'tweeks.fr24.ladd.dotver';
   // (the newest CHANGELOG section's headlines, written in by build.mjs: { v, items })
-  const UB_WHATS_NEW = {"v":"1.0.2","items":["G-LOBY \"landed in Milan\" when it landed at St. Moritz.","N162GB \"Lagos 95%\" while descending into London.","Flight logs from FR24's track first."]};
+  const UB_WHATS_NEW = {"v":"1.0.2","items":["An aircraft lost in a mountain valley is no longer logged as landing on a strip too short for it. G-LOBY now shows St. Moritz, not Milan.","A flight far from home is no longer predicted to be flying back where it came from when it never could have. N162GB over France no longer says Lagos.","Logs now include take-offs that only FR24 saw, so a flight reads Lagos to Farnborough, not a blank to Farnborough.","Blocked aircraft whose flights FR24 lists as none, like M-PORT, now get their LADD tag in search and on their log page.","Opening an airport shows its movements per day and runway usage at once, for every airport, with no padlock flashing first.","Blocked aircraft are now worked out all the time, and one that FR24 loses and finds again keeps its identity."]};
   // (an aircraft with an open padlock: FR24's outline style - 24 grid, 1.5 stroke in the text colour)
   const UB_ICON = '<svg data-tl-ub-icon="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
   const UB_X = '<svg viewBox="0 0 14 14" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5l11 11M12.5 1.5l-11 11"/></svg>';
@@ -14019,7 +14019,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   }
   function whatsNewHtml() {
     if (!whatsNewDue()) return '';
-    const W = UB_WHATS_NEW && typeof UB_WHATS_NEW === 'object' && UB_WHATS_NEW.v === VERSION ? UB_WHATS_NEW : null, items = W ? (W.items || []).slice(0, 3) : [];
+    const W = UB_WHATS_NEW && typeof UB_WHATS_NEW === 'object' && UB_WHATS_NEW.v === VERSION ? UB_WHATS_NEW : null, items = W ? (W.items || []).slice(0, 6) : [];
     return `<div class="tl-ub-new"><b>Updated to v${esc(VERSION)}</b>${items.length ? '<ul>' + items.map(t => `<li>${esc(t)}</li>`).join('') + '</ul>' : ' '}<a href="${UB_CHANGES_URL}" target="_blank" rel="noopener">What's new</a>
       <button type="button" class="tl-ub-x" data-ub-act="seenNew" aria-label="Dismiss" title="Dismiss">${UB_X}</button></div>`;
   }
