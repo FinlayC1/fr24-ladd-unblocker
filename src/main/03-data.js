@@ -102,13 +102,28 @@
   // An aircraft FR24 knows but lists no flight of: hidden by FR24 (LADD and the like) - only if it has flown in the last
   // six days (FR24 lists a week of flights; one parked longer is listed with none as well: NASA's retired 747SP N747NA).
   // Flown: a flight of it kept here, or a track of it on adsb.lol today or yesterday.
-  const blkAsked = new Map();
+  // (1.0.2) Or the monitor's word, asked first: it holds the aircraft as blocked (FR24 seen hiding it, the FAA's list, the
+  // archive's LADD flag), or its log has a flight of the last six days - M-PORT, with its flights listed by FR24 as none,
+  // went untagged in search and on its log page while adsb.lol walled the browser and the proof could not be had
+  const blkAsked = new Map(), monBlk = new Map();   // monBlk: hex -> the monitor's blk (2 hidden by FR24 / on the FAA list, 1 held as blocked)
+  function noteMonBlk(hex, blk, reg) {
+    if (!(blk > 0)) return; monBlk.set(hex, blk); if (monBlk.size > 5000) monBlk.delete(monBlk.keys().next().value);
+    const hx = store.getHex(hex) || {};
+    if (blk >= 2 && !(hx.ladd && hx.fr24Blocked)) store.mergeHex(hex, Object.assign({ ladd: true, fr24Blocked: true }, !hx.reg && reg ? { reg: clean(reg).toUpperCase() } : {}));
+  }
   function noteFr24Blocked(hex, reg) {
     hex = clean(hex).toLowerCase(); const hx = store.getHex(hex) || {};
     if (!/^[0-9a-f]{6}$/.test(hex) || hx.fr24Blocked || now() - (blkAsked.get(hex) || 0) < 6 * 3600e3) return Promise.resolve();
     blkAsked.set(hex, now()); if (blkAsked.size > 2000) blkAsked.delete(blkAsked.keys().next().value);
     return (async () => {
-      let flew = (hx.recent || []).some(x => nowS() - (x[1] || 0) < 6 * 86400);
+      let flew = monBlk.has(hex) || (hx.recent || []).some(x => nowS() - (x[1] || 0) < 6 * 86400);
+      if (!flew) {
+        const c = monCheck(); if (c) await c.catch(() => null);
+        if (monUp()) try {
+          const j = await monGet('/hist?hex=' + hex + '&since=' + dayStr(now() - 7 * 864e5).replace(/\//g, '-'), {}), x = j && Array.isArray(j.list) ? j.list.find(e => e && e.hex === hex) : null;
+          if (x) flew = x.blk > 0 || (Array.isArray(x.legs) && x.legs.some(l => l && fin(l.tEnd) && nowS() - l.tEnd < 6 * 86400));
+        } catch (e) { /* the sites, then */ }
+      }
       for (const d of flew ? [] : ['', dayStr(now() - 864e5)]) { try { const j = await fetchTrace(hex, d, { bg: true, back: d ? 1 : 0 }); if (j && Array.isArray(j.trace) && j.trace.length) { flew = true; break; } } catch (e) { /* not that day */ } }
       if (flew) store.mergeHex(hex, { reg: clean(reg).toUpperCase() || hx.reg, ladd: true, fr24Blocked: true });
     })().catch(() => {});
@@ -1267,6 +1282,8 @@
     const hx = store.getHex(hex) || {}, c = countryOfHex(hex), g = globalList.byHex.get(hex);
     return { hex, type: hx.type || (g && g.type) || '', reg: hx.reg || (g && g.reg) || '', mil: !!(hx.mil || (g && g.mil)), cat: hx.cat || (g && g.cat) || '', country: c ? c.name : '' };
   }
+  // (its class and type, for the stops chainLegs works out - no field with a runway too short for it)
+  const legCtx = hex => { const ac = acOfHex(hex); return { cls: ENGINE.classify(ac), type: ac.type }; };
   function summarize(legs, hex) {
     const hs0 = ENGINE.histStats(compactToLegs((store.getHex(hex) || {}).recent || []), nowS());
     const ac = acOfHex(hex), cls = ENGINE.classify(ac), ctx = { visits: hs0.visits, base: hs0.base, mil: ac.mil, grp: ENGINE.groupOf(cls), cls, type: ac.type };
@@ -1314,10 +1331,10 @@
     const bySince = new Map(); for (const x of all) (bySince.get(x[1].since) || bySince.set(x[1].since, []).get(x[1].since)).push(x);
     for (const [since, list] of bySince) for (let i = 0; i < list.length; i += 20) {
       const part = list.slice(i, i + 20), give = by => { for (const [h, e] of part) for (const r of e.rs) r((by && by.get(h)) || null); };
-      monGet('/hist?hex=' + part.map(x => x[0]).join(',') + (since ? '&since=' + since.replace(/\//g, '-') : '')).then(j => give(new Map(((j && j.hv === HIST_V && Array.isArray(j.list)) ? j.list : []).filter(x => x && x.hex && x.days).map(x => [x.hex, x]))), () => give(null));
+      monGet('/hist?hex=' + part.map(x => x[0]).join(',') + (since ? '&since=' + since.replace(/\//g, '-') : '')).then(j => { const list = ((j && j.hv === HIST_V && Array.isArray(j.list)) ? j.list : []).filter(x => x && x.hex && x.days); for (const x of list) noteMonBlk(x.hex, x.blk); give(new Map(list.map(x => [x.hex, x]))); }, () => give(null));
     }
   }
-  const historyJobs = new Map();
+  const historyJobs = new Map(), monFrAsked = new Map();
   // Loads today's trace and up to `maxDays` of history (newest first, several days in parallel), keeps the full log in
   // IndexedDB and a compact recent summary in memory. onProgress fires as days arrive.
   // opts.bg: background backfill for an aircraft nobody is looking at (never takes the last free request slots)
@@ -1367,7 +1384,7 @@
         for (const o of [h.miss, h.err, h.rd]) for (const k of Object.keys(o)) if (k < oldest || (o !== h.rd && h.days[k] && h.days[k] !== 'p')) delete o[k];
         if (h.nopub) for (const k of Object.keys(h.nopub)) if (k < oldest) delete h.nopub[k];
         h.savedAt = now(); store.setHist(hex, h);
-        const chained = ENGINE.chainLegs(ENGINE.stitchLegs(h.legs.slice().reverse()));
+        const chained = ENGINE.chainLegs(ENGINE.stitchLegs(h.legs.slice().reverse()), legCtx(hex));
         store.mergeHex(hex, { recent: legsToCompact(chained) });
         try { boardNoteLegs(hex, chained.filter(l => l.tStart > nowS() - 3 * 86400)); } catch (e) { log('board legs', e); }
         for (const f of st.prog) { try { f(h, done, todo.length); } catch (e) { log('history progress', e); } }
@@ -1377,28 +1394,37 @@
       // never one it has no flights for: it says so of a day it watched the aircraft all day and did not hear it fly, and
       // airplanes.live had TC-ACN's London - Istanbul of 13 Sep and Larnaca - Istanbul of 26 Sep on days given as none. A
       // day it built with one network only - the other refusing it - is 'p': read again here, both networks, when looked at)
-      if (todo.length) {
-        const mh = await monHist(hex, todo[todo.length - 1]).catch(() => null);
+      // (1.0.2) and, the aircraft looked at with every day read here already, every half hour: the monitor's days built
+      // with FR24's track of the flights (fr) replace this browser's own read of them - N162GB's Lagos - Farnborough of
+      // 25 Oct, only FR24 saw it leave Lagos)
+      if (todo.length || (looked && now() - (monFrAsked.get(hex) || 0) > 30 * 60000)) {
+        monFrAsked.set(hex, now()); if (monFrAsked.size > 500) monFrAsked.delete(monFrAsked.keys().next().value);
+        const mh = await monHist(hex, todo.length ? todo[todo.length - 1] : dayStr(now())).catch(() => null);
         if (mh && mh.days && typeof mh.days === 'object') {
           const byDay = new Map(); for (const l of Array.isArray(mh.legs) ? mh.legs : []) if (l && l.day && fin(l.tStart)) (byDay.get(l.day) || byDay.set(l.day, []).get(l.day)).push(l);
           const part = new Set(Array.isArray(mh.part) ? mh.part : []), lo = new Set(Array.isArray(mh.lo) ? mh.lo : []);
+          const frD = mh.fr && typeof mh.fr === 'object' && !Array.isArray(mh.fr) ? mh.fr : {};
           // (a day of flights: all of them with it. A day with none - adsb.lol's archive read and the aircraft not in it, or
           // the monitor's lists watched all day and it not heard: no flights as adsb.lol knows it - taken as a day read from
           // adsb.lol alone, 'l', for a day not known here yet: airplanes.live heard flights adsb.lol missed (TC-ACN, 13 Sep),
           // so it is read again with both when the aircraft is looked at and airplanes.live answers; walled from both, as
           // browsers are now, it is all there is - and never a hole in the log)
-          const have = todo.filter(d => Number.isInteger(mh.days[d]) && (mh.days[d] > 0 ? (byDay.get(d) || []).length === mh.days[d] && !(h.days[d] === 'b' && part.has(d)) : mh.days[d] === 0 && !h.days[d]));
-          for (const d of have) {
+          const complete = d => mh.days[d] > 0 && (byDay.get(d) || []).length === mh.days[d];
+          const have = todo.filter(d => Number.isInteger(mh.days[d]) && (mh.days[d] > 0 ? complete(d) && !(h.days[d] === 'b' && part.has(d)) : mh.days[d] === 0 && !h.days[d]));
+          const richer = Object.keys(frD).filter(d => !todo.includes(d) && h.days[d] && complete(d) && !part.has(d) && (h.days[d] !== 'm' || (h.rd[d] || 0) < (+frD[d] || 0) * 1000));
+          for (const d of have.concat(richer)) {
             // (mon: a flight of the monitor's - kept should a read of the day here not have it - not one of its world log, which
             // is adsb.lol's file as the day's read here has it)
             const legs = (byDay.get(d) || []).map(l => { const s = Object.assign({}, l), lx = s.lx; delete s.lx; s.day = d; if (s.src === 'world') delete s.src; else s.mon = 1; learnFromLeg(hex, null, s, cls0, ac0.mil, lx); return s; });
-            h.days[d] = part.has(d) ? 'p' : lo.has(d) || !legs.length ? 'l' : 'm'; h.rd[d] = now(); delete h.miss[d]; h.legs = h.legs.filter(l => l.day !== d).concat(legs); dirty = true;
+            h.days[d] = part.has(d) ? 'p' : (lo.has(d) && !frD[d]) || !legs.length ? 'l' : 'm'; h.rd[d] = now(); delete h.miss[d]; h.legs = h.legs.filter(l => l.day !== d).concat(legs); dirty = true;
           }
+          if (richer.length && !have.length) flush();
           // (looked at: a day built with a network refusing is read again here, both networks, at once - and so is a day of
           // adsb.lol's alone, flights or none, while airplanes.live answers this browser; one that has shown it a
           // verification page within the hour is not asked: the day stays as the monitor has it, read again later)
           const aplOpen = !(netState.apl.wallAt && now() - netState.apl.wallAt < 3600e3);
-          if (have.length) { const got = new Set(have.filter(d => !(looked && backOf[d] <= LOL_DAYS && (part.has(d) || (aplOpen && (lo.has(d) || !mh.days[d])))))); todo = todo.filter(d => !got.has(d)); monDays = have.length; flush(); }
+          // (a day with FR24's track in it: kept as the monitor built it - a read of the networks here has none of that)
+          if (have.length) { const got = new Set(have.filter(d => frD[d] || !(looked && backOf[d] <= LOL_DAYS && (part.has(d) || (aplOpen && (lo.has(d) || !mh.days[d])))))); todo = todo.filter(d => !got.has(d)); monDays = have.length; flush(); }
         }
       }
       // (the monitor's check answered first - its archive is where the days come from while the sites wall this browser; an
@@ -1564,7 +1590,7 @@
     if (h && h.v === HIST_V && h.legs && h.legs.length) legs = h.legs.slice();
     else legs = compactToLegs((store.getHex(hex) || {}).recent || []);
     if (t && t.sums) legs = legs.concat(t.sums.filter(l => !(excludeOpen && !l.ended)));
-    return ENGINE.chainLegs(ENGINE.stitchLegs(legs));
+    return ENGINE.chainLegs(ENGINE.stitchLegs(legs), legCtx(hex));
   }
 
   // ---- the population tables (22.10): packed into the script at build time (gzip, base64), unpacked once at start ------

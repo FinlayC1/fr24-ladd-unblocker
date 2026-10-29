@@ -839,7 +839,7 @@
   function naHistStats(hex, t) {
     if (!hex) return null; const c = naHs.get(hex); if (c && now() - c.at < 600000) return c.hs;
     const h = store.peekHist(hex); let hs = null;
-    if (h && h.legs && h.legs.length) { try { hs = ENGINE.histStats(ENGINE.chainLegs(ENGINE.stitchLegs(h.legs.slice())).filter(l => l.tEnd < t - 60), t); } catch (e) { hs = null; } }
+    if (h && h.legs && h.legs.length) { try { hs = ENGINE.histStats(ENGINE.chainLegs(ENGINE.stitchLegs(h.legs.slice()), legCtx(hex)).filter(l => l.tEnd < t - 60), t); } catch (e) { hs = null; } }
     naHs.set(hex, { at: now(), hs }); if (naHs.size > 500) naHs.delete(naHs.keys().next().value);
     return hs;
   }

@@ -55,7 +55,7 @@ function createRouteEngine() {
 
   // ---- aircraft knowledge ------------------------------------------------------------------------------------
   // Ranges in nm (typical max with reserves). Unknown types fall back to their class.
-  const RANGE = { GLF6: 7000, GL7T: 7700, GL8T: 8000, GLF5: 6500, GLF4: 4200, G280: 3600, GL5T: 5200, GLEX: 6000, GLF3: 3600, GA5C: 5200, GA6C: 6500, GA7C: 7500, GA8C: 7900, CL60: 3500, CL64: 3800, CL65: 4000, CL35: 3200, CL30: 3100, C68A: 1700, C56X: 2000, C25A: 1300, C25B: 1600, C25C: 2000, C25M: 1100, C700: 3500, C750: 3300, C510: 1000, C525: 1200, C550: 1500, C560: 1800, C650: 2000, C680: 2700, E50P: 1100, E55P: 2000, E545: 2400, E550: 3000, E35L: 3900, E135: 1700, LJ31: 1400, LJ35: 2000, LJ40: 1700, LJ45: 1700, LJ55: 2000, LJ60: 2400, LJ70: 2000, LJ75: 2000, H25B: 2500, H25C: 2600, HA4T: 2500, HDJT: 1200, F2TH: 3300, FA7X: 5900, FA8X: 6400, F900: 4700, FA50: 3100, FA6X: 5500, FA10: 1500, FA20: 2000, ASTR: 3000, G150: 2900, WW24: 2000, PRM1: 1200, BE40: 1500, PC12: 1800, PC24: 2000, TBM7: 1400, TBM8: 1500, TBM9: 1700, B350: 1800, BE20: 1500, BE9L: 1300, BE58: 1400, BE36: 900, C208: 1000, SF50: 1200, EA50: 1100, C172: 650, C182: 900, C206: 800, C210: 1000, SR22: 1000, SR20: 800, S22T: 1000, PA46: 1300, P46T: 1300, M600: 1500, DA62: 1200, DA42: 1100, DA40: 900, PA31: 1000, PA32: 800, PA28: 650, PA34: 800, PA44: 700, BE55: 900, BE76: 700, C150: 400, C152: 400, P28A: 650, BBJ1: 6000, BBJ2: 5500, B737: 3000, B738: 3000, B739: 3000, B38M: 3500, A319: 3700, A320: 3300, A20N: 3500, A21N: 4700, A318: 4200, B752: 3900, B763: 5900, B764: 5600, B772: 7000, B77L: 8500, B77W: 7400, B78X: 6400, B762: 6600, B39M: 3500, B37M: 3500, B3XM: 3300, B753: 3400, A35K: 8700, A388: 8000, A339: 7200, A338: 8100, A346: 7900, A343: 7400, A342: 7800, MD11: 6700, A306: 4000, B788: 7300, B789: 7600, B744: 7200, B748: 7700, A332: 7200, A333: 6000, A359: 8000, E190: 2400, E195: 2300, CRJ2: 1700, CRJ7: 1500, CRJ9: 1600, AT72: 800, AT76: 800, DH8D: 1100, DHC6: 800, C130: 2000, C30J: 3000, A400: 4500, C17: 4500, K35R: 5000, KC46: 6000, R135: 5000, E3TF: 5000, E3CF: 5000, P8: 4500, MRTT: 7200, A310: 5000, C5M: 5500, C160: 2500, CN35: 2000, C295: 2300, B703: 5000, E6: 6000, E4: 6000, C40: 3000, C37A: 6500, C37B: 6500, C32: 3900, VC25: 7000, EUFI: 1500, F35: 1200, F15: 2000, F16: 1500, F18: 1200, FA18: 1200, F18S: 1200, F22: 1600, A10: 700, T38: 900, HAWK: 1300, TEX2: 900, PC21: 700, M346: 1000, TOR: 1500, RFAL: 2000, GRIF: 1500, F5: 900, B52: 7000, B1: 5000, B2: 6000, U2: 6000, RQ4: 12000, MQ9: 1000, Q9: 1000, EH10: 750, H47: 400, H60: 320, S70: 320, NH90: 450, EC35: 350, EC30: 330, EC45: 350, EC55: 400, EC75: 450, H160: 450, A139: 500, A169: 450, A109: 450, AW09: 450, S76: 400, S92: 500, B429: 400, B407: 330, B412: 400, B505: 300, B06: 330, R44: 300, R66: 350, R22: 200, AS50: 350, AS55: 380, AS65: 450, AS32: 450, EC20: 330, PUMA: 350, LYNX: 320, WILD: 400, APAC: 250, H64: 250, AH64: 250, UH1: 250, V22: 900 };
+  const RANGE = { GLF6: 7000, GL7T: 7700, GL8T: 8000, GLF5: 6500, GLF4: 4200, G280: 3600, GALX: 3400, G200: 3400, GL5T: 5200, GLEX: 6000, GLF3: 3600, GA5C: 5200, GA6C: 6500, GA7C: 7500, GA8C: 7900, CL60: 3500, CL64: 3800, CL65: 4000, CL35: 3200, CL30: 3100, C68A: 2700, C56X: 2000, C25A: 1300, C25B: 1600, C25C: 2000, C25M: 1100, C700: 3500, C750: 3300, C510: 1000, C500: 1300, C501: 1300, MU30: 1300, SBR1: 1700, SBR2: 2000, C525: 1200, C550: 1500, C560: 1800, C650: 2000, C680: 2700, E50P: 1100, E55P: 2000, E545: 2400, E550: 3000, E35L: 3900, E135: 1700, LJ31: 1400, LJ35: 2000, LJ40: 1700, LJ45: 1700, LJ55: 2000, LJ60: 2400, LJ70: 2000, LJ75: 2000, H25B: 2500, H25C: 2600, HA4T: 2500, HDJT: 1200, F2TH: 3300, FA7X: 5900, FA8X: 6400, F900: 4700, FA50: 3100, FA6X: 5500, FA10: 1500, FA20: 2000, ASTR: 3000, G150: 2900, WW24: 2000, PRM1: 1200, BE40: 1500, PC12: 1800, PC24: 2000, TBM7: 1400, TBM8: 1500, TBM9: 1700, B350: 1800, BE20: 1500, BE9L: 1300, BE58: 1400, BE36: 900, C208: 1000, SF50: 1200, EA50: 1100, C172: 650, C182: 900, C206: 800, C210: 1000, SR22: 1000, SR20: 800, S22T: 1000, PA46: 1300, P46T: 1300, M600: 1500, DA62: 1200, DA42: 1100, DA40: 900, PA31: 1000, PA32: 800, PA28: 650, PA34: 800, PA44: 700, BE55: 900, BE76: 700, C150: 400, C152: 400, P28A: 650, BBJ1: 6000, BBJ2: 5500, B737: 3000, B738: 3000, B739: 3000, B38M: 3500, A319: 3700, A320: 3300, A20N: 3500, A21N: 4700, A318: 4200, B752: 3900, B763: 5900, B764: 5600, B772: 7000, B77L: 8500, B77W: 7400, B78X: 6400, B762: 6600, B39M: 3500, B37M: 3500, B3XM: 3300, B753: 3400, A35K: 8700, A388: 8000, A339: 7200, A338: 8100, A346: 7900, A343: 7400, A342: 7800, MD11: 6700, A306: 4000, B788: 7300, B789: 7600, B744: 7200, B748: 7700, A332: 7200, A333: 6000, A359: 8000, E190: 2400, E195: 2300, CRJ2: 1700, CRJ7: 1500, CRJ9: 1600, AT72: 800, AT76: 800, DH8D: 1100, DHC6: 800, C130: 2000, C30J: 3000, A400: 4500, C17: 4500, K35R: 5000, KC46: 6000, R135: 5000, E3TF: 5000, E3CF: 5000, P8: 4500, MRTT: 7200, A310: 5000, C5M: 5500, C160: 2500, CN35: 2000, C295: 2300, B703: 5000, E6: 6000, E4: 6000, C40: 3000, C37A: 6500, C37B: 6500, C32: 3900, VC25: 7000, EUFI: 1500, F35: 1200, F15: 2000, F16: 1500, F18: 1200, FA18: 1200, F18S: 1200, F22: 1600, A10: 700, T38: 900, HAWK: 1300, TEX2: 900, PC21: 700, M346: 1000, TOR: 1500, RFAL: 2000, GRIF: 1500, F5: 900, B52: 7000, B1: 5000, B2: 6000, U2: 6000, RQ4: 12000, MQ9: 1000, Q9: 1000, EH10: 750, H47: 400, H60: 320, S70: 320, NH90: 450, EC35: 350, EC30: 330, EC45: 350, EC55: 400, EC75: 450, H160: 450, A139: 500, A169: 450, A109: 450, AW09: 450, S76: 400, S92: 500, B429: 400, B407: 330, B412: 400, B505: 300, B06: 330, R44: 300, R66: 350, R22: 200, AS50: 350, AS55: 380, AS65: 450, AS32: 450, EC20: 330, PUMA: 350, LYNX: 320, WILD: 400, APAC: 250, H64: 250, AH64: 250, UH1: 250, V22: 900 };
   const HELI = /^(?:H\d|EC\d|AS[3-6]|A1[0-6]9|A139|AW\d|S\d{2}|B0[5-7]|B4\d\d|B2\d\d|B505|R22|R44|R66|NH90|EH10|PUMA|LYNX|WILD|APAC|AH64|H64|UH1|MI\d|KA\d|B47G|H500|MD[56]\d\d|EXPL|GAZL|ALO[23]|SA3\d|CABR|G2CA|HUCO|BK17|EN\d{2})/;
   const FIGHTER = /^(?:EUFI|F35|F15|F16|F18|FA18|F18S|F22|A10|T38|HAWK|TEX2|PC21|PC9|PC7|M346|TOR|RFAL|GRIF|F5|MIR2|M2000|J8|SU\d{2}|MG29|F4|T6|T45|L39|ALJ|AJET|G120|G12T|TUCA|T7|K8)$/;
   const MIL_HEAVY = /^(?:C130|C30J|A400|C17|K35R|KC46|R135|E3TF|E3CF|P8|MRTT|C5M|C160|CN35|C295|B703|E6|E4|C40|C32|VC25|B52|B1|B2|E2|C2|KC10|DC10|P3|ATLA|ME3|E7WW|E737|B762|RQ4|U2|MQ9|Q9|V22|A332|A330|A310)$/;
@@ -1027,17 +1027,25 @@ function createRouteEngine() {
     return s;
   }
   // Where a flight that was last seen descending most likely landed.
+  // (1.0.2) not on a runway too short for it - unless it has been there before: G-LOBY, a Global 5000 lost at 10,550 ft
+  // coming down the Engadin into Samedan, was read as landing on Sondrio's 3,445 ft strip)
+  const tooShort = (a, ctx) => !!ctx && !!ctx.cls && rwyImpossible(a, ctx.cls, ctx.type) && !(ctx.visits && ctx.visits.get(a.id));
+  const descentReach = p => clamp(p.alt / 250 * NM * 1.4 + 10, 12, 150);
+  // how well a descent seen at p fits a landing at a (arrivalFromDescent's score; null: out of reach)
+  function descentFit(p, a, ctx) {
+    if (!p || p.alt == null || !a) return null;
+    const d = dist(p.lat, p.lon, a.lat, a.lon), agl = p.alt - a.alt; if (agl < -300 || d > descentReach(p) || tooShort(a, ctx)) return null;
+    const expNm = Math.max(1, agl / 300), dNm = d / NM;
+    let s = -Math.abs(Math.log((dNm + 2) / (expNm + 2))) * 2;
+    if (fin(p.trk) && d > 6) { const off = angDiff(p.trk, brg(p.lat, p.lon, a.lat, a.lon)); s -= off > 50 ? (off - 50) / 15 : 0; }
+    return s + priorBonus(a, ctx) + Math.log10(2 + a.size) * 0.3;
+  }
   function arrivalFromDescent(p, ctx) {
     if (!p || p.alt == null) return null;
-    let best = null, bs = -Infinity;
-    const maxKm = clamp(p.alt / 250 * NM * 1.4 + 10, 12, 150);
-    nearby(p.lat, p.lon, maxKm, (a, d) => {
-      const agl = p.alt - a.alt; if (agl < -300) return;
-      const expNm = Math.max(1, agl / 300), dNm = d / NM;
-      let s = -Math.abs(Math.log((dNm + 2) / (expNm + 2))) * 2;
-      if (fin(p.trk) && d > 6) { const off = angDiff(p.trk, brg(p.lat, p.lon, a.lat, a.lon)); s -= off > 50 ? (off - 50) / 15 : 0; }
-      s += priorBonus(a, ctx) + Math.log10(2 + a.size) * 0.3;
-      if (s > bs) { bs = s; best = { airport: a, dist: d, score: s }; }
+    let best = null;
+    nearby(p.lat, p.lon, descentReach(p), (a, d) => {
+      const s = descentFit(p, a, ctx);
+      if (s != null && (!best || s > best.score)) best = { airport: a, dist: d, score: s };
     });
     return best;
   }
@@ -1099,7 +1107,7 @@ function createRouteEngine() {
     const ap = e => e ? { id: e.airport.id, code: e.airport.code, conf: e.conf } : null;
     const on = to ? touchdownOf(leg, to.airport) : null, off = from ? takeoffOf(leg, from.airport) : null;
     // (endRules: built with the rules above - a board need not check its ends again: climbedOut)
-    const sum = { endRules: 2, tStart: leg.start.t, tEnd: leg.end.t, startLat: leg.start.lat, startLon: leg.start.lon, startAlt: leg.start.alt, endLat: leg.end.lat, endLon: leg.end.lon, endAlt: leg.end.alt, endTrk: leg.end.trk, endGs: fin(leg.end.gs) ? Math.round(leg.end.gs) : null, startGs: fin(leg.start.gs) ? Math.round(leg.start.gs) : null, startedOnGround: !!leg.startGnd, ended: !!leg.ended, how: leg.how, maxAlt: leg.maxAlt || 0, cs: leg.cs || '', pathKm: Math.round(pathKm), from: ap(from), to: ap(to), laps: leg.laps > 1 ? leg.laps : 0, path: pathOf(leg),
+    const sum = { endRules: 2, tStart: leg.start.t, tEnd: leg.end.t, startLat: leg.start.lat, startLon: leg.start.lon, startAlt: leg.start.alt, endLat: leg.end.lat, endLon: leg.end.lon, endAlt: leg.end.alt, endTrk: leg.end.trk, endGs: fin(leg.end.gs) ? Math.round(leg.end.gs) : null, startGs: fin(leg.start.gs) ? Math.round(leg.start.gs) : null, startTrk: !leg.startGnd && fin(leg.start.trk) ? Math.round(leg.start.trk) : null, startedOnGround: !!leg.startGnd, ended: !!leg.ended, how: leg.how, maxAlt: leg.maxAlt || 0, cs: leg.cs || '', pathKm: Math.round(pathKm), from: ap(from), to: ap(to), laps: leg.laps > 1 ? leg.laps : 0, path: pathOf(leg),
       tOn: on ? on.t : null, tOnEst: !!(on && on.est), tOff: off ? off.t : null, tOffEst: !!(off && off.est) };
     return sum;
   }
@@ -1155,8 +1163,11 @@ function createRouteEngine() {
   }
   // An aircraft that departs an airport must have arrived there, and one that lands somewhere departs from there
   // next: chaining consecutive legs fills in the ends that ADS-B coverage missed.
-  function chainLegs(legs) {
+  // (ctx: { cls, type } of the aircraft - fields with runways too short for it left out of the guesses below; else its
+  // flights' own type, where they carry one)
+  function chainLegs(legs, ctx) {
     const out = legs.slice().sort((a, b) => a.tStart - b.tStart);
+    if (!ctx || !ctx.cls) { const ty = (out.find(l => l && l.type) || {}).type; ctx = ty ? { cls: classify({ type: ty }), type: ty } : null; }
     const reach = (lat, lon, a, h) => !a || !fin(lat) || dist(lat, lon, a.lat, a.lon) <= Math.max(120, Math.abs(h) * 950);
     for (let i = 0; i < out.length - 1; i++) {
       const a = out[i], b = out[i + 1], gapH = (b.tStart - a.tEnd) / 3600;
@@ -1173,6 +1184,46 @@ function createRouteEngine() {
       // out of coverage: right 25% of the time, a neighbouring field 43% (Teterboro read as Newark, Zurich as a strip beside
       // it) - and a field guessed wrongly is a visit in the aircraft's history: N811MK's "Valladolid" of 7 Oct made it
       // "Valladolid 73%" on 23 Oct, and it landed at Madrid. Those ends stay unknown.)
+      // (1.0.2) Common sense across a stop neither end of which was seen: a landing guessed from the descent and the next
+      // take-off guessed from the climb, within hours of each other, are one stop. The landing leads (the descent is the
+      // better guess): its field is the take-off's too when it explains the climb about as well as the field guessed for
+      // it; when it does not, the field that explains both best, if one does nearly as well as the two apart. On 921 real
+      // stops of business jets, turboprops and airliners, both ends cut out of coverage at random heights (2,500 - 11,500
+      // ft coming down, 2,500 - 16,500 ft going up): the take-off's field right 52% of the time (34% before), the landing's
+      // as before (52%), both right 52% (25%). G-LOBY, 25 Oct: lost at 10,550 ft coming down the Engadin into Samedan,
+      // heard again an hour later climbing out of the same valley - its log had it landing at Sondrio, taking off from
+      // Mollis (and a browser's, at Milan, then from St. Moritz)
+      const guessed = e => !e || e.conf === 'near';
+      if (guessed(a.to) && guessed(b.from) && (a.to || b.from) && !b.startedOnGround && gapH >= 0.15 && gapH < 8 && fin(a.endAlt) && a.endAlt < 15000 && fin(b.startAlt) && b.startAlt < 22000 && fin(a.endLat) && fin(b.startLat)) {
+        const pe = { lat: a.endLat, lon: a.endLon, alt: a.endAlt, trk: a.endTrk }, ps = { lat: b.startLat, lon: b.startLon, alt: b.startAlt, trk: b.startTrk };
+        const FLOOR = -3.5, orFloor = v => v == null ? FLOOR : Math.max(FLOOR, v);
+        const sepA = a.to ? orFloor(descentFit(pe, byId.get(a.to.id), ctx)) : FLOOR, sepB = b.from ? orFloor(climbFit(ps, byId.get(b.from.id), ctx)) : FLOOR;
+        const A = a.to && byId.get(a.to.id), sbA = A ? climbFit(ps, A, ctx) : null;
+        let best = null;
+        if (A && sbA != null && sbA >= sepB - 3) { if (!b.from || b.from.id !== A.id) best = { ap: A, on: null, off: fieldTimeOfSum(b, A, true) }; }
+        else {
+          nearby(pe.lat, pe.lon, descentReach(pe), ap => {
+            if (ap.id >= 1e7) return;
+            const sa = descentFit(pe, ap, ctx), sb = sa == null ? null : climbFit(ps, ap, ctx); if (sb == null || sa < FLOOR || sb < FLOOR) return;
+            // (down before it is up again: its landing there, ten minutes on the ground, its take-off)
+            const on = fieldTimeOfSum(a, ap, false), off = fieldTimeOfSum(b, ap, true);
+            if ((on ? on.t : a.tEnd) + 600 > (off ? off.t : b.tStart)) return;
+            if (!best || sa + sb > best.s) best = { ap, s: sa + sb, sa, on, off };
+          });
+          if (best && !(best.s >= sepA + sepB - 1 && best.sa >= sepA - 0.5)) best = null;
+        }
+        if (best && !(a.to && b.from && a.to.id === best.ap.id && b.from.id === best.ap.id)) {
+          const e = { id: best.ap.id, code: best.ap.code, conf: 'near' };
+          if (!a.to || a.to.id !== e.id) { a.to = Object.assign({}, e); if (best.on && (!a.tOn || a.tOnEst)) { a.tOn = best.on.t; a.tOnEst = best.on.est; } }
+          if (!b.from || b.from.id !== e.id) { b.from = Object.assign({}, e); if (best.off && (!b.tOff || b.tOffEst)) { b.tOff = best.off.t; b.tOffEst = best.off.est; } }
+        }
+      }
+      // (1.0.2) and a landing guessed from the descent before a take-off seen from a field it could have been coming down
+      // to: that field (the take-off seen - on its runway, or low over it - is the stronger word)
+      if (a.to && a.to.conf === 'near' && b.from && b.from.id !== a.to.id && (b.startedOnGround || ['ground', 'low'].includes(b.from.conf)) && gapH >= 0.15 && gapH < 8) {
+        const ap = byId.get(b.from.id), sa = ap && fin(a.endAlt) ? descentFit({ lat: a.endLat, lon: a.endLon, alt: a.endAlt, trk: a.endTrk }, ap, null) : null;
+        if (sa != null && sa > -3.5) { a.to = Object.assign({}, b.from, { conf: 'chain' }); if (!a.tOn || a.tOnEst) { const e = fieldTimeOfSum(a, ap, false); if (e && e.t < b.tStart) { a.tOn = e.t; a.tOnEst = e.est; } } }
+      }
       // (an end known but its time not: the way left from the last point heard)
       if (a.to && !a.tOn) { const ap = byId.get(a.to.id), e = ap && fieldTimeOfSum(a, ap, false); if (e && e.t < b.tStart) { a.tOn = e.t; a.tOnEst = e.est; } }
     }
@@ -1565,7 +1616,7 @@ function createRouteEngine() {
   function climbFit(p, a, ctx) {
     if (!p || p.alt == null || !a) return null;
     const grp = ctx && ctx.grp || 'jet', q = tq('clb', grp, 0), d = dist(p.lat, p.lon, a.lat, a.lon);
-    const agl = p.alt - a.alt; if (agl < -200 || d > clamp(p.alt / 150 * NM, 15, 200)) return null;
+    const agl = p.alt - a.alt; if (agl < -200 || d > clamp(p.alt / 150 * NM, 15, 200) || tooShort(a, ctx)) return null;
     const dNm = d / NM, r = Math.log((dNm + 1) / (Math.max(0, agl) / 300 + 1));
     let s = q ? ld(q, r, -4, 3) - Math.log(dNm + 1) - Math.log(2 * Math.PI * Math.max(1, d)) : -Math.abs(Math.log((dNm + 2) / (agl / 420 + 2))) * 2.2;
     if (fin(p.trk) && d > 4) { const off = angDiff(p.trk, brg(a.lat, a.lon, p.lat, p.lon)); s -= off > 100 ? (off - 100) / 20 : 0; }
@@ -2002,6 +2053,11 @@ function createRouteEngine() {
     const desc = describe(trail, pos);
     const dOP = O ? dist(O.lat, O.lon, pos.lat, pos.lon) : NaN;
     const flownKm = O ? Math.max(dOP, desc.path * 0.9) : desc.path;
+    // (1.0.2) what it has flown since it took off it can fly, a fifth to spare: a range from the type's table - or its
+    // class's, where the table has no figure - that the flight itself has gone beyond is too short. N162GB, a G200 (no
+    // figure: a light jet's 2,200 nm), 4,500 km out of Lagos over France, had every field ahead "beyond its range" and
+    // Lagos left alone - 95%)
+    const rngEff = Math.max(rng, flownKm * 1.2);
     const emergency = SQ_EMERG.test(String(pos.sq || ''));
     const onGround = !!pos.gnd;
     // How often this airframe comes back to where it started: its class, updated with its own record.
@@ -2012,7 +2068,7 @@ function createRouteEngine() {
     const add = a => { if (a && !cands.has(a.id)) cands.set(a.id, a); };
     for (const id of hs.visits.keys()) add(byId.get(id));
     if (O) add(O);
-    let reachKm = onGround ? Math.min(rng, 4000) : clamp(rng - flownKm * 0.9, 150, rng);
+    let reachKm = onGround ? Math.min(rng, 4000) : clamp(rngEff - flownKm * 0.9, 150, rngEff);
     if (!onGround && phase === 'descent' && pos.alt != null) reachKm = Math.min(reachKm, pos.alt / 300 * NM * 3.5 + 150);
     if (!onGround && pos.alt != null && pos.alt < 6000 && phase !== 'climb') reachKm = Math.min(reachKm, 200);
     if (cls === 'heli') reachKm = Math.min(reachKm, 450);
@@ -2037,7 +2093,7 @@ function createRouteEngine() {
       for (let i = 0; i < preF.length && i < (W.fcand || 150); i++) add(preF[i][1]);
     }
     // where business jets from this origin actually go, however far
-    if (O && O.icao) for (const [ic] of (ODN.get(O.icao.toUpperCase()) || []).slice(0, 40)) { const b = byIcao.get(ic); if (b && (onGround || flownKm + dist(pos.lat, pos.lon, b.lat, b.lon) < rng * 1.08)) add(b); }
+    if (O && O.icao) for (const [ic] of (ODN.get(O.icao.toUpperCase()) || []).slice(0, 40)) { const b = byIcao.get(ic); if (b && (onGround || flownKm + dist(pos.lat, pos.lon, b.lat, b.lon) < rngEff * 1.08)) add(b); }
     if (!onGround && (phase === 'descent' || (pos.alt != null && pos.alt < 9000) || emergency)) nearby(pos.lat, pos.lon, emergency ? 250 : 100, a => add(a));
     if (fieldsToo && !onGround && (phase === 'descent' || (pos.alt != null && pos.alt < 6000))) nearbyFields(pos.lat, pos.lon, 25, a => add(a));
 
@@ -2319,8 +2375,11 @@ function createRouteEngine() {
       }
       if (!onGround) {
         const agl = (pos.alt != null ? pos.alt : 0) - a.alt;
-        if (!isO && flownKm + d > rng * 1.08) continue;
-        if (!isO && flownKm + d > rng * 0.85) F('range', -((flownKm + d) / rng - 0.85) / 0.23);
+        if (!isO && flownKm + d > rngEff * 1.08) continue;
+        if (!isO && flownKm + d > rngEff * 0.85) F('range', -((flownKm + d) / rngEff - 0.85) / 0.23);
+        // (1.0.2) nor back to where it took off when the way back on top of what it has flown is beyond it - far out,
+        // a civil aircraft (a military one may be refuelled on the way)
+        if (isO && !ac.mil && dOP > 300 && flownKm + d > rngEff * 1.08) continue;
         // --- where it is. Both hypotheses are scored as a density per km² at the current position, so a local
         // sortie and a trip compete on equal terms: a trip spreads its probability evenly along the route and across
         // it by the learned cross-track spread; a local sortie by the learned distance-from-home over the ring.

@@ -77,7 +77,9 @@ aside.tl-pred .tl-pred-text b{font-weight:700}
 .tl-pop .tl-spin{display:inline-block;width:9px;height:9px;border:2px solid #327db6;border-right-color:transparent;border-radius:50%;animation:tl-spin .8s linear infinite}`;
   function addStyle() { if (document.getElementById('tl-style')) return; const s = document.createElement('style'); s.id = 'tl-style'; s.textContent = STYLE; (document.head || document.documentElement).appendChild(s); }
   // FR24's adverts and upsell banners (the sidebar, the carousel promo and the free-trial pop-up are switched off in
-  // the page itself, see the bridge). In place from the first paint, on every FR24 page. The advert slots are hidden,
+  // the page itself, see the bridge). In place from the first paint, on every FR24 page. (1.0.2: and the airport panel's
+  // locked "Movements per day" and "Runway usage" pictures - never seen, not even for the moment before the real figures
+  // take their place; their room kept, nothing moves.) The advert slots are hidden,
   // not removed: their scripts still run, so FR24's ad-blocker check has nothing to find. (:has() rules stand alone -
   // a browser without it drops only that rule.)
   const AD_STYLE = `
@@ -87,7 +89,9 @@ div:has(>[id^="pb-slot-fr24-"]:only-child){display:none!important}
 div:has(>[id^="div-gpt-ad-"]:only-child){display:none!important}
 #aside-main-menu div:has(>[data-testid="aside-main-menu__try-for-free-btn"]){display:none!important}
 div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:none!important}
-[data-testid="airport-panel"] div:has(>button[data-testid^="airport-panel__schedules__"][data-testid$="-flights"]:disabled){display:none!important}`;
+[data-testid="airport-panel"] div:has(>button[data-testid^="airport-panel__schedules__"][data-testid$="-flights"]:disabled){display:none!important}
+[data-testid="airport-panel"] [data-testid^="airport-panel__promo-movement"],[data-testid="airport-panel"] [data-testid^="airport-panel__promo-runway_usage"],[data-testid="airport-panel"] img[alt="Movements per day" i],[data-testid="airport-panel"] img[alt="Runway usage" i]{visibility:hidden!important}
+[data-testid="airport-panel"] button:has(img[alt="Movements per day" i]),[data-testid="airport-panel"] button:has(img[alt="Runway usage" i]),[data-testid="airport-panel"] button:has([data-testid^="airport-panel__promo-movement"]),[data-testid="airport-panel"] button:has([data-testid^="airport-panel__promo-runway_usage"]){visibility:hidden!important}`;
   function addAdStyle() { if (document.getElementById('tl-noads')) return; const s = document.createElement('style'); s.id = 'tl-noads'; s.textContent = AD_STYLE; (document.head || document.documentElement).appendChild(s); }
 
   const q = (root, sel) => root.querySelector(sel);

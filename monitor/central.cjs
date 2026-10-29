@@ -282,7 +282,7 @@ function createCentral(env) {
     if (closedMap.size > 500) closedMap.clear();
     S.flights = flights.size;
   }
-  return { start, take, compute, routeOf, answer, prune, flights, stats: S, get ctx() { return ctx; }, wxMap, closedMap, histOf };
+  return { start, take, compute, routeOf, answer, prune, flights, stats: S, overBudget: () => busy() || !!(env.busy && env.busy()), get ctx() { return ctx; }, wxMap, closedMap, histOf };
 }
 
 module.exports = { createCentral, compactTables, loadTables, packApproach, blockOf, BLOCKS, cleanPt };

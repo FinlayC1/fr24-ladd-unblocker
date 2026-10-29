@@ -70,6 +70,21 @@ function createTracks(env) {
     if (changed.length && api.onChange) try { api.onChange(hex, changed); } catch (e) { if (env.log) env.log('tracks', String(e)); }
     return n;
   }
+  // (1.0.2) an aircraft's points at exactly these moments taken out again - those put for a flight whose name was then
+  // withdrawn (monitor.cjs fr24Track)
+  function drop(hex, times) {
+    hex = String(hex || '').toLowerCase(); if (!/^[0-9a-f]{6}$/.test(hex) || !times || !times.length) return 0;
+    const byDay = new Map(); for (const t of times) if (fin(t)) { const d = dayOf(t); (byDay.get(d) || byDay.set(d, new Set()).get(d)).add(Math.round(t)); }
+    let n = 0;
+    for (const [d, set] of byDay) {
+      if (!days.has(d) && !fs.existsSync(file(d))) continue;
+      const x = dayMap(d), a = x.m.get(hex); if (!a) continue;
+      const out = []; for (let i = 0; i < a.length; i += 4) if (set.has(a[i])) n++; else out.push(a[i], a[i + 1], a[i + 2], a[i + 3]);
+      if (out.length !== a.length) { if (out.length) x.m.set(hex, out); else x.m.delete(hex); x.dirty = true; }
+    }
+    stats.dropped = (stats.dropped || 0) + n;
+    return n;
+  }
   // the days with points not yet written, to disk (whole files, written beside and moved in)
   function save() {
     fs.mkdirSync(dir, { recursive: true });
@@ -235,7 +250,7 @@ function createTracks(env) {
     for (let i = 0; i < a.length; i += 4) out.push([a[i], a[i + 1], a[i + 2], a[i + 3] >= 0 ? a[i + 3] * 100 : a[i + 3] === -1 ? 0 : null, a[i + 3] === -1]);
     return out;
   }
-  const api = { put, save, release, prune, at, of, estimate, atAll, around, gcDist, stats, onChange: null, get days() { return days.size; }, dirty: () => [...days.values()].some(x => x.dirty) };
+  const api = { put, drop, save, release, prune, at, of, estimate, atAll, around, gcDist, stats, onChange: null, get days() { return days.size; }, dirty: () => [...days.values()].some(x => x.dirty) };
   return api;
 }
 module.exports = { createTracks };

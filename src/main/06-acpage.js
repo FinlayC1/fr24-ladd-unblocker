@@ -600,6 +600,9 @@
       let hx = Object.assign({ hex, reg }, (await store.hexAsync(hex)) || {}, { otherAirframe: other });
       if (!hx.msn && titleMsn && !other) hx.msn = titleMsn;   // (FR24's title names its register's airframe)
       fillAircraftHeader(hx, reg);
+      // (1.0.2) FR24's page knows the aircraft and shows none of its flights: blocked, if it has flown lately (the monitor's
+      // word first) - its LADD tag here and in search from then on (M-PORT's log page had none)
+      if (!other && !(hx.ladd || hx.pia || hx.mil)) noteFr24Blocked(hex, reg).then(() => { if (current === run) { hx = Object.assign(hx, store.getHex(hex) || {}); fillAircraftHeader(hx, reg); } });
       const shell = Object.assign({ id: 0 }, hx, { hex, reg, photoLevel: 0, photoV: 0 });
       // photos in parallel with the identity lookups; each fills its part of the header as soon as it arrives
       fetchPhotos(shell, true).then(ph => {

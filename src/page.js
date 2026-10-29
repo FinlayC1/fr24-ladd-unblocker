@@ -1964,12 +1964,18 @@
       });
       return out;
     }
-    // (the movements of each of the last days: FR24's own counts and the blocked flights the userscript knows)
+    // (the movements of each of the last days: FR24's own counts and the blocked flights the userscript knows - and, 1.0.2,
+    // every finished day the monitor has counted: every aircraft public ADS-B heard take off or land there, its world log)
     function panelMoves(code, d) {
       var c = code.toLowerCase(), tz = d.tz || 'UTC', today = dayOf(Date.now() / 1000, tz);
       var days = mvKept(c).days || {}, add = {}, inc = function (t, k) { var x = dayOf(t, tz); (add[x] = add[x] || { off: 0, on: 0 })[k]++; };
       (routesAdd.get(d.apId) || []).forEach(function (m) { if (m.from.id === d.apId) (m.offs || []).forEach(function (t) { inc(t, 'off'); }); if (m.to.id === d.apId) (m.ons || []).forEach(function (t) { inc(t, 'on'); }); });
-      return Object.keys(days).sort().reverse().slice(0, 7).map(function (k) { var x = days[k], e = add[k] || { off: 0, on: 0 }; return { day: k, today: k === today, off: x.takeoffs + e.off, on: x.landings + e.on, blocked: e.off + e.on }; });
+      var mon = {}; (Array.isArray(d.daily) ? d.daily : []).forEach(function (x) { if (Array.isArray(x) && x[3] === 'all' && /^\d{4}-\d\d-\d\d$/.test(String(x[0])) && x[0] !== today) mon[x[0]] = { off: +x[1] || 0, on: +x[2] || 0 }; });
+      var keys = Object.keys(days).concat(Object.keys(mon)).filter(function (k, i, a) { return a.indexOf(k) === i; }).sort().reverse().slice(0, 7);
+      return keys.map(function (k) {
+        if (mon[k]) return { day: k, today: false, off: mon[k].off, on: mon[k].on, blocked: 0, all: true };
+        var x = days[k], e = add[k] || { off: 0, on: 0 }; return { day: k, today: k === today, off: x.takeoffs + e.off, on: x.landings + e.on, blocked: e.off + e.on };
+      });
     }
     var TL_OFF = '#3d7be0', TL_ON = '#f0b429';
     function bar(parts, max) {
@@ -2000,8 +2006,9 @@
       if (!rows.length) { var p = document.createElement('div'); p.className = 'px-1.5 py-2 text-sm text-gray-900'; p.textContent = 'Counting this airport\'s flights of the last days…'; box.appendChild(p); return 'none'; }
       var max = Math.max.apply(null, rows.map(function (r) { return r.off + r.on; }));
       grid(box, rows.map(function (r) { return { label: dayLabel(r.day) + (r.today ? ' (so far)' : ''), off: r.off, on: r.on }; }), max);
-      var bl = rows.reduce(function (s, r) { return s + r.blocked; }, 0);
-      legend(box, 'Take-offs / landings by the airport\'s local day - FR24\'s own schedule' + (bl ? ', with ' + bl + ' blocked flight' + (bl > 1 ? 's' : '') + ' it does not show' : '') + '.');
+      var bl = rows.reduce(function (s, r) { return s + r.blocked; }, 0), all = rows.filter(function (r) { return r.all; }).length;
+      legend(box, all === rows.length ? 'Take-offs / landings each day (UTC) - every aircraft public ADS-B heard there, counted by the monitor.'
+        : (all ? 'Finished days (UTC): every aircraft public ADS-B heard there, counted by the monitor; the others: ' : 'Take-offs / landings by the airport\'s local day - ') + 'FR24\'s own schedule' + (bl ? ', with ' + bl + ' blocked flight' + (bl > 1 ? 's' : '') + ' it does not show' : '') + '.');
       return JSON.stringify(rows);
     }
     function usageBlock(box, d) {
@@ -2013,7 +2020,7 @@
       if (!rows.length) { p = document.createElement('div'); p.className = 'px-1.5 py-2 text-sm text-gray-900'; p.textContent = 'No runways known for this airport.'; box.appendChild(p); return 'none'; }
       var max = Math.max(1, Math.max.apply(null, rows.map(function (r) { return r.off + r.on; })));
       grid(box, rows, max);
-      legend(box, d.moves ? 'Take-offs / landings of the ' + d.moves + ' movement' + (d.moves > 1 ? 's' : '') + ' the monitor tracked here in the last ' + (d.days || 7) + ' days (blocked aircraft worldwide, all traffic in its areas - not every flight); the runway was clear from the track for ' + (d.withRunway || 0) + '.' : 'The monitor tracked no flights here in the last ' + (d.days || 7) + ' days.');
+      legend(box, d.moves ? 'Take-offs / landings of the ' + d.moves + ' movement' + (d.moves > 1 ? 's' : '') + (d.allDays ? ' public ADS-B heard here in the last ' + (d.days || 7) + ' days (every aircraft on the ' + d.allDays + ' day' + (d.allDays > 1 ? 's' : '') + ' the monitor has counted; the rest, the flights it tracks)' : ' the monitor tracked here in the last ' + (d.days || 7) + ' days (blocked aircraft worldwide, all traffic in its areas - not every flight)') + '; the runway was clear from the track for ' + (d.withRunway || 0) + '.' : 'No take-offs or landings heard here in the last ' + (d.days || 7) + ' days.');
       return JSON.stringify(rows) + d.moves;
     }
     function panelBlock(slot, code, d) {
@@ -2032,7 +2039,7 @@
       var code = panelCode(); if (!code) return;
       if (panelOpen.code !== code) { panelOpen.code = code; panelOpen.at = Date.now(); }
       panelWant(code); rwyPanel();
-      var d = panelData[code];
+      var d = panelData[code] || panelFromKept(code);
       // (FR24's own counts of the last days: once the panel has been open a moment - a click through airports asks nothing)
       if (d && Date.now() - panelOpen.at > 2500) mvCount(code.toLowerCase(), d.tz || 'UTC');
       // (the panel as it was last done, unchanged: nothing to do)
@@ -2044,9 +2051,20 @@
     function panelSig(panel, code, d) { return [panel.getElementsByTagName('*').length, textOf(panel).length, d ? d.at : 0, (lsGet('tl.mv.' + code.toLowerCase()) || '').length, ((d && routesAdd.get(d.apId)) || []).length, Math.floor(Date.now() / 60000)].join(':'); }
     function acceptAirportPanel(d) {
       var code = rwyKey(d.code); if (!code) return;
-      panelData[code] = { at: Date.now(), apId: Number(d.apId) || 0, tz: String(d.tz || ''), days: Number(d.days) || 7, runways: Array.isArray(d.runways) ? d.runways : null, freqs: Array.isArray(d.freqs) ? d.freqs : null, usage: Array.isArray(d.usage) ? d.usage : null, moves: Number(d.moves) || 0, withRunway: Number(d.withRunway) || 0, monitor: !!d.monitor, ends: Array.isArray(d.ends) ? d.ends : null };
+      panelData[code] = { at: Date.now(), apId: Number(d.apId) || 0, tz: String(d.tz || ''), days: Number(d.days) || 7, runways: Array.isArray(d.runways) ? d.runways : null, freqs: Array.isArray(d.freqs) ? d.freqs : null, usage: Array.isArray(d.usage) ? d.usage : null, moves: Number(d.moves) || 0, withRunway: Number(d.withRunway) || 0, monitor: !!d.monitor, ends: Array.isArray(d.ends) ? d.ends : null, daily: Array.isArray(d.daily) ? d.daily : null, allDays: Number(d.allDays) || 0 };
+      panelKeep(code, panelData[code]);
       panelSigs[code] = ''; panelTick();
     }
+    // (1.0.2) the last 40 airports' panels kept in this browser: one opened again is filled the moment it shows, the
+    // monitor's fresh answer replacing it when it comes
+    function panelKept() { try { var o = JSON.parse(lsGet('tl.apc') || 'null'); return o && typeof o === 'object' ? o : {}; } catch (e) { return {}; } }
+    function panelKeep(code, d) {
+      if (!d || !d.monitor) return;
+      var o = panelKept(); delete o[code]; o[code] = d;
+      var ks = Object.keys(o); while (ks.length > 40) delete o[ks.shift()];
+      lsSet('tl.apc', JSON.stringify(o));
+    }
+    function panelFromKept(code) { var d = panelKept()[code]; if (!d || typeof d !== 'object' || !(Date.now() - (d.at || 0) < 3 * 86400e3)) return null; d.kept = true; panelData[code] = d; return d; }
     setInterval(function () { try { panelTick(); } catch (e) { stats.errors++; stats.lastError = String(e); } }, 400);
     // an airport page's runway table: FR24's runways, each end's elevation where the userscript knows it, else the airport's
     function unlockRunways(p, apId) {
