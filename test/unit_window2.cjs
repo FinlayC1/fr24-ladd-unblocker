@@ -68,7 +68,7 @@ const click = (win, el) => el.dispatchEvent(new win.MouseEvent('click', { bubble
     check('after an update, a newer one out: the button\'s tooltip says so before the window is opened - nothing drawn over its icon', (await until(() => /9\.1\.0 is out/.test(btn.getAttribute('title') || ''), 2000)) && !btn.querySelector('.tl-ub-dot'));
     click(win, btn); const w = await until(() => doc.querySelector('.tl-ub'), 4000);
     const note = w.querySelector('.tl-ub-new');
-    check('... the window opens with "Updated to v' + VERSION + '" and this version\'s headlines (at most 3), a link to all of them', !!note && note.textContent.includes('Updated to v' + VERSION) && note.querySelectorAll('li').length >= 1 && note.querySelectorAll('li').length <= 3 && !!note.querySelector('a[href*="CHANGELOG"]'), note && note.textContent.replace(/\s+/g, ' ').slice(0, 300));
+    check('... the window opens with "Updated to v' + VERSION + '" and this version\'s "in short" sentences (at most 6), a link to all of them', !!note && note.textContent.includes('Updated to v' + VERSION) && note.querySelectorAll('li').length >= 1 && note.querySelectorAll('li').length <= 6 && !!note.querySelector('a[href*="CHANGELOG"]'), note && note.textContent.replace(/\s+/g, ' ').slice(0, 300));
     await until(() => w.querySelector('.tl-ub-alert'), 3000);
     const alert = w.querySelector('.tl-ub-alert');
     check('a newer version out: a line in Updates says this one is out of date, with both versions', !!alert && alert.textContent.includes('9.1.0') && alert.textContent.includes(VERSION) && alert.closest('#tl-ub-upd'), alert && alert.textContent);

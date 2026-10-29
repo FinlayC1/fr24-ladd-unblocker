@@ -59,7 +59,10 @@ const registry = registrySrc.slice(r0, r1 + '/* ==/REGISTRY== */'.length).split(
 // (the newest CHANGELOG section's headlines - its bold lead of each item - for the window's "what's new" note after an update)
 const whatsNew = (() => {
   const sec = rd('CHANGELOG.md').split(/^## /m)[1] || '', v = (sec.match(/^\[([^\]]+)\]/) || [])[1] || '';
-  const items = [...sec.matchAll(/^- \*\*(.+?)\*\*/gm)].map(m => m[1].replace(/`/g, '').trim()).filter(Boolean).slice(0, 3);
+  // (the section's "In short" sentences, written for the people using it; failing that, the bold lead of each item)
+  const short = (sec.match(/^### In short\n([\s\S]*?)(?=^### |^## |$(?![\s\S]))/m) || [])[1] || '';
+  const lead = [...short.matchAll(/^- (.+)$/gm)].map(m => m[1].replace(/`/g, '').trim());
+  const items = (lead.length ? lead : [...sec.matchAll(/^- \*\*(.+?)\*\*/gm)].map(m => m[1].replace(/`/g, '').trim())).filter(Boolean).slice(0, 6);
   return { v, items };
 })();
 const mods = fs.readdirSync(path.join(root, 'src', 'main')).filter(f => /^\d\d-.*\.js$/.test(f)).sort().map(f => rd('src/main/' + f).replace("'__TL_WHATSNEW__'", () => JSON.stringify(whatsNew)));
