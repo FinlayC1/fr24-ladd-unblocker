@@ -77,7 +77,9 @@ it is set to the Oracle monitor and shows "in use".
 **Access:** the user runs all VM commands. The cloud session has no SSH key and must not ask for the private key. Give
 exact single-line commands, one step at a time, and wait for the pasted output. The user is on Windows PowerShell
 (paste = right-click):
-`ssh -o ServerAliveInterval=30 -i "$env:USERPROFILE\Downloads\ssh-key-2026-10-12.key" ubuntu@143.47.224.210`
+**The live monitor is the Ampere A1 VM `fr24-monitor-a1` (79.72.69.41).** Log in there:
+`ssh -o ServerAliveInterval=30 -i "$env:USERPROFILE\Downloads\ssh-key-2026-10-12.key" ubuntu@79.72.69.41`
+(The old 1 GB micro VM `fr24-monitor`, 143.47.224.210, is not the live monitor - do not deploy to it.)
 
 **Home PC monitor** `C:\Users\finla\OneDrive\Documents\FR24LaddMonitor\` (monitor.cjs now the /dash version, dash.html,
 engine.js, dataset.cjs, data/, `store/` = `legs-2026-10-03.json` ... `legs-2026-10-11.json` + `state.json` with ~7,199

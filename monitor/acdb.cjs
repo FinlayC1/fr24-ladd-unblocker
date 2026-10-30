@@ -78,7 +78,7 @@ function openskyParser(header) {
 }
 // FAA MASTER.txt: a header line; N-number, serial, year, the registrant's name, city and state, the Mode S address in hex
 function faaParser(header) {
-  const cols = csvLine(header).map(c => c.replace(/^﻿/, '').trim().toUpperCase());
+  const cols = csvLine(header.replace(/^(\uFEFF|\u00EF\u00BB\u00BF)/, '')).map(c => c.trim().toUpperCase());   // (its byte-order mark, read as UTF-8 or as Latin-1)
   const at = name => cols.indexOf(name);
   const I = { n: at('N-NUMBER'), msn: at('SERIAL NUMBER'), year: at('YEAR MFR'), name: at('NAME'), city: at('CITY'), state: at('STATE'), hex: at('MODE S CODE HEX') };
   if (I.n < 0 || I.hex < 0) return null;

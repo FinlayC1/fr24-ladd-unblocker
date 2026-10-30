@@ -43,7 +43,7 @@ const CCURR = [ccLine('FABC', '28-7105001', '1971/03/01', (0xc00001).toString(2)
 const COWNR = [['FABC', 'Doe, Jane', '', '12 Maple Street', '', 'Deep River', 'Ontario', 'Ontario', 'K0J 1P0', 'CANADA'].map(v => q(v, '"')).join(',')].join('\n');
 const SRC = {
   'https://t/tar1090.csv.gz': zlib.gzipSync(T.join('\n') + '\n'), 'https://t/adsbx.json.gz': zlib.gzipSync(X.map(o => JSON.stringify(o)).join('\n') + '\n'),
-  'https://t/opensky.csv': Buffer.from(OS.join('\n') + '\n'), 'https://t/ccar.zip': zipOf({ 'carscurr.txt': CCURR, 'carsownr.txt': COWNR, 'carslayout.txt': 'x' }), 'https://t/faa.zip': zipOf({ 'MASTER.txt': FAA.join('\r\n') + '\r\n' })
+  'https://t/opensky.csv': Buffer.from(OS.join('\n') + '\n'), 'https://t/ccar.zip': zipOf({ 'carscurr.txt': CCURR, 'carsownr.txt': COWNR, 'carslayout.txt': 'x' }), 'https://t/faa.zip': zipOf({ 'MASTER.txt': Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(FAA.join('\r\n') + '\r\n')]) })   // (with its byte-order mark, as the FAA sends it)
 };
 const urls = { tar1090: 'https://t/tar1090.csv.gz', adsbx: 'https://t/adsbx.json.gz', opensky: 'https://t/opensky.csv', ccar: 'https://t/ccar.zip', faa: 'https://t/faa.zip' };
 let refuse = new Set();
