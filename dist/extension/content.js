@@ -48,7 +48,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
 // ==UserScript==
 // @name         Flightradar24 LADD / N-A Unblocker (feed-level)
 // @namespace    tweeks.io
-// @version      1.1.4
+// @version      1.1.5
 // @description  Identifies every LADD / N/A / blocked military aircraft on Flightradar24 from public ADS-B, and injects callsign, registration, operator, age, country, MSN, squawk, vertical speed, GPS altitude, airspeeds, wind, photos, a reasoned origin/destination with a wind-corrected ETA (also for ordinary flights FR24 shows as N/A - military, private, GA, helicopters, with private landing sites; learned from 63 days of every aircraft worldwide, with live weather and closures), airport-board entries and a rebuilt 7-month flight log straight into FR24's own data - so it all renders like normal FR24 traffic.
 // @author       Finlay Clarke
 // @updateURL    https://raw.githubusercontent.com/FinlayC1/fr24-ladd-unblocker/main/dist/fr24-ladd-unblocker.user.js
@@ -138,7 +138,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "1.1.4";
+    var BRIDGE_V = "1.1.5";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed
@@ -1531,9 +1531,54 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     }
     // ---- the board archive (userscript 06-boards): three days back and three ahead, in one list ------------------
     // FR24 serves a free account its page 1 (now onwards) and page -1 (earlier today), a page at a time. Its page 1 is
-    // answered with both, and with every flight the userscript keeps for the airport (three days each way), in FR24's row
-    // format - its own day headings and cards - and no other page: no "Earlier" / "Later flights" (none twice).
+    // answered with both, and with every flight the userscript keeps for the airport, in FR24's row format - its own day
+    // headings and cards - cut into FR24's own pages (1.1.5, below): the present first, the rest when its "Load earlier /
+    // later flights" asks, answered here.
     var boardArch = new Map(), archWait = new Map(), archById = new Map(), archRefreshAt = 0, archRefreshT = 0, archRefreshSince = 0;
+    // (1.1.5) A board's whole list - FR24's rows, the kept fortnight, the flights followed here - is FR24's own pages:
+    // FR24 drawing a thousand rows at once held the page for seconds (two minutes, with the script's watchers), however
+    // little the script did. Page 1 is the present (40 rows before it, 160 after); the pages before and after it 100 rows
+    // each, as FR24's own, their edges times set once when the board opens - a page's rows the same however often FR24
+    // asks for it again, none twice, none lost - answered here at once when FR24's "Load earlier / later flights" asks.
+    var boardKept = new Map(), PAGE_FIRST = 200, PAGE_ROWS = 100, PAGE_BEFORE = 40;
+    var rowT = function (e) { return (e && (e.scheduledTime || e.estimatedTime || e.landedTime)) || 0; };
+    function keepBoard(apId, kind, list, fresh) {
+      var k = apId + '/' + kind, kb = boardKept.get(k), now = Date.now();
+      // (the edges set when FR24 opens the board - its first ask names no page - and not again while it holds other pages
+      // of it: every five minutes, and on coming back to the tab, it asks again for every page it has, all at once, and
+      // each must keep its rows. With page 1 alone drawn, set afresh after ten minutes, to keep up with the present)
+      if (!kb || fresh || (!kb.paged && now - kb.anchoredAt > 10 * 60000)) {
+        var from = now / 1000 - 900, start = 0; while (start < list.length && rowT(list[start]) < from) start++;
+        // (nothing before page 1: it reaches back to the start, whatever comes in earlier later on)
+        var i0 = Math.max(0, start - PAGE_BEFORE), cuts = { 1: i0 > 0 && list.length ? rowT(list[Math.min(i0, list.length - 1)]) : -Infinity };
+        for (var n = 2, i = i0 + PAGE_FIRST; i < list.length; n++, i += PAGE_ROWS) cuts[n] = Math.max(rowT(list[i]), cuts[n - 1]);
+        for (var q = 1, b = i0 - PAGE_ROWS; i0 > 0; q++, b -= PAGE_ROWS) { cuts[-q] = b > 0 ? Math.min(rowT(list[b]), q === 1 ? cuts[1] : cuts[-q + 1]) : -Infinity; if (b <= 0) break; }
+        kb = { anchoredAt: now, cuts: cuts, paged: false };
+      }
+      kb.list = list; kb.at = now;
+      // (the last four boards asked for kept: FR24 shows one at a time, and asks for page 1 afresh whenever one is opened)
+      boardKept.delete(k); boardKept.set(k, kb);
+      if (boardKept.size > 4) boardKept.delete(boardKept.keys().next().value);
+      return kb;
+    }
+    // (page p's rows: from the time it begins to the time the next begins - the last forward page to the end, the first
+    // page back from the start)
+    function pageOf(kb, p) {
+      // (a page there is none of: empty, leading nowhere - never "earlier" again and again)
+      var c = kb.cuts; if (c[p] == null) return { data: [], meta: { currentPage: p, previousPage: null, nextPage: null, hasMorePreviousData: false, hasMoreNextData: false } };
+      var lo = c[p], hi = p >= 1 ? (c[p + 1] != null ? c[p + 1] : Infinity) : (p === -1 ? c[1] : c[p + 1]);
+      var list = kb.list || [], data = list.filter(function (e) { var t = rowT(e); return t >= lo && t < hi; });
+      var before = lo > -Infinity && list.some(function (e) { return rowT(e) < lo; }), after = hi < Infinity && list.some(function (e) { return rowT(e) >= hi; });
+      return { data: data, meta: { currentPage: p, previousPage: before ? (p === 1 ? -1 : p - 1) : null, nextPage: after ? (p === -1 ? 1 : p + 1) : null, hasMorePreviousData: before, hasMoreNextData: after } };
+    }
+    function keptPage(apId, kind, url) {
+      var pm = url.match(/[?&]page=(-?\d+)/), p = pm ? Number(pm[1]) : 1; if (p === 1 || p === 0) return null;
+      // (however long ago page 1 was: the pages FR24 asks for again, coming back to the tab after an hour, are the pages it has)
+      var kb = boardKept.get(apId + '/' + kind); if (!kb || !kb.list) return null;
+      var pg = pageOf(kb, p); kb.paged = true; stats.boardPages = (stats.boardPages || 0) + 1;
+      return { data: pg.data, meta: Object.assign({ date: kb.date || null }, pg.meta) };
+    }
+
     function hashStr(s) { var h = 2166136261; s = String(s); for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; } return h; }
     function needBoardArch(apId) {
       var a = boardArch.get(apId);
@@ -1699,8 +1744,11 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       return null;
     }
     function stopBoardHold() { if (boardHold) boardHold.stop = true; }
+    // (1.1.5: the six seconds counted from when the row is first there to be placed - waited for up to half a minute.
+    // They were counted from FR24's answer: a board drawn later than that - all of them while the page was held for
+    // minutes - was never placed, and opened at its very top, a week back)
     function holdBoardRow(id, off, t) {
-      var h = boardHold = { id: String(id), off: off, t: t || 0, until: Date.now() + 6000, stop: false }, mo = null, main = null, tries = 0, frameDue = false;
+      var h = boardHold = { id: String(id), off: off, t: t || 0, until: Date.now() + 30000, placed: false, stop: false }, mo = null, main = null, frameDue = false;
       // (the row wanted - or, while it is not drawn, the drawn row nearest its time: FR24 draws a long list a piece at a
       // time, and a row gone from a new list has another under another id. Found in one pass over the drawn rows - it was
       // a search of the page for every row kept, each frame: a fortnight of a big airport froze the page for half a
@@ -1723,20 +1771,22 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
         }
         var d = el.getBoundingClientRect().top - m.getBoundingClientRect().top - h.off;
         if (Math.abs(d) > 1) m.scrollTop += d;
+        if (!h.placed) { h.placed = true; h.until = Date.now() + 6000; }
         return true;
       };
-      (function poll() { if (apply() && ++tries < 60) oSetTimeout(poll, 100); })();
+      (function poll() { if (apply() && Date.now() < h.until) oSetTimeout(poll, 100); })();
     }
-    // (an answer of the board: the present brought up when the board is opened; else the row at the top held there)
-    function placeBoard(first, key, data) {
+    // (an answer of the board: the present brought up when the board is opened - FR24's first ask of it, which names no
+    // page: FR24 has just put its list back to the top - else the row at the top held there)
+    function placeBoard(first, key, data, opened) {
       var times = {}; (data || []).forEach(function (e) { if (e && e.id) times[e.id] = e.scheduledTime || e.landedTime || 0; });
       var anyRow = boardRows()[0], main = anyRow && anyRow.closest('main'), wrap = main && (anyRow.closest('[data-testid="list-wrapper"]') || main);
-      var top = wrap && wrap.__tlKey === key ? topRowOf(main) : null;
+      var top = !opened && wrap && wrap.__tlKey === key ? topRowOf(main) : null;
       if (top) holdBoardRow(top.id, top.off, boardTimes[top.id] || times[top.id] || 0);
       else if (first) {
         holdBoardRow(first.id, 36, first.scheduledTime || 0);
         // (the board marked opened once its rows are drawn)
-        var tries = 0; (function mark() { var el = rowById(first.id), m = el && el.closest('main'); if (m) (el.closest('[data-testid="list-wrapper"]') || m).__tlKey = key; else if (++tries < 40) oSetTimeout(mark, 150); })();
+        var tries = 0; (function mark() { var el = rowById(first.id), m = el && el.closest('main'); if (m) (el.closest('[data-testid="list-wrapper"]') || m).__tlKey = key; else if (++tries < 200) oSetTimeout(mark, 150); })();
       }
       boardTimes = times;
     }
@@ -2035,6 +2085,8 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       if (blankDue.length === 1) Promise.resolve().then(function () { var l = blankDue; blankDue = []; l.forEach(function (p) { try { if (p.isConnected) blankParts(p); } catch (e) { stats.errors++; stats.lastError = String(e); } }); });
     }
     var EVENTS_RE = /^(latest|live) events$/i, BEG_RE = /help us improve|improve (our |the )?(ground )?coverage/i;
+    // (words of a text node that something hidden here says - its title, the request, the button)
+    function hideWords(t) { var v = String(t || '').replace(/\s+/g, ' ').trim(); return !!v && v.length < 160 && (EVENTS_RE.test(v) || BEG_RE.test(v) || ADS_RE.test(v) || PART_RE.test(v) || WX_RE.test(v)); }
     function hidePart(el, panel) { if (!el || el === panel) return; tlHide(el); hideShell(el, panel); }
     // (the events' own section - FR24 builds the panel of sections, the events' the one its title opens - whatever is in it)
     function firstText(el) {
@@ -2081,13 +2133,23 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
               if (r.type === 'characterData') { if (!t.closest('li[id^="airport_schedule_"]')) panelHide(panel, t); }
               // (1.1.2: not inside a flight's row of a board - none of what is hidden is ever in one, and a board of a fortnight
               // is thousands of rows, each looked through three times as FR24 drew it; its adverts sit between rows)
-              else for (var j = 0; j < r.addedNodes.length; j++) { var a = r.addedNodes[j], el = a.nodeType === 1 ? a : a.nodeType === 3 ? a.parentElement : null; if (el && !el.closest('li[id^="airport_schedule_"]')) panelHide(panel, el); }
+              // (1.1.5: a text put in is looked at only when its own words are what is hidden - the empty text nodes Vue puts
+              // between a list's items had the whole board looked through for each one. Other words put in: the panel's empty
+              // boxes looked at again, so that a box FR24 has filled since is shown)
+              else for (var j = 0; j < r.addedNodes.length; j++) {
+                var a = r.addedNodes[j];
+                if (a.nodeType === 3) { var ap = a.parentElement; if (ap && /\S/.test(a.data || '') && !ap.closest('li[id^="airport_schedule_"]')) { if (hideWords(a.data)) panelHide(panel, ap); else blankSoon(panel); } continue; }
+                if (a.nodeType === 1 && !a.closest('li[id^="airport_schedule_"]')) panelHide(panel, a);
+              }
             } else if (r.type === 'childList') {
               // (the panel itself put in, whole; elsewhere - a board's own page - the "Remove ads" button)
               for (var k = 0; k < r.addedNodes.length; k++) {
                 var n = r.addedNodes[k], ne = n.nodeType === 1 ? n : n.nodeType === 3 ? n.parentElement : null; if (!ne) continue;
-                var p = ne.matches(SEL_AP) ? ne : ne.querySelector(SEL_AP); if (p) panelHide(p);
-                if (/remove ads/i.test(n.textContent || '')) saying(ne, ADS_RE).forEach(function (e) { if (!e.closest(SEL_AP)) hideAd(e, null); });
+                // (1.1.5: the panel put in is an element that is it or holds it - a text put in never is: an empty text node
+                // Vue puts in high up the page, under a box that holds the panel, had the whole panel - and its board of a
+                // fortnight - looked through three times for each one, half a minute of a frozen page)
+                var p = n.nodeType === 1 ? (n.matches(SEL_AP) ? n : n.querySelector(SEL_AP)) : null; if (p) panelHide(p);
+                if (/remove ads/i.test(n.nodeType === 3 ? n.data || '' : n.textContent || '')) saying(ne, ADS_RE).forEach(function (e) { if (!e.closest(SEL_AP)) hideAd(e, null); });
               }
             } else if (ADS_RE.test(textOf(t))) hideAd(t, null);
           } catch (e) { stats.errors++; stats.lastError = String(e); }
@@ -2409,6 +2471,8 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
           if (grec) return photosWithin(grec, 2800).then(function (ph) { return jsonResponse(null, { data: { images: ph.slice(0, 3).map(boardImage) } }); });
         }
         if (LIST_RE.test(url)) return listFetch(this, arguments, url);
+        // (1.1.5) a page of a board other than its first, its whole list kept here: answered from it, at once
+        if (optOn('boards') && (m = url.match(/\/api\/v1\/airports\/(\d+)\/(departures|arrivals)\?/))) { var kpg = keptPage(Number(m[1]), m[2], url); if (kpg) return Promise.resolve(jsonResponse(null, kpg)); }
         // (a landing place the userscript learned is no airport of FR24's: its boards, opened from its marker, answered
         // here - empty - instead of FR24's "not found")
         if ((m = url.match(/\/api\/v1\/airports\/(\d+)\/(?:departures|arrivals|on-grounds)\b/)) && Number(m[1]) > 9000000 && Number(m[1]) < 10000000) return Promise.resolve(jsonResponse(null, { data: [], meta: { currentPage: 1, previousPage: null, nextPage: null, hasMorePreviousData: false, hasMoreNextData: false } }));
@@ -2536,7 +2600,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
               if (!j || !Array.isArray(j.data)) return res;
               var merged = false;
               if (whole && earlier && Array.isArray(earlier.data)) { var have = {}; j.data.forEach(function (e) { if (e && e.id) have[e.id] = true; }); earlier.data.forEach(function (e) { if (e && !have[e.id]) { j.data.push(e); merged = true; } }); }
-              var hits = 0, today = new Date().toISOString().slice(0, 10), seenIds = [];
+              var hits = 0, today = new Date().toISOString().slice(0, 10), seenIds = [], fullList = null;
               j.data.forEach(function (e) {
                 if (!e || !e.flight || !e.flight.id) return;
                 var id = parseInt(e.flight.id, 16), rec = resolved.get(id);
@@ -2598,13 +2662,14 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
                 if (natRows.length && (page === 1 || page === -1)) post('boardRows', { apId: apId, kind: kind, rows: natRows });
                 if (whole) {
                   try { hits += addArch(j, apId, kind); } catch (e) { stats.errors++; stats.lastError = String(e); }
-                  j.meta = Object.assign({}, j.meta, { currentPage: 1, previousPage: null, nextPage: null, hasMorePreviousData: false, hasMoreNextData: false });
                   j.data.sort(function (x, y) { return (x.scheduledTime || x.landedTime || 0) - (y.scheduledTime || y.landedTime || 0); });
+                  var kb = keepBoard(apId, kind, j.data, !pageM), pg1 = pageOf(kb, 1); kb.date = j.meta && j.meta.date || kb.date || null; fullList = j.data;
+                  j.data = pg1.data; j.meta = Object.assign({}, j.meta, pg1.meta);
                   var nowS1 = Date.now() / 1000 - 900, first = j.data.filter(function (e) { return e && (e.scheduledTime || 0) >= nowS1; })[0] || j.data[j.data.length - 1];
-                  placeBoard(first, apId + '/' + kind, j.data);
+                  placeBoard(first, apId + '/' + kind, fullList, !pageM);
                 }
               }
-              if (kind !== 'on-grounds') noteBoardRows(j.data, apId, kind);
+              if (kind !== 'on-grounds') noteBoardRows(fullList || j.data, apId, kind);
               if (!hits && !merged && JSON.stringify(j.meta || null) === metaWas) return res;
               stats.boardHits += hits;
               return jsonResponse(res, j);
@@ -5672,7 +5737,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '1.1.4';
+  const VERSION = '1.1.5';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
@@ -14006,7 +14071,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // (the version whose "what's new" was put away, and the one whose dot on the button the window was opened for)
   const UB_SEEN_KEY = 'tweeks.fr24.ladd.seenver', UB_DOT_KEY = 'tweeks.fr24.ladd.dotver';
   // (the newest CHANGELOG section's headlines, written in by build.mjs: { v, items })
-  const UB_WHATS_NEW = {"v":"1.1.4","items":["An airport's runway details and runway usage fill in again. FR24 changed its airport address, and the script was reading the wrong part of it.","Opening an airport no longer freezes the page while its board is open.","Both were found on FR24's real page, which you saved and sent, and are tested against its own markup."]};
+  const UB_WHATS_NEW = {"v":"1.1.5","items":["Opening an airport's arrivals or departures no longer freezes the page. On FR24's real page, 1.1.4 froze it for nearly two minutes. The longest pause is now under half a second, close to FR24's own.","The board opens at the current time, not at its very top a week back.","The board now uses FR24's own pages. The first page is the present: the 40 flights before now and 160 after. FR24's own \"Load earlier flights\" and \"Load later flights\" buttons add the rest of the fortnight, 100 flights at a time, instantly and without asking FR24's server.","These were found and measured by running FR24's own front-end in Chromium with the script, on Liverpool's arrivals and departures."]};
   // (an aircraft with an open padlock: FR24's outline style - 24 grid, 1.5 stroke in the text colour)
   const UB_ICON = '<svg data-tl-ub-icon="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
   const UB_X = '<svg viewBox="0 0 14 14" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5l11 11M12.5 1.5l-11 11"/></svg>';
@@ -14775,6 +14840,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   // widget's own tabs, list and "Add bookmark" left as they are. Found by its words; the box is the largest one round
   // them that holds neither the tabs nor "Add bookmark".
   const BEG_RE = /^to get more than \d+ bookmarks?\b/i;
+  const BOARD_ROW = 'li[id^="airport_schedule_"]';
   function begSweep(root) {
     if (!opt.on || !root || root.nodeType !== 1 || !/more than \d+ bookmark/i.test(root.textContent || '')) return;
     const tw = document.createTreeWalker(root, 4);
@@ -14792,11 +14858,17 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   function bookmarksMut(recs) {
     for (const r of recs) {
       if (r.type === 'characterData') { const p = r.target.parentElement; if (p && /more than \d+ bookmark/i.test(r.target.data || '')) begSweep(p.parentElement || p); continue; }
-      for (const n of r.addedNodes) if (n.nodeType === 1) begSweep(n); else if (n.nodeType === 3 && n.parentElement) begSweep(n.parentElement.parentElement || n.parentElement);
+      // (1.1.5: a text put in is looked at only when its own words are the box's - the empty text nodes Vue puts between a
+      // list's items had the whole of an airport's board read for each one, two minutes of a frozen page; nor anything in a
+      // board's row)
+      for (const n of r.addedNodes) {
+        if (n.nodeType === 1) { if (!(n.closest && n.closest(BOARD_ROW))) begSweep(n); }
+        else if (n.nodeType === 3 && n.parentElement && /more than \d+ bookmark/i.test(n.data || '')) begSweep(n.parentElement.parentElement || n.parentElement);
+      }
     }
     for (const r of recs) {
       if (r.type === 'characterData') { const p = r.target.parentElement; if (p && /bookmarks/i.test(r.target.data || '')) bookmarksSweep(p.parentElement || p); continue; }
-      for (const n of r.addedNodes) { if (n.nodeType === 1) bookmarksSweep(n); else if (n.nodeType === 3 && /bookmarks/i.test(n.data || '') && n.parentElement) bookmarksSweep(n.parentElement.parentElement || n.parentElement); }
+      for (const n of r.addedNodes) { if (n.nodeType === 1) { if (!(n.closest && n.closest(BOARD_ROW))) bookmarksSweep(n); } else if (n.nodeType === 3 && /bookmarks/i.test(n.data || '') && n.parentElement) bookmarksSweep(n.parentElement.parentElement || n.parentElement); }
     }
   }
 
