@@ -716,11 +716,15 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     for (const leaf of all) { const b = boxOf(leaf, all); if (b && b !== leaf) b.setAttribute('data-tl-ub-hid', ''); }
   }
 
-  // ---- FR24's Bookmarks widget: switched off where FR24 keeps it, and never drawn ----------------------------------------
-  // Its row in FR24's Widgets list: its "On" pressed, so FR24 itself no longer puts the widget on the map (and keeps it so),
-  // and the row taken out of the list. Wherever FR24 puts the widget or the row, it is hidden as it is put in - a mutation
-  // observer's answer comes before the browser paints - so neither is ever seen, not even for a moment. All found by their
-  // words, not by FR24's class names (it is a Vue app); never in a menu, a link, a flight's or an airport's panel.
+  // ---- FR24's Bookmarks widget: off by default, the user's to switch on --------------------------------------------------
+  // (1.1.1) Its row is in FR24's Widgets list as FR24 has it. The first time the list is seen with Bookmarks "On", its "On"
+  // is pressed once, so FR24 itself keeps it off (and says so, "Off"); from then on it is left to the user - switched on
+  // there, FR24 puts it on the map as its own. Until that first time (the list never opened) the widget is hidden wherever
+  // FR24 puts it - a mutation observer's answer comes before the browser paints - so off by default is never seen as on.
+  // All found by their words, not by FR24's class names (it is a Vue app); never in a menu, a link, a flight's or an
+  // airport's panel.
+  const UB_BM_KEY = 'tweeks.fr24.ladd.bmdefault';
+  let bmDefaulted = lsGet(UB_BM_KEY) === '1';
   let bmPressedAt = 0;
   function leavesByText(wanted, root) {
     const out = new Map(wanted.map(w => [w, []]));
@@ -747,20 +751,27 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   }
   const ownWords = el => [...el.childNodes].filter(n => n.nodeType === 3).map(n => n.data).join('').trim();
   function bookmarksSweep(root) {
-    if (!opt.on || !root || !/bookmarks/i.test(root.textContent || '')) return;
+    if (!opt.on || bmDefaulted || !root || !/bookmarks/i.test(root.textContent || '')) return;
     const mine = leavesByText(['bookmarks'], root).get('bookmarks');
     if (!mine.length) return;
     const L = leavesByText(UB_WIDGET_TITLES), all = UB_WIDGET_TITLES.flatMap(t => L.get(t));
     for (const leaf of mine) {
       if (leaf.closest('a,nav,aside,header,[role="menu"],[role="menubar"],#aside-main-menu,[data-testid^="aircraft-panel"],[data-testid="airport-panel"],[data-testid^="search"]')) continue;
       const box = boxOf(leaf, all.filter(x => x !== leaf)); if (!box || box === leaf) continue;
-      if (!box.hasAttribute('data-tl-gone')) box.setAttribute('data-tl-gone', '');
-      // (its row in the Widgets list - the list says "Enable widgets": switched off there, if it is on)
+      // (its row in the Widgets list - the list says "Enable widgets": switched off there once, if it is on, and shown)
       let list = null; for (let a = box.parentElement, d = 0; a && a !== document.body && d < 6; a = a.parentElement, d++) if (/enable widgets/i.test(a.textContent || '')) { list = a; break; }
-      if (!list) continue;
-      const on = [...box.querySelectorAll('*')].find(e => /^on$/i.test(ownWords(e)));
-      if (on && now() - bmPressedAt > 2000) { bmPressedAt = now(); const b = on.closest('button,[role="button"],[role="switch"],label') || on; if (box.contains(b)) progClick(b); }
+      if (!list) { if (!box.hasAttribute('data-tl-gone')) box.setAttribute('data-tl-gone', ''); continue; }
+      const sw = [...box.querySelectorAll('*')].find(e => /^(on|off)$/i.test(ownWords(e)));
+      if (!sw) continue;
+      if (/^on$/i.test(ownWords(sw))) { if (now() - bmPressedAt < 2000) continue; bmPressedAt = now(); const b = sw.closest('button,[role="button"],[role="switch"],label') || sw; if (box.contains(b)) progClick(b); }
+      bmDone();
+      return;
     }
+  }
+  // (the default set: FR24 keeps Bookmarks off - nothing hidden from now on, the widget FR24's and the user's)
+  function bmDone() {
+    bmDefaulted = true; lsSet(UB_BM_KEY, '1');
+    for (const e of document.querySelectorAll('[data-tl-gone]')) e.removeAttribute('data-tl-gone');
   }
   function bookmarksMut(recs) {
     for (const r of recs) {

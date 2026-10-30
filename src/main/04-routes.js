@@ -240,8 +240,15 @@
   // only what is its own - its user's confirmation, the progress bar from where the aircraft is now. None yet: null.
   // (opts.quick: asked by the round of every flight identified - boards, labels, search - not for a panel: refreshed on its
   // own schedule there)
+  // (1.1.1) No answer of central calculation yet - the monitor busy, or just asked: the route the monitor's table of names
+  // has for it (the same for every browser), with its progress bar and time to go from where the aircraft is now - not a
+  // panel with "N/A" for the arrival and no progress bar until the answer comes (BOS -> LPI, a LADD jet mid-Atlantic)
   function composeRoute(id, hex, opts) {
-    const r = centralOf(id, hex);
+    let r = centralOf(id, hex);
+    if (!r && id > 0 && hex) {
+      const row = srvIds.rows.get(id), t = row && String(row[1] || '').toLowerCase() === hex ? srvRoute(row) : null;
+      if (t && (t.destId || t.originId)) r = localView(Object.assign({}, t, { computedAt: now() }), id, hex, currentPos(id));
+    }
     if (r && opts && opts.quick) r.quick = true;
     return r;
   }
@@ -507,8 +514,17 @@
         }
       }
     }
-    // (the candidates the user can confirm from - the likeliest first)
-    r.cands = cands.slice(0, 12).map(c => [c.airport.id, Math.round(c.p * 100)]);
+    // (the candidates the user can confirm from - the likeliest first - at the odds the panel shows: the destination's as
+    // shown, the others' as "also possible" has them, the rest sharing what the shown odds leave as those do - never the
+    // engine's own figures beside the shown ones: ISL 28% in the panel was ISL 38% in the list)
+    { const shown = new Map((r.alternatives || []).filter(a => a && a.iata).map(a => [a.iata, a.p]));
+      const raw0 = r.destId ? (cands.find(c => c.airport.id === r.destId) || { p: 0 }).p : 0;
+      const k = r.destP > 0 && r.destP < 100 && raw0 < 0.999 ? Math.min(3, Math.max(0, (1 - r.destP / 100) / (1 - raw0))) : 1;
+      const cap = r.destP > 0 ? Math.max(1, r.destP - 1) : 99;
+      r.cands = cands.slice(0, 12).map(c => {
+        const code = apCode(c.airport);
+        return [c.airport.id, c.airport.id === r.destId && r.destP > 0 ? r.destP : shown.has(code) ? shown.get(code) : Math.min(cap, Math.round(c.p * k * 100))];
+      }).sort((a, b) => (b[0] === r.destId) - (a[0] === r.destId) || b[1] - a[1]); }
     // A destination the user confirmed ("confirm": heard on the radio, seen on final, known): it stands, at 100%
     const uc = userDestOf(id, hex, r.departedAt);
     if (uc && !planDest) {
@@ -584,6 +600,8 @@
     }
     const destAp = apById(out.destId) || (out.destSite && fin(out.destSite.lat) ? out.destSite : null);
     if (pos && destAp && !pos.gnd) {
+      // (no time of arrival with it, or one gone by: from where the aircraft is now - the arrival FR24's panel shows)
+      if (!out.landed && !(out.eta > nowS() - 300)) out.eta = estimateEta(pos, destAp, ENGINE.classify(acOf(live.get(id) || pubRecs.get(id) || {})));
       const stage = out.phase === 'descent' ? 4 : out.phase === 'climb' && (pos.alt || 0) < 15000 ? 2 : 3;
       out.progress = buildProgress(pos, apById(out.originId) || (out.originSite && fin(out.originSite.lat) ? out.originSite : null), destAp, out.departedAt, out.eta, stage);
     }
@@ -651,7 +669,8 @@
     if (!flights.length && !ask.length) return;
     calcBusy = true;
     try {
-      const j = await monPost('/calc', { v: 1, flights, ids: ask });
+      // (sel: the flight opened here - worked out at once on the monitor, whatever else it has in hand)
+      const j = await monPost('/calc', { v: 1, flights, ids: ask, sel: sel > 0 && ids.includes(sel) ? sel : undefined });
       if (j && j.on) {
         for (const [id, e] of sent) calcSent.set(id, { t0: e.t0, lastT: e.lastT, at: now(), full: false });
         for (const id of Array.isArray(j.full) ? j.full : []) { const s = calcSent.get(+id); if (s) s.full = true; }

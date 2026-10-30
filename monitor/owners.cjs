@@ -63,10 +63,11 @@ function createOwners(env) {
   // (an aircraft to look up: the ones flying now to the front; its registration as known, for its register)
   function want(hex, reg, front) {
     hex = String(hex || '').toLowerCase(); if (!/^[0-9a-f]{6}$/.test(hex)) return false;
-    if (reg) regHint.set(hex, String(reg).toUpperCase());
     if (!due(hex)) return false;
-    if (queued.has(hex)) { if (front) { const i = q.indexOf(hex); if (i > 0) { q.splice(i, 1); q.unshift(hex); } } return true; }
+    // (its registration kept only while it waits - one not queued leaves nothing behind)
+    if (queued.has(hex)) { if (reg) regHint.set(hex, String(reg).toUpperCase()); if (front) { const i = q.indexOf(hex); if (i > 0) { q.splice(i, 1); q.unshift(hex); } } return true; }
     if (q.length >= C.queueMax) return false;
+    if (reg) regHint.set(hex, String(reg).toUpperCase());
     queued.add(hex); if (front) q.unshift(hex); else q.push(hex);
     return true;
   }
@@ -86,7 +87,7 @@ function createOwners(env) {
   async function pumpOne() {
     if (busy) return ''; busy = true;
     try {
-      let hex = ''; while (q.length) { const h = q.shift(); queued.delete(h); if (due(h)) { hex = h; break; } }
+      let hex = ''; while (q.length) { const h = q.shift(); queued.delete(h); if (due(h)) { hex = h; break; } regHint.delete(h); }
       if (!hex) return '';
       const r = db.get(hex) || {}, reg = regHint.get(hex) || r.reg || '';
       let idn;
@@ -137,7 +138,17 @@ function createOwners(env) {
   // company, trust, bank, operator, club or public body is named, a person is not (each browser can still look a person
   // up in the register itself, for its own use). Personal data served to the public needs a reason a name does not have.
   const row = (hex, r, pub) => { const wh = !!pub && named(r.owner) && !orgName(r.owner); return [hex, r.reg || '', r.type || '', r.desc || '', wh ? '' : r.owner || '', wh ? '' : r.ownerCity || '', r.country || '', r.countryIso || '', r.msn || '', r.year || 0, r.opId || 0, r.opIcao || '', r.opName || '', r.at || 0, r.ok ? 1 : 0, wh ? 1 : 0]; };
-  function rows(hexes, opts) { const out = [], pub = !!(opts && opts.public); for (const h of hexes) { const hex = String(h || '').toLowerCase(), r = db.get(hex); if (r) out.push(row(hex, r, pub)); } return out; }
+  // (1.1.1: the gaps filled from the world's aircraft databases - acdb.cjs - so any aircraft has its serial number, age and
+  // owner at once: what was looked up here, or a browser found, stands over them)
+  function withBulk(hex, r) {
+    const b = env.bulk ? env.bulk(hex) : null; if (!b) return r || null;
+    const o = Object.assign({}, r || {});
+    for (const [k, v] of [['reg', b.reg], ['type', b.type], ['desc', b.model], ['msn', b.msn], ['opName', b.op]]) if (v && !o[k]) o[k] = v;
+    if (b.year > 1900 && !o.year) o.year = b.year;
+    if (b.owner && !named(o.owner)) { o.owner = b.owner; if (b.ownerCity) o.ownerCity = b.ownerCity; }
+    return o;
+  }
+  function rows(hexes, opts) { const out = [], pub = !!(opts && opts.public); for (const h of hexes) { const hex = String(h || '').toLowerCase(), r = withBulk(hex, db.get(hex)); if (r) out.push(row(hex, r, pub)); } return out; }
   // (for the names table, which every browser gets: who it is - the owner if not a private person, the operator)
   function short(hex) { const r = db.get(hex); return r ? { owner: named(r.owner) && orgName(r.owner) ? r.owner : '', opName: r.opName || '', opId: r.opId || 0, opIcao: r.opIcao || '' } : null; }
 
@@ -157,6 +168,6 @@ function createOwners(env) {
     return db.size;
   }
   function status() { let withOwner = 0, withOp = 0; for (const r of db.values()) { if (named(r.owner)) withOwner++; if (r.opId || r.opName) withOp++; } return Object.assign({ known: db.size, withOwner, withOperator: withOp, queue: q.length, paused: Object.fromEntries([...paused].filter(([, t]) => t > Date.now()).map(([h, t]) => [h, Math.round((t - Date.now()) / 1000)])) }, stats); }
-  return { C, db, q, want, due, pumpOne, fromLookup, fromClient, rows, short, save, load, status, stats, REG, ask, pend, orgName };
+  return { C, db, q, want, due, pumpOne, fromLookup, fromClient, rows, withBulk, short, save, load, status, stats, REG, ask, pend, orgName };
 }
 module.exports = { createOwners };

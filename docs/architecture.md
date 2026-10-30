@@ -76,6 +76,7 @@ flowchart TB
 | `monitor/ident.cjs` | Naming FR24's callsign-less flights from public ADS-B: the server's resolver |
 | `monitor/dest.cjs` | A rough destination for every named flight |
 | `monitor/owners.cjs` | Owners and operators, looked up once and kept |
+| `monitor/acdb.cjs` | (1.1.1) Every aircraft in the world: the open aircraft databases and registers merged once a week, in a worker thread |
 | `monitor/airport.cjs` | Runways in full, frequencies, and which runway each tracked flight used |
 | `monitor/mkdata.cjs` | Builds the runway and frequency data from OurAirports |
 
@@ -281,6 +282,8 @@ It is written atomically (temp file + rename) every 2 minutes and on `SIGTERM`/`
 **What browsers work out** (22.25; 1.1.0). Browsers used to send the routes they worked out for flights the monitor names. Those were handed out with the names (`/fr24ids` columns 24 to 26). Since 1.1.0 a browser sends only a destination its user confirmed (or the withdrawal of one); routes from older versions are still taken, but give way to central calculation's answer wherever it has one. Each end is kept on its own, and a destination the flight has since left behind (its ETA long gone, or far off its track) is dropped.
 
 **Owners** (`owners.cjs`). Every blocked aircraft's owner and operator is looked up once, from hexdb, adsbdb and its own register. The register code (`src/registry.js`) is the same as the browser's. Aircraft flying now go first, at one every 4 s, and each site is asked at its own pace. A site that refuses is left alone for a while. A browser asks the monitor before asking any register itself, and sends what it found (FR24's operator included) with its next report. The names table carries each aircraft's owner and operator.
+
+**Every aircraft in the world** (`acdb.cjs`, 1.1.1). Once a week tar1090-db, ADS-B Exchange's and OpenSky's aircraft databases and the FAA's and Transport Canada's registers are merged into one file of about 760,000 aircraft, in blocks of 64 by address. A lookup reads one block. `/owners` fills what the lookups above have not found from it, so any aircraft a browser opens, on the map or a log page, has its serial number, age and owner at once. Aircraft it leaves something out of are queued for the lookups above: those browsers open first, then every aircraft in the world log's newest day.
 
 ### 4.6 API and security
 

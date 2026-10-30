@@ -4,6 +4,37 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 
 1.0.0 is the first release. The versions before it are the betas, labelled B: B22.31.12 is version 22.31.12.
 
+## [1.1.1] - 2026-10-30
+
+### In short
+- LADD flights show their progress bar and time of arrival again, even while the monitor is busy.
+- The odds in the "confirm destination" list now match the ones the panel shows.
+- The destination's percentage no longer opens a tooltip when you point at it.
+- The monitor now keeps the serial number, age and owner of about 760,000 aircraft worldwide, so they appear at once for any aircraft you open, on the map or a log page.
+- Bookmarks is back in FR24's Widgets list. It starts switched off, and you can switch it on there.
+
+### Fixed
+- **No progress bar and "ESTIMATED N/A" on LADD flights (BOS → LPI?).** 1.1.0 showed a route only once central calculation had answered for the flight. A busy monitor (its minute's allowance spent) answered later, and until then the panel showed the monitor's table route, which has no progress or time of arrival.
+  - Until the answer comes, the table route is shown with its progress bar and time of arrival worked out from where the aircraft is now.
+  - The flight opened in a browser is now worked out on the monitor at once, whatever is left of the minute's allowance. Flights only on screen still wait for it.
+- **The confirm list's odds differed from the panel's (ISL 28% in the panel, 38% in the list).** The list showed the engine's raw figures and the panel its calibrated ones. Now the destination comes first at the panel's figure, the "also possible" airports at theirs, and the rest share what is left, below the destination.
+
+### Changed
+- **No tooltip on the destination's percentage.** FR24's own panel already shows the time of arrival.
+- **FR24's Bookmarks widget is off by default, not removed.** Its row is back in FR24's Widgets list. The first time the list is seen with Bookmarks on, it is switched off once, and from then on it is yours to switch on. Until then the widget stays hidden on the map.
+
+### Added
+- **Every aircraft in the world on the monitor** (`monitor/acdb.cjs`). Once a week it merges five sources into one file on disk, about 760,000 aircraft (21 MB) with each one's registration, type, model, serial number, build year, owner and operator:
+  - tar1090-db;
+  - ADS-B Exchange's basic aircraft database;
+  - OpenSky's aircraft database (only filling gaps, and only where the registration and type agree);
+  - Transport Canada's register;
+  - the FAA's register.
+  - `/owners` fills from it whatever the lookups have not found, so any aircraft opened has its details at once.
+  - Aircraft still missing a serial number, build year or owner are queued for the register lookups: first those browsers open, then every aircraft in the world log's newest day.
+  - Built in a worker thread with its own memory limit (about 250 MB for a minute or two, given back after), only when the machine has 300 MB free. A source that fails is skipped and reported in `/status` → `aircraft`. The old file serves until the new one is whole. Owners' names only: no street or postcode is read in, and private persons' names stay withheld from the public.
+- **The browser asks the monitor for any aircraft missing its serial number or build year**, not only blocked ones, at most every 6 hours per aircraft.
+
 ## [1.1.0] - 2026-10-30
 
 ### In short

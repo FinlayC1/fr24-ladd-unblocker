@@ -591,7 +591,7 @@
   function publicIdentity(hex, reg, opts) {
     hex = String(hex || '').toLowerCase(); if (!/^[0-9a-f]{6}$/.test(hex)) return Promise.resolve(null);
     const bg = !!(opts && opts.bg);
-    const hx = store.getHex(hex) || {};
+    let hx = store.getHex(hex) || {};
     // (an owner known only as "Private" where a register names it - the UK's, the Isle of Man's, the FAA's - is asked
     // for once more, whatever the age of the rest)
     // (asked again a day later when it came to nothing - a register that did not answer then, a first ask before the
@@ -600,11 +600,23 @@
     const ownerDue = regDue && !shownOwner(hx, hx.cs) && now() - (hx.ownerAskedAt || 0) > 864e5;
     // (and a register that did not answer last time - its serial number and build year with it - asked again in 5 minutes)
     const msnDue = regDue && !hx.msn && !!hx.ownerFailAt;
-    if (hx.pubAt && now() - hx.pubAt < 30 * 864e5 && (bg || hx.msn || hx.pubFull) && !ownerDue && !msnDue) return Promise.resolve(hx);
+    // (1.1.1: and the monitor not asked about it lately - it has every aircraft of the world's databases and registers)
+    const monDue = monUp() && now() - (hx.monOwnAt || 0) > 6 * 3600e3 && !(hx.msn && hx.year > 1900 && shownOwner(hx, hx.cs));
+    if (hx.pubAt && now() - hx.pubAt < 30 * 864e5 && (bg || hx.msn || hx.pubFull) && !ownerDue && !msnDue && !monDue) return Promise.resolve(hx);
     if (pubJobs.has(hex)) return pubJobs.get(hex);
     const job = (async () => {
       const seed = seedFromArea(hex);
       if (Object.keys(seed).length) store.mergeHex(hex, Object.assign({}, seed, hx));   // instant part first
+      // (1.1.1) the monitor next - every aircraft in the world's databases and registers, merged there: its serial number,
+      // age and owner in FR24's frame of it at once, before any register is asked here - an aircraft on screen before it is
+      // even opened (many in one request)
+      if (monDue) {
+        const mr = await monOwner(hex).catch(() => null), t = Object.assign({ hex }, store.getHex(hex) || hx), o = { monOwnAt: now() };
+        if (mr && await applyMonOwner(t, mr)) for (const k of ['reg', 'type', 'desc', 'owner', 'ownerCity', 'msn', 'year', 'country', 'countryId', 'ownerAskedAt', 'faaAt']) if (t[k] && t[k] !== hx[k]) o[k] = t[k];
+        hx = store.mergeHex(hex, o) || hx; if (Object.keys(o).length > 1) pushPubIds([hex]);
+        // (all of it known now, a register's answer among it: no register asked again here for a month)
+        if (!bg && hx.msn && hx.year > 1900 && shownOwner(hx, hx.cs) && !ownerDue) { const m = store.mergeHex(hex, { pubAt: now(), pubFull: true }); return m || hx; }
+      }
       const r = { hex, reg: reg || hx.reg || seed.reg || '', faaAt: ownerDue ? 0 : hx.faaAt || 0 };
       // the serial number of a non-US airframe is only on JetPhotos: asked in parallel, for the aircraft opened
       const jpJob = !bg && r.reg && !/^N\d/i.test(r.reg) && !hx.msn ? fetchJetphotos(r.reg).catch(() => null) : Promise.resolve(null);
@@ -950,7 +962,8 @@
     let changed = false;
     // (the monitor first: an aircraft it - or any browser - already looked up is not asked about again here)
     { const due = () => (!shownOwner(rec, rec.cs) && /^(G-|M-|HB-|N\d)/i.test(rec.reg || '') && now() - (rec.ownerAskedAt || 0) > 864e5) || ((!rec.reg || !rec.type || !rec.countryId || (/^N\d/.test(rec.reg || '') && !rec.faaAt)) && now() - (rec.idAt || 0) > 3 * 864e5) || (rec.reg && !rec.operatorId && !rec.fr24At);
-      if (monUp() && due() && now() - (rec.monOwnAt || 0) > 6 * 3600e3) {
+      // (1.1.1: and its serial number or age not known here - the monitor has every aircraft in the world's databases)
+      if (monUp() && (due() || !rec.msn || !(rec.year > 1900)) && now() - (rec.monOwnAt || 0) > 6 * 3600e3) {
         rec.monOwnAt = now();
         const r = await monOwner(rec.hex);
         if (r && await applyMonOwner(rec, r)) changed = true;

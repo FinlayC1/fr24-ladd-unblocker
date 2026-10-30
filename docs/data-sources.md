@@ -63,8 +63,12 @@ The monitor looks up each blocked aircraft's owner once (`monitor/owners.cjs`) a
 
 It looks up one aircraft every 4 s, the ones flying now first, and asks again after 60 days. A register that did not answer is asked again an hour later. Requests say who is asking (`User-Agent: fr24-ladd-monitor …`).
 
+## The aircraft database on the monitor
+
+(1.1.1) Once a week the monitor downloads the open aircraft databases and registers and merges them (`monitor/acdb.cjs`), so any aircraft's registration, type, model, serial number, build year, owner and operator are there at once: tar1090-db (`raw.githubusercontent.com/wiedehopf/tar1090-db`), ADS-B Exchange's basic aircraft database (`downloads.adsbexchange.com`), OpenSky's aircraft database (`s3.opensky-network.org`), Transport Canada's register (`wwwapps.tc.gc.ca`) and the FAA's (`registry.faa.gov`). One download of each a week; requests say who is asking. What they leave out is looked up aircraft by aircraft as above. Details: [the monitor's guide](monitor.md#every-aircraft-in-the-world).
+
 ## Personal data
 
-- **Owner names only.** Registers are used for owner names; **addresses are never fetched, stored or shown.** Trustee and lessor names (for example "Bank of Utah Trustee") are replaced by the operator where it can be determined.
+- **Owner names only.** Registers are used for owner names; **addresses are never fetched, stored or shown.** (The FAA's and Transport Canada's whole-register files do contain addresses: the monitor reads only the name, city and state or province from them, and deletes the files once read.) Trustee and lessor names (for example "Bank of Utah Trustee") are replaced by the operator where it can be determined.
 - **Keys stay with the user.** API keys (ADS-B Exchange, FAA NOTAM) and the monitor secret are entered by the user and stored only in their browser (IndexedDB) or on their own server. They are never sent anywhere except to the service they belong to.
 - **No telemetry, one count.** The project sends no data about its user to anyone. The only thing a browser says about itself is the daily hello to the monitor that counts installs: a random install id, the version, extension or userscript, the userscript manager (or extension build), and the browser and system by name (`POST /hello`, at most every 12 hours and once after an update). It is switched off with **Count this install (anonymous)** in the LADD Unblock window; nothing is sent then. Exactly what it sends is in [PRIVACY.md](../PRIVACY.md#counting-installs).

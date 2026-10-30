@@ -4,8 +4,8 @@
 // (test/fixtures/fr24mock.html). Watched frame by frame: the window opens in FR24's Widgets window, never showing
 // "Widgets" or FR24's list; the window open before goes back as FR24's do; one button drawn open on the bar at a time;
 // another button, Widgets, a flight, its own button and FR24's close button put it away; Widgets after it shows FR24's
-// own list; FR24's size and title bar; the text size; FR24's Bookmarks switched off in FR24's own list, never drawn, and
-// not put on the map after a reload; the empty box of an airport's events never drawn. For each way FR24 might build
+// own list; FR24's size and title bar; the text size; FR24's Bookmarks switched off in FR24's own list by default (never
+// drawn on the map until then), its row in the list, not put on the map after a reload, and the user's to switch on again; the empty box of an airport's events never drawn. For each way FR24 might build
 // its windows: one per button (v-if), one window retitled, kept and hidden (v-show), an open look with an extra mark and
 // a filled icon, a window loaded later, buttons inside boxes; and one it cannot be found in (the stand-in, at once after).
 // Needs Playwright and Vue 3's browser build (skipped without): PLAYWRIGHT_PATH=<its module dir> CHROMIUM=<binary>
@@ -132,9 +132,9 @@ async function run(browser, mode) {
   f = await rec(() => page.click('nav.bar .tl-ub-face, nav.bar [data-testid="map-bar__widgets"]:not([data-tl-ub-under])'), 1500);
   const L3 = last(f);
   check('Widgets pressed while this is open: this goes back, FR24\'s own Widgets comes up after', L3.titles.join() === 'Widgets' && L3.ours === 0 && L3.on.join() === 'Widgets', { L3, seq: f.map(x => x.titles.join('+')).filter((v, i, a) => v !== a[i - 1]) });
-  const own = await page.evaluate(() => { const w = [...document.querySelectorAll('.win')].find(x => getComputedStyle(x).display !== 'none'); return { list: getComputedStyle(w.querySelector('.win-body')).display, rows: [...w.querySelectorAll('.wrow')].filter(r => getComputedStyle(r).display !== 'none').map(r => r.querySelector('.wt').textContent) }; });
-  check('... with FR24\'s own list in it; the Bookmarks row not in it', own.list !== 'none' && own.rows.length === 5 && !own.rows.includes('Bookmarks'), own);
-  check('... the Bookmarks row never drawn', f.every(x => x.bm === 0));
+  const own = await page.evaluate(() => { const w = [...document.querySelectorAll('.win')].find(x => getComputedStyle(x).display !== 'none'); return { list: getComputedStyle(w.querySelector('.win-body')).display, rows: [...w.querySelectorAll('.wrow')].filter(r => getComputedStyle(r).display !== 'none').map(r => r.querySelector('.wt').textContent), bm: [...w.querySelectorAll('.wrow')].filter(r => /Bookmarks/.test(r.textContent)).map(r => r.querySelector('.lbl').textContent.trim())[0] }; });
+  check('... with FR24\'s own list in it, its Bookmarks row too (Off)', own.list !== 'none' && own.rows.length === 6 && own.rows.includes('Bookmarks') && own.bm === 'Off', own);
+  check('... Bookmarks left off', (await st()).bm === false);
   await shot(page, `${mode}-widgets`);
   // ---- this pressed while FR24's Widgets is open: Widgets goes back first, then this comes up
   f = await rec(() => page.click(ours), 1500);
@@ -162,6 +162,16 @@ async function run(browser, mode) {
   await page.reload(); await page.waitForSelector('nav.bar .tl-ub-btn', { timeout: 15000 });
   const cards = await page.evaluate(() => [...document.querySelectorAll('.card')].map(c => c.dataset.card));
   check('after a reload: FR24 itself no longer puts the Bookmarks widget on the map', !cards.includes('bm') && cards.includes('mt'), cards);
+  // ---- the user's to switch on: FR24's Widgets, Bookmarks "Off" pressed - left on, FR24's widget on the map drawn
+  await page.click(bar('Widgets')); await page.waitForSelector('.wrow .pic', { timeout: 5000 }); await sleep(300);
+  await page.locator('.wrow', { hasText: 'Bookmarks' }).locator('.pic').click(); await sleep(2600);
+  const on1 = await st(), lbl = await page.evaluate(() => [...document.querySelectorAll('.wrow')].filter(r => /Bookmarks/.test(r.textContent)).map(r => r.querySelector('.lbl').textContent.trim())[0]);
+  check('Bookmarks switched on by the user in FR24\'s list: left on (not pressed off again)', on1.bm === true && lbl === 'On', { on1, lbl });
+  f = await rec(() => page.click(bar('Widgets')), 1500);
+  check('... Widgets put away: FR24\'s Bookmarks widget drawn on the map', last(f).bm === 1 && (await page.evaluate(() => !document.querySelector('[data-tl-gone]'))), last(f));
+  await page.reload(); await page.waitForSelector('nav.bar .tl-ub-btn', { timeout: 15000 }); await sleep(2600);
+  f = await rec(async () => {}, 300);
+  check('... and after a reload, still on and drawn', (await st()).bm === true && last(f).bm === 1, last(f));
   await apCheck(page, rec);
   if (mode === 'keyed') await shot(page, `${mode}-airport`);
   check('no page errors', errors.length === 0, errors);
