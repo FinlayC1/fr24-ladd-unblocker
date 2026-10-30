@@ -110,6 +110,9 @@
       if (!dash(fromTd) && !dash(toTd) && !weak(fromTd) && !weak(toTd) && !/^\s*(Scheduled|Unknown)\b/i.test(statusTd.textContent || '')) continue;
       const atd = Number(atdTd.dataset.timestamp) || Number(tr.dataset.timestamp) || 0; if (!atd) continue;
       let l = null, bd = 900; for (const x of legs) { const d = Math.abs((x.tOff || x.tStart) - atd); if (d < bd) { bd = d; l = x; } }
+      // (1.1.2: or one heard only after the take-off - within FR24's take-off and landing: that flight, its start out of
+      // coverage; the panel's "Recent flights" the same, 04-routes pageLegsOf)
+      if (!l && /Landed/i.test(statusTd.textContent || '')) { const ata = Number(statusTd.dataset.timestamp) || 0; if (ata) l = legs.find(x => x.tStart > atd && x.tEnd <= ata + 600) || null; }
       // (the flight in the air now: its row is FR24's latest, taking off when the live state says it did)
       const isLive = !!lv && (!l || !l.ended) && (!lv.departedAt || Math.abs(lv.departedAt - atd) < 1800) && nowS() - atd < 24 * 3600 && tr === tbody.querySelector('tr.data-row:not(.tl-adsb-row):not(.tl-live-row)');
       const mob = tr.querySelectorAll('td.visible-xs p');

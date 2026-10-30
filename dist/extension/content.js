@@ -48,7 +48,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
 // ==UserScript==
 // @name         Flightradar24 LADD / N-A Unblocker (feed-level)
 // @namespace    tweeks.io
-// @version      1.1.1
+// @version      1.1.2
 // @description  Identifies every LADD / N/A / blocked military aircraft on Flightradar24 from public ADS-B, and injects callsign, registration, operator, age, country, MSN, squawk, vertical speed, GPS altitude, airspeeds, wind, photos, a reasoned origin/destination with a wind-corrected ETA (also for ordinary flights FR24 shows as N/A - military, private, GA, helicopters, with private landing sites; learned from 63 days of every aircraft worldwide, with live weather and closures), airport-board entries and a rebuilt 7-month flight log straight into FR24's own data - so it all renders like normal FR24 traffic.
 // @author       Finlay Clarke
 // @updateURL    https://raw.githubusercontent.com/FinlayC1/fr24-ladd-unblocker/main/dist/fr24-ladd-unblocker.user.js
@@ -138,7 +138,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "1.1.1";
+    var BRIDGE_V = "1.1.2";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed
@@ -1533,7 +1533,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     // FR24 serves a free account its page 1 (now onwards) and page -1 (earlier today), a page at a time. Its page 1 is
     // answered with both, and with every flight the userscript keeps for the airport (three days each way), in FR24's row
     // format - its own day headings and cards - and no other page: no "Earlier" / "Later flights" (none twice).
-    var boardArch = new Map(), archWait = new Map(), archById = new Map(), archRefreshAt = 0, archRefreshT = 0;
+    var boardArch = new Map(), archWait = new Map(), archById = new Map(), archRefreshAt = 0, archRefreshT = 0, archRefreshSince = 0;
     function hashStr(s) { var h = 2166136261; s = String(s); for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; } return h; }
     function needBoardArch(apId) {
       var a = boardArch.get(apId);
@@ -1552,10 +1552,15 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       // (rows added while the board is open: FR24's own re-read shows them)
       // (and the first lot, when FR24's board was served before it came; while an airport fills up, a re-read at most
       // every 15 s - each one redraws the whole list)
+      // (1.1.2: rows that keep coming - FR24's schedule read, flight-number lookups - redrawn once they have settled, three
+      // seconds with nothing new, and not more than every 30 s: each redraw of a week's list was the board building
+      // itself again a piece at a time)
       if (curBoard && curBoard.apId === apId && (!had || had.arr.length !== a.arr.length || had.dep.length !== a.dep.length)) {
-        var wait = archRefreshAt + 15000 - Date.now();
-        if (wait <= 0 || !had) { archRefreshAt = Date.now(); refreshBoardSoon(); }
-        else if (!archRefreshT) archRefreshT = oSetTimeout(function () { archRefreshT = 0; archRefreshAt = Date.now(); refreshBoardSoon(); }, wait);
+        if (!had) { archRefreshAt = Date.now(); refreshBoardSoon(); }
+        else {
+          if (archRefreshT && Date.now() - archRefreshSince < 30000) { oClearTimeout(archRefreshT); archRefreshT = 0; }
+          if (!archRefreshT) { if (!archRefreshSince || Date.now() - archRefreshSince >= 30000) archRefreshSince = Date.now(); archRefreshT = oSetTimeout(function () { archRefreshT = 0; archRefreshSince = 0; archRefreshAt = Date.now(); refreshBoardSoon(); }, Math.max(3000, archRefreshAt + 30000 - Date.now())); }
+        }
       }
     }
     function archRow(r, kind, apId) {
@@ -1695,16 +1700,25 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     }
     function stopBoardHold() { if (boardHold) boardHold.stop = true; }
     function holdBoardRow(id, off, t) {
-      var h = boardHold = { id: String(id), off: off, t: t || 0, until: Date.now() + 6000, stop: false }, mo = null, main = null, tries = 0;
+      var h = boardHold = { id: String(id), off: off, t: t || 0, until: Date.now() + 6000, stop: false }, mo = null, main = null, tries = 0, frameDue = false;
+      // (the row wanted - or, while it is not drawn, the drawn row nearest its time: FR24 draws a long list a piece at a
+      // time, and a row gone from a new list has another under another id. Found in one pass over the drawn rows - it was
+      // a search of the page for every row kept, each frame: a fortnight of a big airport froze the page for half a
+      // minute - and the wanted row kept, not swapped for the stand-in, so the present is where the board ends up)
+      var find = function () {
+        var el = rowById(h.id); if (el || !h.t) return el;
+        var rows = boardRows(), best = null, bd = 3600;
+        for (var i = 0; i < rows.length; i++) { var k = rows[i].getAttribute('data-testid').slice(ROW_TID.length), tk = boardTimes[k]; if (tk) { var d = Math.abs(tk - h.t); if (d < bd) { bd = d; best = rows[i]; } } }
+        return best;
+      };
       var apply = function () {
+        frameDue = false;
         if (boardHold !== h || h.stop || Date.now() > h.until) { if (mo) mo.disconnect(); return false; }
-        var el = rowById(h.id);
-        // (the row gone from the new list - a flight now shown under another id: the one nearest its time)
-        if (!el && h.t) { var best = null, bd = Infinity; Object.keys(boardTimes).forEach(function (k) { var d = Math.abs(boardTimes[k] - h.t); if (d < bd && rowById(k)) { bd = d; best = k; } }); if (best != null && bd < 3600) { h.id = best; el = rowById(best); } }
+        var el = find();
         var m = el && el.closest('main'); if (!el || !m) return true;
         if (m !== main) {
           if (mo) mo.disconnect(); main = m;
-          if (typeof MutationObserver === 'function') { mo = new MutationObserver(function () { if (window.requestAnimationFrame) window.requestAnimationFrame(apply); else oSetTimeout(apply, 16); }); mo.observe(m, { childList: true, subtree: true }); }
+          if (typeof MutationObserver === 'function') { mo = new MutationObserver(function () { if (frameDue) return; frameDue = true; if (window.requestAnimationFrame) window.requestAnimationFrame(apply); else oSetTimeout(apply, 16); }); mo.observe(m, { childList: true, subtree: true }); }
           if (!m.__tlHoldL) { m.__tlHoldL = true; ['wheel', 'touchstart', 'keydown', 'mousedown'].forEach(function (ev) { m.addEventListener(ev, stopBoardHold, { passive: true }); }); }
         }
         var d = el.getBoundingClientRect().top - m.getBoundingClientRect().top - h.off;
@@ -4372,10 +4386,14 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
         const a = byId.get(last.to.id);
         if (a) {
           const dh = (f.t - last.tEnd) / 3600, d = dist(a.lat, a.lon, f.lat, f.lon);
-          const trkOk = !fin(f.trk) || d < 80 || angDiff(f.trk, brg(a.lat, a.lon, f.lat, f.lon)) < 70;
+          // (heading away from there: the great circle's course where the aircraft is now, not where it set off - over an
+          // ocean they part by tens of degrees: OK-NLV, a G700 over Labrador at 252° on its way back to Savannah from Prague,
+          // 4,800 km, set off on 310°, flies 245° there - its departure was "unknown, first seen at FL470")
+          const away = (brg(f.lat, f.lon, a.lat, a.lon) + 180) % 360;
+          const trkOk = !fin(f.trk) || d < 80 || angDiff(f.trk, away) < 70;
           // (parked there for days or weeks: still where this flight began, if nothing has been seen of it since and it is
           // heading away from there)
-          const parkedOk = dh >= 48 && dh < 30 * 24 && d <= rangeKm(ac, classify(ac)) && fin(f.trk) && (d < 80 || angDiff(f.trk, brg(a.lat, a.lon, f.lat, f.lon)) < 50);
+          const parkedOk = dh >= 48 && dh < 30 * 24 && d <= rangeKm(ac, classify(ac)) && fin(f.trk) && (d < 80 || angDiff(f.trk, away) < 50);
           if (dh > -0.2 && ((dh < 48 && d <= Math.max(150, (Math.min(dh, 14) + 0.3) * 950) && trkOk) || parkedOk)) return { airport: a, conf: 'history', note: `last landed at ${a.code}`, departedAt: 0 };
         }
       }
@@ -5634,7 +5652,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '1.1.1';
+  const VERSION = '1.1.2';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
@@ -8220,11 +8238,23 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       return { link: links[i] || large, credit: credits[i] || '', thumb: small, medium: small, large, source: 'JetPhotos', date: '' };
     });
   }
+  // (the page itself, read once in five minutes for its pictures and its flights - "Recent <reg> flights", 04-routes)
+  const fr24PageCache = new Map();
+  function fr24AircraftHtml(reg) {
+    const k = String(reg || '').toLowerCase(), c = fr24PageCache.get(k);
+    if (c && now() - c.at < 5 * 60000) return c.p;
+    const p = (async () => {
+      const pw = pageWindow(), pf = typeof pw.fetch === 'function' ? pw.fetch.bind(pw) : fetch;
+      const res = await Promise.race([pf('/data/aircraft/' + encodeURIComponent(k), { credentials: 'same-origin', headers: { Accept: 'text/html' } }), sleep(12000).then(() => null)]);
+      if (!res || !res.ok) throw new Error('FR24 aircraft page ' + (res ? 'HTTP ' + res.status : 'timed out'));
+      return res.text();
+    })();
+    fr24PageCache.set(k, { at: now(), p }); if (fr24PageCache.size > 40) fr24PageCache.delete(fr24PageCache.keys().next().value);
+    p.catch(() => { if (fr24PageCache.get(k) && fr24PageCache.get(k).p === p) fr24PageCache.delete(k); });
+    return p;
+  }
   async function fetchFr24PagePhotos(reg) {
-    const pw = pageWindow(), pf = typeof pw.fetch === 'function' ? pw.fetch.bind(pw) : fetch;
-    const res = await Promise.race([pf('/data/aircraft/' + encodeURIComponent(String(reg).toLowerCase()), { credentials: 'same-origin', headers: { Accept: 'text/html' } }), sleep(12000).then(() => null)]);
-    if (!res || !res.ok) throw new Error('FR24 aircraft page ' + (res ? 'HTTP ' + res.status : 'timed out'));
-    return goodPhotos(parseFr24AircraftPage(await res.text()));
+    return goodPhotos(parseFr24AircraftPage(await fr24AircraftHtml(reg)));
   }
   async function fetchPhotos(rec, pri, early, fill) {
     const hex = rec.hex.toLowerCase(), errs = [];
@@ -10455,6 +10485,52 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       __tlPb: l.tStart > 0 ? { t: l.tStart, lat: from && fin(from.lat) ? from.lat : fin(l.startLat) ? l.startLat : null, lon: from && fin(from.lon) ? from.lon : fin(l.startLon) ? l.startLon : null, z: from ? 10 : 9 } : null
     };
   }
+  // (1.1.2) "Recent <reg> flights" as the log page has them. FR24's own page of the aircraft (/data/aircraft/<reg>) lists a
+  // blocked aircraft's flights - callsign, take-off, landing - while its registration lookup lists none; their ends are
+  // filled as the log page fills them (06-acpage fillFr24Rows): the ADS-B flight that took off within a quarter of an hour
+  // of the row - its landing only if not after FR24's own - else where FR24's own track of the flight began and ended, else
+  // where the flight before landed / the flight after took off, within twelve hours. G-OUEG's list had "N/A -> Dubai"
+  // and no Luton -> Liverpool where its log page had Liverpool -> Dubai and Luton -> Liverpool.
+  const pageRowsOf = new Map();   // reg -> { at, rows } (FR24's rows of its page, newest first)
+  const trackEndIds = new Map();  // FR24 flight id -> { from, to } airport ids where its track began / ended (or a promise)
+  function fr24PageRows(reg) {
+    const c = pageRowsOf.get(reg); if (c && c.rows && now() - c.at < 5 * 60000) return Promise.resolve(c.rows);
+    if (c && c.p) return c.p;
+    const p = fr24AircraftHtml(reg).then(html => {
+      const doc = new DOMParser().parseFromString(html, 'text/html'), tb = doc.querySelector('#tbl-datatable tbody') || doc.querySelector('table tbody');
+      const rows = tb ? fr24LogRows(tb).filter(r => r.atd > 0).sort((a, b) => b.atd - a.atd) : [];
+      pageRowsOf.set(reg, { at: now(), rows }); if (pageRowsOf.size > 40) pageRowsOf.delete(pageRowsOf.keys().next().value);
+      return rows;
+    }, () => { pageRowsOf.set(reg, { at: now() - 4 * 60000, rows: c && c.rows ? c.rows : [] }); return c && c.rows ? c.rows : []; });
+    pageRowsOf.set(reg, Object.assign({}, c || { at: 0 }, { p }));
+    return p;
+  }
+  function trackEndsOf(fid, ts) {
+    const c = trackEndIds.get(fid); if (c) return c.then ? c : Promise.resolve(c);
+    const at = q => { const n = q && fin(q.lat) ? ENGINE.placeAt(q.lat, q.lon, 7, 2) : null; return n && n.airport ? n.airport.id : 0; };
+    const p = fr24TrackEnds(Number(fid).toString(16), ts).then(e => { const v = { from: e ? at(e.start) : 0, to: e ? at(e.end) : 0 }; trackEndIds.set(fid, v); return v; });
+    trackEndIds.set(fid, p); if (trackEndIds.size > 500) trackEndIds.delete(trackEndIds.keys().next().value);
+    return p;
+  }
+  function pageLegsOf(rows, legs) {
+    const out = rows.map(r => {
+      let l = null, bd = 900; for (const x of legs) { const d = Math.abs((x.tOff || x.tStart) - r.atd); if (d < bd) { bd = d; l = x; } }
+      // (or one heard only after the take-off - within FR24's take-off and landing: that flight, its start out of coverage)
+      if (!l && r.ata) l = legs.find(x => x.tStart > r.atd && x.tEnd <= r.ata + 600) || null;
+      const legEnd = l ? (l.tOn || l.tEnd) : 0, endAgrees = !r.ata || !legEnd || legEnd <= r.ata + 600, e = trackEndIds.get(r.id), te = e && !e.then ? e : {};
+      const from = r.o ? { id: r.o } : l && l.from ? l.from : te.from ? { id: te.from } : null;
+      const to = r.d ? { id: r.d } : l && l.to && endAgrees ? l.to : r.ata && te.to ? { id: te.to } : null;
+      return { tStart: r.atd, tOff: r.atd, tEnd: r.ata || (l && l.tEnd) || r.atd, tOn: r.ata || 0, from, to, cs: r.cs || (l && l.cs) || '', ended: !!r.ata, fr24: r.id, eta: r.eta || 0 };
+    });
+    for (let i = 0; i < out.length; i++) {
+      const x = out[i], older = out[i + 1], newer = out[i - 1];
+      if (!x.from && older && older.ended && older.to && x.tStart >= older.tEnd - 300 && x.tStart - older.tEnd < 12 * 3600) x.from = Object.assign({}, older.to, { conf: 'inferred' });
+      if (!x.to && x.ended && newer && newer.from && newer.tStart >= x.tEnd - 300 && newer.tStart - x.tEnd < 12 * 3600) x.to = Object.assign({}, newer.from, { conf: 'inferred' });
+    }
+    // (the ADS-B flights from before FR24's oldest row: its page lists only its last days)
+    const oldest = out.length ? out[out.length - 1].tStart : Infinity;
+    return out.concat(legs.filter(l => (l.from || l.to) && l.tStart < oldest - 900));
+  }
   const histReqs = new Map();
   const histShown = new Map();    // reg -> { hex, legs } last list handed to FR24's "Recent flights" (row i = legs[i + 1])
   // The list for an aircraft as known right now: [rec, hex, build, past] (null when the registration is not known)
@@ -10516,7 +10592,20 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     if (!warm && !store.peekHist(hex)) { try { await loadAirports(); await Promise.race([Promise.all([todayJob, store.getHist(hex)]), sleep(1600)]); } catch (e) { /* use what we have */ } }
     // current flight first (FR24's list component always skips the first entry, which is the flight on screen)
     const fly = flyingNow(hex, rec);
-    const past = () => knownLegs(hex).filter(l => l.from || l.to).sort((a, b) => b.tStart - a.tStart);
+    // (FR24's own rows of its page where it has them - the log page's flights - else the ADS-B log alone)
+    const legs0 = () => knownLegs(hex).filter(l => l.from || l.to).sort((a, b) => b.tStart - a.tStart);
+    const pc = pageRowsOf.get(reg);
+    const past = () => { const pr = pageRowsOf.get(reg), l0 = legs0(); return pr && pr.rows && pr.rows.length ? pageLegsOf(pr.rows, l0).sort((a, b) => b.tStart - a.tStart) : l0; };
+    // (asked for an aircraft FR24 lists no flights of - when FR24 asks, or warming one blocked: no page read for every
+    // ordinary aircraft opened)
+    const pageOk = !warm || !!(rec.ladd || rec.fr24Blocked || [...live.values()].some(r => r && r.hex === hex));
+    const rowsJob = (pageOk ? fr24PageRows(reg) : Promise.resolve([])).then(rows => {
+      // (the ends FR24's own track has, for the rows the log leaves open - the newest twelve, together)
+      const want = pageLegsOf(rows, legs0()).filter(l => l.fr24 && l.ended && (!l.from || !l.to)).slice(0, 12);
+      return Promise.race([Promise.all(want.map(l => trackEndsOf(l.fr24, l.tStart).catch(() => null))), sleep(warm ? 15000 : 3000)]).then(() => rows);
+    }).catch(() => []);
+    // (the first answer is the one FR24 draws: its page and the tracks' ends waited for, briefly, unless already known)
+    if (!warm && !(pc && pc.rows)) await Promise.race([rowsJob, sleep(3500)]);
     const build = all => {
       let legs = all, head = all.slice(0, 1);
       if (fly) {
@@ -10544,6 +10633,8 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     let sent = 0;
     const progress = () => { const d = build(past()); if (d.length > 1 && d.length !== sent) { sent = d.length; postToPage('hist', { reg, data: d, partial: true }); } };
     if (more && !warm) loadHistory(hex, 21, progress, { front: true }).then(() => postToPage('hist', { reg, data: build(past()) }), () => postToPage('hist', { reg, data: build(past()) }));
+    // (FR24's rows and their tracks' ends, come in after the first answer: handed over again)
+    rowsJob.then(() => { const d = build(past()); if (d.length > 1 && JSON.stringify(d) !== JSON.stringify(build0)) { sent = d.length; postToPage('hist', { reg, data: d, partial: more }); } });
     // (today's files come in after the first answer: handed over again with what they add)
     if (todayJob) todayJob.then(() => { const d = build(past()); if (d.length > 1 && JSON.stringify(d) !== JSON.stringify(build0)) { sent = d.length; postToPage('hist', { reg, data: d, partial: more }); } });
   }
@@ -11411,6 +11502,9 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       if (!dash(fromTd) && !dash(toTd) && !weak(fromTd) && !weak(toTd) && !/^\s*(Scheduled|Unknown)\b/i.test(statusTd.textContent || '')) continue;
       const atd = Number(atdTd.dataset.timestamp) || Number(tr.dataset.timestamp) || 0; if (!atd) continue;
       let l = null, bd = 900; for (const x of legs) { const d = Math.abs((x.tOff || x.tStart) - atd); if (d < bd) { bd = d; l = x; } }
+      // (1.1.2: or one heard only after the take-off - within FR24's take-off and landing: that flight, its start out of
+      // coverage; the panel's "Recent flights" the same, 04-routes pageLegsOf)
+      if (!l && /Landed/i.test(statusTd.textContent || '')) { const ata = Number(statusTd.dataset.timestamp) || 0; if (ata) l = legs.find(x => x.tStart > atd && x.tEnd <= ata + 600) || null; }
       // (the flight in the air now: its row is FR24's latest, taking off when the live state says it did)
       const isLive = !!lv && (!l || !l.ended) && (!lv.departedAt || Math.abs(lv.departedAt - atd) < 1800) && nowS() - atd < 24 * 3600 && tr === tbody.querySelector('tr.data-row:not(.tl-adsb-row):not(.tl-live-row)');
       const mob = tr.querySelectorAll('td.visible-xs p');
@@ -13860,7 +13954,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // (the version whose "what's new" was put away, and the one whose dot on the button the window was opened for)
   const UB_SEEN_KEY = 'tweeks.fr24.ladd.seenver', UB_DOT_KEY = 'tweeks.fr24.ladd.dotver';
   // (the newest CHANGELOG section's headlines, written in by build.mjs: { v, items })
-  const UB_WHATS_NEW = {"v":"1.1.1","items":["LADD flights show their progress bar and time of arrival again, even while the monitor is busy.","The odds in the \"confirm destination\" list now match the ones the panel shows.","The destination's percentage no longer opens a tooltip when you point at it.","The monitor now keeps the serial number, age and owner of about 760,000 aircraft worldwide, so they appear at once for any aircraft you open, on the map or a log page.","Bookmarks is back in FR24's Widgets list. It starts switched off, and you can switch it on there."]};
+  const UB_WHATS_NEW = {"v":"1.1.2","items":["Opening an airport no longer freezes the page, and the board opens at the current time.","The board no longer rebuilds itself piece by piece as more flights come in.","A blocked aircraft's \"Recent flights\" list in its panel now matches its log page.","A flight first picked up mid-ocean now shows where it took off, from where the aircraft last landed.","The Bookmarks widget no longer shows FR24's upgrade message."]};
   // (an aircraft with an open padlock: FR24's outline style - 24 grid, 1.5 stroke in the text colour)
   const UB_ICON = '<svg data-tl-ub-icon="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
   const UB_X = '<svg viewBox="0 0 14 14" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5l11 11M12.5 1.5l-11 11"/></svg>';
@@ -14621,7 +14715,30 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     bmDefaulted = true; lsSet(UB_BM_KEY, '1');
     for (const e of document.querySelectorAll('[data-tl-gone]')) e.removeAttribute('data-tl-gone');
   }
+  // (1.1.2) FR24's Bookmarks widget asks a free account to upgrade for more than one bookmark - "To get more than 1
+  // bookmark, please upgrade..." with its trial button - in the widget itself: that box taken out as it is put in, the
+  // widget's own tabs, list and "Add bookmark" left as they are. Found by its words; the box is the largest one round
+  // them that holds neither the tabs nor "Add bookmark".
+  const BEG_RE = /^to get more than \d+ bookmarks?\b/i;
+  function begSweep(root) {
+    if (!opt.on || !root || root.nodeType !== 1 || !/more than \d+ bookmark/i.test(root.textContent || '')) return;
+    const tw = document.createTreeWalker(root, 4);
+    for (let n = tw.nextNode(); n; n = tw.nextNode()) {
+      if (!BEG_RE.test(n.data.trim())) continue;
+      let box = n.parentElement; if (!box || box.closest('[data-tl-beg],.tl-ub,.tl-ub-c')) continue;
+      for (let a = box.parentElement, d = 0; a && a !== document.body && d < 6; a = a.parentElement, d++) {
+        const t = a.textContent || '';
+        if (/add bookmark/i.test(t) || /\baircraft\b[\s\S]*\bflights\b[\s\S]*\bairports\b/i.test(t)) break;
+        box = a;
+      }
+      box.setAttribute('data-tl-beg', '');
+    }
+  }
   function bookmarksMut(recs) {
+    for (const r of recs) {
+      if (r.type === 'characterData') { const p = r.target.parentElement; if (p && /more than \d+ bookmark/i.test(r.target.data || '')) begSweep(p.parentElement || p); continue; }
+      for (const n of r.addedNodes) if (n.nodeType === 1) begSweep(n); else if (n.nodeType === 3 && n.parentElement) begSweep(n.parentElement.parentElement || n.parentElement);
+    }
     for (const r of recs) {
       if (r.type === 'characterData') { const p = r.target.parentElement; if (p && /bookmarks/i.test(r.target.data || '')) bookmarksSweep(p.parentElement || p); continue; }
       for (const n of r.addedNodes) { if (n.nodeType === 1) bookmarksSweep(n); else if (n.nodeType === 3 && /bookmarks/i.test(n.data || '') && n.parentElement) bookmarksSweep(n.parentElement.parentElement || n.parentElement); }
@@ -14936,7 +15053,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
       if (UB_LABELS.some(l => t.includes(l))) { ubTryAt = clock(); ubDirty = true; ensureBarButton(); return; }
     }
   }
-  function addUnblockStyle() { if (document.getElementById('tl-ub-style')) return; const s = document.createElement('style'); s.id = 'tl-ub-style'; s.textContent = UB_STYLE + BN_STYLE + '\n[data-tl-gone],[data-tl-ub-hid],[data-tl-ub-under]{display:none!important}'; (document.head || document.documentElement).appendChild(s); ubIconStyle(); }
+  function addUnblockStyle() { if (document.getElementById('tl-ub-style')) return; const s = document.createElement('style'); s.id = 'tl-ub-style'; s.textContent = UB_STYLE + BN_STYLE + '\n[data-tl-gone],[data-tl-beg],[data-tl-ub-hid],[data-tl-ub-under]{display:none!important}'; (document.head || document.documentElement).appendChild(s); ubIconStyle(); }
   function startUnblockWindow() {
     const go = () => {
       addUnblockStyle(); if (opt.on) applyOptsLive();
@@ -14960,7 +15077,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
       } catch (e) { ubDirty = true; }
       const tick = () => {
         ensureBarButton(); ubBanners();
-        if (bmDirty && now() - bmAt > 2000) { bmDirty = false; bmAt = now(); try { bookmarksSweep(document.body); } catch (e) { log('bookmarks', e); } }
+        if (bmDirty && now() - bmAt > 2000) { bmDirty = false; bmAt = now(); try { bookmarksSweep(document.body); begSweep(document.body); } catch (e) { log('bookmarks', e); } }
         setTimeout(tick, ubMiss > 60 ? 5000 : 1000);
       };
       tick();

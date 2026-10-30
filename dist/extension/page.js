@@ -1,4 +1,4 @@
-// FR24 LADD Unblocker 1.1.1 - the page-world part (see src/page.js)
+// FR24 LADD Unblocker 1.1.2 - the page-world part (see src/page.js)
 (function () {
   'use strict';
   // ------------------------------------------------------------------------------------------------------------
@@ -7,7 +7,7 @@
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "1.1.1";
+    var BRIDGE_V = "1.1.2";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed
@@ -1402,7 +1402,7 @@
     // FR24 serves a free account its page 1 (now onwards) and page -1 (earlier today), a page at a time. Its page 1 is
     // answered with both, and with every flight the userscript keeps for the airport (three days each way), in FR24's row
     // format - its own day headings and cards - and no other page: no "Earlier" / "Later flights" (none twice).
-    var boardArch = new Map(), archWait = new Map(), archById = new Map(), archRefreshAt = 0, archRefreshT = 0;
+    var boardArch = new Map(), archWait = new Map(), archById = new Map(), archRefreshAt = 0, archRefreshT = 0, archRefreshSince = 0;
     function hashStr(s) { var h = 2166136261; s = String(s); for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; } return h; }
     function needBoardArch(apId) {
       var a = boardArch.get(apId);
@@ -1421,10 +1421,15 @@
       // (rows added while the board is open: FR24's own re-read shows them)
       // (and the first lot, when FR24's board was served before it came; while an airport fills up, a re-read at most
       // every 15 s - each one redraws the whole list)
+      // (1.1.2: rows that keep coming - FR24's schedule read, flight-number lookups - redrawn once they have settled, three
+      // seconds with nothing new, and not more than every 30 s: each redraw of a week's list was the board building
+      // itself again a piece at a time)
       if (curBoard && curBoard.apId === apId && (!had || had.arr.length !== a.arr.length || had.dep.length !== a.dep.length)) {
-        var wait = archRefreshAt + 15000 - Date.now();
-        if (wait <= 0 || !had) { archRefreshAt = Date.now(); refreshBoardSoon(); }
-        else if (!archRefreshT) archRefreshT = oSetTimeout(function () { archRefreshT = 0; archRefreshAt = Date.now(); refreshBoardSoon(); }, wait);
+        if (!had) { archRefreshAt = Date.now(); refreshBoardSoon(); }
+        else {
+          if (archRefreshT && Date.now() - archRefreshSince < 30000) { oClearTimeout(archRefreshT); archRefreshT = 0; }
+          if (!archRefreshT) { if (!archRefreshSince || Date.now() - archRefreshSince >= 30000) archRefreshSince = Date.now(); archRefreshT = oSetTimeout(function () { archRefreshT = 0; archRefreshSince = 0; archRefreshAt = Date.now(); refreshBoardSoon(); }, Math.max(3000, archRefreshAt + 30000 - Date.now())); }
+        }
       }
     }
     function archRow(r, kind, apId) {
@@ -1564,16 +1569,25 @@
     }
     function stopBoardHold() { if (boardHold) boardHold.stop = true; }
     function holdBoardRow(id, off, t) {
-      var h = boardHold = { id: String(id), off: off, t: t || 0, until: Date.now() + 6000, stop: false }, mo = null, main = null, tries = 0;
+      var h = boardHold = { id: String(id), off: off, t: t || 0, until: Date.now() + 6000, stop: false }, mo = null, main = null, tries = 0, frameDue = false;
+      // (the row wanted - or, while it is not drawn, the drawn row nearest its time: FR24 draws a long list a piece at a
+      // time, and a row gone from a new list has another under another id. Found in one pass over the drawn rows - it was
+      // a search of the page for every row kept, each frame: a fortnight of a big airport froze the page for half a
+      // minute - and the wanted row kept, not swapped for the stand-in, so the present is where the board ends up)
+      var find = function () {
+        var el = rowById(h.id); if (el || !h.t) return el;
+        var rows = boardRows(), best = null, bd = 3600;
+        for (var i = 0; i < rows.length; i++) { var k = rows[i].getAttribute('data-testid').slice(ROW_TID.length), tk = boardTimes[k]; if (tk) { var d = Math.abs(tk - h.t); if (d < bd) { bd = d; best = rows[i]; } } }
+        return best;
+      };
       var apply = function () {
+        frameDue = false;
         if (boardHold !== h || h.stop || Date.now() > h.until) { if (mo) mo.disconnect(); return false; }
-        var el = rowById(h.id);
-        // (the row gone from the new list - a flight now shown under another id: the one nearest its time)
-        if (!el && h.t) { var best = null, bd = Infinity; Object.keys(boardTimes).forEach(function (k) { var d = Math.abs(boardTimes[k] - h.t); if (d < bd && rowById(k)) { bd = d; best = k; } }); if (best != null && bd < 3600) { h.id = best; el = rowById(best); } }
+        var el = find();
         var m = el && el.closest('main'); if (!el || !m) return true;
         if (m !== main) {
           if (mo) mo.disconnect(); main = m;
-          if (typeof MutationObserver === 'function') { mo = new MutationObserver(function () { if (window.requestAnimationFrame) window.requestAnimationFrame(apply); else oSetTimeout(apply, 16); }); mo.observe(m, { childList: true, subtree: true }); }
+          if (typeof MutationObserver === 'function') { mo = new MutationObserver(function () { if (frameDue) return; frameDue = true; if (window.requestAnimationFrame) window.requestAnimationFrame(apply); else oSetTimeout(apply, 16); }); mo.observe(m, { childList: true, subtree: true }); }
           if (!m.__tlHoldL) { m.__tlHoldL = true; ['wheel', 'touchstart', 'keydown', 'mousedown'].forEach(function (ev) { m.addEventListener(ev, stopBoardHold, { passive: true }); }); }
         }
         var d = el.getBoundingClientRect().top - m.getBoundingClientRect().top - h.off;

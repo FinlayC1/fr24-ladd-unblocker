@@ -73,6 +73,19 @@ const check = (name, ok, info) => { if (!ok) fails++; console.log((ok ? 'PASS  '
   const tB = Date.now(), a2 = await H.needBoardArch(609), dtB = Date.now() - tB;
   check('... none coming: FR24\'s board goes on after two seconds', a2 === null && dtB >= 1900 && dtB < 3000, { dtB });
   check('... the board asked of the userscript', posted.some(d => d && d.__tweeksLadd === 'needBoard' && d.apId === 608));
+  // ---- (1.1.2) a big airport's fortnight - 4,000 rows - drawn by FR24 a piece at a time after the board was placed: the
+  // place found without searching the page once per row each frame (it froze the page for half a minute)
+  { H.stopBoardHold(); st = 0;
+    const big = []; for (let i = 0; i < 4000; i++) big.push({ id: 7000000000 + i, scheduledTime: nowS - 7 * 86400 + i * 302 });
+    let qs = 0; const q0 = doc.querySelector.bind(doc), qa0 = doc.querySelectorAll.bind(doc);
+    doc.querySelector = s => { qs++; return q0(s); }; doc.querySelectorAll = s => { qs++; return qa0(s); };
+    list.innerHTML = ''; const t0 = Date.now();
+    H.placeBoard(firstOf(big), '701/arrivals', big);
+    for (let c = 0; c < 10; c++) { list.insertAdjacentHTML('beforeend', big.slice(c * 400, (c + 1) * 400).map(e => `<li><div data-testid="airport-panel__schedules__flight__${e.id}">${e.id}</div></li>`).join('')); layout(); await sleep(40); }
+    await settle(); const ms = Date.now() - t0, calls = qs;
+    doc.querySelector = q0; doc.querySelectorAll = qa0;
+    const f = firstOf(big);
+    check('a fortnight of a big airport (4,000 rows) drawn a piece at a time: placed at the present, the page searched a few hundred times at most (not once per row each frame)', calls < 600 && Math.abs(offOf(f.id) - 36) <= 1, { calls, ms, off: offOf(f.id) }); }
   console.log(fails ? `\n${fails} failed` : '\nall passed');
   process.exit(fails ? 1 : 0);
 })().catch(e => { console.log('FAIL  crashed ' + (e && e.stack || e)); process.exit(1); });

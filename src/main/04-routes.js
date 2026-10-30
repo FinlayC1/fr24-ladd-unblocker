@@ -1195,6 +1195,52 @@
       __tlPb: l.tStart > 0 ? { t: l.tStart, lat: from && fin(from.lat) ? from.lat : fin(l.startLat) ? l.startLat : null, lon: from && fin(from.lon) ? from.lon : fin(l.startLon) ? l.startLon : null, z: from ? 10 : 9 } : null
     };
   }
+  // (1.1.2) "Recent <reg> flights" as the log page has them. FR24's own page of the aircraft (/data/aircraft/<reg>) lists a
+  // blocked aircraft's flights - callsign, take-off, landing - while its registration lookup lists none; their ends are
+  // filled as the log page fills them (06-acpage fillFr24Rows): the ADS-B flight that took off within a quarter of an hour
+  // of the row - its landing only if not after FR24's own - else where FR24's own track of the flight began and ended, else
+  // where the flight before landed / the flight after took off, within twelve hours. G-OUEG's list had "N/A -> Dubai"
+  // and no Luton -> Liverpool where its log page had Liverpool -> Dubai and Luton -> Liverpool.
+  const pageRowsOf = new Map();   // reg -> { at, rows } (FR24's rows of its page, newest first)
+  const trackEndIds = new Map();  // FR24 flight id -> { from, to } airport ids where its track began / ended (or a promise)
+  function fr24PageRows(reg) {
+    const c = pageRowsOf.get(reg); if (c && c.rows && now() - c.at < 5 * 60000) return Promise.resolve(c.rows);
+    if (c && c.p) return c.p;
+    const p = fr24AircraftHtml(reg).then(html => {
+      const doc = new DOMParser().parseFromString(html, 'text/html'), tb = doc.querySelector('#tbl-datatable tbody') || doc.querySelector('table tbody');
+      const rows = tb ? fr24LogRows(tb).filter(r => r.atd > 0).sort((a, b) => b.atd - a.atd) : [];
+      pageRowsOf.set(reg, { at: now(), rows }); if (pageRowsOf.size > 40) pageRowsOf.delete(pageRowsOf.keys().next().value);
+      return rows;
+    }, () => { pageRowsOf.set(reg, { at: now() - 4 * 60000, rows: c && c.rows ? c.rows : [] }); return c && c.rows ? c.rows : []; });
+    pageRowsOf.set(reg, Object.assign({}, c || { at: 0 }, { p }));
+    return p;
+  }
+  function trackEndsOf(fid, ts) {
+    const c = trackEndIds.get(fid); if (c) return c.then ? c : Promise.resolve(c);
+    const at = q => { const n = q && fin(q.lat) ? ENGINE.placeAt(q.lat, q.lon, 7, 2) : null; return n && n.airport ? n.airport.id : 0; };
+    const p = fr24TrackEnds(Number(fid).toString(16), ts).then(e => { const v = { from: e ? at(e.start) : 0, to: e ? at(e.end) : 0 }; trackEndIds.set(fid, v); return v; });
+    trackEndIds.set(fid, p); if (trackEndIds.size > 500) trackEndIds.delete(trackEndIds.keys().next().value);
+    return p;
+  }
+  function pageLegsOf(rows, legs) {
+    const out = rows.map(r => {
+      let l = null, bd = 900; for (const x of legs) { const d = Math.abs((x.tOff || x.tStart) - r.atd); if (d < bd) { bd = d; l = x; } }
+      // (or one heard only after the take-off - within FR24's take-off and landing: that flight, its start out of coverage)
+      if (!l && r.ata) l = legs.find(x => x.tStart > r.atd && x.tEnd <= r.ata + 600) || null;
+      const legEnd = l ? (l.tOn || l.tEnd) : 0, endAgrees = !r.ata || !legEnd || legEnd <= r.ata + 600, e = trackEndIds.get(r.id), te = e && !e.then ? e : {};
+      const from = r.o ? { id: r.o } : l && l.from ? l.from : te.from ? { id: te.from } : null;
+      const to = r.d ? { id: r.d } : l && l.to && endAgrees ? l.to : r.ata && te.to ? { id: te.to } : null;
+      return { tStart: r.atd, tOff: r.atd, tEnd: r.ata || (l && l.tEnd) || r.atd, tOn: r.ata || 0, from, to, cs: r.cs || (l && l.cs) || '', ended: !!r.ata, fr24: r.id, eta: r.eta || 0 };
+    });
+    for (let i = 0; i < out.length; i++) {
+      const x = out[i], older = out[i + 1], newer = out[i - 1];
+      if (!x.from && older && older.ended && older.to && x.tStart >= older.tEnd - 300 && x.tStart - older.tEnd < 12 * 3600) x.from = Object.assign({}, older.to, { conf: 'inferred' });
+      if (!x.to && x.ended && newer && newer.from && newer.tStart >= x.tEnd - 300 && newer.tStart - x.tEnd < 12 * 3600) x.to = Object.assign({}, newer.from, { conf: 'inferred' });
+    }
+    // (the ADS-B flights from before FR24's oldest row: its page lists only its last days)
+    const oldest = out.length ? out[out.length - 1].tStart : Infinity;
+    return out.concat(legs.filter(l => (l.from || l.to) && l.tStart < oldest - 900));
+  }
   const histReqs = new Map();
   const histShown = new Map();    // reg -> { hex, legs } last list handed to FR24's "Recent flights" (row i = legs[i + 1])
   // The list for an aircraft as known right now: [rec, hex, build, past] (null when the registration is not known)
@@ -1256,7 +1302,20 @@
     if (!warm && !store.peekHist(hex)) { try { await loadAirports(); await Promise.race([Promise.all([todayJob, store.getHist(hex)]), sleep(1600)]); } catch (e) { /* use what we have */ } }
     // current flight first (FR24's list component always skips the first entry, which is the flight on screen)
     const fly = flyingNow(hex, rec);
-    const past = () => knownLegs(hex).filter(l => l.from || l.to).sort((a, b) => b.tStart - a.tStart);
+    // (FR24's own rows of its page where it has them - the log page's flights - else the ADS-B log alone)
+    const legs0 = () => knownLegs(hex).filter(l => l.from || l.to).sort((a, b) => b.tStart - a.tStart);
+    const pc = pageRowsOf.get(reg);
+    const past = () => { const pr = pageRowsOf.get(reg), l0 = legs0(); return pr && pr.rows && pr.rows.length ? pageLegsOf(pr.rows, l0).sort((a, b) => b.tStart - a.tStart) : l0; };
+    // (asked for an aircraft FR24 lists no flights of - when FR24 asks, or warming one blocked: no page read for every
+    // ordinary aircraft opened)
+    const pageOk = !warm || !!(rec.ladd || rec.fr24Blocked || [...live.values()].some(r => r && r.hex === hex));
+    const rowsJob = (pageOk ? fr24PageRows(reg) : Promise.resolve([])).then(rows => {
+      // (the ends FR24's own track has, for the rows the log leaves open - the newest twelve, together)
+      const want = pageLegsOf(rows, legs0()).filter(l => l.fr24 && l.ended && (!l.from || !l.to)).slice(0, 12);
+      return Promise.race([Promise.all(want.map(l => trackEndsOf(l.fr24, l.tStart).catch(() => null))), sleep(warm ? 15000 : 3000)]).then(() => rows);
+    }).catch(() => []);
+    // (the first answer is the one FR24 draws: its page and the tracks' ends waited for, briefly, unless already known)
+    if (!warm && !(pc && pc.rows)) await Promise.race([rowsJob, sleep(3500)]);
     const build = all => {
       let legs = all, head = all.slice(0, 1);
       if (fly) {
@@ -1284,6 +1343,8 @@
     let sent = 0;
     const progress = () => { const d = build(past()); if (d.length > 1 && d.length !== sent) { sent = d.length; postToPage('hist', { reg, data: d, partial: true }); } };
     if (more && !warm) loadHistory(hex, 21, progress, { front: true }).then(() => postToPage('hist', { reg, data: build(past()) }), () => postToPage('hist', { reg, data: build(past()) }));
+    // (FR24's rows and their tracks' ends, come in after the first answer: handed over again)
+    rowsJob.then(() => { const d = build(past()); if (d.length > 1 && JSON.stringify(d) !== JSON.stringify(build0)) { sent = d.length; postToPage('hist', { reg, data: d, partial: more }); } });
     // (today's files come in after the first answer: handed over again with what they add)
     if (todayJob) todayJob.then(() => { const d = build(past()); if (d.length > 1 && JSON.stringify(d) !== JSON.stringify(build0)) { sent = d.length; postToPage('hist', { reg, data: d, partial: more }); } });
   }
