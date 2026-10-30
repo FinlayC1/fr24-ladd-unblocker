@@ -844,11 +844,23 @@
       return { link: links[i] || large, credit: credits[i] || '', thumb: small, medium: small, large, source: 'JetPhotos', date: '' };
     });
   }
+  // (the page itself, read once in five minutes for its pictures and its flights - "Recent <reg> flights", 04-routes)
+  const fr24PageCache = new Map();
+  function fr24AircraftHtml(reg) {
+    const k = String(reg || '').toLowerCase(), c = fr24PageCache.get(k);
+    if (c && now() - c.at < 5 * 60000) return c.p;
+    const p = (async () => {
+      const pw = pageWindow(), pf = typeof pw.fetch === 'function' ? pw.fetch.bind(pw) : fetch;
+      const res = await Promise.race([pf('/data/aircraft/' + encodeURIComponent(k), { credentials: 'same-origin', headers: { Accept: 'text/html' } }), sleep(12000).then(() => null)]);
+      if (!res || !res.ok) throw new Error('FR24 aircraft page ' + (res ? 'HTTP ' + res.status : 'timed out'));
+      return res.text();
+    })();
+    fr24PageCache.set(k, { at: now(), p }); if (fr24PageCache.size > 40) fr24PageCache.delete(fr24PageCache.keys().next().value);
+    p.catch(() => { if (fr24PageCache.get(k) && fr24PageCache.get(k).p === p) fr24PageCache.delete(k); });
+    return p;
+  }
   async function fetchFr24PagePhotos(reg) {
-    const pw = pageWindow(), pf = typeof pw.fetch === 'function' ? pw.fetch.bind(pw) : fetch;
-    const res = await Promise.race([pf('/data/aircraft/' + encodeURIComponent(String(reg).toLowerCase()), { credentials: 'same-origin', headers: { Accept: 'text/html' } }), sleep(12000).then(() => null)]);
-    if (!res || !res.ok) throw new Error('FR24 aircraft page ' + (res ? 'HTTP ' + res.status : 'timed out'));
-    return goodPhotos(parseFr24AircraftPage(await res.text()));
+    return goodPhotos(parseFr24AircraftPage(await fr24AircraftHtml(reg)));
   }
   async function fetchPhotos(rec, pri, early, fill) {
     const hex = rec.hex.toLowerCase(), errs = [];

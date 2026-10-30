@@ -1402,10 +1402,14 @@ function createRouteEngine() {
       const a = byId.get(last.to.id);
       if (a) {
         const dh = (f.t - last.tEnd) / 3600, d = dist(a.lat, a.lon, f.lat, f.lon);
-        const trkOk = !fin(f.trk) || d < 80 || angDiff(f.trk, brg(a.lat, a.lon, f.lat, f.lon)) < 70;
+        // (heading away from there: the great circle's course where the aircraft is now, not where it set off - over an
+        // ocean they part by tens of degrees: OK-NLV, a G700 over Labrador at 252° on its way back to Savannah from Prague,
+        // 4,800 km, set off on 310°, flies 245° there - its departure was "unknown, first seen at FL470")
+        const away = (brg(f.lat, f.lon, a.lat, a.lon) + 180) % 360;
+        const trkOk = !fin(f.trk) || d < 80 || angDiff(f.trk, away) < 70;
         // (parked there for days or weeks: still where this flight began, if nothing has been seen of it since and it is
         // heading away from there)
-        const parkedOk = dh >= 48 && dh < 30 * 24 && d <= rangeKm(ac, classify(ac)) && fin(f.trk) && (d < 80 || angDiff(f.trk, brg(a.lat, a.lon, f.lat, f.lon)) < 50);
+        const parkedOk = dh >= 48 && dh < 30 * 24 && d <= rangeKm(ac, classify(ac)) && fin(f.trk) && (d < 80 || angDiff(f.trk, away) < 50);
         if (dh > -0.2 && ((dh < 48 && d <= Math.max(150, (Math.min(dh, 14) + 0.3) * 950) && trkOk) || parkedOk)) return { airport: a, conf: 'history', note: `last landed at ${a.code}`, departedAt: 0 };
       }
     }

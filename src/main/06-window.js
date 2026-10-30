@@ -773,7 +773,30 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     bmDefaulted = true; lsSet(UB_BM_KEY, '1');
     for (const e of document.querySelectorAll('[data-tl-gone]')) e.removeAttribute('data-tl-gone');
   }
+  // (1.1.2) FR24's Bookmarks widget asks a free account to upgrade for more than one bookmark - "To get more than 1
+  // bookmark, please upgrade..." with its trial button - in the widget itself: that box taken out as it is put in, the
+  // widget's own tabs, list and "Add bookmark" left as they are. Found by its words; the box is the largest one round
+  // them that holds neither the tabs nor "Add bookmark".
+  const BEG_RE = /^to get more than \d+ bookmarks?\b/i;
+  function begSweep(root) {
+    if (!opt.on || !root || root.nodeType !== 1 || !/more than \d+ bookmark/i.test(root.textContent || '')) return;
+    const tw = document.createTreeWalker(root, 4);
+    for (let n = tw.nextNode(); n; n = tw.nextNode()) {
+      if (!BEG_RE.test(n.data.trim())) continue;
+      let box = n.parentElement; if (!box || box.closest('[data-tl-beg],.tl-ub,.tl-ub-c')) continue;
+      for (let a = box.parentElement, d = 0; a && a !== document.body && d < 6; a = a.parentElement, d++) {
+        const t = a.textContent || '';
+        if (/add bookmark/i.test(t) || /\baircraft\b[\s\S]*\bflights\b[\s\S]*\bairports\b/i.test(t)) break;
+        box = a;
+      }
+      box.setAttribute('data-tl-beg', '');
+    }
+  }
   function bookmarksMut(recs) {
+    for (const r of recs) {
+      if (r.type === 'characterData') { const p = r.target.parentElement; if (p && /more than \d+ bookmark/i.test(r.target.data || '')) begSweep(p.parentElement || p); continue; }
+      for (const n of r.addedNodes) if (n.nodeType === 1) begSweep(n); else if (n.nodeType === 3 && n.parentElement) begSweep(n.parentElement.parentElement || n.parentElement);
+    }
     for (const r of recs) {
       if (r.type === 'characterData') { const p = r.target.parentElement; if (p && /bookmarks/i.test(r.target.data || '')) bookmarksSweep(p.parentElement || p); continue; }
       for (const n of r.addedNodes) { if (n.nodeType === 1) bookmarksSweep(n); else if (n.nodeType === 3 && /bookmarks/i.test(n.data || '') && n.parentElement) bookmarksSweep(n.parentElement.parentElement || n.parentElement); }
@@ -1088,7 +1111,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
       if (UB_LABELS.some(l => t.includes(l))) { ubTryAt = clock(); ubDirty = true; ensureBarButton(); return; }
     }
   }
-  function addUnblockStyle() { if (document.getElementById('tl-ub-style')) return; const s = document.createElement('style'); s.id = 'tl-ub-style'; s.textContent = UB_STYLE + BN_STYLE + '\n[data-tl-gone],[data-tl-ub-hid],[data-tl-ub-under]{display:none!important}'; (document.head || document.documentElement).appendChild(s); ubIconStyle(); }
+  function addUnblockStyle() { if (document.getElementById('tl-ub-style')) return; const s = document.createElement('style'); s.id = 'tl-ub-style'; s.textContent = UB_STYLE + BN_STYLE + '\n[data-tl-gone],[data-tl-beg],[data-tl-ub-hid],[data-tl-ub-under]{display:none!important}'; (document.head || document.documentElement).appendChild(s); ubIconStyle(); }
   function startUnblockWindow() {
     const go = () => {
       addUnblockStyle(); if (opt.on) applyOptsLive();
@@ -1112,7 +1135,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
       } catch (e) { ubDirty = true; }
       const tick = () => {
         ensureBarButton(); ubBanners();
-        if (bmDirty && now() - bmAt > 2000) { bmDirty = false; bmAt = now(); try { bookmarksSweep(document.body); } catch (e) { log('bookmarks', e); } }
+        if (bmDirty && now() - bmAt > 2000) { bmDirty = false; bmAt = now(); try { bookmarksSweep(document.body); begSweep(document.body); } catch (e) { log('bookmarks', e); } }
         setTimeout(tick, ubMiss > 60 ? 5000 : 1000);
       };
       tick();

@@ -4,6 +4,32 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 
 1.0.0 is the first release. The versions before it are the betas, labelled B: B22.31.12 is version 22.31.12.
 
+## [1.1.2] - 2026-10-30
+
+### In short
+- Opening an airport no longer freezes the page, and the board opens at the current time.
+- The board no longer rebuilds itself piece by piece as more flights come in.
+- A blocked aircraft's "Recent flights" list in its panel now matches its log page.
+- A flight first picked up mid-ocean now shows where it took off, from where the aircraft last landed.
+- The Bookmarks widget no longer shows FR24's upgrade message.
+
+### Fixed
+- **Opening an airport froze the page for up to half a minute, and the board did not end at the present.** While FR24 drew a long board a piece at a time, the script kept the present in view by searching the page once for every row, on every frame.
+  - It now looks over the drawn rows once each time.
+  - It keeps the row it was asked for instead of switching to the nearest drawn so far, so the board ends at the current time.
+  - Measured on a fortnight of a busy airport (4,000 rows): 32 page searches instead of 3,317.
+- **Boards building themselves piece by piece.** Rows that keep arriving after a board is open (FR24's schedule, flight-number lookups) now redraw it once they have settled (3 s with nothing new), and at most every 30 s. It used to redraw the whole week every 15 s.
+- **"Recent <reg> flights" was less complete than the log page (G-OUEG: "N/A -> Dubai", Luton -> Liverpool missing).** The panel's list is now built from what the log page uses:
+  - FR24's own rows of the aircraft's page;
+  - the ADS-B flight that took off with each;
+  - where FR24's own track of the flight began and ended;
+  - the flight before's landing.
+  - An ADS-B flight first heard after FR24's take-off time, but over before its landing, now counts as that flight, on the log page too.
+- **"Departure unknown, first seen at FL470" for a flight tracked from mid-ocean (OK-NLV over Labrador, last down at Prague).** The aircraft's last landing is used as its departure when it is heading away from there. Its heading was compared with the course it would have set off on, not the great-circle course where it is now. Over 4,800 km those differ by 65°.
+
+### Changed
+- **FR24's upgrade box in the Bookmarks widget** ("To get more than 1 bookmark, please upgrade…", with its trial button) is hidden. The widget's tabs, its list and "Add bookmark" are FR24's own as before. FR24 still keeps only one bookmark for a free account on its servers.
+
 ## [1.1.1] - 2026-10-30
 
 ### In short

@@ -171,5 +171,18 @@ check('runway rule: Dublin Weston impossible for a G500, Dublin fine; fine for a
     check('runway in use from the wind: lined up with a runway end that has a 20 kt tailwind is not a fit', calm > 0.8 && tail < calm, { calm: +calm.toFixed(2), tailwind: +tail.toFixed(2) });
   }
 }
+// 1.1.1) OK-NLV (G700, 49D6A5), 30 Oct: first heard over Labrador at FL470 by satellite, 252° at 482 kt - its log SAV -> SNN
+//     -> PRG, down at Prague 27 Oct 11:36Z. Its departure was "unknown, first seen at FL470": the heading was compared with
+//     the course it would have set off from Prague on (310°), not the great circle's course where it is (245°). Heading
+//     the other way - back towards Prague - Prague is not where it came from.
+{
+  const sav = E.byIcao('KSAV'), snn = E.byIcao('EINN'), prg = E.byIcao('LKPR'), t = Date.UTC(2026, 9, 30, 15, 0) / 1000, at = (d, h, m) => Date.UTC(2026, 9, d, h, m) / 1000;
+  const mk = (a, b, t0, t1) => ({ from: { id: a.id, conf: 'ground' }, to: { id: b.id, conf: 'ground' }, tStart: t0, tEnd: t1, ended: true, how: 'ground' });
+  const hs = E.histStats([mk(sav, snn, at(27, 1, 34), at(27, 7, 45)), mk(snn, prg, at(27, 9, 40), at(27, 11, 36))], t), ac = { hex: '49d6a5', type: 'GA7C', reg: 'OK-NLV' };
+  const fly = trk => { const p = { t, lat: 57.0, lon: -61.5, alt: 47000, gs: 482, trk, gnd: false }; return E.inferOrigin({ ac, pos: p, trail: [p], hs, now: t }); };
+  const west = fly(252), east = fly(70);
+  check('OK-NLV first heard over Labrador at FL470 heading 252°, last down at Prague three days before: from Prague (its log)', !!(west && west.airport && west.airport.id === prg.id), west && { a: west.airport && west.airport.icao, note: west.note });
+  check('... heading 070° (towards Prague): not from Prague', !(east && east.airport && east.airport.id === prg.id), east && { a: east.airport && east.airport.icao, note: east.note });
+}
 console.log(fails ? `\n${fails} FAILED` : '\nall passed');
 process.exitCode = fails ? 1 : 0;

@@ -71,7 +71,7 @@ function actFR24(win) {
       for (const sw of w.querySelectorAll('.sw')) sw.addEventListener('click', () => { if (sw.parentElement.id === 'bmrow') S.bm = !S.bm; sw.textContent = sw.textContent === 'On' ? 'Off' : 'On'; });
     }
     const panels = col.querySelector('.panels');
-    if (!want && !S.flight) { if (!panels) col.insertAdjacentHTML('beforeend', `<div class="panels" data-g="336,400,8"><div class="card" data-g="336,150,8"><h3>Most tracked flights</h3><p>UAL941</p></div>${S.bm ? '<div class="card" id="bmcard" data-g="336,150,166"><h3>Bookmarks</h3><p>yours</p></div>' : ''}</div>`); } else if (panels) panels.remove();
+    if (!want && !S.flight) { if (!panels) col.insertAdjacentHTML('beforeend', `<div class="panels" data-g="336,400,8"><div class="card" data-g="336,150,8"><h3>Most tracked flights</h3><p>UAL941</p></div>${S.bm ? '<div class="card" id="bmcard" data-g="336,150,166"><h3>Bookmarks</h3><div class="tabs" data-g="336,20,190"><span>Aircraft</span> <span>Flights</span> <span>Airports</span> <span>Locations</span></div><div class="bml" data-g="336,100,210"><div class="beg" data-g="320,80,212"><p data-g="300,40,214">To get more than 1 bookmark, please upgrade to a Silver (10), Gold (25) or Business (60) subscription.</p><button data-g="200,20,260">7-day free trial | Learn more</button></div><button class="add" data-g="200,20,300">Add bookmark</button></div></div>' : ''}</div>`); } else if (panels) panels.remove();
   };
   for (const b of items()) b.addEventListener('click', () => { const l = b.dataset.testid.slice(9); S.flight = false; S.open = S.open === l ? null : l; queueMicrotask(render); });
   S.openFlight = () => { S.open = null; S.flight = true; queueMicrotask(render); };
@@ -216,6 +216,7 @@ function actFR24(win) {
     check('Bookmarks switched on by the user in FR24\'s list: left on (not pressed off again)', S.bm === true && q('#bmrow .sw').textContent === 'On' && shown(w3, q('#bmrow')));
     click(w3, q('.fr24-win .x')); await sleep(2600);
     check('... FR24\'s Bookmarks widget on the map, shown', !!card() && shown(w3, card()) && !card().hasAttribute('data-tl-gone'));
+    check('... without FR24\'s upgrade box ("To get more than 1 bookmark...", its trial button) - its tabs and "Add bookmark" there', !shown(w3, q('#bmcard .beg')) && shown(w3, q('#bmcard .add')) && shown(w3, q('#bmcard .tabs')), { beg: shown(w3, q('#bmcard .beg')), add: shown(w3, q('#bmcard .add')) });
     w3.close();
   }
   console.log(fails ? `\n${fails} failed` : '\nall passed');
