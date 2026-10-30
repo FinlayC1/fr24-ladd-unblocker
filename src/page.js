@@ -1397,9 +1397,54 @@
     }
     // ---- the board archive (userscript 06-boards): three days back and three ahead, in one list ------------------
     // FR24 serves a free account its page 1 (now onwards) and page -1 (earlier today), a page at a time. Its page 1 is
-    // answered with both, and with every flight the userscript keeps for the airport (three days each way), in FR24's row
-    // format - its own day headings and cards - and no other page: no "Earlier" / "Later flights" (none twice).
+    // answered with both, and with every flight the userscript keeps for the airport, in FR24's row format - its own day
+    // headings and cards - cut into FR24's own pages (1.1.5, below): the present first, the rest when its "Load earlier /
+    // later flights" asks, answered here.
     var boardArch = new Map(), archWait = new Map(), archById = new Map(), archRefreshAt = 0, archRefreshT = 0, archRefreshSince = 0;
+    // (1.1.5) A board's whole list - FR24's rows, the kept fortnight, the flights followed here - is FR24's own pages:
+    // FR24 drawing a thousand rows at once held the page for seconds (two minutes, with the script's watchers), however
+    // little the script did. Page 1 is the present (40 rows before it, 160 after); the pages before and after it 100 rows
+    // each, as FR24's own, their edges times set once when the board opens - a page's rows the same however often FR24
+    // asks for it again, none twice, none lost - answered here at once when FR24's "Load earlier / later flights" asks.
+    var boardKept = new Map(), PAGE_FIRST = 200, PAGE_ROWS = 100, PAGE_BEFORE = 40;
+    var rowT = function (e) { return (e && (e.scheduledTime || e.estimatedTime || e.landedTime)) || 0; };
+    function keepBoard(apId, kind, list, fresh) {
+      var k = apId + '/' + kind, kb = boardKept.get(k), now = Date.now();
+      // (the edges set when FR24 opens the board - its first ask names no page - and not again while it holds other pages
+      // of it: every five minutes, and on coming back to the tab, it asks again for every page it has, all at once, and
+      // each must keep its rows. With page 1 alone drawn, set afresh after ten minutes, to keep up with the present)
+      if (!kb || fresh || (!kb.paged && now - kb.anchoredAt > 10 * 60000)) {
+        var from = now / 1000 - 900, start = 0; while (start < list.length && rowT(list[start]) < from) start++;
+        // (nothing before page 1: it reaches back to the start, whatever comes in earlier later on)
+        var i0 = Math.max(0, start - PAGE_BEFORE), cuts = { 1: i0 > 0 && list.length ? rowT(list[Math.min(i0, list.length - 1)]) : -Infinity };
+        for (var n = 2, i = i0 + PAGE_FIRST; i < list.length; n++, i += PAGE_ROWS) cuts[n] = Math.max(rowT(list[i]), cuts[n - 1]);
+        for (var q = 1, b = i0 - PAGE_ROWS; i0 > 0; q++, b -= PAGE_ROWS) { cuts[-q] = b > 0 ? Math.min(rowT(list[b]), q === 1 ? cuts[1] : cuts[-q + 1]) : -Infinity; if (b <= 0) break; }
+        kb = { anchoredAt: now, cuts: cuts, paged: false };
+      }
+      kb.list = list; kb.at = now;
+      // (the last four boards asked for kept: FR24 shows one at a time, and asks for page 1 afresh whenever one is opened)
+      boardKept.delete(k); boardKept.set(k, kb);
+      if (boardKept.size > 4) boardKept.delete(boardKept.keys().next().value);
+      return kb;
+    }
+    // (page p's rows: from the time it begins to the time the next begins - the last forward page to the end, the first
+    // page back from the start)
+    function pageOf(kb, p) {
+      // (a page there is none of: empty, leading nowhere - never "earlier" again and again)
+      var c = kb.cuts; if (c[p] == null) return { data: [], meta: { currentPage: p, previousPage: null, nextPage: null, hasMorePreviousData: false, hasMoreNextData: false } };
+      var lo = c[p], hi = p >= 1 ? (c[p + 1] != null ? c[p + 1] : Infinity) : (p === -1 ? c[1] : c[p + 1]);
+      var list = kb.list || [], data = list.filter(function (e) { var t = rowT(e); return t >= lo && t < hi; });
+      var before = lo > -Infinity && list.some(function (e) { return rowT(e) < lo; }), after = hi < Infinity && list.some(function (e) { return rowT(e) >= hi; });
+      return { data: data, meta: { currentPage: p, previousPage: before ? (p === 1 ? -1 : p - 1) : null, nextPage: after ? (p === -1 ? 1 : p + 1) : null, hasMorePreviousData: before, hasMoreNextData: after } };
+    }
+    function keptPage(apId, kind, url) {
+      var pm = url.match(/[?&]page=(-?\d+)/), p = pm ? Number(pm[1]) : 1; if (p === 1 || p === 0) return null;
+      // (however long ago page 1 was: the pages FR24 asks for again, coming back to the tab after an hour, are the pages it has)
+      var kb = boardKept.get(apId + '/' + kind); if (!kb || !kb.list) return null;
+      var pg = pageOf(kb, p); kb.paged = true; stats.boardPages = (stats.boardPages || 0) + 1;
+      return { data: pg.data, meta: Object.assign({ date: kb.date || null }, pg.meta) };
+    }
+
     function hashStr(s) { var h = 2166136261; s = String(s); for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; } return h; }
     function needBoardArch(apId) {
       var a = boardArch.get(apId);
@@ -1565,8 +1610,11 @@
       return null;
     }
     function stopBoardHold() { if (boardHold) boardHold.stop = true; }
+    // (1.1.5: the six seconds counted from when the row is first there to be placed - waited for up to half a minute.
+    // They were counted from FR24's answer: a board drawn later than that - all of them while the page was held for
+    // minutes - was never placed, and opened at its very top, a week back)
     function holdBoardRow(id, off, t) {
-      var h = boardHold = { id: String(id), off: off, t: t || 0, until: Date.now() + 6000, stop: false }, mo = null, main = null, tries = 0, frameDue = false;
+      var h = boardHold = { id: String(id), off: off, t: t || 0, until: Date.now() + 30000, placed: false, stop: false }, mo = null, main = null, frameDue = false;
       // (the row wanted - or, while it is not drawn, the drawn row nearest its time: FR24 draws a long list a piece at a
       // time, and a row gone from a new list has another under another id. Found in one pass over the drawn rows - it was
       // a search of the page for every row kept, each frame: a fortnight of a big airport froze the page for half a
@@ -1589,20 +1637,22 @@
         }
         var d = el.getBoundingClientRect().top - m.getBoundingClientRect().top - h.off;
         if (Math.abs(d) > 1) m.scrollTop += d;
+        if (!h.placed) { h.placed = true; h.until = Date.now() + 6000; }
         return true;
       };
-      (function poll() { if (apply() && ++tries < 60) oSetTimeout(poll, 100); })();
+      (function poll() { if (apply() && Date.now() < h.until) oSetTimeout(poll, 100); })();
     }
-    // (an answer of the board: the present brought up when the board is opened; else the row at the top held there)
-    function placeBoard(first, key, data) {
+    // (an answer of the board: the present brought up when the board is opened - FR24's first ask of it, which names no
+    // page: FR24 has just put its list back to the top - else the row at the top held there)
+    function placeBoard(first, key, data, opened) {
       var times = {}; (data || []).forEach(function (e) { if (e && e.id) times[e.id] = e.scheduledTime || e.landedTime || 0; });
       var anyRow = boardRows()[0], main = anyRow && anyRow.closest('main'), wrap = main && (anyRow.closest('[data-testid="list-wrapper"]') || main);
-      var top = wrap && wrap.__tlKey === key ? topRowOf(main) : null;
+      var top = !opened && wrap && wrap.__tlKey === key ? topRowOf(main) : null;
       if (top) holdBoardRow(top.id, top.off, boardTimes[top.id] || times[top.id] || 0);
       else if (first) {
         holdBoardRow(first.id, 36, first.scheduledTime || 0);
         // (the board marked opened once its rows are drawn)
-        var tries = 0; (function mark() { var el = rowById(first.id), m = el && el.closest('main'); if (m) (el.closest('[data-testid="list-wrapper"]') || m).__tlKey = key; else if (++tries < 40) oSetTimeout(mark, 150); })();
+        var tries = 0; (function mark() { var el = rowById(first.id), m = el && el.closest('main'); if (m) (el.closest('[data-testid="list-wrapper"]') || m).__tlKey = key; else if (++tries < 200) oSetTimeout(mark, 150); })();
       }
       boardTimes = times;
     }
@@ -1901,6 +1951,8 @@
       if (blankDue.length === 1) Promise.resolve().then(function () { var l = blankDue; blankDue = []; l.forEach(function (p) { try { if (p.isConnected) blankParts(p); } catch (e) { stats.errors++; stats.lastError = String(e); } }); });
     }
     var EVENTS_RE = /^(latest|live) events$/i, BEG_RE = /help us improve|improve (our |the )?(ground )?coverage/i;
+    // (words of a text node that something hidden here says - its title, the request, the button)
+    function hideWords(t) { var v = String(t || '').replace(/\s+/g, ' ').trim(); return !!v && v.length < 160 && (EVENTS_RE.test(v) || BEG_RE.test(v) || ADS_RE.test(v) || PART_RE.test(v) || WX_RE.test(v)); }
     function hidePart(el, panel) { if (!el || el === panel) return; tlHide(el); hideShell(el, panel); }
     // (the events' own section - FR24 builds the panel of sections, the events' the one its title opens - whatever is in it)
     function firstText(el) {
@@ -1947,13 +1999,23 @@
               if (r.type === 'characterData') { if (!t.closest('li[id^="airport_schedule_"]')) panelHide(panel, t); }
               // (1.1.2: not inside a flight's row of a board - none of what is hidden is ever in one, and a board of a fortnight
               // is thousands of rows, each looked through three times as FR24 drew it; its adverts sit between rows)
-              else for (var j = 0; j < r.addedNodes.length; j++) { var a = r.addedNodes[j], el = a.nodeType === 1 ? a : a.nodeType === 3 ? a.parentElement : null; if (el && !el.closest('li[id^="airport_schedule_"]')) panelHide(panel, el); }
+              // (1.1.5: a text put in is looked at only when its own words are what is hidden - the empty text nodes Vue puts
+              // between a list's items had the whole board looked through for each one. Other words put in: the panel's empty
+              // boxes looked at again, so that a box FR24 has filled since is shown)
+              else for (var j = 0; j < r.addedNodes.length; j++) {
+                var a = r.addedNodes[j];
+                if (a.nodeType === 3) { var ap = a.parentElement; if (ap && /\S/.test(a.data || '') && !ap.closest('li[id^="airport_schedule_"]')) { if (hideWords(a.data)) panelHide(panel, ap); else blankSoon(panel); } continue; }
+                if (a.nodeType === 1 && !a.closest('li[id^="airport_schedule_"]')) panelHide(panel, a);
+              }
             } else if (r.type === 'childList') {
               // (the panel itself put in, whole; elsewhere - a board's own page - the "Remove ads" button)
               for (var k = 0; k < r.addedNodes.length; k++) {
                 var n = r.addedNodes[k], ne = n.nodeType === 1 ? n : n.nodeType === 3 ? n.parentElement : null; if (!ne) continue;
-                var p = ne.matches(SEL_AP) ? ne : ne.querySelector(SEL_AP); if (p) panelHide(p);
-                if (/remove ads/i.test(n.textContent || '')) saying(ne, ADS_RE).forEach(function (e) { if (!e.closest(SEL_AP)) hideAd(e, null); });
+                // (1.1.5: the panel put in is an element that is it or holds it - a text put in never is: an empty text node
+                // Vue puts in high up the page, under a box that holds the panel, had the whole panel - and its board of a
+                // fortnight - looked through three times for each one, half a minute of a frozen page)
+                var p = n.nodeType === 1 ? (n.matches(SEL_AP) ? n : n.querySelector(SEL_AP)) : null; if (p) panelHide(p);
+                if (/remove ads/i.test(n.nodeType === 3 ? n.data || '' : n.textContent || '')) saying(ne, ADS_RE).forEach(function (e) { if (!e.closest(SEL_AP)) hideAd(e, null); });
               }
             } else if (ADS_RE.test(textOf(t))) hideAd(t, null);
           } catch (e) { stats.errors++; stats.lastError = String(e); }
@@ -2275,6 +2337,8 @@
           if (grec) return photosWithin(grec, 2800).then(function (ph) { return jsonResponse(null, { data: { images: ph.slice(0, 3).map(boardImage) } }); });
         }
         if (LIST_RE.test(url)) return listFetch(this, arguments, url);
+        // (1.1.5) a page of a board other than its first, its whole list kept here: answered from it, at once
+        if (optOn('boards') && (m = url.match(/\/api\/v1\/airports\/(\d+)\/(departures|arrivals)\?/))) { var kpg = keptPage(Number(m[1]), m[2], url); if (kpg) return Promise.resolve(jsonResponse(null, kpg)); }
         // (a landing place the userscript learned is no airport of FR24's: its boards, opened from its marker, answered
         // here - empty - instead of FR24's "not found")
         if ((m = url.match(/\/api\/v1\/airports\/(\d+)\/(?:departures|arrivals|on-grounds)\b/)) && Number(m[1]) > 9000000 && Number(m[1]) < 10000000) return Promise.resolve(jsonResponse(null, { data: [], meta: { currentPage: 1, previousPage: null, nextPage: null, hasMorePreviousData: false, hasMoreNextData: false } }));
@@ -2402,7 +2466,7 @@
               if (!j || !Array.isArray(j.data)) return res;
               var merged = false;
               if (whole && earlier && Array.isArray(earlier.data)) { var have = {}; j.data.forEach(function (e) { if (e && e.id) have[e.id] = true; }); earlier.data.forEach(function (e) { if (e && !have[e.id]) { j.data.push(e); merged = true; } }); }
-              var hits = 0, today = new Date().toISOString().slice(0, 10), seenIds = [];
+              var hits = 0, today = new Date().toISOString().slice(0, 10), seenIds = [], fullList = null;
               j.data.forEach(function (e) {
                 if (!e || !e.flight || !e.flight.id) return;
                 var id = parseInt(e.flight.id, 16), rec = resolved.get(id);
@@ -2464,13 +2528,14 @@
                 if (natRows.length && (page === 1 || page === -1)) post('boardRows', { apId: apId, kind: kind, rows: natRows });
                 if (whole) {
                   try { hits += addArch(j, apId, kind); } catch (e) { stats.errors++; stats.lastError = String(e); }
-                  j.meta = Object.assign({}, j.meta, { currentPage: 1, previousPage: null, nextPage: null, hasMorePreviousData: false, hasMoreNextData: false });
                   j.data.sort(function (x, y) { return (x.scheduledTime || x.landedTime || 0) - (y.scheduledTime || y.landedTime || 0); });
+                  var kb = keepBoard(apId, kind, j.data, !pageM), pg1 = pageOf(kb, 1); kb.date = j.meta && j.meta.date || kb.date || null; fullList = j.data;
+                  j.data = pg1.data; j.meta = Object.assign({}, j.meta, pg1.meta);
                   var nowS1 = Date.now() / 1000 - 900, first = j.data.filter(function (e) { return e && (e.scheduledTime || 0) >= nowS1; })[0] || j.data[j.data.length - 1];
-                  placeBoard(first, apId + '/' + kind, j.data);
+                  placeBoard(first, apId + '/' + kind, fullList, !pageM);
                 }
               }
-              if (kind !== 'on-grounds') noteBoardRows(j.data, apId, kind);
+              if (kind !== 'on-grounds') noteBoardRows(fullList || j.data, apId, kind);
               if (!hits && !merged && JSON.stringify(j.meta || null) === metaWas) return res;
               stats.boardHits += hits;
               return jsonResponse(res, j);

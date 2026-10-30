@@ -781,6 +781,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   // widget's own tabs, list and "Add bookmark" left as they are. Found by its words; the box is the largest one round
   // them that holds neither the tabs nor "Add bookmark".
   const BEG_RE = /^to get more than \d+ bookmarks?\b/i;
+  const BOARD_ROW = 'li[id^="airport_schedule_"]';
   function begSweep(root) {
     if (!opt.on || !root || root.nodeType !== 1 || !/more than \d+ bookmark/i.test(root.textContent || '')) return;
     const tw = document.createTreeWalker(root, 4);
@@ -798,11 +799,17 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   function bookmarksMut(recs) {
     for (const r of recs) {
       if (r.type === 'characterData') { const p = r.target.parentElement; if (p && /more than \d+ bookmark/i.test(r.target.data || '')) begSweep(p.parentElement || p); continue; }
-      for (const n of r.addedNodes) if (n.nodeType === 1) begSweep(n); else if (n.nodeType === 3 && n.parentElement) begSweep(n.parentElement.parentElement || n.parentElement);
+      // (1.1.5: a text put in is looked at only when its own words are the box's - the empty text nodes Vue puts between a
+      // list's items had the whole of an airport's board read for each one, two minutes of a frozen page; nor anything in a
+      // board's row)
+      for (const n of r.addedNodes) {
+        if (n.nodeType === 1) { if (!(n.closest && n.closest(BOARD_ROW))) begSweep(n); }
+        else if (n.nodeType === 3 && n.parentElement && /more than \d+ bookmark/i.test(n.data || '')) begSweep(n.parentElement.parentElement || n.parentElement);
+      }
     }
     for (const r of recs) {
       if (r.type === 'characterData') { const p = r.target.parentElement; if (p && /bookmarks/i.test(r.target.data || '')) bookmarksSweep(p.parentElement || p); continue; }
-      for (const n of r.addedNodes) { if (n.nodeType === 1) bookmarksSweep(n); else if (n.nodeType === 3 && /bookmarks/i.test(n.data || '') && n.parentElement) bookmarksSweep(n.parentElement.parentElement || n.parentElement); }
+      for (const n of r.addedNodes) { if (n.nodeType === 1) { if (!(n.closest && n.closest(BOARD_ROW))) bookmarksSweep(n); } else if (n.nodeType === 3 && /bookmarks/i.test(n.data || '') && n.parentElement) bookmarksSweep(n.parentElement.parentElement || n.parentElement); }
     }
   }
 

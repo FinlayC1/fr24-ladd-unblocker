@@ -86,6 +86,13 @@ const check = (name, ok, info) => { if (!ok) fails++; console.log((ok ? 'PASS  '
     doc.querySelector = q0; doc.querySelectorAll = qa0;
     const f = firstOf(big);
     check('a fortnight of a big airport (4,000 rows) drawn a piece at a time: placed at the present, the page searched a few hundred times at most (not once per row each frame)', calls < 600 && Math.abs(offOf(f.id) - 36) <= 1, { calls, ms, off: offOf(f.id) }); }
+  // ---- (1.1.5) a board drawn seven seconds after its answer (the page held meanwhile): still opened at the present - the
+  // six seconds of holding were counted from the answer, and a board drawn later opened at its very top, a week back
+  { H.stopBoardHold(); st = 0; list.innerHTML = '';
+    const late = rows(nowS - 7 * 86400, nowS + 7 * 86400), f = firstOf(late);
+    H.placeBoard(f, '703/arrivals', late);
+    await sleep(7000); draw(late); await settle();
+    check('a board drawn 7 s after its answer: opened at the present all the same, not at its top a week back', Math.abs(offOf(f.id) - 36) <= 1 && st > 0, { off: offOf(f.id), st }); }
   console.log(fails ? `\n${fails} failed` : '\nall passed');
   process.exit(fails ? 1 : 0);
 })().catch(e => { console.log('FAIL  crashed ' + (e && e.stack || e)); process.exit(1); });

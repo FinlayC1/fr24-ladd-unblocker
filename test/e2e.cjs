@@ -229,19 +229,26 @@ async function mapMode() {
     L.boardNoteLegs('a1b2c3', [{ tStart: tNow - 50 * 3600, tOff: tNow - 50 * 3600, tEnd: tNow - 49 * 3600, tOn: tNow - 49 * 3600, from: { id: fab.id, conf: 'ground' }, to: { id: lbg.id, conf: 'ground' }, ended: true, startedOnGround: true, cs: 'TSTLOG1' }]);
     L.boardNoteFlight(0x41bbb001, { hex: 'a1b2c4', reg: 'N1ARC', type: 'GLF6', cs: 'TSTLV1' }, { originId: fab.id, destId: lbg.id, atd: tNow - 31 * 3600, ata: tNow - 30 * 3600, landed: true, originConf: 'ground', destConf: 'landed' });
     await L.boardDrain();
-    const get = async (apId, kind, pg) => (await (await w.fetch(`/api/v1/airports/${apId}/${kind}?page=${pg}&limit=100`)).json()) || {};
-    // (one list: three days back to three ahead on FR24's page 1 - its own earlier page in it - and no other page)
-    const p1 = await get(lbg.id, 'arrivals', 1), rows2 = (p1.data || []).filter(e => e.flight && /^TST(LV1|LOG1)$/.test(e.flight.callsign || ''));
-    check('a board is one list: no "Earlier" / "Later flights" pages', !!p1.meta && p1.meta.previousPage == null && p1.meta.nextPage == null && p1.meta.hasMorePreviousData === false, p1.meta);
+    const get = async (apId, kind, pg) => (await (await w.fetch(`/api/v1/airports/${apId}/${kind}?` + (pg == null ? '' : `page=${pg}&`) + 'limit=100')).json()) || {};
+    // (1.1.5: the board's whole list as FR24's own pages - opened as FR24 opens it, naming no page: page 1 the present,
+    // the rest when its "Load earlier / later flights" asks, answered here - every page walked, both ways)
+    const walk = async (apId, kind) => {
+      const p1 = await get(apId, kind), all = [...(p1.data || [])];
+      for (let pg = p1.meta && p1.meta.previousPage, k = 0; pg != null && k < 80; k++) { const r = await get(apId, kind, pg); all.unshift(...(r.data || [])); pg = r.meta && r.meta.previousPage; }
+      for (let pg = p1.meta && p1.meta.nextPage, k = 0; pg != null && k < 80; k++) { const r = await get(apId, kind, pg); all.push(...(r.data || [])); pg = r.meta && r.meta.nextPage; }
+      return { p1, all };
+    };
+    const { p1, all } = await walk(lbg.id, 'arrivals'), rows2 = all.filter(e => e.flight && /^TST(LV1|LOG1)$/.test(e.flight.callsign || ''));
+    check('a board as FR24\'s own pages: page 1 the present (200 rows at most), each flight on one page only', (p1.data || []).length <= 200 && all.length === new Set(all.map(e => e.id)).size, { p1: (p1.data || []).length, all: all.length, meta: p1.meta });
     const lv = rows2.find(e => e.flight.callsign === 'TSTLV1');
     check('... with a LADD landing from yesterday (never opened) and a log\'s flight two days ago, FR24 style', rows2.length === 2 && !!lv && lv.status.name === 'landed' && lv.airportId === fab.id && lv.scheduledTime === tNow - 30 * 3600, { rows: rows2.map(e => [e.flight.callsign, e.status.name, e.airportId, new Date(e.scheduledTime * 1000).toISOString().slice(5, 16)]) });
-    const ordered = (p1.data || []).every((e, i, a) => !i || (a[i - 1].scheduledTime || 0) <= (e.scheduledTime || 0));
+    const ordered = all.every((e, i, a) => !i || (a[i - 1].scheduledTime || a[i - 1].landedTime || 0) <= (e.scheduledTime || e.landedTime || 0));
     const nat1 = await (await w.fetch(`/api/v1/airports/${lbg.id}/arrivals?page=-1&limit=100`, { headers: { 'X-TL-Internal': '1' } })).json().catch(() => ({}));
     const ids1 = ((nat1 && nat1.data) || []).map(e => e.id);
-    check('... in time order, FR24\'s earlier page of today in it', ordered && ids1.every(i => (p1.data || []).some(e => e.id === i)), { n: (p1.data || []).length, earlierPage: ids1.length, missing: ids1.filter(i => !(p1.data || []).some(e => e.id === i)).length });
+    check('... in time order, FR24\'s earlier page of today in it', ordered && ids1.every(i => all.some(e => e.id === i)), { n: all.length, earlierPage: ids1.length, missing: ids1.filter(i => !all.some(e => e.id === i)).length });
     if (lv) { const dv = await (await w.fetch(`/api/v1/airports/${lbg.id}/arrivals/${lv.id}`)).json(); check('its card: registration, origin, landing time (no schedule invented)', !!dv && dv.data && dv.data.aircraft.registration === 'N1ARC' && dv.data.originId === fab.id && dv.data.schedule.ata === tNow - 30 * 3600 && !dv.data.schedule.sta, dv && dv.data && { reg: dv.data.aircraft.registration, origin: dv.data.originId, schedule: dv.data.schedule }); }
-    const d1 = await get(fab.id, 'departures', 1);
-    check('... and both on Farnborough\'s departures', (d1.data || []).filter(e => e.flight && /^TST(LV1|LOG1)$/.test(e.flight.callsign || '')).length === 2, { rows: (d1.data || []).filter(e => e.__tlArch).map(e => e.flight && e.flight.callsign) });
+    const d1 = (await walk(fab.id, 'departures')).all;
+    check('... and both on Farnborough\'s departures', d1.filter(e => e.flight && /^TST(LV1|LOG1)$/.test(e.flight.callsign || '')).length === 2, { rows: d1.filter(e => e.__tlArch).map(e => e.flight && e.flight.callsign) });
     // FR24's own rows of a board as served are kept too (for when they drop off its free day)
     let kept = 0; for (let i = 0; i < 30 && !kept; i++) { await sleep(200); const b = L.boardMem.get(lbg.id); kept = b ? Object.values(b.arr).filter(r => r.src === 'fr24').length : 0; }
     check('FR24\'s own board rows kept for the airport', kept > 0 || !(p1.data || []).length, { kept, fr24Rows: (p1.data || []).length });

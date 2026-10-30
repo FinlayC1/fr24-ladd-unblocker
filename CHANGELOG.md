@@ -4,6 +4,39 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 
 1.0.0 is the first release. The versions before it are the betas, labelled B: B22.31.12 is version 22.31.12.
 
+## [1.1.5] - 2026-10-30
+
+### In short
+- Opening an airport's arrivals or departures no longer freezes the page. On FR24's real page, 1.1.4 froze it for nearly two minutes. The longest pause is now under half a second, close to FR24's own.
+- The board opens at the current time, not at its very top a week back.
+- The board now uses FR24's own pages. The first page is the present: the 40 flights before now and 160 after. FR24's own "Load earlier flights" and "Load later flights" buttons add the rest of the fortnight, 100 flights at a time, instantly and without asking FR24's server.
+- These were found and measured by running FR24's own front-end in Chromium with the script, on Liverpool's arrivals and departures.
+
+### Fixed
+- **The two-minute freeze on opening a board.** Reproduced on FR24's own front-end (its real build, run in Chromium) at `/airport/2002/lpl`: with 1.1.4, the first row showed after 110 s (arrivals) and 116 s (departures), and the page was frozen almost all of that time. The causes:
+  - **The script's watchers of page changes.** Vue, FR24's framework, puts an empty text node between the rows each time it draws the list. For every one of them:
+    - the Bookmarks upgrade-box watcher (from 1.1.2) read every word of the node's grandparent, which is the whole board;
+    - the airport panel's watcher looked through the whole panel three times for a node outside the panel, and through the whole list for one inside.
+
+    Both now skip board rows and empty text, and look only at what was put in.
+  - **FR24 drawing the whole fortnight at once,** about 1,040 rows. FR24 takes about 2 ms to draw each row, so 1.7 s for them all. The board is now FR24's own pages:
+    - page 1 is the present: the 40 flights before now and 160 after;
+    - each page of 100 before or after comes from the flights the script already has, when FR24's buttons ask for it, without asking FR24's server;
+    - every flight is on exactly one page, in time order;
+    - FR24 reloads the board every 5 minutes, and when you come back to the tab, asking again for every page it has, all at once. Each page keeps the same flights, with none twice. The split into pages is set again only when the board is opened, or after 10 minutes with only the first page loaded.
+  - Measured on FR24's front-end, opening Liverpool. "Rows on screen" counts from the start of the page load, FR24's own start-up included:
+
+    | Build | Arrivals: rows on screen | Arrivals: longest pause | Departures: rows on screen | Departures: longest pause |
+    | --- | --- | --- | --- | --- |
+    | FR24 alone | 4.6 s | 0.27 s | 4.6 s | 0.27 s |
+    | 1.1.4 | 110 s | 104 s | 116 s | 110 s |
+    | 1.1.5 | 5.7 s | 0.42 s | 5.5 s | 0.49 s |
+
+    Each "Load earlier/later flights" takes 0.2–0.3 s, with no request to FR24's server.
+- **The board opening at its very top, a week back.** The script scrolls the board to the current time, then keeps it there for 6 seconds while FR24 fills in the rows. Those 6 seconds started when FR24's answer arrived. With the page frozen for two minutes, the rows were drawn long after that, so the board was never moved. Now the 6 seconds start when the rows are drawn, waiting up to 30 seconds for them.
+  - On FR24's front-end, 1.1.4 opened Liverpool's arrivals at the top of the list, a flight 7 days back, with the current time 615 rows further down.
+  - 1.1.5 opens arrivals and departures at the flight from 16 minutes ago, still there after 30 s. Switching between them opens each at the current time.
+
 ## [1.1.4] - 2026-10-30
 
 ### In short
