@@ -38,7 +38,8 @@ const ltn = E.byIcao('EGGW'), lpl = E.byIcao('EGGP');
     check('two copies of a row: the one further on stands - departed over scheduled, whichever came last - what it lacks from the other', m1.st === 'departed' && m2.st === 'departed' && m1.t === nowS + 300 && m2.t === nowS + 300 && m1.ap === lpl.id && m2.reg === 'G-ABCD' && m1.nat.status.name === 'departed' && m1.nat.airportId === lpl.id, { m1, m2 }); }
   // ---- an airport's rows, counts, since, on disk
   { const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bd-')), BD = B.createBoards({ store: dir, E });
-    const y = nowS - 86400, row = (k, t, st, src, fid) => ({ k, src: src || 'sched', fid, t, sch: t, st });
+    // (yesterday from 01:00 UTC - from 24 hours ago, a row ten minutes on was today's just before midnight)
+    const y = Math.floor(nowS / 86400) * 86400 - 86400 + 3600, row = (k, t, st, src, fid) => ({ k, src: src || 'sched', fid, t, sch: t, st });
     const n1 = BD.put(ltn.id, 'departures', [row('fa1', y, 'departed', 'sched', 'a1'), row('fa1', y, 'departed', 'fr24', 'a1'), row('fa2', y + 600, 'departed', 'sched', 'a2'), row('fa3', nowS + 3 * 86400, 'scheduled', 'sched', 'a3')], 'crowd', nowS);
     const n2 = BD.put(ltn.id, 'arrivals', [row('fb1', y + 60, 'landed', 'sched', 'b1')], 'crowd', nowS);
     const r = BD.rows(ltn.id, nowS - 7 * 86400, nowS + 7 * 86400);
@@ -77,7 +78,9 @@ const ltn = E.byIcao('EGGW'), lpl = E.byIcao('EGGP');
       const r = http.request({ host: '127.0.0.1', port, path: p, method, headers: Object.assign({ 'Content-Type': 'application/json', 'X-Forwarded-For': '198.51.100.7' }, hdr || {}) }, x => { const parts = []; x.on('data', c => parts.push(c)); x.on('end', () => { let buf = Buffer.concat(parts); const gz = x.headers['content-encoding'] === 'gzip'; if (gz) buf = zlib.gunzipSync(buf); let j = null; try { j = JSON.parse(buf.toString('utf8')); } catch (e) { j = null; } res({ status: x.statusCode, body: j, gz, size: Buffer.concat(parts).length }); }); });
       r.on('error', rej); if (body) r.write(JSON.stringify(body)); r.end();
     });
-    const cek = E.byIcao('EGCK'), y = nowS - 86400;
+    // (yesterday from 01:00 UTC: its 300 rows a minute apart all yesterday's - from 24 hours ago, after 19:00 UTC the last
+    // ones were today's, and yesterday had 297)
+    const cek = E.byIcao('EGCK'), y = Math.floor(nowS / 86400) * 86400 - 86400 + 3600;
     const rows = Array.from({ length: 300 }, (_, i) => ({ k: 'f' + (0x500000 + i).toString(16), src: 'sched', fid: (0x500000 + i).toString(16), t: y + i * 60, sch: y + i * 60, st: 'departed', ap: lpl.id, al: 'Some Airline With A Long Name', nat: { id: 1000 + i, flight: { id: (0x500000 + i).toString(16), number: 'XY' + i, callsign: 'XYZ' + i }, status: { name: 'departed', color: 'green' }, scheduledTime: y + i * 60, estimatedTime: y + i * 60, airportId: lpl.id } }));
     const p1 = await req('POST', '/boardrows', { list: [{ ap: cek.id, kind: 'departures', rows }, { ap: cek.id, kind: 'arrivals', rows: [{ k: 'fbad', src: 'log', t: y }] }] });
     check('POST /boardrows: a browser\'s rows of FR24\'s board taken (the script\'s own refused)', p1.status === 200 && p1.body && p1.body.taken === 300, p1.body);
