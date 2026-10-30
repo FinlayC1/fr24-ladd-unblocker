@@ -4,6 +4,41 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 
 1.0.0 is the first release. The versions before it are the betas, labelled B: B22.31.12 is version 22.31.12.
 
+## [1.1.3] - 2026-10-30
+
+### In short
+- Opening a busy airport's board no longer freezes the page: it was the script, not FR24, doing most of the work.
+- The Bookmarks widget is now really off by default: the script keeps pressing FR24's switch until it says Off.
+- The monitor's dashboard has a console for the monitor's own commands, and a file browser for everything it stores.
+- The dashboard shows "aircraft in view" correctly again, plus the aircraft database and every figure the monitor reports.
+- The console can measure what the monitor is busy with, to find why it answers slowly.
+
+### Fixed
+- **Boards froze the page for up to two minutes, worst at busy airports.** Measured with the built script on 1,800 board rows drawn in 90 batches, as FR24 draws them, then a minute of FR24 updating rows: 25.1 s before, 2.8 s now. The longest single hold went from 685 ms to 196 ms.
+  - The yellow LADD tags of board rows were looked for over every row of the board, each looked into several times, at every change to the page. Now only the rows just put in or changed are looked at, plus all of them every 2 seconds at most. A row once looked at is not looked at again until the identified aircraft change.
+  - The search results' tags and the flight panel's check now run at most every 100 ms (and once more after the last change), not at every change.
+  - FR24's panel upsell hider no longer looks through each board row as it is drawn: what it hides is never in a row.
+  - The runway details and usage waited behind this, so they came in late or not at all ("locked").
+- **Bookmarks on after installing.** The default switched Bookmarks off with one press and counted it done even when FR24 did not take the press. Now the script checks that the switch says "Off", pressing again every 2 seconds (5 presses at most), and keeps the widget hidden on the map until then.
+- **The dashboard's "aircraft in view" read "[object Object]".** 1.1.1 put the aircraft database's state over that figure in `/status`. It now has its own key, `acdb`. "Left to the browser" also read "NaN".
+- **1.1.2 replaced the test `test/unit_recent.cjs`** (the flight being flown not listed again in its own "Recent flights") with its new one. The original is back, and the new one is `test/unit_recent112.cjs`.
+
+### Added
+- **Console** (dashboard → Console). It runs the monitor's own commands, never a shell, with PowerShell's names for them too:
+  - `help`, `status [part]`;
+  - `ls`/`Get-ChildItem`, `cat`/`Get-Content [-tail n]`, `du`, `df`, `find`;
+  - `aircraft <hex|registration>`, `airport <code>`, `board <code> [arrivals|departures] [n]`, `route <hex>`, `log [n] [text]`;
+  - `acdb [status|rebuild]`, `sweep`, `save`, `restart`, `update`;
+  - `mem`/`Get-Process`, `lag`, `profile [seconds]`, `cls`.
+  - `profile` takes a CPU profile of the monitor for 5-120 s, prints its busiest functions, and keeps the whole profile in `store/profiles/` for Chrome's DevTools.
+- **Files** (dashboard → Files). The monitor's store and data folders, read-only:
+  - each folder's entries, with size and time;
+  - the start of a file, gzipped ones unpacked, JSON laid out, binary ones as hex;
+  - a download of a file whole.
+  - Nothing outside those two folders can be read, not by `..` and not by a link.
+- **Dashboard overview:** an aircraft database card, and every figure of `/status` as a tree to open.
+- **`/status` → `loop`:** the main loop's lag over the last minute (now, max, 95th percentile, average). Every request waits behind it.
+
 ## [1.1.2] - 2026-10-30
 
 ### In short

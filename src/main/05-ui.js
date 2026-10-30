@@ -567,17 +567,36 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     }
     return labelIndex.map.get(label) || null;
   }
-  function tagBoards() {
-    for (const li of document.querySelectorAll('li[id^="airport_schedule_"]')) {
-      const head = li.querySelector('[data-testid^="airport-panel__schedules__flight__"]') || li;
-      const line = head.querySelector('.space-x-1'), card = li.querySelector('[data-testid="airport-flight-details__registration"]');
-      if (line && line.querySelector('.tl-ladd-chip') && !card) continue;          // already tagged, nothing expanded
-      const n = Number(li.id.slice(17)), cs = line && line.firstElementChild;
-      const rec = (n >= 9e9 && live.get(n - 9e9)) || (cs ? recByLabel(cs.textContent) || boardTags.get(clean(cs.textContent).toUpperCase()) : null);
-      if (!rec) continue;
-      if (line && !line.querySelector('.tl-ladd-chip')) { line.classList.add('tl-board-line'); addChip(line.lastElementChild, rec); }   // one line, as FR24 lays its rows out
-      addChip(card, rec);
-      if (card && n >= 9e9) predictedNote(li, rec);
+  // (1.1.2) The rows FR24 has just put in - and, every two seconds at most, all of them (an aircraft identified since):
+  // a board of a fortnight is thousands of rows, and every change to the page walking all of them, each looked into
+  // several times, held the page for minutes while FR24 drew them. A row looked at is not looked at again until the
+  // aircraft known change, or its card is opened.
+  const ROW_SEL = 'li[id^="airport_schedule_"]', tagSeen = new WeakMap();
+  let tagAllAt = 0;
+  const tagVer = () => live.size + ':' + boardTags.size + ':' + Math.floor(now() / 10000);
+  function tagRow(li, ver) {
+    const card = li.querySelector('[data-testid="airport-flight-details__registration"]');
+    if (!card && tagSeen.get(li) === ver) return;
+    tagSeen.set(li, ver);
+    const head = li.querySelector('[data-testid^="airport-panel__schedules__flight__"]') || li;
+    const line = head.querySelector('.space-x-1');
+    if (line && line.querySelector('.tl-ladd-chip') && !card) return;          // already tagged, nothing expanded
+    const n = Number(li.id.slice(17)), cs = line && line.firstElementChild;
+    const rec = (n >= 9e9 && live.get(n - 9e9)) || (cs ? recByLabel(cs.textContent) || boardTags.get(clean(cs.textContent).toUpperCase()) : null);
+    if (!rec) return;
+    if (line && !line.querySelector('.tl-ladd-chip')) { line.classList.add('tl-board-line'); addChip(line.lastElementChild, rec); }   // one line, as FR24 lays its rows out
+    addChip(card, rec);
+    if (card && n >= 9e9) predictedNote(li, rec);
+  }
+  function tagBoards(added) {
+    const ver = tagVer();
+    if (!added || now() - tagAllAt > 2000) { tagAllAt = now(); for (const li of document.querySelectorAll(ROW_SEL)) tagRow(li, ver); return; }
+    const done = new Set();
+    for (const el of added) {
+      if (!el || el.nodeType !== 1 || !el.isConnected) continue;
+      const up = el.closest(ROW_SEL);
+      if (up) { if (!done.has(up)) { done.add(up); tagRow(up, ver); } continue; }
+      for (const li of el.querySelectorAll(ROW_SEL)) if (!done.has(li)) { done.add(li); tagRow(li, ver); }
     }
   }
   // The expanded card of a flight this script put on the board: FR24's info box (asked for with status.isAmbiguous)
@@ -606,16 +625,29 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     if (!panel || !rec || !histShown.has(String(rec.reg || '').toUpperCase())) return;
     for (const el of panel.querySelectorAll('[data-testid="aircraft-panel__recent-flights__callsign"]')) addChip(el, rec);
   }
-  function tagEverything() {
-    try { tagSearchResults(); tagBoards(); const panel = document.querySelector(SEL.panel); if (panel) tagRecent(panel, live.get(currentId())); } catch (e) { log('tags', e); }
+  function tagEverything(added) {
+    try { tagSearchResults(); tagBoards(added); const panel = document.querySelector(SEL.panel); if (panel) tagRecent(panel, live.get(currentId())); } catch (e) { log('tags', e); }
   }
   // Run straight from the observer: its callback comes after the DOM change and before the next paint, so a new row
   // never shows up untagged (an animation-frame hop is not reliable - some embedded/background views never fire it).
   // The tagging is idempotent, so the observer seeing our own chips just finds nothing more to do.
+  let pageWideT = 0, pageWideAt = 0;
   function watchForTags() {
     if (!document.body) return void document.addEventListener('DOMContentLoaded', watchForTags, { once: true });
     // (a panel that opens is filled in the same pass, not at the next 400 ms tick)
-    new MutationObserver(() => { tagEverything(); const p = document.querySelector(SEL.panel); if (p && p !== observedPanel) syncPanel(); }).observe(document.body, { childList: true, subtree: true });
+    new MutationObserver(recs => {
+      // (what was put in or changed: the rows it is in, or the rows in it)
+      const added = [];
+      for (const r of recs) { if (r.target.nodeType === 1 && r.target.closest && r.target.closest(ROW_SEL)) added.push(r.target); for (const n of r.addedNodes) if (n.nodeType === 1) added.push(n); }
+      // (the rows put in, at once; the page-wide part - search results, the flight's panel - at most every 100 ms and
+      // once more after the last change: FR24 drawing a board of thousands of rows is hundreds of changes, and each one
+      // looking all over the page held it)
+      try { tagBoards(added); } catch (e) { log('tags', e); }
+      if (pageWideT) return;
+      const wide = () => { pageWideAt = now(); tagEverything([]); const p = document.querySelector(SEL.panel); if (p && p !== observedPanel) syncPanel(); };
+      if (now() - pageWideAt > 100) wide();
+      pageWideT = setTimeout(() => { pageWideT = 0; wide(); }, 100);
+    }).observe(document.body, { childList: true, subtree: true });
   }
 
   let syncTimer = 0, observer = null, observedPanel = null;

@@ -775,7 +775,9 @@ function archiveJob(nowS) {
 // gone (no logs, no live figures). The archive waits while the server is slow to answer (its event loop late) or the
 // machine is short of memory - a minute at most at a time.
 let loopLag = 0, loopAt = Date.now(), memAt = 0, memFree = Infinity;
-setInterval(() => { const t = Date.now(); loopLag = Math.max(0, t - loopAt - 500); loopAt = t; }, 500).unref();
+const lagRing = [];   // (1.1.3) the last minute's lags, one every half second - /status loop, the console's "lag"
+setInterval(() => { const t = Date.now(); loopLag = Math.max(0, t - loopAt - 500); loopAt = t; lagRing.push(loopLag); if (lagRing.length > 120) lagRing.shift(); }, 500).unref();
+function lagStats() { const a = lagRing.slice().sort((x, y) => x - y); return { nowMs: loopLag, maxMs: a.length ? a[a.length - 1] : 0, p95Ms: a.length ? a[Math.floor(a.length * 0.95)] : 0, avgMs: a.length ? Math.round(a.reduce((s, x) => s + x, 0) / a.length) : 0, over200: a.filter(x => x > 200).length, samples: a.length }; }
 // (memory the machine can still give: Linux's MemAvailable - os.freemem() leaves out the page cache under Node 18, and
 // on the 1 GB VM that is nearly always "short")
 function memAvail() {
@@ -1357,6 +1359,20 @@ async function acdbLoop() {
     await sleep(6 * 3600e3);
   }
 }
+// (1.1.3) The owner's console and file browser for the dashboard (console.cjs): the monitor's own commands, the store read
+const { createConsole } = require('./console.cjs');
+const CON = createConsole({
+  store: STORE, data: DATA, version: () => MON_VER, lag: () => lagStats(),
+  status: () => monStatus(), logLines: () => logRing.slice(), save: () => save(), acdb: AC, sweep: () => acdbSweep(),
+  control: p => adminAnswer(p, 'POST', () => null, ''),
+  hexOfReg: reg => { for (const [h, b] of blocked) if (b && String(b.reg || '').toUpperCase() === reg) return h; for (const [h, r] of owners.db) if (r && String(r.reg || '').toUpperCase() === reg) return h; return ''; },
+  airport: code => { const c = String(code || '').trim().toUpperCase(); if (!c) return null; if (/^\d+$/.test(c)) return E.byId(+c) || null; return E.byIcao(c) || E.airports.find(a => a.iata === c) || null; },
+  airportAnswer: id => airportAnswer(id, Date.now() / 1000, 7, 14),
+  board: (id, kind, n) => { const t = Date.now() / 1000, r = BD.rows(id, t - 7 * 86400, t + 7 * 86400), list = (r[kind] || []).slice().sort((a, b) => a.t - b.t), next = list.filter(x => x.t >= t - 900).slice(0, n);
+    return `${kind}: ${list.length} kept (a week each way); FR24's schedule read ${r.fr24At ? new Date(r.fr24At * 1000).toISOString() : 'never'}\n` + next.map(x => [new Date(x.t * 1000).toISOString().slice(5, 16).replace('T', ' '), (x.cs || x.num || '').padEnd(9), (x.reg || '').padEnd(8), (x.ty || '').padEnd(5), x.st || '', x.ap ? (E.byId(x.ap) || {}).iata || x.ap : ''].join('  ')).join('\n'); },
+  route: hex => { for (const [id, F] of central.flights) if (F && F.hex === hex && F.route) return Object.assign({ id, at: new Date(F.routeAt).toISOString() }, F.route); return null; },
+  aircraft: hex => ({ hex, database: AC.lookup(hex), owner: (owners.rows([hex], { public: false })[0]) || null, blocked: blocked.get(hex) || null, inView: live.has(hex) ? live.get(hex).a : null })
+});
 async function ownersLoop() { for (;;) { await sleep(owners.C.every); try { await owners.pumpOne(); } catch (e) { log('owners', String(e && e.stack || e)); } } }
 const dest = createDest({ E, cfg: CFG.dest, ac, legs, surge: () => surgeNow().map, fromCentral: id => centralFor(id) });
 // (a named flight's route as central calculation has it, worked out in the last two minutes - in the rough destinations'
@@ -2050,7 +2066,7 @@ function monStatus() {
       archive: { names: names.size, added: names.stats.added, withdrawn: names.stats.dropped, servedToPlayback: names.stats.served }, crowd: { public: PUBLIC, refused: ident.stats.crowdRefused || 0, waiting: ident.stats.crowdPending || 0 } },
     wx: { cells: wx.stats.cells, requests: wx.stats.requests, today: wx.stats.used, fails: wx.stats.fails, lastErr: wx.stats.lastErr, estimated: wx.stats.estimated, waiting: wx.want.size },
     tel: { aircraft: tel.size, added: tel.stats.added, fromBrowsers: tel.stats.crowd || 0, refused: tel.stats.crowdBad || 0, served: tel.stats.served, asked: tel.stats.asked, missed: tel.stats.missed },
-    owners: owners.status(), aircraft: Object.assign(AC.status(), { sweptDay: ACS.day, sweptQueued: ACS.queued }),
+    owners: owners.status(), acdb: Object.assign(AC.status(), { sweptDay: ACS.day, sweptQueued: ACS.queued }), loop: lagStats(),
     areas: CFG.areas.concat(userAreas).map(a => a.slice(0, 2)), paused: Object.fromEntries(Object.entries(pause).filter(([, t]) => t > now).map(([h, t]) => [h, Math.round((t - now) / 1000)])) };
 }
 function dashStats() {
@@ -2177,7 +2193,15 @@ function adminAnswer(p, method, q, body) {
     instCache = null;
     return Object.assign({ ok: true }, optionsOut());
   }
+  // (1.1.3: the store and data folders, read-only - a folder's entries or a file's start)
+  if (p === '/admin/files' && method === 'GET') return CON.files(q('path') || '');
   if (method !== 'POST') return null;
+  if (p === '/admin/cmd') {
+    let b; try { b = JSON.parse(body || ''); } catch (e) { return { _http: 400, ok: false, err: 'not JSON' }; }
+    const line = String(b && b.line || '').slice(0, 2000);
+    if (line.trim()) log('console:', line.slice(0, 200));
+    return CON.run(line);
+  }
   if (p === '/admin/restart') {
     if (!UNDER_SYSTEMD) return { ok: false, err: 'not run by systemd here: stopping it would leave it stopped' };
     if (Date.now() - ctl.restartAt < 60000) return { ok: false, err: 'already restarting' };
@@ -2284,6 +2308,12 @@ function serve() {
     // (the owner's controls: only with the secret - a monitor with none set offers none)
     if (u.pathname.startsWith('/admin/')) {
       if (!tokenOk(req.headers['x-monitor-token'])) { res.writeHead(401); res.end(); return; }
+      // (a file of the store whole: streamed, as a download)
+      if (u.pathname === '/admin/download' && req.method === 'GET') {
+        const f = CON.download(u.searchParams.get('path') || ''); if (!f) { res.writeHead(404); res.end(); return; }
+        res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': String(f.size), 'Content-Disposition': 'attachment; filename="' + f.name.replace(/[^\w.-]/g, '_') + '"', 'Cache-Control': 'no-store' });
+        fs.createReadStream(f.abs).on('error', () => res.destroy()).pipe(res); return;
+      }
       const send = b => { if (res.headersSent) return; if (!b) { res.writeHead(404); res.end(); return; } const code = b._http || 200; delete b._http; res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(b)); };
       const go = body => { try { Promise.resolve(adminAnswer(u.pathname, req.method, k => u.searchParams.get(k), body)).then(send, e => { if (!res.headersSent) { res.writeHead(500); res.end(); } log('admin', e); }); } catch (e) { res.writeHead(500); res.end(); } };
       if (req.method !== 'POST') { req.resume(); go(null); return; }

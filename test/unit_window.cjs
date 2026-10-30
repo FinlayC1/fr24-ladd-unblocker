@@ -68,7 +68,7 @@ function actFR24(win) {
       col.insertAdjacentHTML('beforeend', `<section class="fr24-win" data-k="${want}" data-g="336,600,8"><header data-g="336,40,8"><h2 data-g="120,20,18">${title}</h2><button class="x" data-g="20,20,18">x</button></header><div class="list" data-g="336,560,48">${list}</div></section>`);
       const w = col.querySelector('.fr24-win');
       w.querySelector('.x').addEventListener('click', () => { S.open = null; queueMicrotask(render); });
-      for (const sw of w.querySelectorAll('.sw')) sw.addEventListener('click', () => { if (sw.parentElement.id === 'bmrow') S.bm = !S.bm; sw.textContent = sw.textContent === 'On' ? 'Off' : 'On'; });
+      for (const sw of w.querySelectorAll('.sw')) sw.addEventListener('click', () => { if (sw.parentElement.id === 'bmrow' && S.bmIgnore > 0) { S.bmIgnore--; return; } if (sw.parentElement.id === 'bmrow') S.bm = !S.bm; sw.textContent = sw.textContent === 'On' ? 'Off' : 'On'; });
     }
     const panels = col.querySelector('.panels');
     if (!want && !S.flight) { if (!panels) col.insertAdjacentHTML('beforeend', `<div class="panels" data-g="336,400,8"><div class="card" data-g="336,150,8"><h3>Most tracked flights</h3><p>UAL941</p></div>${S.bm ? '<div class="card" id="bmcard" data-g="336,150,166"><h3>Bookmarks</h3><div class="tabs" data-g="336,20,190"><span>Aircraft</span> <span>Flights</span> <span>Airports</span> <span>Locations</span></div><div class="bml" data-g="336,100,210"><div class="beg" data-g="320,80,212"><p data-g="300,40,214">To get more than 1 bookmark, please upgrade to a Silver (10), Gold (25) or Business (60) subscription.</p><button data-g="200,20,260">7-day free trial | Learn more</button></div><button class="add" data-g="200,20,300">Add bookmark</button></div></div>' : ''}</div>`); } else if (panels) panels.remove();
@@ -176,6 +176,7 @@ function actFR24(win) {
   // ---- FR24's own windows: this one in FR24's Widgets window
   {
     const w3 = makeWin(null, BAR('')), d3 = w3.document, S = actFR24(w3);
+    S.bmIgnore = 1;   // (FR24 not taking the first press: pressed again until it says Off)
     const q = s => d3.querySelector(s), card = () => q('#bmcard');
     await sleep(50);
     check('FR24\'s Bookmarks widget on the map: hidden as it is put in', !!card() && card().hasAttribute('data-tl-gone') && !shown(w3, card()) && shown(w3, q('.card')));
@@ -186,7 +187,8 @@ function actFR24(win) {
     const fw = q('.fr24-win'), h2 = fw && fw.querySelector('h2');
     check('pressed: FR24 opens its Widgets window for it (Weather put away by FR24), titled LADD Unblock in FR24\'s own title', S.open === 'widgets' && !!h2 && h2.textContent === 'LADD Unblock' && fw.dataset.k === 'widgets');
     check('... FR24\'s title bar kept, its list hidden, this content in its place', fw.hasAttribute('data-tl-ub-host') && fw.querySelector('header').hasAttribute('data-tl-ub-keep') && shown(w3, fw.querySelector('header')) && !shown(w3, fw.querySelector('.list')) && shown(w3, fw.querySelector('.tl-ub-c.tl-ub-in')) && !!fw.querySelector('.tl-ub-in [data-ub-opt="on"]') && !q('.tl-ub'));
-    check('... FR24\'s Bookmarks switched off in FR24\'s own list ("On" pressed)', S.bm === false && q('#bmrow .sw').textContent === 'Off');
+    await until(() => S.bm === false, 6000);
+    check('... FR24\'s Bookmarks switched off in FR24\'s own list ("On" pressed - again, the first press not taken)', S.bm === false && q('#bmrow .sw').textContent === 'Off' && S.bmIgnore === 0);
     const real = q('[data-testid="map-bar__widgets"]'), face = q('nav.bar .tl-ub-face');
     check('... the bar: this button in Widgets\' open look; Widgets hidden, a copy of it at rest in its place', b3.classList.contains('bar-btn--active') && b3.classList.contains('tl-ub-btn') && b3.textContent.trim() === 'LADD Unblock' && !shown(w3, real) && !!face && face.previousElementSibling === real && !face.classList.contains('bar-btn--active') && face.textContent.trim() === 'Widgets');
     check('... one button drawn open', [...d3.querySelectorAll('nav.bar > *')].filter(e => shown(w3, e) && e.classList.contains('bar-btn--active')).length === 1);

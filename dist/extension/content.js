@@ -48,7 +48,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
 // ==UserScript==
 // @name         Flightradar24 LADD / N-A Unblocker (feed-level)
 // @namespace    tweeks.io
-// @version      1.1.2
+// @version      1.1.3
 // @description  Identifies every LADD / N/A / blocked military aircraft on Flightradar24 from public ADS-B, and injects callsign, registration, operator, age, country, MSN, squawk, vertical speed, GPS altitude, airspeeds, wind, photos, a reasoned origin/destination with a wind-corrected ETA (also for ordinary flights FR24 shows as N/A - military, private, GA, helicopters, with private landing sites; learned from 63 days of every aircraft worldwide, with live weather and closures), airport-board entries and a rebuilt 7-month flight log straight into FR24's own data - so it all renders like normal FR24 traffic.
 // @author       Finlay Clarke
 // @updateURL    https://raw.githubusercontent.com/FinlayC1/fr24-ladd-unblocker/main/dist/fr24-ladd-unblocker.user.js
@@ -138,7 +138,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "1.1.2";
+    var BRIDGE_V = "1.1.3";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed
@@ -2067,8 +2067,10 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
           try {
             var panel = t.closest(SEL_AP);
             if (panel) {
-              if (r.type === 'characterData') panelHide(panel, t);
-              else for (var j = 0; j < r.addedNodes.length; j++) { var a = r.addedNodes[j], el = a.nodeType === 1 ? a : a.nodeType === 3 ? a.parentElement : null; if (el) panelHide(panel, el); }
+              if (r.type === 'characterData') { if (!t.closest('li[id^="airport_schedule_"]')) panelHide(panel, t); }
+              // (1.1.2: not inside a flight's row of a board - none of what is hidden is ever in one, and a board of a fortnight
+              // is thousands of rows, each looked through three times as FR24 drew it; its adverts sit between rows)
+              else for (var j = 0; j < r.addedNodes.length; j++) { var a = r.addedNodes[j], el = a.nodeType === 1 ? a : a.nodeType === 3 ? a.parentElement : null; if (el && !el.closest('li[id^="airport_schedule_"]')) panelHide(panel, el); }
             } else if (r.type === 'childList') {
               // (the panel itself put in, whole; elsewhere - a board's own page - the "Remove ads" button)
               for (var k = 0; k < r.addedNodes.length; k++) {
@@ -5652,7 +5654,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '1.1.2';
+  const VERSION = '1.1.3';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
@@ -11226,17 +11228,36 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     }
     return labelIndex.map.get(label) || null;
   }
-  function tagBoards() {
-    for (const li of document.querySelectorAll('li[id^="airport_schedule_"]')) {
-      const head = li.querySelector('[data-testid^="airport-panel__schedules__flight__"]') || li;
-      const line = head.querySelector('.space-x-1'), card = li.querySelector('[data-testid="airport-flight-details__registration"]');
-      if (line && line.querySelector('.tl-ladd-chip') && !card) continue;          // already tagged, nothing expanded
-      const n = Number(li.id.slice(17)), cs = line && line.firstElementChild;
-      const rec = (n >= 9e9 && live.get(n - 9e9)) || (cs ? recByLabel(cs.textContent) || boardTags.get(clean(cs.textContent).toUpperCase()) : null);
-      if (!rec) continue;
-      if (line && !line.querySelector('.tl-ladd-chip')) { line.classList.add('tl-board-line'); addChip(line.lastElementChild, rec); }   // one line, as FR24 lays its rows out
-      addChip(card, rec);
-      if (card && n >= 9e9) predictedNote(li, rec);
+  // (1.1.2) The rows FR24 has just put in - and, every two seconds at most, all of them (an aircraft identified since):
+  // a board of a fortnight is thousands of rows, and every change to the page walking all of them, each looked into
+  // several times, held the page for minutes while FR24 drew them. A row looked at is not looked at again until the
+  // aircraft known change, or its card is opened.
+  const ROW_SEL = 'li[id^="airport_schedule_"]', tagSeen = new WeakMap();
+  let tagAllAt = 0;
+  const tagVer = () => live.size + ':' + boardTags.size + ':' + Math.floor(now() / 10000);
+  function tagRow(li, ver) {
+    const card = li.querySelector('[data-testid="airport-flight-details__registration"]');
+    if (!card && tagSeen.get(li) === ver) return;
+    tagSeen.set(li, ver);
+    const head = li.querySelector('[data-testid^="airport-panel__schedules__flight__"]') || li;
+    const line = head.querySelector('.space-x-1');
+    if (line && line.querySelector('.tl-ladd-chip') && !card) return;          // already tagged, nothing expanded
+    const n = Number(li.id.slice(17)), cs = line && line.firstElementChild;
+    const rec = (n >= 9e9 && live.get(n - 9e9)) || (cs ? recByLabel(cs.textContent) || boardTags.get(clean(cs.textContent).toUpperCase()) : null);
+    if (!rec) return;
+    if (line && !line.querySelector('.tl-ladd-chip')) { line.classList.add('tl-board-line'); addChip(line.lastElementChild, rec); }   // one line, as FR24 lays its rows out
+    addChip(card, rec);
+    if (card && n >= 9e9) predictedNote(li, rec);
+  }
+  function tagBoards(added) {
+    const ver = tagVer();
+    if (!added || now() - tagAllAt > 2000) { tagAllAt = now(); for (const li of document.querySelectorAll(ROW_SEL)) tagRow(li, ver); return; }
+    const done = new Set();
+    for (const el of added) {
+      if (!el || el.nodeType !== 1 || !el.isConnected) continue;
+      const up = el.closest(ROW_SEL);
+      if (up) { if (!done.has(up)) { done.add(up); tagRow(up, ver); } continue; }
+      for (const li of el.querySelectorAll(ROW_SEL)) if (!done.has(li)) { done.add(li); tagRow(li, ver); }
     }
   }
   // The expanded card of a flight this script put on the board: FR24's info box (asked for with status.isAmbiguous)
@@ -11265,16 +11286,29 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     if (!panel || !rec || !histShown.has(String(rec.reg || '').toUpperCase())) return;
     for (const el of panel.querySelectorAll('[data-testid="aircraft-panel__recent-flights__callsign"]')) addChip(el, rec);
   }
-  function tagEverything() {
-    try { tagSearchResults(); tagBoards(); const panel = document.querySelector(SEL.panel); if (panel) tagRecent(panel, live.get(currentId())); } catch (e) { log('tags', e); }
+  function tagEverything(added) {
+    try { tagSearchResults(); tagBoards(added); const panel = document.querySelector(SEL.panel); if (panel) tagRecent(panel, live.get(currentId())); } catch (e) { log('tags', e); }
   }
   // Run straight from the observer: its callback comes after the DOM change and before the next paint, so a new row
   // never shows up untagged (an animation-frame hop is not reliable - some embedded/background views never fire it).
   // The tagging is idempotent, so the observer seeing our own chips just finds nothing more to do.
+  let pageWideT = 0, pageWideAt = 0;
   function watchForTags() {
     if (!document.body) return void document.addEventListener('DOMContentLoaded', watchForTags, { once: true });
     // (a panel that opens is filled in the same pass, not at the next 400 ms tick)
-    new MutationObserver(() => { tagEverything(); const p = document.querySelector(SEL.panel); if (p && p !== observedPanel) syncPanel(); }).observe(document.body, { childList: true, subtree: true });
+    new MutationObserver(recs => {
+      // (what was put in or changed: the rows it is in, or the rows in it)
+      const added = [];
+      for (const r of recs) { if (r.target.nodeType === 1 && r.target.closest && r.target.closest(ROW_SEL)) added.push(r.target); for (const n of r.addedNodes) if (n.nodeType === 1) added.push(n); }
+      // (the rows put in, at once; the page-wide part - search results, the flight's panel - at most every 100 ms and
+      // once more after the last change: FR24 drawing a board of thousands of rows is hundreds of changes, and each one
+      // looking all over the page held it)
+      try { tagBoards(added); } catch (e) { log('tags', e); }
+      if (pageWideT) return;
+      const wide = () => { pageWideAt = now(); tagEverything([]); const p = document.querySelector(SEL.panel); if (p && p !== observedPanel) syncPanel(); };
+      if (now() - pageWideAt > 100) wide();
+      pageWideT = setTimeout(() => { pageWideT = 0; wide(); }, 100);
+    }).observe(document.body, { childList: true, subtree: true });
   }
 
   let syncTimer = 0, observer = null, observedPanel = null;
@@ -13954,7 +13988,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // (the version whose "what's new" was put away, and the one whose dot on the button the window was opened for)
   const UB_SEEN_KEY = 'tweeks.fr24.ladd.seenver', UB_DOT_KEY = 'tweeks.fr24.ladd.dotver';
   // (the newest CHANGELOG section's headlines, written in by build.mjs: { v, items })
-  const UB_WHATS_NEW = {"v":"1.1.2","items":["Opening an airport no longer freezes the page, and the board opens at the current time.","The board no longer rebuilds itself piece by piece as more flights come in.","A blocked aircraft's \"Recent flights\" list in its panel now matches its log page.","A flight first picked up mid-ocean now shows where it took off, from where the aircraft last landed.","The Bookmarks widget no longer shows FR24's upgrade message."]};
+  const UB_WHATS_NEW = {"v":"1.1.3","items":["Opening a busy airport's board no longer freezes the page: it was the script, not FR24, doing most of the work.","The Bookmarks widget is now really off by default: the script keeps pressing FR24's switch until it says Off.","The monitor's dashboard has a console for the monitor's own commands, and a file browser for everything it stores.","The dashboard shows \"aircraft in view\" correctly again, plus the aircraft database and every figure the monitor reports.","The console can measure what the monitor is busy with, to find why it answers slowly."]};
   // (an aircraft with an open padlock: FR24's outline style - 24 grid, 1.5 stroke in the text colour)
   const UB_ICON = '<svg data-tl-ub-icon="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
   const UB_X = '<svg viewBox="0 0 14 14" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5l11 11M12.5 1.5l-11 11"/></svg>';
@@ -14667,6 +14701,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   // airport's panel.
   const UB_BM_KEY = 'tweeks.fr24.ladd.bmdefault';
   let bmDefaulted = lsGet(UB_BM_KEY) === '1';
+  let bmPresses = 0;
   let bmPressedAt = 0;
   function leavesByText(wanted, root) {
     const out = new Map(wanted.map(w => [w, []]));
@@ -14705,7 +14740,9 @@ html.tl-no-strip .tl-strip{display:none!important}`;
       if (!list) { if (!box.hasAttribute('data-tl-gone')) box.setAttribute('data-tl-gone', ''); continue; }
       const sw = [...box.querySelectorAll('*')].find(e => /^(on|off)$/i.test(ownWords(e)));
       if (!sw) continue;
-      if (/^on$/i.test(ownWords(sw))) { if (now() - bmPressedAt < 2000) continue; bmPressedAt = now(); const b = sw.closest('button,[role="button"],[role="switch"],label') || sw; if (box.contains(b)) progClick(b); }
+      // (1.1.3: done only once FR24 says "Off" - its "On" pressed again every 2 s until it does, five times at most: a press
+      // that did not take left Bookmarks on for good, the default marked as done)
+      if (/^on$/i.test(ownWords(sw)) && bmPresses < 5) { if (now() - bmPressedAt < 2000) continue; bmPressedAt = now(); bmPresses++; const b = sw.closest('button,[role="button"],[role="switch"],label') || sw; if (box.contains(b)) progClick(b); setTimeout(() => { try { bookmarksSweep(document.body); } catch (e) { log('bookmarks', e); } }, 2100); continue; }
       bmDone();
       return;
     }
