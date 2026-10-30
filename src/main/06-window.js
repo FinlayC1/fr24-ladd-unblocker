@@ -725,6 +725,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   // airport's panel.
   const UB_BM_KEY = 'tweeks.fr24.ladd.bmdefault';
   let bmDefaulted = lsGet(UB_BM_KEY) === '1';
+  let bmPresses = 0;
   let bmPressedAt = 0;
   function leavesByText(wanted, root) {
     const out = new Map(wanted.map(w => [w, []]));
@@ -763,7 +764,9 @@ html.tl-no-strip .tl-strip{display:none!important}`;
       if (!list) { if (!box.hasAttribute('data-tl-gone')) box.setAttribute('data-tl-gone', ''); continue; }
       const sw = [...box.querySelectorAll('*')].find(e => /^(on|off)$/i.test(ownWords(e)));
       if (!sw) continue;
-      if (/^on$/i.test(ownWords(sw))) { if (now() - bmPressedAt < 2000) continue; bmPressedAt = now(); const b = sw.closest('button,[role="button"],[role="switch"],label') || sw; if (box.contains(b)) progClick(b); }
+      // (1.1.3: done only once FR24 says "Off" - its "On" pressed again every 2 s until it does, five times at most: a press
+      // that did not take left Bookmarks on for good, the default marked as done)
+      if (/^on$/i.test(ownWords(sw)) && bmPresses < 5) { if (now() - bmPressedAt < 2000) continue; bmPressedAt = now(); bmPresses++; const b = sw.closest('button,[role="button"],[role="switch"],label') || sw; if (box.contains(b)) progClick(b); setTimeout(() => { try { bookmarksSweep(document.body); } catch (e) { log('bookmarks', e); } }, 2100); continue; }
       bmDone();
       return;
     }

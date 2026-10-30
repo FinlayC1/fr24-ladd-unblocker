@@ -22,7 +22,7 @@ jobs:
       - name: Offline tests
         run: |
           git config --global user.email "tests@example.invalid" && git config --global user.name "tests"
-          node test/run-suite.cjs --no-build --only unit_engine,unit_cases,unit_heading,unit_final,unit_legs,unit_monitor,unit_monitor2,unit_fr24,unit_store,unit_registry,unit_merge,unit_deploy,unit_installs,unit_dash,unit_names,unit_origin,unit_flightmsg,unit_monlive,unit_panel,unit_window,unit_hello,unit_vectoring,unit_boards,unit_padlocks,unit_public,unit_wx,unit_tracks,unit_waiting,unit_shared,unit_playback,unit_pbbuttons,unit_recent,unit_photos,unit_ksk16,unit_gioos,unit_n6012c,unit_logos,unit_window2,unit_mosttracked,unit_histgap,unit_photocache,unit_recentlist,unit_recentfast,unit_logreset,unit_photopage,unit_archive,unit_world,unit_central,unit_102,unit_monboards,unit_boardsync,unit_centralpool,unit_noroute,unit_scores,unit_fleet,unit_111,unit_acdb,unit_recent,unit_boardplace,unit_netfetch
+          node test/run-suite.cjs --no-build --only unit_engine,unit_cases,unit_heading,unit_final,unit_legs,unit_monitor,unit_monitor2,unit_fr24,unit_store,unit_registry,unit_merge,unit_deploy,unit_installs,unit_dash,unit_names,unit_origin,unit_flightmsg,unit_monlive,unit_panel,unit_window,unit_hello,unit_vectoring,unit_boards,unit_padlocks,unit_public,unit_wx,unit_tracks,unit_waiting,unit_shared,unit_playback,unit_pbbuttons,unit_recent,unit_photos,unit_ksk16,unit_gioos,unit_n6012c,unit_logos,unit_window2,unit_mosttracked,unit_histgap,unit_photocache,unit_recentlist,unit_recentfast,unit_logreset,unit_photopage,unit_archive,unit_world,unit_central,unit_102,unit_monboards,unit_boardsync,unit_centralpool,unit_noroute,unit_scores,unit_fleet,unit_111,unit_acdb,unit_recent112,unit_console,unit_boardplace,unit_netfetch
   monitor-node18:
     runs-on: ubuntu-latest
     steps:
@@ -33,7 +33,7 @@ jobs:
       - name: Monitor tests on Node 18
         run: |
           git config --global user.email "tests@example.invalid" && git config --global user.name "tests"
-          for t in unit_monitor unit_monitor2 unit_fr24 unit_store unit_merge unit_public unit_installs unit_wx unit_tracks unit_waiting unit_archive unit_world unit_102 unit_monboards unit_noroute unit_scores unit_fleet unit_acdb; do node test/$t.cjs monitor/data > out.txt 2>&1 || { tail -30 out.txt; exit 1; }; grep -q '^FAIL' out.txt && { grep '^FAIL' out.txt; exit 1; }; echo "$t: $(grep -c '^PASS' out.txt) passed"; done
+          for t in unit_monitor unit_monitor2 unit_fr24 unit_store unit_merge unit_public unit_installs unit_wx unit_tracks unit_waiting unit_archive unit_world unit_102 unit_monboards unit_noroute unit_scores unit_fleet unit_acdb unit_console; do node test/$t.cjs monitor/data > out.txt 2>&1 || { tail -30 out.txt; exit 1; }; grep -q '^FAIL' out.txt && { grep '^FAIL' out.txt; exit 1; }; echo "$t: $(grep -c '^PASS' out.txt) passed"; done
           node test/unit_registry.cjs > out.txt 2>&1 || { tail -30 out.txt; exit 1; }; echo "unit_registry: $(grep -c '^PASS' out.txt) passed"
           node test/unit_deploy.cjs > out.txt 2>&1 || { tail -30 out.txt; exit 1; }; echo "unit_deploy: $(grep -c '^PASS' out.txt) passed"
           # (the datalink's zstd on Node 18: the small decoder kept with the monitor - no browser part here)

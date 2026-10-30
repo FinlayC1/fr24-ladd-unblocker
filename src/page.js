@@ -1933,8 +1933,10 @@
           try {
             var panel = t.closest(SEL_AP);
             if (panel) {
-              if (r.type === 'characterData') panelHide(panel, t);
-              else for (var j = 0; j < r.addedNodes.length; j++) { var a = r.addedNodes[j], el = a.nodeType === 1 ? a : a.nodeType === 3 ? a.parentElement : null; if (el) panelHide(panel, el); }
+              if (r.type === 'characterData') { if (!t.closest('li[id^="airport_schedule_"]')) panelHide(panel, t); }
+              // (1.1.2: not inside a flight's row of a board - none of what is hidden is ever in one, and a board of a fortnight
+              // is thousands of rows, each looked through three times as FR24 drew it; its adverts sit between rows)
+              else for (var j = 0; j < r.addedNodes.length; j++) { var a = r.addedNodes[j], el = a.nodeType === 1 ? a : a.nodeType === 3 ? a.parentElement : null; if (el && !el.closest('li[id^="airport_schedule_"]')) panelHide(panel, el); }
             } else if (r.type === 'childList') {
               // (the panel itself put in, whole; elsewhere - a board's own page - the "Remove ads" button)
               for (var k = 0; k < r.addedNodes.length; k++) {

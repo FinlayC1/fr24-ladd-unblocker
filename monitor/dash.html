@@ -6,7 +6,7 @@
 <meta name="robots" content="noindex">
 <title>FR24 monitor</title>
 <!-- The owner's panel of the monitor (/dash): one page, no data in it - everything is asked for with the secret, typed once
-     and kept in this browser (localStorage) until "Sign out". Pages: #overview #users #traffic #logs #options -->
+     and kept in this browser (localStorage) until "Sign out". Pages: #overview #users #traffic #logs #options #console #files -->
 <style>
   :root { --bg:#f6f8fa; --panel:#ffffff; --line:#d0d7de; --text:#1f2328; --muted:#59636e; --ok:#1a7f37; --warn:#9a6700; --bad:#cf222e; --accent:#0969da; --accent-ink:#ffffff; --soft:#eef3f9; color-scheme:light; }
   @media (prefers-color-scheme: dark) {
@@ -29,6 +29,12 @@
   .kpi .k { color:var(--muted); font-size:12px; }
   .kpi .v { font-size:26px; font-weight:600; font-variant-numeric:tabular-nums; line-height:1.2; margin-top:2px; overflow-wrap:anywhere; }
   .kpi .d { color:var(--muted); font-size:12px; margin-top:2px; }
+  .term { background:#012456; color:#eeedf0; border-radius:8px; padding:10px 12px; font:13px/1.45 Consolas,"Cascadia Mono",ui-monospace,monospace; min-height:60vh; max-height:75vh; overflow:auto; }
+  .term #t-out div { white-space:pre-wrap; overflow-wrap:anywhere; }
+  .term .t-cmd { color:#ffff00; } .term .t-err { color:#ff6b6b; }
+  .term form { display:flex; gap:6px; align-items:center; } .term input { flex:1; background:transparent; border:0; outline:0; color:inherit; font:inherit; padding:2px 0; }
+  .tree details { margin-left:12px; } .tree summary { cursor:pointer; } .tree .lf { margin-left:24px; font:12px ui-monospace,Consolas,monospace; overflow-wrap:anywhere; }
+  .flist { width:100%; border-collapse:collapse; font-size:13px; } .flist td { padding:3px 8px; border-top:1px solid var(--line); } .flist a { cursor:pointer; } .flist td.r { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
   .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:12px; }
   .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px 14px; min-width:0; }
   .card h2, section.tbl h2 { margin:0 0 8px; font-size:12px; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); font-weight:600; }
@@ -97,7 +103,7 @@
       <div class="sub"><button class="link" id="out" type="button">Sign out</button></div>
     </div>
     <nav id="nav">
-      <a href="#overview" data-p="overview">Overview</a><a href="#users" data-p="users">Users</a><a href="#traffic" data-p="traffic">Traffic</a><a href="#logs" data-p="logs">Logs</a><a href="#options" data-p="options">Options</a>
+      <a href="#overview" data-p="overview">Overview</a><a href="#users" data-p="users">Users</a><a href="#traffic" data-p="traffic">Traffic</a><a href="#logs" data-p="logs">Logs</a><a href="#options" data-p="options">Options</a><a href="#console" data-p="console">Console</a><a href="#files" data-p="files">Files</a>
     </nav>
   </header>
   <main>
@@ -113,7 +119,9 @@
         <div class="card"><h2>Data held</h2><div id="c-data"></div></div>
         <div class="card"><h2>Server</h2><div id="c-srv"></div></div>
         <div class="card"><h2>Requests</h2><div id="c-req"></div></div>
+        <div class="card"><h2>Aircraft database</h2><div id="c-acdb"></div></div>
       </div>
+      <div class="card"><h2>Everything the monitor reports <span class="sub">(/status - open a part)</span></h2><div id="c-all" class="tree"></div></div>
     </section>
 
     <section class="page hidden" id="p-users">
@@ -147,6 +155,14 @@
       <section class="tbl"><h2 id="dep-h">Last update</h2><pre id="dep-log"></pre></section>
     </section>
 
+    <section class="page hidden" id="p-console">
+      <div class="term" id="t-box"><div id="t-out"></div><form id="t-form" autocomplete="off"><span class="t-ps">PS monitor&gt;</span><input id="t-in" spellcheck="false" aria-label="Command"></form></div>
+      <div class="help">The monitor's own commands - <code>help</code> lists them; PowerShell's names work too (<code>Get-ChildItem</code>, <code>Get-Content</code>, <code>Get-Process</code>...). Up and down go through what was typed. Never a shell on the server: only these commands.</div>
+    </section>
+    <section class="page hidden" id="p-files">
+      <div class="card"><h2>Files <span class="sub" id="f-path"></span></h2><div class="actions"><button type="button" id="f-up">Up</button><button type="button" id="f-reload">Reload</button></div><div id="f-list"></div></div>
+      <div class="card hidden" id="f-view"><h2><span id="f-name"></span> <span class="sub" id="f-meta"></span> <a id="f-dl" href="#" class="sub">Download</a></h2><pre id="f-text"></pre></div>
+    </section>
     <section class="page hidden" id="p-options">
       <form class="card" id="opt-form">
         <h2>Options</h2>
@@ -177,7 +193,7 @@
 <script>
 (function () {
   'use strict';
-  var KEY = 'monTok', PAGES = ['overview', 'users', 'traffic', 'logs', 'options'];
+  var KEY = 'monTok', PAGES = ['overview', 'users', 'traffic', 'logs', 'options', 'console', 'files'];
   var tok = '', page = 'overview', timer = 0, last = {}, busy = {}, stats = null, inst = null;
   var $ = function (id) { return document.getElementById(id); };
   try { tok = localStorage.getItem(KEY) || ''; } catch (e) { tok = ''; }
@@ -247,7 +263,7 @@
       ['backup: OpenSky', m.listAge.osky != null ? m.listAge.osky + ' s ago' : 'not needed yet'],
       ['backup: ADS-B Exchange', m.adsbx && m.adsbx.key ? m.adsbx.today + ' / ' + m.adsbx.cap + ' today' : 'no key set']] : []).concat([['areas', (m.areas || []).map(function (x) { return x.join(','); }).join('  ')]]).concat(
       Object.keys(m.paused || {}).map(function (h) { return [h, 'paused ' + m.paused[h] + ' s', 'bad']; })));
-    fillRows($('c-data'), [['aircraft in view', m.aircraft], ['blocked aircraft', m.blocked], ['with flights', m.withLegs], ['flights kept', m.legs], ['backfill queue', m.backfillQueue]].concat(m.hist ? [['live list (/live)', m.live], ['days rebuilt (/hist)', m.hist.built + ' with flights, ' + m.hist.empty + ' without'], ['days to rebuild', m.hist.queue], ['merged with airplanes.live', m.hist.merged], ['left to the browser', m.hist.inc + m.hist.fails, m.hist.inc + m.hist.fails ? 'warn' : '']] : []));
+    fillRows($('c-data'), [['aircraft in view', m.aircraft], ['blocked aircraft', m.blocked], ['with flights', m.withLegs], ['flights kept', m.legs], ['backfill queue', m.backfillQueue]].concat(m.hist ? [['live list (/live)', m.live], ['days rebuilt (/hist)', m.hist.built + ' with flights, ' + m.hist.empty + ' without'], ['days to rebuild', m.hist.queue], ['merged with airplanes.live', m.hist.merged], ['left to the browser', (m.hist.inc || 0) + (m.hist.fails || 0), (m.hist.inc || 0) + (m.hist.fails || 0) ? 'warn' : '']] : []));
     if (m.fr24) { var f = m.fr24; fillRows($('c-fr24'), [['FR24 scans', f.scanning ? f.scans + (f.last ? ' (last ' + ago(f.last.at) + ', ' + f.last.requests + ' requests, ' + f.last.flights + ' flights)' : '') : 'off', f.lastOkAgo != null && f.lastOkAgo < 300 ? 'ok' : 'warn'],
       ['FR24 headers', f.headersFrom === 'browser' ? 'from your browser' : 'its own (browsers send theirs only to a monitor of their own)', ''], ['FR24 paused', f.paused ? f.paused + ' s' : 'no', f.paused ? 'bad' : ''], ['last FR24 error', f.lastErr || 'none', f.lastErr ? 'warn' : 'ok'],
       ['callsign-less flights', f.flights], ['named', f.named, 'ok'], ['not named yet', f.unnamed, f.unnamed ? 'warn' : ''],
@@ -265,6 +281,7 @@
       .concat(dk ? [['store on disk', size(dk.bytes) + ' in ' + n(dk.files) + ' files'], ['disk free', dk.free != null ? size(dk.free) + ' of ' + size(dk.total) : '-', dk.total && dk.free / dk.total < 0.1 ? 'bad' : '']] : [])
       .concat(s.options ? [['who may use it', s.options.public ? 'public - every copy' : 'private - the secret only'], ['rate per address', s.options.rate ? s.options.rate + ' a minute' : 'no limit']] : []));
     showRequests($('c-req'), s.req || {});
+    showAcdb(m.acdb); showTree($('c-all'), m);
   }
   function showRequests(box, r) { fillRows(box, [['total', r.total], ['last minute', r.lastMin], ['clients seen', r.clients], ['no / wrong secret (401)', r.unauthorized, r.unauthorized ? 'warn' : ''], ['rate limited (429)', r.limited, r.limited ? 'warn' : ''], ['errors (5xx)', r.errors, r.errors ? 'bad' : '']]); }
   function showTraffic(s) {
@@ -373,12 +390,81 @@
   $('log-now').onclick = function () { load(true); };
   $('log-auto').onchange = function () { if ($('log-auto').checked) load(true); };
 
+  // ---- (1.1.3) the aircraft database's card, and every figure of /status as an open-able tree
+  function showAcdb(a) {
+    if (!a) { fillRows($('c-acdb'), [['state', 'not on this monitor']]); return; }
+    var src = a.sources || {};
+    fillRows($('c-acdb'), [['aircraft', n(a.aircraft)], ['built', a.builtAt ? new Date(a.builtAt * 1000).toLocaleString() : 'not yet', a.builtAt ? '' : 'warn'], ['building now', a.building ? 'yes' : 'no'], ['lookups', n(a.lookups) + ' (' + n(a.found) + ' found)'], ['swept day', a.sweptDay || '-'], ['queued by the sweep', n(a.sweptQueued)]]
+      .concat(Object.keys(src).map(function (k) { var v = src[k] || {}; return [k, v.err ? 'failed: ' + v.err : n(v.n), v.err ? 'bad' : 'ok']; }))
+      .concat(a.err ? [['last error', a.err, 'bad']] : []));
+  }
+  var treeOpen = {};
+  function showTree(box, o) {
+    var top = Object.keys(o || {}).sort();
+    box.textContent = '';
+    top.forEach(function (k) { box.appendChild(treeNode(k, o[k], k)); });
+  }
+  function treeNode(k, v, path) {
+    if (v && typeof v === 'object') {
+      var d = document.createElement('details'), sm = document.createElement('summary'), keys = Object.keys(v);
+      sm.textContent = k + (Array.isArray(v) ? ' [' + v.length + ']' : ' {' + keys.length + '}'); d.appendChild(sm);
+      d.open = !!treeOpen[path]; d.ontoggle = function () { treeOpen[path] = d.open; if (d.open && d.childNodes.length === 1) keys.slice(0, 500).forEach(function (kk) { d.appendChild(treeNode(kk, v[kk], path + '.' + kk)); }); };
+      if (d.open) keys.slice(0, 500).forEach(function (kk) { d.appendChild(treeNode(kk, v[kk], path + '.' + kk)); });
+      return d;
+    }
+    return el('div', k + ': ' + (v == null ? '-' : String(v)), 'lf');
+  }
+  // ---- (1.1.3) the console: a line typed is run by the monitor (POST /admin/cmd), its answer shown under it
+  var hist = [], hpos = 0;
+  function tPrint(t, cls) { var d = el('div', t, cls || ''); $('t-out').appendChild(d); var b = $('t-box'); b.scrollTop = b.scrollHeight; }
+  $('t-form').onsubmit = function (e) {
+    e.preventDefault(); var line = $('t-in').value; $('t-in').value = ''; if (!line.trim()) return;
+    hist.push(line); hpos = hist.length; tPrint('PS monitor> ' + line, 't-cmd');
+    $('t-in').disabled = true;
+    api('/admin/cmd', { line: line }).then(function (r) { $('t-in').disabled = false; $('t-in').focus(); if (r.clear) { $('t-out').textContent = ''; return; } if (r.out) tPrint(r.out, r.err ? 't-err' : ''); }, function (er) { $('t-in').disabled = false; $('t-in').focus(); tPrint(String(er && er.message || er), 't-err'); });
+  };
+  $('t-in').onkeydown = function (e) {
+    if (e.key === 'ArrowUp' && hpos > 0) { hpos--; $('t-in').value = hist[hpos]; e.preventDefault(); }
+    else if (e.key === 'ArrowDown') { hpos = Math.min(hist.length, hpos + 1); $('t-in').value = hist[hpos] || ''; e.preventDefault(); }
+  };
+  $('t-box').onclick = function () { if (!window.getSelection || !String(window.getSelection())) $('t-in').focus(); };
+  // ---- (1.1.3) the files: the store and data folders, read-only (GET /admin/files), a file whole as a download
+  var fpath = '';
+  function fileOpen(p) {
+    api('/admin/files?path=' + encodeURIComponent(p)).then(function (r) {
+      if (r.err && !r.file && !r.dir) { status(r.err, true); return; }
+      if (r.dir) {
+        fpath = r.path || ''; $('f-path').textContent = '/' + fpath; $('f-view').classList.add('hidden');
+        var t = document.createElement('table'); t.className = 'flist';
+        r.dir.forEach(function (e) {
+          var tr = document.createElement('tr'), a = el('a', (e[1] ? '📁 ' : '📄 ') + e[0] + (e[1] ? '/' : ''));
+          a.onclick = function () { fileOpen((fpath ? fpath + '/' : '') + e[0]); };
+          var c1 = document.createElement('td'); c1.appendChild(a); tr.appendChild(c1);
+          tr.appendChild(el('td', e[1] ? '' : size(e[2]), 'r')); tr.appendChild(el('td', e[3] ? new Date(e[3]).toLocaleString() : '', 'r'));
+          t.appendChild(tr);
+        });
+        $('f-list').textContent = ''; $('f-list').appendChild(t); if (!r.dir.length) $('f-list').appendChild(el('div', '(empty)', 'sub'));
+      } else if (r.file) {
+        $('f-view').classList.remove('hidden'); $('f-name').textContent = r.path; $('f-meta').textContent = size(r.file.size) + ' - ' + new Date(r.file.mtime).toLocaleString() + (r.file.cut ? ' - the start only' : '');
+        $('f-text').textContent = r.file.text;
+        $('f-dl').onclick = function (ev) {
+          ev.preventDefault();
+          fetch('/admin/download?path=' + encodeURIComponent(r.path), { headers: { 'X-Monitor-Token': tok } }).then(function (x) { if (!x.ok) throw new Error('HTTP ' + x.status); return x.blob(); }).then(function (b) { var u = URL.createObjectURL(b), a = document.createElement('a'); a.href = u; a.download = r.path.split('/').pop(); document.body.appendChild(a); a.click(); a.remove(); setTimeout(function () { URL.revokeObjectURL(u); }, 5000); }, function (er) { status('download: ' + er.message, true); });
+        };
+        $('f-view').scrollIntoView({ block: 'nearest' });
+      }
+    }, failed);
+  }
+  $('f-up').onclick = function () { fileOpen(fpath.split('/').slice(0, -1).join('/')); };
+  $('f-reload').onclick = function () { fileOpen(fpath); };
+
   // ---- pages, and what each asks for how often (ms)
-  var SRC = { overview: ['/stats', 5000], traffic: ['/stats', 5000], users: ['/admin/installs', 30000], logs: ['/admin/log?n=300', 5000], options: ['/admin/options', 0] };
+  var SRC = { overview: ['/stats', 5000], traffic: ['/stats', 5000], users: ['/admin/installs', 30000], logs: ['/admin/log?n=300', 5000], options: ['/admin/options', 0], console: ['', 0], files: ['', 0] };
   function render(p, d) { try { if (p === 'overview') showOverview(d); else if (p === 'traffic') showTraffic(d); else if (p === 'users') showUsers(d); else if (p === 'logs') showLogs(d); else if (p === 'options') showOptions(d); } catch (e) { status('could not show this page: ' + (e && e.message || e), true); if (window.console) console.error(e); } }
   function load(force) {
     var p = page, src = SRC[p], url = src[0], now = Date.now();
     if (!tok || busy[p]) return;
+    if (!url) { showApp(); if (p === 'files' && force) fileOpen(fpath); if (p === 'console' && force) setTimeout(function () { $('t-in').focus(); }, 0); return; }
     if (!force && (!src[1] || now - (last[p] || 0) < src[1] - 250 || (p === 'logs' && !$('log-auto').checked))) return;
     busy[p] = true; last[p] = now;
     api(url).then(function (d) {

@@ -40,6 +40,7 @@ async function open(stored) {
         if (!tokOk) return reply(401, null);
         if (p === '/stats') return reply(200, JSON.parse(JSON.stringify(M.answer(new URL('http://x/stats'), Date.now() / 1000))));
         if (o.method === 'POST' && p === '/admin/options') { const r = M.optionsSet(JSON.parse(o.body), false); return r ? reply(400, { ok: false, err: r }) : reply(200, Object.assign({ ok: true }, await adminGet('/admin/options'))); }
+        if (o.method === 'POST' && p === '/admin/cmd') return reply(200, await M.adminAnswer('/admin/cmd', 'POST', () => null, o.body));
         if (o.method === 'POST') return reply(200, { ok: false, err: 'not under systemd here' });
         const j = await adminGet(p); return j ? reply(200, JSON.parse(JSON.stringify(j))) : reply(404, null);
       };
@@ -89,7 +90,16 @@ const nav = async (P, h) => { P.w.location.hash = h; await sleep(120); };
     check('... saved: notice, minVer, counting, public, rate sent - and shown as now set', sent && JSON.stringify(JSON.parse(sent.body)) === JSON.stringify({ notice: 'Please update', minVer: '22.1.0', counting: true, public: false, rate: 120 }) && /Saved/.test(P.d.getElementById('o-msg').textContent) && M.PUBLIC === false && M.RATE === 120, sent && sent.body);
     P.d.getElementById('o-minver').value = 'abc'; P.d.getElementById('opt-form').dispatchEvent(new P.w.Event('submit', { cancelable: true })); await sleep(100);
     check('... a wrong version refused in the page, nothing sent', /x\.y\.z/.test(P.d.getElementById('o-msg').textContent) && P.asked.filter(a => a.method === 'POST').length === 1); }
+  // (1.1.3) the console: a command typed runs on the monitor, its answer under it; the files: the store's folder listed
+  await nav(P, '#console');
+  { P.d.getElementById('t-in').value = 'Get-ChildItem store'; P.d.getElementById('t-form').dispatchEvent(new P.w.Event('submit', { cancelable: true })); await sleep(250);
+    const out = P.d.getElementById('t-out').textContent;
+    check('Console: "Get-ChildItem store" sent to the monitor (POST /admin/cmd, with the secret) and its listing shown', P.asked.some(a => a.p === '/admin/cmd' && a.method === 'POST' && a.token === 'dash-secret') && /PS monitor> Get-ChildItem store/.test(out) && /entries/.test(out), out.slice(0, 200)); }
+  await nav(P, '#files'); await sleep(200);
+  { const t = P.d.getElementById('f-list').textContent; check('Files: the two folders - store and data - listed', /store\//.test(t) && /data\//.test(t), t.slice(0, 120)); }
+  { const a = P.d.querySelector('#f-list a'); a.click(); await sleep(250); check('... a folder opened: its path shown', /\/store/.test(P.d.getElementById('f-path').textContent), P.d.getElementById('f-path').textContent); }
   await nav(P, '#overview');
+  check('Overview: the aircraft database card and every figure of /status as a tree; "aircraft in view" a number', /aircraft/.test(P.d.getElementById('c-acdb').textContent) && P.d.querySelectorAll('#c-all details').length > 5 && !/object Object/.test(P.d.getElementById('c-data').textContent), P.d.getElementById('c-data').textContent.slice(0, 80));
   { const b = P.d.getElementById('b-update'); b.disabled = false; P.setConfirm(false); b.click(); await sleep(100);
     const none = P.asked.filter(a => a.p === '/admin/update').length;
     P.setConfirm(true); b.click(); await sleep(150);

@@ -140,7 +140,7 @@ const fakeFetch = async u => {
     check('the sweep: the world log\'s day\'s aircraft the databases leave something out of (no serial number) queued - one with all of it not', n >= 2 && M.owners.q.includes('abcde0') && M.owners.q.includes('5003e7') && !M.owners.q.includes('a15a72'), { n, q: M.owners.q.slice(0, 5) });
     check('... once a day', await M.acdbSweep() === 0); }
   const s = M.answer(new URL('http://x/status'), Date.now() / 1000, { admin: true });
-  check('/status: the aircraft database - how many, when built, each source', s.aircraft && s.aircraft.aircraft === 2004 && s.aircraft.sources && s.aircraft.sources.faa, s.aircraft);
+  check('/status: the aircraft database - how many, when built, each source', s.acdb && s.acdb.aircraft === 2004 && s.acdb.sources && s.acdb.sources.faa && typeof s.aircraft !== 'object', s.acdb);
   console.log(fails ? `\n${fails} FAILED` : '\nall passed');
   process.exit(fails ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(1); });
