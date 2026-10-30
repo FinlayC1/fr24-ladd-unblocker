@@ -25,6 +25,8 @@ w.__logs = []; w.console.debug = (...a) => w.__logs.push(a.map(x => typeof x ===
   w.eval(SRC);
   const L = w.__tweeksLadd, E = L.engine;
   for (let i = 0; i < 60 && !E.airports.length; i++) await sleep(500);
+  // (1.1.0: the route code the monitor runs, with its tables, on what this browser has)
+  await require('./monfake.cjs').tablesInto(E);
   const td = await L.loadToday(HEX, 0, { priority: true });
   console.log('today legs:', td.legs.map(l => l.how).join(','), td.sums.map(s => `${s.from ? s.from.code : '?'}>${s.to ? s.to.code : '?'}`).join(' '));
   await L.loadHistory(HEX, 60, null);
@@ -47,7 +49,7 @@ w.__logs = []; w.console.debug = (...a) => w.__logs.push(a.map(x => typeof x ===
   L.pending.set(id, { id, lat: lp.lat, lon: lp.lon, alt: lp.alt, spd: lp.gs, trk: lp.trk, receivedAt: Date.now(), gnd: false });
   w.postMessage({ __tweeksLadd: 'trail', id, first: pts[0], n: pts.length, maxAlt: 41000, pts: pts.filter((p, k) => k % 3 === 0), at: Date.now() });
   await sleep(300);
-  const r = L.composeRoute(id, HEX);
+  const r = L.composeRoute0(id, HEX);
   console.log('route:', r && JSON.stringify({ from: r.originIata, note: r.originNote, to: r.destIata, p: r.destP, conf: r.destConf, why: r.destReason, alts: r.alternatives, phase: r.phase }));
   // the engine's view of the same moment
   const trail = L.todayCache.get(HEX) && null;

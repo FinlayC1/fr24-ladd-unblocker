@@ -76,6 +76,10 @@ async function mapMode() {
   for (let i = 0; i < 40 && !(L.globalList.items.length && L.engine.airports.length); i++) await sleep(500);
   check('FR24 airports loaded into engine', L.engine.airports.length > 5000, L.engine.airports.length);
   if (!L.engine.airports.length) { console.log(w.__logs.slice(0, 30).join(String.fromCharCode(10))); console.log(netLog.filter(n => /flightradar24/.test(n[0]))); }
+  // (1.1.0: the routes shown are the monitor's - the shared one, or MON_URL's. The checks below that look at the route code
+  // on its own run it here, with the tables as the monitor loads them)
+  check('the script carries no route tables (every route is the monitor\'s)', typeof L.loadT2 === 'undefined' && typeof L.loadApprTable === 'undefined' && !L.engine.T2);
+  await require('./monfake.cjs').tablesInto(L.engine);
   check('LADD + military list loaded', L.globalList.items.length > 100, L.globalList.items.length + ' aircraft @' + T());
   // simulate FR24 LiveFeed: callsign-less flights built from live LADD aircraft (airborne, with a type)
   let src = L.globalList.items.filter(c => !c.gnd && c.type && c.ladd && c.gs > 150 && c.ageS < 20).slice(0, 25);
@@ -179,7 +183,7 @@ async function mapMode() {
     L.live.set(idY, { id: idY, hex: hexY, reg: 'N900YB', type: 'F900', cs: 'N900YB', receivedAt: Date.now() });
     L.pending.set(idY, { id: idY, lat: 53.4302, lon: -6.2641, alt: 0, spd: 0, trk: 0, gnd: true, type: 'F900', reg: '', receivedAt: Date.now() - 25 * 60000, serverTime: 0, ts: 0 });
     L.areaCache.set(hexY, { hex: hexY, lat: 55.995, lon: -6.206, alt: 36875, gs: 464, trk: 342, gnd: false, receivedAt: Date.now(), ageS: 1, type: 'F900', reg: 'N900YB' });
-    const pY = L.currentPos(idY), rY = pY ? L.composeRoute(idY, hexY, { pos: pY }) : null;
+    const pY = L.currentPos(idY), rY = pY ? L.composeRoute0(idY, hexY, { pos: pY }) : null;
     check('a followed flight\'s stale ground position gives way to the airframe\'s live one (N900YB airborne, not "on the ground at Dublin")', !!pY && !pY.gnd && pY.alt > 30000 && !!rY && !rY.onGround && rY.phase !== 'parked', { pos: pY && { lat: pY.lat, alt: pY.alt, gnd: pY.gnd }, phase: rY && rY.phase, origin: rY && rY.originIata, dest: rY && rY.destIata });
     L.live.delete(idY); L.pending.delete(idY);
   }
@@ -364,25 +368,22 @@ async function mapMode() {
       check('permanent monitor: its LADD list is fresh (matching against it needs no adsb.lol request)', !!lad && Date.now() - lad.at < 300000 && (lad.ac || []).length > 50, lad && { age: Math.round((Date.now() - lad.at) / 1000), n: (lad.ac || []).length });
     }
   }
-  // "confirm": the user sets the destination (heard on the radio, seen on final) - locked in at 100%, learned from at once
+  // "confirm": the user sets the destination (heard on the radio, seen on final) - locked in at 100%
   {
     const r0 = (L.routeState.get(id) || {}).route || L.live.get(id).route || {};
     const pick = L.engine.airports.find(a => a.iata && a.id !== r0.destId && a.size > 5000 && Math.abs(a.lat - (r0.destId ? L.engine.byId(r0.destId).lat : a.lat)) < 3);
     if (pick) {
-      const nL = L.learnedStore().length;
       L.userConfirm(id, L.live.get(id), pick.id); await sleep(400);
-      const pos = L.currentPos(id), r1 = pos ? L.composeRoute(id, L.live.get(id).hex, { pos }) : null;
+      const pos = L.currentPos(id), r1 = pos ? L.composeRoute0(id, L.live.get(id).hex, { pos }) : null;
       check('confirm: the destination the user picks is shown, confirmed at 100% ("confirmed by you")', !!r1 && r1.destId === pick.id && r1.destConf === 'confirmed' && r1.destP === 100 && /confirmed by you/.test(r1.destReason), r1 && { dest: r1.destIata, conf: r1.destConf, p: r1.destP, why: r1.destReason });
-      check('... and learned from at once (when its departure is known)', !r0.originId || L.learnedStore().length > nL, { before: nL, after: L.learnedStore().length });
       L.userConfirm(id, L.live.get(id), 0); await sleep(200);
-      const r2 = pos ? L.composeRoute(id, L.live.get(id).hex, { pos }) : null;
+      const r2 = pos ? L.composeRoute0(id, L.live.get(id).hex, { pos }) : null;
       check('... and cleared again', !!r2 && !r2.userConfirmed, r2 && r2.destIata);
     }
   }
-  // the learned arrival paths: unpacked from the script, and F-GBOL (2 Oct, into Le Bourget over Paris) on LBG's
+  // the learned arrival paths (the monitor's, as it loads them), and F-GBOL (2 Oct, into Le Bourget over Paris) on LBG's
   {
-    const n = await L.loadApprTable();
-    check('arrival paths unpacked', n > 10000, n);
+    const n = L.engine.approachPath ? 1 : 0;
     const fx = path.join(__dirname, 'fixtures/legs/3905cb/2026-10-02_lol.json.gz');
     if (n && fs.existsSync(fx)) {
       const E = L.engine, pts = E.parseTrace(JSON.parse(zlib.gunzipSync(fs.readFileSync(fx)).toString()));

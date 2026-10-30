@@ -78,7 +78,7 @@
             <span class="btn-text"><strong>Install the userscript</strong><small>Tampermonkey · Violentmonkey</small></span>
           </a>
         </div>
-        <p class="byline">Version 1.0.2 · <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/releases">all releases</a></p>
+        <p class="byline">Version 1.1.0 · <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/releases">all releases</a></p>
       </div>
       <figure class="hero-art">
         <picture>
@@ -158,7 +158,8 @@
           <p class="muted">A small always-on server. Every copy of the script uses the shared public one by default.</p>
           <ul class="dots">
             <li>It follows adsb.lol's worldwide <b>LADD</b>, <b>military</b> and <b>PIA</b> lists (every 10 seconds to 2 minutes), and every known blocked aircraft by address.</li>
-            <li>It reads FR24's whole map every two minutes and names every flight FR24 shows without a callsign, from public ADS-B. Each named flight gets a rough destination.</li>
+            <li>It reads FR24's whole map every two minutes and names every flight FR24 shows without a callsign, from public ADS-B.</li>
+            <li>It works out every flight's route, all the time, so everyone sees the same answer, and checks each one against where the flight really landed.</li>
             <li>It logs every blocked aircraft's take-offs and landings for good, including flights only FR24 can see, with the runway used.</li>
             <li>It looks up each aircraft's owner once, and serves runway and frequency data for every airport.</li>
           </ul>
@@ -169,7 +170,7 @@
           <p class="muted">The extension or userscript, inside the FR24 tab.</p>
           <ul class="dots">
             <li>It takes the monitor's whole names table the moment FR24 opens, so FR24's very first frame of any blocked flight is drawn named.</li>
-            <li>It works out the full destination prediction for whatever is on screen.</li>
+            <li>It sends what it sees of the flights on screen to the monitor, which works out every route, the same for everyone, and shows its answer.</li>
             <li>It writes everything into FR24's own data before FR24 draws it.</li>
             <li>If the monitor is unreachable, it identifies flights from public ADS-B on its own.</li>
           </ul>

@@ -235,11 +235,15 @@
     const k = (1 - want) / Math.max(1e-9, 1 - c.p);
     return cands.map((x, j) => Object.assign({}, x, { p: j === i ? want : x.p * k })).sort((a, b) => b.p - a.p);
   }
+  // (1.1.0) A flight's route is the monitor's: worked out there, with the same tables for every browser, from what all of
+  // them send and the monitor's own logs. Nothing is worked out here (the tables are not in the script); this browser adds
+  // only what is its own - its user's confirmation, the progress bar from where the aircraft is now. None yet: null.
+  // (opts.quick: asked by the round of every flight identified - boards, labels, search - not for a panel: refreshed on its
+  // own schedule there)
   function composeRoute(id, hex, opts) {
-    let r;
-    try { r = composeRoute0(id, hex, opts); } catch (e) { const rr = live.get(id) || pubRecs.get(id); if (rr) rr.routeErr = String((e && e.message) || e).slice(0, 160); log('route failed', id, e); return null; }
-    // (a moment of its own - the log page's flight in progress: this browser's answer)
-    return opts && opts.pos ? r : centralOf(id, hex, r);
+    const r = centralOf(id, hex);
+    if (r && opts && opts.quick) r.quick = true;
+    return r;
   }
   function composeRoute0(id, hex, opts) {
     const rec0 = live.get(id) || pubRecs.get(id) || null, rec = rec0 || {};
@@ -554,32 +558,71 @@
   // plan, the flights of the day, the weather and closures at the airports in question - and the route it answers with is
   // the one shown: every browser showing the flight gets that same one (monitor/central.cjs runs this script's own route
   // code, ==ROUTE-CORE== above). The progress bar and the time to go are from where the aircraft is now.
-  // This browser's own answer stands where the monitor has none (not on, not answering, nothing of the flight, its answer
-  // over 90 s old), where the user confirmed a destination here, and while a landing or take-off seen here is not in the
-  // monitor's answer yet.
-  const calcGot = new Map();     // fr24 id -> { at (worked out there), until (good here until: 90 s from when it was worked out, by its own clock), r }
+  // (1.1.0) The monitor's answer is the only one: none here until it comes (a second or two), none without the monitor. An
+  // answer is shown for ten minutes after it came at most - asked for again every few seconds while the flight is shown.
+  const calcGot = new Map();     // fr24 id -> { at (worked out there), until (shown here until), r }
   const calcSent = new Map();    // fr24 id -> { t0, lastT, at, full } - what of its track the monitor has from here
-  const calcAsk = new Set(); let calcT = 0, calcBusy = false;
+  const calcAsk = new Set(); let calcT = 0, calcBusy = false, calcSoon = false;
   const centralUp = () => !!(monOk && monBase && monStat && monStat.central && monStat.central.on);
   // (a point as sent: numbers that are numbers, booleans, strings, nulls - nothing else)
   const ptOut = p => { if (!p || typeof p !== 'object') return null; const o = {}; for (const k of Object.keys(p)) { const v = p[k]; if (typeof v === 'number' ? isFinite(v) : v === null || typeof v === 'boolean' || typeof v === 'string') o[k] = v; } return o; };
-  function centralOf(id, hex, r) {
-    if (!r || !(id > 0) || !centralUp()) return r;
-    calcWant(id);
-    const c = calcGot.get(id); if (!c || !c.r || now() > c.until) return r;
-    if (r.userConfirmed || !!r.landed !== !!c.r.landed || !!r.onGround !== !!c.r.onGround) return r;
-    const out = Object.assign({}, c.r, { computedAt: now(), quick: !!r.quick, central: c.at });
-    const pos = currentPos(id), destAp = apById(out.destId) || (out.destSite && fin(out.destSite.lat) ? out.destSite : null);
+  function centralOf(id, hex) {
+    if (!(id > 0)) return null;
+    if (centralUp()) calcWant(id);
+    const c = calcGot.get(id); if (!c || !c.r || now() > c.until) return null;
+    return localView(Object.assign({}, c.r, { computedAt: now(), central: c.at }), id, hex, currentPos(id));
+  }
+  // (what of an answer is this browser's own: a destination its user confirmed - it stands at 100% - and the progress bar and
+  // time to go from where the aircraft is now)
+  function localView(out, id, hex, pos) {
+    const uc = userDestOf(id, hex, out.departedAt), planDest = out.destConf === 'filed' || out.destConf === 'landed';
+    const ua = uc && !planDest && !out.landed ? apById(uc.destId) : null;
+    if (ua) {
+      const prev = uc.prev || (out.userConfirmed ? '' : out.destIata || '');
+      Object.assign(out, { destId: ua.id, destIata: apCode(ua), destCity: ua.city || ua.name, destConf: 'confirmed', destReason: 'confirmed by you' + (prev && prev !== apCode(ua) ? ` (it was predicting ${prev})` : ''), destP: 100, destSite: null, alternatives: [], userConfirmed: true, confirmed: true, crowdD: false });
+      if (pos && !pos.gnd) out.eta = estimateEta(pos, ua, ENGINE.classify(acOf(live.get(id) || pubRecs.get(id) || {})));
+    }
+    const destAp = apById(out.destId) || (out.destSite && fin(out.destSite.lat) ? out.destSite : null);
     if (pos && destAp && !pos.gnd) {
       const stage = out.phase === 'descent' ? 4 : out.phase === 'climb' && (pos.alt || 0) < 15000 ? 2 : 3;
       out.progress = buildProgress(pos, apById(out.originId) || (out.originSite && fin(out.originSite.lat) ? out.originSite : null), destAp, out.departedAt, out.eta, stage);
     }
     return out;
   }
-  function calcWant(id) { calcAsk.add(id); if (!calcT) calcT = setTimeout(calcFlush, 1500); }
+  // (why there is no route yet - for the panel)
+  const calcWhy = () => !monOk || !monBase ? 'the monitor isn\'t answering - routes are worked out there' : !centralUp() ? 'the monitor isn\'t working routes out at the moment' : 'the monitor is working it out';
+  // (1.1.0) One flight's answer now, for what is not on the map - the log page's flight in progress, a watched aircraft: its
+  // evidence sent, the answer waited for (the monitor waits for its worker)
+  const hexCalcId = hex => 2000000000 + (parseInt(hex, 16) % 100000000);
+  async function calcNow(x) {
+    if (!x || !centralUp()) return null;
+    try { const j = await monPost('/calc', { v: 1, flights: [x] }), v = j && j.routes && j.routes[x.id]; return v && v.r && typeof v.r === 'object' ? v.r : null; }
+    catch (e) { log('central calculation', String(e && e.message || e)); return null; }
+  }
+  function calcWant(id) {
+    calcAsk.add(id);
+    // (the flight opened, no answer for it yet: asked at once - its panel waits for it; the rest together, every 1.5 s)
+    const first = id === currentId() && !calcGot.has(id);
+    if (first && calcT && !calcSoon) { clearTimeout(calcT); calcT = 0; }
+    if (!calcT) { calcSoon = first; calcT = setTimeout(calcFlush, first ? 60 : 1500); }
+  }
+  // (what this browser has of a flight it shows that is neither a blocked one nor opened: FR24's own N/A flights on the
+  // boards, from its feed - id -> () => evidence)
+  const calcExtra = new Map();
   // What this browser sees of a flight, for the monitor
   function calcEvidence(id) {
-    const rec = live.get(id) || pubRecs.get(id); if (!rec || !rec.hex) return null;
+    const rec = live.get(id) || pubRecs.get(id);
+    // (one of FR24's flights with no destination: whole once, then what is new - its window of positions slides along)
+    if ((!rec || !rec.hex) && calcExtra.has(id)) {
+      try {
+        const x = calcExtra.get(id)(); if (!x) return null;
+        const pts = x.trail.pts, s0 = calcSent.get(id), lastT = pts.length ? pts[pts.length - 1].t : 0, whole = !s0 || s0.full;
+        if (!whole) x.trail = Object.assign({}, x.trail, { full: false, pts: pts.filter(p => p.t > s0.lastT) });
+        return { t0: pts.length ? pts[0].t : 0, lastT, x };
+      } catch (e) { log('central evidence', e); }
+      return null;
+    }
+    if (!rec || !rec.hex) return null;
     const pos = currentPos(id); if (!pos) return null;
     const hex = rec.hex, trail = trailFor(id, hex, pos), s = calcSent.get(id);
     const t0 = trail.length ? trail[0].t : 0, full = !s || s.full || Math.abs(s.t0 - t0) > 60;
@@ -595,7 +638,7 @@
   // (the flights wanted, every second and a half: what is new of each - the one looked at every 10 s, the others every 30 s,
   // 20 at a time - and the answers for the rest)
   async function calcFlush() {
-    calcT = 0;
+    calcT = 0; calcSoon = false;
     if (calcBusy || !centralUp()) { if (calcAsk.size && centralUp()) calcT = setTimeout(calcFlush, 3000); else calcAsk.clear(); return; }
     const sel = currentId(), ids = [...calcAsk].sort((a, b) => (b === sel) - (a === sel)).slice(0, 60); for (const id of ids) calcAsk.delete(id);
     const flights = [], ask = [], sent = new Map(); let npts = 0;
@@ -615,8 +658,12 @@
         for (const [k, v] of Object.entries(j.routes && typeof j.routes === 'object' ? j.routes : {})) {
           if (!v || !v.r || typeof v.r !== 'object') continue;
           const id = +k, was = calcGot.get(id);
-          calcGot.set(id, { at: +v.at || 0, until: now() + Math.max(0, 90000 - (fin(v.age) ? v.age : 90000)), r: v.r });
-          if (!was || was.at !== +v.at) scheduleReplan(id, 10);
+          calcGot.set(id, { at: +v.at || 0, until: now() + 10 * 60000, r: v.r });
+          if (!was || was.at !== +v.at) {
+            scheduleReplan(id, 10);
+            // (one of FR24's flights with no destination - a board's, Most tracked's: to the page now, not at the next round)
+            const ne = naFeed.get(id); if (ne && !live.has(id)) { ne.routedAt = 0; naSoon(); }
+          }
         }
         for (const m of [calcGot, calcSent]) if (m.size > 3000) for (const k of [...m.keys()].slice(0, 1000)) m.delete(k);
       }
@@ -641,7 +688,6 @@
   function onHistElsewhere(hex) {
     if (!store.peekHist(hex) && !(histHook && histHook.hex === hex)) return;     // (one this tab has not read: nothing stale)
     store.reloadHist(hex).then(() => {
-      naHs.delete(hex);
       for (const [id, rec] of live) if (rec && rec.hex === hex) scheduleReplan(id, 50);
       for (const [id, p] of pubRecs) if (p && p.hex === hex && pubRouted(id)) scheduleReplan(id, 50);
       if (histHook) histHook(hex);
@@ -825,7 +871,6 @@
   // FR24's own estimated style. Worked out quietly, a few at a time, from what the feed has shown of it and its log if
   // one is kept; dropped again when the prediction weakens or the flight is no longer seen.
   const naFeed = new Map();     // fr24 id -> { f: latest report, trail: [points], at, routedAt, pub }
-  const naHs = new Map();       // hex -> { at, hs } (its kept log, as statistics)
   function noteNa(list, at) {
     for (const f of list) {
       if (live.has(f.id)) continue;
@@ -836,18 +881,18 @@
       e.f = f; e.at = at; naFeed.set(f.id, e);
     }
   }
-  function naHistStats(hex, t) {
-    if (!hex) return null; const c = naHs.get(hex); if (c && now() - c.at < 600000) return c.hs;
-    const h = store.peekHist(hex); let hs = null;
-    if (h && h.legs && h.legs.length) { try { hs = ENGINE.histStats(ENGINE.chainLegs(ENGINE.stitchLegs(h.legs.slice()), legCtx(hex)).filter(l => l.tEnd < t - 60), t); } catch (e) { hs = null; } }
-    naHs.set(hex, { at: now(), hs }); if (naHs.size > 500) naHs.delete(naHs.keys().next().value);
-    return hs;
-  }
   // (on the ground as the engine counts it - FR24 says so, or a fixed-wing aircraft under 40 kt: an airliner taxiing with
   // its transponder saying "airborne" - and flying: off the ground at flying speed)
   const naGnd = (p, heli) => !!p.gnd || (!heli && fin(p.gs) && p.gs < 40 && !(fin(p.alt) && p.alt > 12000));
   const naFlying = (p, cls) => !naGnd(p, cls === 'heli') && fin(p.gs) && p.gs >= (cls === 'heli' ? 20 : cls === 'piston' ? 45 : 60);
-  function naRouteOf(e) {
+  // (1.1.0) Where an N/A flight is going is the monitor's answer, as for any flight: its evidence - what FR24's feed showed
+  // of it here - sent, the answer taken when it is good enough for a board (on final for it, landed there, or 60% and more)
+  function naEvidenceOf(id, e) {
+    const f = e.f, trail = e.trail.slice(-400), pos = trail[trail.length - 1]; if (!pos) return null;
+    const hex = f.hex ? Number(f.hex).toString(16).padStart(6, '0') : '', fromAp = f.from ? airports.byIata.get(String(f.from).toUpperCase()) : null;
+    return { id, hex, kind: 'pub', ac: { hex, type: f.type || '', reg: f.reg || '', cs: f.cs || '' }, pos: ptOut(pos), trail: { full: true, pts: trail.map(ptOut) }, plan: fromAp ? { originId: fromAp.id, fr24: true } : null };
+  }
+  function naRouteOf(e, id) {
     const f = e.f, trail = e.trail.slice(), pos = trail[trail.length - 1]; if (!pos) return null;
     const hex = f.hex ? Number(f.hex).toString(16).padStart(6, '0') : '';
     const ac = { hex, type: f.type || '', reg: f.reg || '', cs: f.cs || '' }, cls = ENGINE.classify(ac), heli = cls === 'heli';
@@ -856,43 +901,32 @@
     // taxiing at Liverpool as RYR8SF was "Liverpool -> Liverpool, landed" on its arrivals)
     const fly = trail.filter(p => naFlying(p, cls)); if (fly.length < 2) return null;
     const i0 = trail.indexOf(fly[0]), startGnd = i0 > 0 && trail.slice(0, i0).some(p => naGnd(p, heli));
-    // (its take-off: the first report at flying speed after it was seen on the ground)
     const departedAt = startGnd ? fly[0].t : 0;
     const fromAp = f.from ? airports.byIata.get(String(f.from).toUpperCase()) : null;
-    const origin = fromAp ? { airport: fromAp, conf: 'fr24', departedAt } : null;
-    // (where it began - FR24's origin, else the field it was seen on the ground at - and back there only after a real flight)
+    // (where it began - FR24's origin, else the field it was seen on the ground at)
     const g0 = startGnd ? trail[i0 - 1] : null, home = fromAp || (g0 ? ((h => h && h.airport)(heli ? ENGINE.heliAirportAt(g0.lat, g0.lon) : ENGINE.placeAt(g0.lat, g0.lon, 7, 2)) || null) : null);
+    // (the monitor asked; its answer, once in)
+    if (id > 0) { calcExtra.set(id, () => { const x = naFeed.get(id) || e; return naEvidenceOf(id, x); }); if (calcExtra.size > 3000) calcExtra.delete(calcExtra.keys().next().value); if (centralUp()) calcWant(id); }
+    const c = id > 0 ? calcGot.get(id) : null, r = c && c.r && now() <= c.until ? c.r : null;
+    if (!r || !r.destId) return null;
+    const dest = apById(r.destId); if (!dest || dest.id >= 1e7) return null;
+    const sure = !!r.landed || r.destConf === 'confirmed' || r.destConf === 'filed' || r.destConf === 'landed' || (r.destP || 0) >= 60;
+    if (!sure) return null;
+    // (back where it began only after a real flight - circuits, a return an hour on - as the engine's rule has it)
     let pathKm = 0; for (let i = 1; i < fly.length; i++) pathKm += ENGINE.dist(fly[i - 1].lat, fly[i - 1].lon, fly[i].lat, fly[i].lon);
     const backOk = ap => !home || !ap || home.id !== ap.id || ENGINE.localFlew({ from: { id: ap.id }, to: { id: ap.id }, tOff: departedAt || fly[0].t, tOn: pos.t, maxAlt: Math.max(0, ...fly.map(p => fin(p.alt) ? p.alt : 0)), pathKm }, cls);
     // (an arrival comes in from further out: a take-off roll - FR24's ground flag flickering "airborne" at 110 kt, then
-    // "on the ground" - is no approach to, and no landing at, the field it is leaving)
+    // "on the ground" - is no landing at the field it is leaving)
     const cameFrom = ap => { const d0 = ENGINE.dist(pos.lat, pos.lon, ap.lat, ap.lon); return fly.some(p => ENGINE.dist(p.lat, p.lon, ap.lat, ap.lon) >= d0 + 3); };
-    if (naGnd(pos, heli)) {
-      // down: landed where it was going - just down from flying, and not back where it began without having flown
-      const prev = e.pub, here = heli ? ENGINE.heliAirportAt(pos.lat, pos.lon) : ENGINE.placeAt(pos.lat, pos.lon, 7, 2);
-      if (prev && here && here.airport.id === prev.destId && !prev.landed && pos.t - fly[fly.length - 1].t <= 900 && backOk(here.airport) && cameFrom(here.airport)) return Object.assign({}, prev, { landed: true, ata: pos.t, phase: 'landed' });
-      return null;
-    }
-    const hs = naHistStats(hex, pos.t) || ENGINE.histStats([], pos.t);
-    // (flying circuits - a light aircraft in the pattern of a field: that field, as for one opened)
-    const circ = /^(piston|fighter|heli)$/.test(cls) ? ENGINE.circuits(trail, pos, { heli }) : null;
-    if (circ && circ.airport.id < 1e7) return backOk(circ.airport) ? { originId: fromAp ? fromAp.id : circ.airport.id, originIata: apCode(fromAp || circ.airport), originCity: (fromAp || circ.airport).city, destId: circ.airport.id, destIata: apCode(circ.airport), destCity: circ.airport.city,
-      destConf: 'confirmed', destP: 100, eta: 0, atd: departedAt, std: 0, sta: 0, landed: false, phase: 'circuits', circuits: circ.laps } : null;
-    const r = ENGINE.predict({ surge: surgeNow(), ac, pos, trail, hs, now: pos.t, origin, wx: wxMap, closed: closedMap }); if (!r || !r.cands.length) return null;
-    const top = r.cands[0], elapsed = departedAt ? (pos.t - departedAt) / 60 : null;
-    const lfOk = !heli && !/^(piston|milheavy|fighter)$/.test(cls), rwyOk = a => !ENGINE.rwyImpossible(a, cls, ac.type);
-    const pathOk = ap => !!ap && r.cands.some(c => c.airport.id === ap.airport.id && c.p >= 0.02) && rwyOk(ap.airport) && !(home && home.id === ap.airport.id && elapsed != null && elapsed < 15) ? ap : null;
-    const appr = r.phase !== 'climb' ? (a => a && cameFrom(a.airport) ? a : null)(ENGINE.approachTo(pos, { heli, origin: home, elapsedMin: elapsed, rwyOk }) || (lfOk ? (lf => lf && lf.airport.id === top.airport.id ? lf : null)(ENGINE.longFinal(pos, trail, { origin: home, elapsedMin: elapsed, rwyOk })) : null) || pathOk(ENGINE.approachPath(pos, trail, cls))) : null;
-    const dest = appr ? appr.airport : top.airport, p = appr ? 1 : calibP(ENGINE.calibrated(top.p, cls));
-    if (!appr && p < 0.6) return null;
-    // (a field FR24 has no board for; back where it began - guessed, or without a real flight first)
-    if (dest.id >= 1e7 || (home && home.id === dest.id && (!appr || !backOk(dest)))) return null;
+    if (r.landed && !(cameFrom(dest) && backOk(dest))) return null;
+    // (back where it began without having flown somewhere first, or circuits there: not a flight for a board)
+    if (home && home.id === dest.id && !r.landed && !(r.circuits > 0 && backOk(dest))) return null;
     // (an airline's jet flying its number is not going back to the field it left, nor to one close by: a climb-out turning
     // over the field, or levelling off on a departure that points at the next airport - Ryanairs out of Manchester "to
     // Manchester" and "to Liverpool" on its boards)
     if (home && cls === 'airliner' && /^[A-Z]{3}\d/.test(String(f.cs || '').toUpperCase()) && ENGINE.dist(home.lat, home.lon, dest.lat, dest.lon) <= 80) return null;
-    return { originId: fromAp ? fromAp.id : 0, originIata: fromAp ? apCode(fromAp) : '', originCity: fromAp ? fromAp.city : '', destId: dest.id, destIata: apCode(dest), destCity: dest.city,
-      destConf: appr ? 'confirmed' : CONF_OF(p), destP: Math.round(p * 100), eta: estimateEta(pos, dest, cls) || 0, atd: departedAt, std: 0, sta: 0, landed: false, phase: r.phase || '' };
+    return { originId: fromAp ? fromAp.id : r.originId || 0, originIata: fromAp ? apCode(fromAp) : r.originIata || '', originCity: fromAp ? fromAp.city : r.originCity || '', destId: dest.id, destIata: apCode(dest), destCity: dest.city,
+      destConf: r.destConf, destP: r.destP || 0, eta: r.eta || 0, atd: r.atd || departedAt, std: 0, sta: 0, landed: !!r.landed, ata: r.ata || 0, phase: r.circuits > 0 && !r.landed ? 'circuits' : r.phase || '', circuits: r.circuits || 0 };
   }
   let naBusy = false;
   async function naTick() {
@@ -906,7 +940,7 @@
         e.routedAt = now();
         // (one opened in the panel has its full route, posted with it - left to that, never dropped from here)
         { const pr = pubRecs.get(id); if (pr && pr.route && pubRouted(id)) return; }
-        let r = null; try { r = naRouteOf(e); } catch (err) { log('na route', err); }
+        let r = null; try { r = naRouteOf(e, id); } catch (err) { log('na route', err); }
         if (r) { const f0 = e.f, hx0 = f0.hex ? Number(f0.hex).toString(16).padStart(6, '0') : ''; try { const sig = (r.atd || 0) + ':' + (r.landed ? r.ata : 0) + ':' + r.destId; if (boardNoted.get(id) !== sig && (r.atd || r.landed)) { boardNoted.set(id, sig); boardNoteFlight(id, { hex: hx0, reg: f0.reg || '', type: f0.type || '', cs: f0.cs || '' }, r); } } catch (err) { log('board note', err); } }
         if (r) { e.pub = r; const f = e.f; list.push({ id, rec: { cs: f.cs || '', reg: f.reg || '', type: f.type || '', hex: f.hex ? Number(f.hex).toString(16).padStart(6, '0') : '', cat: '', fcat: fr24Cat({ type: f.type }), mil: false, operatorId: operatorIdOf({}, f.cs) }, route: routeForPage(r), pos: { lat: f.lat, lon: f.lon, alt: f.alt, gnd: !!f.gnd, at: e.at } }); }
         else if (e.pub) { e.pub = null; drop.push(id); }
@@ -915,6 +949,8 @@
     } finally { naBusy = false; }
   }
   setInterval(() => { naTick().catch(e => log('na boards', e)); }, 20000);
+  let naSoonT = 0;
+  const naSoon = () => { if (!naSoonT) naSoonT = setTimeout(() => { naSoonT = 0; naTick().catch(e => log('na boards', e)); }, 50); };
   // ---- a flight FR24 lists elsewhere with no destination (its Most tracked widget), anywhere in the world -----------------
   // Asked for by the page; worked out the same way from FR24's own track of the flight, fetched in the background one at a
   // time (the page's FollowFlight, its first frame). The answer goes to the page as the boards' N/A flights' do; FR24's
@@ -944,7 +980,10 @@
     for (const p of ft.pts) { if (!fin(p.lat) || !fin(p.lon) || !fin(p.t)) continue; const last = trail[trail.length - 1]; if (!last || p.t - last.t >= 20) trail.push({ t: p.t, lat: p.lat, lon: p.lon, alt: p.alt, gs: p.gs, trk: p.trk, gnd: false }); }
     const pos = trail[trail.length - 1]; if (!pos || nowS() - pos.t > 15 * 60) return null;
     const f = { id, cs: w.cs, reg: '', type: w.type, hex: 0, from: w.from, lat: pos.lat, lon: pos.lon, alt: pos.alt, spd: pos.gs, trk: pos.trk, gnd: false };
-    const r = naRouteOf({ f, trail: trail.slice(-400), pub: null }); if (!r) return null;
+    const e = { f, trail: trail.slice(-400), pub: null, at: now(), routedAt: now() };
+    // (kept as a board's N/A flight is: the monitor's answer, when it comes, picked up by the boards' round)
+    if (!naFeed.has(id)) naFeed.set(id, e);
+    const r = naRouteOf(e, id); if (!r) return null;
     postToPage('naBoard', { list: [{ id, rec: { cs: w.cs, reg: '', type: w.type, hex: '', cat: '', fcat: fr24Cat({ type: w.type }), mil: false, operatorId: operatorIdOf({}, w.cs) }, route: routeForPage(r), pos: { lat: pos.lat, lon: pos.lon, alt: pos.alt, gnd: false, at: pos.t * 1000 } }] });
     return r;
   }

@@ -13,7 +13,10 @@ const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const { execFile } = require('child_process');
 const curlFetch = url => new Promise((res, rej) => execFile('curl', ['-s', '--compressed', '-A', UA, '-w', '\n%{http_code}', url], { maxBuffer: 64e6, encoding: 'buffer' }, (err, out) => { if (err) return rej(err); const s2 = out.toString('utf8'); const i = s2.lastIndexOf('\n'); res(new Response(s2.slice(0, i), { status: Number(s2.slice(i + 1)) || 0, headers: { 'content-type': 'application/json' } })); }));
+// (1.1.0: every route is worked out on the monitor - a monitor of the test's own, its central calculation: test/monfake.cjs)
+let fake = null;
 async function netFetch(url, init) {
+  if (fake && url.startsWith('https://mon.test/')) { const a = fake.answer(url, { data: init && init.body }); return new Response(a[1], { status: a[0] }); }
   // (FR24 and airplanes.live refuse Node's own HTTP client - its TLS handshake is not a browser's - and answer curl)
   if (/flightradar24\.com|globe\.airplanes\.live/.test(url)) return curlFetch(url);
   const headers = Object.assign({ 'User-Agent': UA, Accept: 'application/json, text/html;q=0.9, */*;q=0.8' }, (init && init.headers) || {});
@@ -34,10 +37,15 @@ let H = null; w.__tlTestHook = h => { H = h; };
 const check = (name, ok, extra) => console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${extra !== undefined ? '  ' + JSON.stringify(extra) : ''}`);
 const b = s => new Uint8Array(Buffer.from(s, 'base64'));
 (async () => {
+  fake = await require('./monfake.cjs').createFakeMonitor({ data: path.join(__dirname, '..', 'monitor', 'data') });
   w.eval(SRC);
   const L = w.__tweeksLadd;
   for (let i = 0; i < 60 && !L.engine.airports.length; i++) await sleep(500);
   check('airports loaded', L.engine.airports.length > 5000, L.engine.airports.length);
+  await L.store.kvReady; L.store.kvSet('monRemote', { url: 'https://mon.test', token: '' }); await L.monCheck(true).catch(() => {});
+  check('(the monitor answering, its central calculation on)', L.monUp(), L.calcWhy());
+  // (the route code the monitor runs, given what this browser has: the cases below that look at it on its own)
+  await require('./monfake.cjs').tablesInto(L.engine);
   // (FR24's schedule lookup would find this recorded flight - days old - already landed: the reasoning is what is tested)
   L.fr24.schedules.set('ZH847', { at: Date.now() + 864e5, rows: [] });
   const id = fx.id, st = { id };
@@ -89,7 +97,7 @@ const b = s => new Uint8Array(Buffer.from(s, 'base64'));
     const lp = pts[pts.length - 1];
     w.postMessage({ __tweeksLadd: 'pos', id: mid, lat: lp.lat, lon: lp.lon, trk: 172, alt: lp.alt, spd: 220, gnd: false, at: Date.now() }, '*');
     await sleep(300);
-    const rr = L.composeRoute(mid, '424c60');
+    const rr = L.composeRoute0(mid, '424c60');
     check('a new take-off under the same flight id: this leg only (from Barrow - not the earlier Farnborough -> Barrow)', !!rr && rr.originIata === 'BWF' && rr.destIata !== 'BWF', rr && { from: rr.originIata, note: rr.originNote, to: rr.destIata, p: rr.destP });
     L.live.delete(mid);
   }
@@ -104,7 +112,7 @@ const b = s => new Uint8Array(Buffer.from(s, 'base64'));
     const lp = pts[pts.length - 1];
     w.postMessage({ __tweeksLadd: 'pos', id: sid, lat: lp.lat, lon: lp.lon, trk: 235, alt: lp.alt, spd: lp.gs, gnd: false, at: Date.now() }, '*');
     await sleep(300);
-    const rr = L.composeRoute(sid, '080010');
+    const rr = L.composeRoute0(sid, '080010');
     check('first seen climbing out of an airfield FR24 does not list: named as the departure (Los Alamitos AAF, not Long Beach)', !!rr && (!rr.originId || rr.originId >= 1e7) && /Los Alamitos/i.test(rr.originCity || ''), rr && { from: rr.originIata, city: rr.originCity, note: rr.originNote, sites: L.sites.n });
     L.live.delete(sid);
   }
@@ -125,7 +133,7 @@ const b = s => new Uint8Array(Buffer.from(s, 'base64'));
     const lp = fr[fr.length - 1];
     w.postMessage({ __tweeksLadd: 'pos', id: tid, lat: lp.lat, lon: lp.lon, trk: 350, alt: lp.alt, spd: lp.gs, gnd: false, at: Date.now() }, '*');
     await sleep(300);
-    const rr = L.composeRoute(tid, '4bd273');
+    const rr = L.composeRoute0(tid, '4bd273');
     check('a new take-off after adsb.lol lost the aircraft landing: this leg from Misrata, not the earlier Paris one', !!rr && rr.originIata === 'MRA' && rr.departedAt > tN - 900, rr && { from: rr.originIata, note: rr.originNote, dep: rr.departedAt && new Date(rr.departedAt * 1000).toISOString().slice(11, 16), to: rr.destIata, p: rr.destP });
     L.live.delete(tid); L.todayCache.delete('4bd273');
   }
@@ -147,7 +155,7 @@ const b = s => new Uint8Array(Buffer.from(s, 'base64'));
     const lp = pts[pts.length - 1];
     w.postMessage({ __tweeksLadd: 'pos', id: tid, lat: lp.lat, lon: lp.lon, trk: lp.trk, alt: lp.alt, spd: lp.gs, gnd: false, at: Date.now() }, '*');
     await sleep(300);
-    const rr = L.composeRoute(tid, '4bd273');
+    const rr = L.composeRoute0(tid, '4bd273');
     const ok = !!rr && rr.originIata !== 'LBG' && (variant.includes('runway') ? rr.originIata === 'MRA' : true) && rr.departedAt > a0.t - 3600;
     check(`TC-TSS seen again after landing at Misrata out of coverage (${variant}): not "from Paris"`, ok && legs.length >= 2, rr && { legs: legs.map(l => l.how).join(','), from: rr.originIata, note: rr.originNote, dep: rr.departedAt && new Date((rr.departedAt - shift) * 1000).toISOString().slice(11, 16), to: rr.destIata, conf: rr.destConf });
     L.live.delete(tid); L.todayCache.delete('4bd273'); L.routeState.delete(tid);
@@ -292,8 +300,8 @@ const b = s => new Uint8Array(Buffer.from(s, 'base64'));
   // 22.10: the population tables unpack at start; METARs come in for the fields asked; the wind changes the ETA; every
   // reconstructed flight is learned with its take-off time, callsign, type and flow cells
   {
-    const ok = await L.loadT2(), T2 = L.engine.T2;
-    check('population tables unpacked (directional pairs, flow field, type performance)', ok === true && !!T2 && Object.keys(T2.od2 || {}).length > 1000 && Object.keys(T2.flow || {}).length > 1000 && Object.keys(T2.tperf || {}).length > 50, T2 && { od2: Object.keys(T2.od2 || {}).length, flow: Object.keys(T2.flow || {}).length, types: Object.keys(T2.tperf || {}).length });
+    const T2 = L.engine.T2;
+    check('population tables: the monitor\'s alone - none in the script (1.1.0); the monitor\'s own as it loads them (directional pairs, flow field, type performance)', typeof L.loadT2 === 'undefined' && !/ROUTE_T2_GZ|APPR_TABLE_GZ|ROUTE_TABLES/.test(SRC) && !!T2 && Object.keys(T2.od2 || {}).length > 1000 && Object.keys(T2.flow || {}).length > 1000 && Object.keys(T2.tperf || {}).length > 50, T2 && { od2: Object.keys(T2.od2 || {}).length, flow: Object.keys(T2.flow || {}).length, types: Object.keys(T2.tperf || {}).length });
     let got = false; L.wantWx(['EGLL', 'LFPG', 'KTEB'], () => { got = true; });
     for (let i = 0; i < 40 && !got; i++) await sleep(250);
     const e = L.wxMap.get('EGLL');

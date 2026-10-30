@@ -4,6 +4,39 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 
 1.0.0 is the first release. The versions before it are the betas, labelled B: B22.31.12 is version 22.31.12.
 
+## [1.1.0] - 2026-10-30
+
+### In short
+- Every route is now worked out on the shared monitor, so everyone sees exactly the same destination for a flight.
+- The script is much smaller and quicker to load, because it no longer carries the prediction tables.
+- A destination you confirm now shows as confirmed for everyone else too, and taking it back takes it back for everyone.
+- Airport boards open full straight away, with a week of flights either side of today, the same for everyone.
+- Flights FR24 shows without a destination get one on the boards and in Most tracked, worked out like blocked ones.
+- Aircraft of the same owner now help predict where each other is going.
+- The monitor now checks every prediction against where the flight really landed, to measure and improve accuracy.
+
+### Changed
+- **Every route is the monitor's.** The userscript no longer carries the route tables, the population tables or the arrival paths (the userscript 8.4 MB down to 1.7 MB, the extension 5.3 MB down to 0.8 MB, four data files down to one), and works nothing out itself. Every route any browser shows is central calculation's answer for that flight, so two browsers never disagree.
+  - The flight you open is asked for at once; the others on screen together, every 1.5 s.
+  - The answer is shown for ten minutes after it came at most, with the progress bar and time to go from where the aircraft is now.
+  - Without the monitor the panel says so ("the monitor isn't answering - routes are worked out there") instead of showing a guess.
+  - The browser no longer fetches the monitor's learning (`/learned`) or learns into an engine of its own. The flights it rebuilds still go to the monitor as training data.
+- **Central calculation on worker threads.** Each worker has its own engine, tables and route code, so the monitor's main loop stays free. A flight is always worked out by the same worker; one that dies is replaced. Every 5 s it works out every flight it has named, every flight a browser showed in the last ten minutes, and FR24's flights with no destination. `monitor.json` `centralWorkers` (`"auto"` by default).
+- **Board rules for FR24's flights without a destination** now take their destination from the monitor's answer and keep the same guards: no taxi or take-off roll read as a landing, no return to the field it left without a real flight first, circuits kept.
+
+### Added
+- **Confirmations shared through the monitor.** A destination you confirm goes with your browser's next report. The monitor puts it in its answer for every browser ("confirmed in another browser", 100%), checked against the flight as before, and works the flight out again at once. Taking it back sends a withdrawal. Routes worked out by browsers of an older version never take the place of the monitor's answer.
+- **Airport boards kept on the monitor.** FR24's own rows of every airport's arrivals and departures, seven days back and seven ahead, are kept per airport (`STORE/boards/`). Browsers send what they read from FR24 (`POST /boardrows`). The monitor reads FR24's airport schedule itself for every airport opened in the last day, paced, and leaves FR24 alone for three hours if it refuses. A board opens with all of it in one answer (`/board?rows=1`), then only what changed. The browser reads FR24's schedule itself only when the monitor's copy is over a quarter of an hour old.
+- **Movements per day from FR24's rows too.** The airport panel's daily movements are the larger of the ADS-B count and FR24's rows plus the flights FR24 hides, so an airport with little ADS-B coverage (Portimao) no longer shows nothing. Today is always listed.
+- **FR24's flights with no destination, worked out on the monitor.** The world scan asks FR24 for each flight's route and address too, stepping down to fewer fields if FR24 refuses them. Flights in the air with a callsign or registration, an address and no destination are followed and worked out every round.
+- **Fleets.** An owner's other aircraft (2 to 15 of them; trust companies and banks that only hold the registration left out) and the airports they used in the last 60 days are evidence for each one's destination, from the monitor's own logs.
+- **Live accuracy.** Every answer is noted (each five minutes and every change of destination) and scored once the flight is down, by its own landing or by the monitor's log. `/status` → `scores`: right per moment and per flight over the last week, by kind of aircraft and by time to go. Each finished flight is kept with its track and every answer (`STORE/scores/`) as training data.
+
+- **Aircraft types in the world log.** Each day of the world log built from now on keeps every aircraft's type, registration, adsb.lol flags and ADS-B category with its flights, so the population tables can be learned from every aircraft's flights once the year has filled in (a day built before stays as it is and reads as before).
+
+### Fixed
+- **"No monitor connected" and slow building of large airports' data.** The airport panel asks the monitor directly and retries once, whatever the browser's last check said, and the movements and boards come from the monitor's copy instead of being counted in the browser.
+
 ## [1.0.2] - 2026-10-29
 
 ### In short

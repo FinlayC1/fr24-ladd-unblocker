@@ -354,6 +354,12 @@ function createIdent(env) {
     const R = ids.get(id), F = flights.get(id); if (!R || R.hex !== String(hex || '').toLowerCase() || !r) return false;
     const o = r.o > 0 && E.byId(r.o) ? r.o : 0, da = r.d > 0 ? E.byId(r.d) : null, d = da ? r.d : 0;
     if (!o && !d) return false;
+    // (1.1.0) a destination confirmed in a browser, taken back there by its user: no longer confirmed for anyone
+    if (String(r.dc || '') === 'withdrawn') {
+      const w = R.crowd; if (!w || w.d !== d || w.dc !== 'confirmed') return false;
+      Object.assign(w, { d: 0, p: 0, dc: '', eta: 0, dt: 0, dOwn: 0, km: -1, kmAt: 0 }); if (!w.o) R.crowd = null;
+      R.chg = nowMs; stats.routeWithdrawn = (stats.routeWithdrawn || 0) + 1; return true;
+    }
     if (da && (away(F, da) || contradicted(R, F, da, r.eta > 1e9 ? r.eta : 0, nowMs, String(r.dc || '') === 'confirmed', r.atd > 1e9 ? r.atd : (R.crowd && R.crowd.atd) || 0))) { stats.routeRefused = (stats.routeRefused || 0) + 1; return false; }
     const conf = s => /^[a-z]{3,12}$/.test(String(s || '')) ? String(s) : '', nowS = Math.round(nowMs / 1000), mine = by ? 0 : 1, cur = R.crowd || null;
     const c = Object.assign({ o: 0, oc: '', atd: 0, ot: 0, oOwn: 0, d: 0, p: 0, dc: '', eta: 0, dt: 0, dOwn: 0, km: -1, kmAt: 0 }, cur);
@@ -411,7 +417,10 @@ function createIdent(env) {
     const rows = [], pos = [];
     for (const [id, R] of ids) {
       if (since && R.chg <= since) { if (R.pchg > since) pos.push([id, r4(R.lat), r4(R.lon), fin(R.alt) ? R.alt : null, R.gnd ? 1 : 0, R.ts || 0]); continue; }
-      const c = R.crowd && (R.crowd.o || R.crowd.d) ? R.crowd : null;
+      const c0 = R.crowd && (R.crowd.o || R.crowd.d) ? R.crowd : null;
+      // (1.1.0) a flight central calculation has worked out - its route the one every browser shows: a browser's own working
+      // out (one of an older version) gives way to it; only a destination confirmed in a browser stands, as in that answer
+      const c = c0 && R.central ? (c0.d && c0.dc === 'confirmed' ? Object.assign({}, c0, { o: 0, oc: '', atd: 0 }) : null) : c0;
       // (the part a browser's route leaves out - an origin only - this side's own)
       if (c) { rows.push([id, R.hex, R.reg, R.type, R.cs, R.flags, R.how, R.at, c.o || (R.origin ? R.origin.id : 0), c.o ? c.oc : R.origin ? R.origin.conf : '', c.d || (R.dest ? R.dest.id : 0), c.d ? c.p : R.dest ? Math.round(R.dest.p * 100) : 0, c.at, r4(R.lat), r4(R.lon), fin(R.alt) ? R.alt : null, R.gnd ? 1 : 0, R.ts || 0, c.d ? c.eta : (R.dest && R.dest.eta) || 0, (c.o && c.atd) || (R.origin && R.origin.t) || 0].concat(ownerCols(R.hex), [c.d && c.dc === 'confirmed' ? 2 : 1, c.d ? c.dc : '', c.o ? 1 : 0])); continue; }
       rows.push([id, R.hex, R.reg, R.type, R.cs, R.flags, R.how, R.at, R.origin ? R.origin.id : 0, R.origin ? R.origin.conf : '', R.dest ? R.dest.id : 0, R.dest ? Math.round(R.dest.p * 100) : 0, R.dest ? R.dest.at : 0,

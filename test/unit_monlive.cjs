@@ -185,13 +185,10 @@ const sameDayFlights = l => `${l.from ? l.from.code : '?'}-${l.to ? l.to.code : 
     const b2 = net.posts[0] && JSON.parse(net.posts[0].body);
     check('... the headers only once', !!b2 && !b2.hdr);
     L.live.delete(0x7a5a5a30); L.pending.delete(0x7a5a5a30); }
-  // ---- every blocked aircraft's completed flights, from the monitor, learned here --------------------------------------
+  // ---- every blocked aircraft's completed flights, learned on the monitor - (1.1.0) not in the browser ---------------------
   { const built = await M.learnedBuild(Date.parse('2026-10-14T12:00:00Z') / 1000);
-    net.asked.length = 0; await L.syncSrvLearn();
-    const kept = await L.store.getBlob('srvLearned');
-    check('the monitor\'s learning (M-ARNZ, 6 and 7 Oct): its 90-day snapshot fetched with the secret and kept for the next page load', !!built && built.flights >= 8 && !!kept && kept.ver === built.ver && Array.isArray(kept.ops) && kept.ops.length > 0 && kept.from === '2026-10-06' && kept.asOf === '2026-10-07' && learnAsked[learnAsked.length - 1] === '' && net.asked.some(a => /mon\.test\/learned/.test(a.url) && a.headers['X-Monitor-Token'] === 'tok'), { built: built && { ver: built.ver, flights: built.flights }, kept: kept && kept.ver, asked: learnAsked });
-    const n0 = L.learnedStore().length; await L.syncSrvLearn();
-    check('... next time asked with its version, nothing fetched again, nothing learned twice', learnAsked[learnAsked.length - 1] === built.ver && L.learnedStore().length === n0 && (await L.store.getBlob('srvLearned')).ver === built.ver, learnAsked); }
+    net.asked.length = 0; await sleep(50);
+    check('the monitor\'s learning (M-ARNZ, 6 and 7 Oct) built there; the browser fetches none of it (1.1.0: every route is worked out on the monitor)', !!built && built.flights >= 8 && built.from === '2026-10-06' && built.asOf === '2026-10-07' && typeof L.syncSrvLearn === 'undefined' && !net.asked.some(a => /mon\.test\/learned/.test(a.url || a)), { flights: built && built.flights, asked: learnAsked }); }
   // ---- the LADD tag: always on an aircraft known to be LADD-listed ---------------------------------------------------
   { const ID6 = 0x7a5a5a60;
     L.store.mergeHex('49d698', { ladd: true }); L.store.mergeHex('49d698', { reg: 'OK-VOS', ladd: false, pia: false });

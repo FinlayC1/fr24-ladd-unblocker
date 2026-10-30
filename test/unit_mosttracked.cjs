@@ -2,7 +2,8 @@
 // script part talking as in the browser):
 //   - FR24's Most tracked widget (Feed/TopFlights, and the JSON list): a flight shown "ADW - N/A" (AF1 out of Andrews)
 //     given the destination worked out here (GSP); FR24's own destinations left alone; one not worked out yet asked for
-//   - asked for: worked out from FR24's own track of the flight (fetched in the background) and handed to the page
+//   - asked for: FR24's own track of the flight (fetched in the background) sent to the monitor, worked out there (1.1.0:
+//     every route is the monitor's) and handed to the page as the answer comes
 //   - FR24's search: a route asked for ("LPL-EIS", "EGGP-TUPJ") lists the flights worked out on it - M-PORT, blocked -
 //     as live flights, with the callsign after (to its flight-number page); with FR24 answering nothing as well; FR24's
 //     own live row of a flight it has no destination for gets the one worked out here
@@ -22,7 +23,9 @@ const check = (name, ok, extra) => { if (!ok) fails++; console.log(`${ok ? 'PASS
 // route - or an error, when told), its Most tracked list as JSON
 const S = { searchFails: false };
 const AF1 = 0x3a1b2c3d, MPORT = 0x3a1b2c40, NEW = 0x3a1b2c41;
-function answer(url) {
+let fake = null;   // (1.1.0: the monitor - where every route is worked out: test/monfake.cjs)
+function answer(url, o) {
+  if (fake) { const a = fake.answer(url, o); if (a) return a; }
   if (/flightradar24\.com\/mobile\/airports\/format/.test(url)) return [200, AIRPORTS];
   if (/\/v1\/search\/web\/find\?/.test(url)) {
     if (S.searchFails) return [500, ''];
@@ -41,7 +44,7 @@ function makeWin() {
   win.fetch = input => { let u = typeof input === 'string' ? input : input.url; if (u.startsWith('/')) u = 'https://www.flightradar24.com' + u;
     if (/Feed\/TopFlights/.test(u) && S.top) return Promise.resolve(new Response(S.top.body, { status: 200, headers: { 'content-type': S.top.ct, 'content-length': String(S.top.body.length) } }));
     const [st, text] = answer(u); return Promise.resolve(new Response(text, { status: st })); };
-  win.GM_xmlhttpRequest = o => { const [st, text] = answer(o.url); setTimeout(() => o.onload && o.onload({ status: st, responseText: text, response: text }), 2); return { abort() {} }; };
+  win.GM_xmlhttpRequest = o => { const [st, text] = answer(o.url, o); setTimeout(() => o.onload && o.onload({ status: st, responseText: text, response: text }), 2); return { abort() {} }; };
   win.unsafeWindow = win; win.GM_notification = () => {};
   win.__posted = []; win.postMessage = data => { win.__posted.push(data); setTimeout(() => win.dispatchEvent(new win.MessageEvent('message', { data, origin: 'https://www.flightradar24.com', source: win })), 0); };
   win.console.debug = () => {}; win.console.log = () => {};
@@ -52,8 +55,10 @@ function makeWin() {
 const cat = parts => { const n = parts.reduce((s, p) => s + p.length, 0), o = new Uint8Array(n); let k = 0; for (const p of parts) { o.set(p, k); k += p.length; } return o; };
 
 (async () => {
+  fake = await require('./monfake.cjs').createFakeMonitor({ data: DATA });
   const w = makeWin(), L = w.__tweeksLadd;
   await until(() => L && L.engine.airports.length > 5000, 60000);
+  await L.store.kvReady; L.store.kvSet('monRemote', { url: 'https://mon.test', token: '' }); await L.monCheck(true).catch(() => {});
   const H = await until(() => w.__H, 5000), B = w.__tweeksLaddBridge, E = L.engine;
   check('(the page part and the engine are up)', !!H && !!B && E.airports.length > 5000);
   const dec = new TextDecoder(), str = (fs, n) => { const f = fs.find(x => x.fn === n); return f ? dec.decode(f.val) : ''; };
@@ -99,9 +104,9 @@ const cat = parts => { const n = parts.reduce((s, p) => s + p.length, 0), o = ne
     check('asked for one whose track is not here: FR24\'s track of it asked for in the background', w.__posted.some(m => m.__tweeksLadd === 'needTrail' && m.id === ID) && L.naWanted.has(ID));
     // (the page's answer, as its background FollowFlight gives it)
     w.postMessage({ __tweeksLadd: 'trail', id: ID, first: pts[0], n: pts.length, maxAlt: 2000, pts, at: Date.now(), bg: true });
-    await until(() => B.naRoutes.has(ID), 3000);
+    await until(() => B.naRoutes.has(ID), 10000);
     const r = B.naRoutes.get(ID);
-    check('... its track in: worked out (to Liverpool, from Blackpool) and handed to the page', !!r && r.destIata === 'LPL' && !L.naWanted.has(ID), r && [r.originIata, r.destIata, r.destConf, r.destP]);
+    check('... its track in: sent to the monitor, worked out there (to Liverpool, from Blackpool) and handed to the page as its answer comes', fake.posts.some(b => (b.flights || []).some(x => x.id === ID && x.trail.pts.length > 20)) && !!r && r.destIata === 'LPL' && !L.naWanted.has(ID), r && [r.originIata, r.destIata, r.destConf, r.destP]);
     const o2 = H.parse(H.patchTopFlights(entry(ID, 'GDEMO', 'GDEMO', 'BLK', 'Blackpool', '', '', 'C172'))).map(f => H.parse(f.val));
     check('... and Most tracked shows it: BLK - LPL', str(o2[0], 9) === 'LPL', str(o2[0], 9));
   }

@@ -14,14 +14,14 @@ npm run build          # writes dist/fr24-ladd-unblocker.user.js
 2. `src/page.js` (the page-world interceptor)
 3. `src/engine.js` (the route engine)
 4. `src/registry.js` (the aircraft registers)
-5. The learned tables in `src/*.json`, packed as gzip + base64
+5. The aircraft-age table, packed as gzip + base64 (1.1.0: the route tables in `src/*.json` are the monitor's alone - it reads them from its checkout - and are not in the build)
 6. Every `src/main/NN-*.js` module, in file-name order
 
 The modules share one scope; they are not separate ES modules.
 
 The same build also writes the **browser extension**:
 
-- `dist/extension/` holds `manifest.json` (its hosts are the header's `@connect` list), `page.js` (in FR24's own world), `data-<n>.js` (the learned tables, in parts), `content.js` (`extension/shim.js` plus the whole script, which reads the tables from the data files), `background.js` (the service worker making requests) and the icons from `extension/icons/` (rendered from `docs/assets/icon.svg`).
+- `dist/extension/` holds `manifest.json` (its hosts are the header's `@connect` list), `page.js` (in FR24's own world), `data-<n>.js` (the packed data, in parts - one since 1.1.0), `content.js` (`extension/shim.js` plus the whole script, which reads the tables from the data files), `background.js` (the service worker making requests) and the icons from `extension/icons/` (rendered from `docs/assets/icon.svg`).
 - `dist/fr24-ladd-unblocker-extension.zip` is the same, zipped. The build is reproducible: the same sources give the same zip, byte for byte.
 - `dist/fr24-ladd-unblocker-firefox.zip` is the same files with Firefox's manifest: `background.js` as a background script (Firefox has no extension service workers), the add-on id `ladd-unblocker@finlayc1.github.io` (fixed for good once on addons.mozilla.org) and what it sends, as addons.mozilla.org asks. Mozilla's check reads no script of 5 MB or more, which is why the tables are in parts; the build stops if any file reaches 4 MB. To run that check yourself: `npx addons-linter dist/fr24-ladd-unblocker-firefox.zip` (0 errors expected; the warnings are the script's `innerHTML` and Firefox lacking `runtime.requestUpdateCheck`).
 
@@ -57,7 +57,13 @@ npm run test:all       # also the live end-to-end runs (normal and Tampermonkey-
 | `unit_panel` | Built userscript on an FR24-shaped airport panel: *Latest events* and the coverage plea removed before they are drawn, movements per day, runway usage, runways in full, frequencies | – |
 | `unit_playback` | Built userscript on FR24's playback (M-ARNZ, 9 Oct): the heatmap fetched with the first frame beside a monitor that never answers, names before the track arrives, the file kept on disk, Mach and temperature from the track, the panel's padlocked country, serial number and age | – |
 | `unit_waiting` | Monitor: dead reckoning across the holes in a track (`tracks.estimate`), the flights not named yet tried again until one aircraft fits (`waiting.cjs`: playback and live, one aircraft one flight), browsers' routes and learned flights taken, checked and handed out | – |
-| `unit_shared` | Two built userscripts with the real monitor between them: a route worked out in one shown in the other (map and panel, confirmed destinations, never sent back), learned flights in every engine counted once, a playback flight asked about again and named once the monitor has worked it out | – |
+| `unit_shared` | Two built userscripts with the real monitor between them (1.1.0): the monitor's answer the same in both, nothing sent back; a destination confirmed in one in the other's answer, a guess of an older version not over it, taken back everywhere; TC-AKB's checks on the monitor; learned flights to the monitor, none fetched; playback names worked out later | – |
+| `unit_central` | Central calculation: the route code's free names given on the monitor, memory and start, what browsers send, the same answer from what a browser sends as from everything it has, two browsers one answer, the user's confirmation, the monitor off; no tables in the built script | – |
+| `unit_centralpool` | Central calculation on worker threads: the same answers as on the main thread, a flight always on one worker, a worker that dies replaced | – |
+| `unit_noroute` | The world scan asking FR24 for routes and addresses (and stepping down when refused); FR24's flights with no destination followed and given to central calculation | – |
+| `unit_monboards` / `unit_boardsync` | Airport boards on the monitor (rows kept, merged, served with `since`, FR24's schedule read by the monitor, paced and paused) and a built userscript's board filled from it at once, its own FR24 rows sent back | – |
+| `unit_scores` | Live accuracy: answers noted and scored at landing or from the log, written as training data, read back after a restart, old days gzipped | – |
+| `unit_fleet` | Fleets: an owner's other aircraft and their airports of 60 days, trustees and lessors left out | – |
 | `unit_extension` | The built extension in a real Chromium: service worker, both worlds, requests through the worker | – (needs Playwright and Chromium; skipped without them) |
 | `unit_native` | The built userscript's LADD Unblock window in a real Chromium, frame by frame, on a Vue 3 page made like FR24's map (`fixtures/fr24mock.html`) in seven layouts: opens in FR24's Widgets window, one bar item open, closes with flights and other options, Bookmarks switched off, the airport panel's empty bar never drawn | – (needs Playwright, Chromium and Vue 3's `vue.global.js` as `VUE_PATH`; skipped without them) |
 | `unit_pbnative` | Playback buttons in a real Chromium on the Vue 3 mock (`?pb=1`): the bottom bar's left to FR24, a blocked flight's (panel, board card, search result, middle click) opening its track on airplanes.live in a new tab | – (needs Playwright, Chromium and `VUE_PATH`; skipped without them) |

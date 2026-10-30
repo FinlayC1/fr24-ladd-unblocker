@@ -224,7 +224,9 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       const st = routeState.get(rec.id);
       const route = (st && st.route) || rec.route;
       const nLog = route && route.legCount || 0, basis = route && (route.destIata || route.originIata) && !route.landed ? `${isConfirmed(route) ? 'confirmed' : 'worked out'} from its track, ${nLog ? `its own flight log (${nLog} earlier flight${nLog === 1 ? '' : 's'}${route.base ? ', based at ' + route.base : ''})` : 'no earlier flights of its own on record'}${popTxt()} and public ADS-B` : '';
-      const routeHtml = route ? routeCells(route, '', basis) : (st && st.working ? gridHtml([cellHtml('Destination' + tagHtml('Predicted', 'pred'), '<span class="tl-spin"></span> <span class="tl-muted">working out the route…</span>', '', true)]) : '');
+      // (1.1.0: none yet - the monitor working it out, or why there is none: every route is worked out there)
+      const routeHtml = route ? routeCells(route, '', basis) : !centralUp() ? gridHtml([cellHtml('Destination' + tagHtml('Predicted', 'pred'), `<span class="tl-muted">${esc(calcWhy())}</span>`, '', true)])
+        : (st && st.working) || currentPos(rec.id) ? gridHtml([cellHtml('Destination' + tagHtml('Predicted', 'pred'), '<span class="tl-spin"></span> <span class="tl-muted">working out the route on the monitor…</span>', '', true)]) : '';
       // (no data-source credit: the hex, then whether it was just verified and the owner's town)
       const tail = [rec.verifiedAt && now() - rec.verifiedAt < 120000 ? 'verified' : '', hx.ownerCity ? esc(placeName(ENGINE.placeShort(hx.ownerCity))) : ''].filter(Boolean).join(' · ');
       const idCell = cellHtml('Identified from public ADS-B' + tagHtml(badge, 'ladd'), `${esc(hexU || '?')}${tail ? ` <span class="tl-muted">· ${tail}</span>` : ''}`, '', true);
@@ -392,7 +394,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       // (still being worked out - or why it could not be: shown, never a silent blank)
       el.dataset.state = 'pending';
       const pos = currentPos(pub.id);
-      const why = pub.routeErr ? 'could not work it out: ' + pub.routeErr : !pub.routeStarted ? 'waiting for FR24\'s flight data' : !pos ? 'waiting for its position' : now() - (pub.routeAt || 0) > 8000 ? 'no airport fits its track yet' : 'working out the ' + what;
+      const why = pub.routeErr ? 'could not work it out: ' + pub.routeErr : !pub.routeStarted ? 'waiting for FR24\'s flight data' : !pos ? 'waiting for its position' : !centralUp() ? calcWhy() : now() - (pub.routeAt || 0) > 8000 ? 'no airport fits its track yet' : 'working out the ' + what + ' on the monitor';
       const diag = !pos ? `live positions: ${posStats.n ? posStats.n + ' received, none for this flight id' : 'none received yet'}` : '';
       html = rowHtml('pin', gridHtml([cellHtml((what === 'departure airport' ? 'Departure' : 'Destination') + tagHtml('Predicted', 'pred'), `${/^working/.test(why) ? '<span class="tl-spin"></span> ' : ''}<span class="tl-muted" title="${esc(diag)}">${esc(why)}…</span>`, '', true)]) + linksHtml(pub) + foot);
     }

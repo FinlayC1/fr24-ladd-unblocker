@@ -33,6 +33,8 @@ function makeWin() {
 (async () => {
   const w = makeWin(), L = w.__tweeksLadd;
   await until(() => L && L.engine.airports.length > 5000, 60000);
+  // (1.1.0: the route code the monitor runs, with the tables as the monitor has them - here on what this browser has)
+  await require('./monfake.cjs').tablesInto(L.engine);
   const E = L.engine, ank = E.byIcao('LTAD');
   check('the engine as the browser runs it, with Ankara (Etimesgut) at 2,600 ft', !!ank && ank.alt > 2500, ank && { code: ank.code, alt: ank.alt });
   const hex = '4bf295';
@@ -62,7 +64,7 @@ function makeWin() {
     L.todayCache.set(hex, { at: Date.now(), pts: f.lol, lastPt: f.lol[f.lol.length - 1], legs: E.legsFromPoints(f.lol, { cls: 'jet', type: 'CL60' }), sums: [] });
     await sleep(20);
     const pos = Object.assign({}, f.lol[f.lol.length - 1], { t: Math.floor(Date.now() / 1000) });
-    const trail = L.trailFor(id, hex, pos), r = L.composeRoute(id, hex, { pos });
+    const trail = L.trailFor(id, hex, pos), r = L.composeRoute0(id, hex, { pos });
     return { trail, r, o: r && { from: r.originIata || '', note: r.originNote, conf: r.originConf } };
   }
 

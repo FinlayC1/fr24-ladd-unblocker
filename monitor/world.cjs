@@ -7,7 +7,9 @@
 //
 // A day's file: [4 bytes: header length][header JSON: { v, day, n, nb, legs, at }][nb records of 12 bytes: uint32 first
 // address of the block, uint32 where the block begins (after the records), uint32 its length][the blocks]: each block 32
-// aircraft by address, gzipped lines "<hex>\t<JSON of its flights>\n". One aircraft's day: a binary search of the records
+// aircraft by address, gzipped lines "<hex>\t<JSON of its flights>\n" - (1.1.0) "...\t<JSON [type, registration, adsb.lol's
+// dbFlags, ADS-B category]>" after them in a day built from 1.1.0 on: what kind of aircraft flew them, for learning the
+// population tables from every aircraft's flights. One aircraft's day: a binary search of the records
 // (a record at a time, from disk - never the whole file in memory), one block read (~10 kB) and unzipped.
 // ~17 MB a day; 366 days ~6 GB.
 const fs = require('fs');
@@ -69,8 +71,9 @@ function createWorld(dir) {
     let fd = fs.openSync(tmpRows, 'w'), pos = 0, legs = 0;
     const close = () => { if (fd != null) { try { fs.closeSync(fd); } catch (e) { /* closed */ } fd = null; } };
     return {
-      add(hex, sums) {
-        const b = Buffer.from(hex + '\t' + JSON.stringify((sums || []).map(encodeLeg)) + '\n', 'utf8');
+      add(hex, sums, ac) {
+        const info = Array.isArray(ac) ? '\t' + JSON.stringify([String(ac[0] || '').slice(0, 8), String(ac[1] || '').slice(0, 12), ac[2] | 0, String(ac[3] || '').slice(0, 4)]) : '';
+        const b = Buffer.from(hex + '\t' + JSON.stringify((sums || []).map(encodeLeg)) + info + '\n', 'utf8');
         fs.writeSync(fd, b, 0, b.length, pos); list.push([parseInt(hex, 16), pos, b.length]); pos += b.length; legs += (sums || []).length;
       },
       get n() { return list.length; },
@@ -119,11 +122,12 @@ function createWorld(dir) {
       const txt = zlib.gunzipSync(z).toString('utf8'), key = String(hex).toLowerCase() + '\t';
       const i = txt.startsWith(key) ? 0 : txt.indexOf('\n' + key) + 1;
       if (i <= 0 && !txt.startsWith(key)) return null;
-      const line = txt.slice(i + key.length, txt.indexOf('\n', i));
-      return JSON.parse(line).map(a => decodeLeg(a, day.replace(/-/g, '/')));
+      const line = txt.slice(i + key.length, txt.indexOf('\n', i)), tab = line.indexOf('\t');
+      return JSON.parse(tab < 0 ? line : line.slice(0, tab)).map(a => decodeLeg(a, day.replace(/-/g, '/')));
     } finally { fs.closeSync(fd); stats.ms += Date.now() - t0; }
   }
-  // (1.0.2) Every aircraft's flights of a day, block by block: cb(hex, legs) for each; breath() awaited between blocks
+  // (1.0.2) Every aircraft's flights of a day, block by block: cb(hex, legs, ac) for each - ac: { type, reg, flags, cat }
+  // in a day built from 1.1.0 on, else null; breath() awaited between blocks
   async function each(day, cb, breath) {
     const h = days.get(day); if (!h) return 0;
     let fd; try { fd = fs.openSync(fileOf(day), 'r'); } catch (e) { days.delete(day); stats.days = days.size; return 0; }
@@ -135,7 +139,8 @@ function createWorld(dir) {
         fs.readSync(fd, z, 0, len, base + h.nb * REC + off);
         for (const line of zlib.gunzipSync(z).toString('utf8').split('\n')) {
           const i = line.indexOf('\t'); if (i < 0) continue;
-          cb(line.slice(0, i), JSON.parse(line.slice(i + 1)).map(a => decodeLeg(a, day.replace(/-/g, '/')))); n++;
+          const j = line.indexOf('\t', i + 1), x = j < 0 ? null : JSON.parse(line.slice(j + 1));
+          cb(line.slice(0, i), JSON.parse(line.slice(i + 1, j < 0 ? undefined : j)).map(a => decodeLeg(a, day.replace(/-/g, '/'))), Array.isArray(x) ? { type: x[0], reg: x[1], flags: x[2], cat: x[3] } : null); n++;
         }
         if (breath) await breath();
       }

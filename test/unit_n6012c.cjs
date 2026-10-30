@@ -259,12 +259,13 @@ const frTrail = how => how === 'ground' ? F.thin : how === 'low' ? F.thin.filter
     L.pubRecs.set(ID, { id: ID, hex: HEX, reg: 'N6012C', type: 'GA6C', cs: '', public: true, ladd: true });
     const tr = frTrail(o.fr);
     if (tr) w.dispatchEvent(new w.MessageEvent('message', { source: w, data: { __tweeksLadd: 'trail', id: ID, first: tr[0], n: tr.length, maxAlt: 43000, pts: tr } }));
-    await L.loadT2();
+    // (1.1.0: the route code the monitor runs, with the tables as the monitor has them - here on what this browser has)
+    await require('./monfake.cjs').tablesInto(L.engine);
     if (o.hist !== false) await L.loadHistory(HEX, 3, null, { front: true }).catch(() => {});
     await L.loadToday(HEX, 0, { priority: true }).catch(() => {});
     await sleep(50);
     const pos = { t: T_NOW, lat: 49.35, lon: 18.167, alt: 43000, trk: 304, gs: 498, gnd: false, vr: 0 };
-    return { w, L, pos, route: () => L.composeRoute(ID, HEX, { pos }), trail: () => L.trailFor(ID, HEX, pos) };
+    return { w, L, pos, route: () => L.composeRoute0(ID, HEX, { pos }), trail: () => L.trailFor(ID, HEX, pos) };
   }
   // another browser's route for it, in the monitor's row: [id, hex, reg, type, cs, flags, how, named at, origin, its word, destination, chance, at, lat, lon, alt, ground, FR24 time, ETA, departed, owner, operator, operator id, ICAO, whose, word, origin's]
   const crowdRow = (L, o) => { const ap = c => L.engine.byIcao(c).id; return [ID, HEX, 'N6012C', 'GA6C', '', 1, 'list', T_NOW - 3600, ap('VVNB'), 'ground', ap(o.dest || 'EDDB'), o.p || 60, T_NOW - 60, 49.35, 18.167, 43000, 0, T_NOW, T_NOW + 7200, T1, '', '', 0, '', o.by || 1, 'likely', 1]; };
@@ -285,7 +286,7 @@ const frTrail = how => how === 'ground' ? F.thin : how === 'low' ? F.thin.filter
     s.L.srvIds.rows.set(ID, crowdRow(s.L, {}));
     const c = s.route();
     check('another browser\'s Berlin at 60% over this browser\'s own 5%: its own stands - it has the aircraft\'s log and saw the take-off (it did not before)', c.destIata === r.destIata && c.destP === r.destP && c.destReason !== 'worked out by another browser' && !c.crowdD && c.originIata === 'GYD' && !c.crowdO, show(c));
-    check('... and sends it to the monitor - Baku, Baku\'s take-off time, its own destination and chance', (() => { s.L.live.set(ID, { id: ID, hex: HEX, reg: 'N6012C', type: 'GA6C', ladd: true }); s.L.routesOut.delete(ID); s.L.noteRouteOut(ID, c); const row = s.L.routesOut.get(ID); s.L.live.delete(ID); return !!row && row[2] === s.L.engine.byIcao('UBBB').id && row[4] === c.destId && row[5] === c.destP; })(), s.L.routesOut.get(ID));
+    check('... and sends none of it to the monitor (1.1.0: the monitor works the flight out itself, from what this browser sends of it)', (() => { s.L.live.set(ID, { id: ID, hex: HEX, reg: 'N6012C', type: 'GA6C', ladd: true }); s.L.routesOut.delete(ID); s.L.noteRouteOut(ID, c); const row = s.L.routesOut.get(ID); s.L.live.delete(ID); return !row; })());
     s.L.srvIds.rows.set(ID, crowdRow(s.L, { dest: 'EDDB', p: 100, by: 2 }));
     const k = s.route();
     check('a destination confirmed in another browser still stands over its own guess', k.destIata === 'BER' && k.destConf === 'confirmed' && k.destReason === 'confirmed in another browser' && k.crowdD, show(k));

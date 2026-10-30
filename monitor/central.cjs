@@ -11,9 +11,9 @@
 // still adds itself.
 //
 // Memory: the population tables and the arrival paths are some 110 MB more. They are loaded only when the machine has
-// room (CFG.centralFreeMb free after start, 300 MB by default); otherwise there is no central calculation and every
-// browser works routes out itself, as before. CPU: CFG.centralMsPerMin of work a minute at most (12 s); past it, the last
-// answer is given, or none - the browser's own then stands.
+// room (CFG.centralFreeMb free after start, 300 MB by default); otherwise there is no central calculation, and (1.1.0: the
+// userscript has no tables) no routes - /status says why. CPU, without workers: CFG.centralMsPerMin of work a minute at
+// most (12 s); past it, the last answer is given, or none yet.
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
@@ -22,7 +22,7 @@ const zlib = require('zlib');
 const fin = v => typeof v === 'number' && isFinite(v);
 // (a browser's object kept only when it is small: weather, closures, what was seen of a hole in coverage)
 const small = (v, n) => { try { const j = JSON.stringify(v); return j && j.length <= (n || 2000) ? JSON.parse(j) : null; } catch (e) { return null; } };
-const BLOCKS = [['03-data.js', 'ROUTE-SITES'], ['03-data.js', 'ROUTE-PLACE'], ['04-routes.js', 'ROUTE-NOTE'], ['04-routes.js', 'ROUTE-DL'], ['04-routes.js', 'ROUTE-CORE']];
+const BLOCKS = [['02-resolver.js', 'ROUTE-CROWD'], ['03-data.js', 'ROUTE-SITES'], ['03-data.js', 'ROUTE-PLACE'], ['04-routes.js', 'ROUTE-NOTE'], ['04-routes.js', 'ROUTE-DL'], ['04-routes.js', 'ROUTE-CORE']];
 function blockOf(dir, file, mark) {
   const s = fs.readFileSync(path.join(dir, file), 'utf8'), a = s.indexOf('// ==' + mark + '=='), b = s.indexOf('// ==/' + mark + '==');
   if (a < 0 || b < a) throw new Error(file + ': ' + mark + ' marks missing');
@@ -124,7 +124,7 @@ function createCalc(o) {
       datalinkRoutes: reg => (o.datalink ? o.datalink(reg) : cur && cur.dl) || null,
       acOf: rec => (rec && rec.ac) || cleanAc(null, rec && rec.hex), airportsReady: () => E.airports.length > 1000,
       apById: id => (id && E.byId(id)) || null, apCode: a => a ? (a.iata || a.icao || String(a.id)) : '',
-      calibP: p => p, wxMap, closedMap, srvIds: { rows: new Map() }, crowdOf: () => null, crowdContradicted: () => true,
+      calibP: p => p, wxMap, closedMap, srvIds: { rows: new Map() },
       currentPos: () => null, trailFor: () => [], fleetVisits: () => (cur && cur.fleet) || null, knownLegs: () => (cur && cur.hist) || [],
       live: new Map(), pubRecs: new Map(), planState: new Map(), routeState: new Map(), todayCache: new Map(),
       schedPlan: () => null, restedAfter: () => !!(cur && cur.rested), surgeNow: () => (o.surge ? o.surge() : surgeMap),
@@ -158,7 +158,8 @@ function createCalc(o) {
   }
   const get = name => vm.runInContext(name, ctx);
   // A flight's route from what is known of it. job: { id, hex, kind, rec, pos, trail, meta: { cut, gapFrom, gapInfo }, st:
-  // { maxAlt, landedAt }, plan, lastLeg, hist, fleet: [[airport id, n]], rested, dl } -> { r, origin, maxAlt } - origin:
+  // { maxAlt, landedAt }, plan, lastLeg, hist, fleet: [[airport id, n]], rested, dl, confirmed: { d, p, eta, at } } ->
+  // { r, origin, maxAlt } - origin:
   // the departure the route code remembers with the flight (rememberOrigin), handed back to be sent with the next job
   function run(job) {
     if (!ctx) throw new Error('not loaded');
@@ -169,6 +170,9 @@ function createCalc(o) {
     let maxAlt = (job.st && job.st.maxAlt) || 0; for (const p of job.trail) if ((p.alt || 0) > maxAlt) maxAlt = p.alt;
     routeState.set(job.id, { maxAlt, landedAt: (job.st && job.st.landedAt) || 0 }); if (job.plan) planState.set(job.id, { plan: job.plan });
     if (job.lastLeg) todayCache.set(job.hex, { sums: [job.lastLeg] });
+    // (a destination confirmed in a browser: as the browsers have it in the monitor's table of named flights - a row of it)
+    const rows = get('srvIds').rows; rows.clear();
+    if (job.confirmed && fin(job.confirmed.d)) { const c = job.confirmed, row = []; row[1] = job.hex; row[10] = c.d; row[11] = fin(c.p) ? c.p : 100; row[12] = c.at || 0; row[18] = c.eta || 0; row[24] = 2; row[25] = 'confirmed'; row[26] = 0; rows.set(job.id, row); }
     const trail = job.trail.map(p => Object.assign({}, p)), m = job.meta || {}; trail.cut = !!m.cut; trail.gapFrom = m.gapFrom || null; trail.gapInfo = m.gapInfo || null;
     cur = { hist: job.hist || [], fleet: job.fleet ? new Map(job.fleet) : null, rested: !!job.rested, dl: job.dl || null };
     try {
@@ -233,10 +237,11 @@ function createCentral(env) {
     o = o || {};
     if (fin(o.free)) S.freeMb = Math.round(o.free / 1048576);
     if (o.off) { S.why = 'turned off (monitor.json "central": false)'; return S; }
-    if (fin(o.free) && o.free < (o.needMb || 300) * 1048576) { S.why = `${Math.round(o.free / 1048576)} MB free at start, ${o.needMb || 300} MB wanted - every browser works routes out itself`; return S; }
+    if (fin(o.free) && o.free < (o.needMb || 300) * 1048576) { S.why = `${Math.round(o.free / 1048576)} MB free at start, ${o.needMb || 300} MB wanted - no routes until it has room`; return S; }
     try {
       const st = await calc.load(o);
       S.mb = st.mb; if (st.sites) S.sites = st.sites; if (st.sitesWhy) S.sitesWhy = st.sitesWhy; if (o.learnedOps) S.learned = st.learned;
+      S.popDays = (E.T2 && E.T2.days) || 0;   // (the days the population tables were learned from: said in the browsers' panels)
       const nw = Math.max(0, Math.floor(+o.workers || 0));
       if (nw) {
         const p = createPool(nw, { engine: o.engineFile, dataDir: o.dataDir, datasetFile: o.datasetFile, srcDir: o.srcDir, mainDir: o.mainDir, sitesCsv: S.sites ? o.sitesCsv : '', learnedOps: o.learnedOps || null }, env.log);
@@ -257,15 +262,18 @@ function createCentral(env) {
   // gapInfo }, plan, st: { maxAlt, landedAt }, lastLeg, rested, fleet: [[airport id, n]], today: [legs], wx: { ICAO: entry },
   // closed: { ICAO: [...] } } -> 'full' when the track it added to was not the one held here (send it whole), else ''
   function take(x) {
-    const id = +x.id, hex = String(x.hex || '').toLowerCase(); if (!(id > 0) || !/^[0-9a-f]{6}$/.test(hex)) return '';
+    // (1.1.0: an ordinary flight may come without its address - FR24's N/A flights of its Most tracked list: worked out
+    // without the aircraft's history; an address that comes later is kept, not a new flight)
+    const id = +x.id, hex = String(x.hex || '').toLowerCase(); if (!(id > 0) || !(/^[0-9a-f]{6}$/.test(hex) || (!hex && x.kind !== 'live'))) return '';
     let F = flights.get(id);
-    if (!F || F.hex !== hex) {
+    if (F && !F.hex && hex) { F.hex = hex; F.rec.hex = hex; histCache.delete(hex); }
+    if (!F || (hex && F.hex !== hex)) {
       if (!F && flights.size >= C.maxFlights) return '';
       F = { id, hex, rec: { id, hex }, kind: 'pub', pos: null, trail: [], meta: {}, plan: null, st: { maxAlt: 0, landedAt: 0 }, lastLeg: null, rested: false, fleet: null, today: [], at: 0, route: null, routeAt: 0, dirty: true, origin: null };
       flights.set(id, F);
     }
     S.evidence++; F.at = now(); F.kind = x.kind === 'live' ? 'live' : 'pub';
-    const ac = cleanAc(x.ac, hex); F.rec.ac = ac; for (const k of ['reg', 'type', 'cs', 'cat', 'mil', 'ladd', 'pia']) F.rec[k] = ac[k];
+    const ac = cleanAc(x.ac, F.hex); F.rec.ac = ac; for (const k of ['reg', 'type', 'cs', 'cat', 'mil', 'ladd', 'pia']) F.rec[k] = ac[k];
     for (const k of ['operatorName', 'owner', 'airline']) if (x.rec && typeof x.rec[k] === 'string') F.rec[k] = x.rec[k].slice(0, 60);
     const p = cleanPt(x.pos); if (p && (!F.pos || p.t >= F.pos.t)) { F.pos = p; F.dirty = true; }
     let need = '';
@@ -310,6 +318,7 @@ function createCentral(env) {
   // The aircraft's history: the monitor's logs of it (its days, the world log's, its live log), the flights a browser saw
   // today, joined - as the userscript's knownLegs gives them. Kept a quarter of an hour
   function histOf(F) {
+    if (!F.hex) return [];
     const c = histCache.get(F.hex); if (c && now() - c.at < C.histMin * 60000) return c.legs;
     let legs = [];
     try { legs = (env.logOf ? env.logOf(F.hex) : []) || []; } catch (e) { legs = []; }
@@ -323,28 +332,34 @@ function createCentral(env) {
   const busy = () => { const t = now(); spent = spent.filter(x => t - x[0] < 60000); return spent.reduce((n, x) => n + x[1], 0) >= C.msPerMin; };
   function jobOf(F) {
     return { id: F.id, hex: F.hex, kind: F.kind, rec: F.rec, pos: F.pos, trail: F.trail, meta: F.meta, st: F.st, plan: F.plan, lastLeg: F.lastLeg, hist: histOf(F),
-      fleet: F.fleet ? [...F.fleet] : null, rested: F.rested, origin: F.origin, dl: env.datalink ? env.datalink(F.rec.reg) || null : null };
+      // (1.1.0: the fleet's habits the monitor's own - its owners, its logs - so the answer does not hang on which browser sent
+      // the flight; a browser's where the monitor knows no fleet of it)
+      fleet: (() => { const m = env.fleetOf ? env.fleetOf(F.hex) : null; return m ? [...m] : F.fleet ? [...F.fleet] : null; })(), rested: F.rested, origin: F.origin, dl: env.datalink ? env.datalink(F.rec.reg) || null : null,
+      confirmed: env.confirmedOf && F.hex ? env.confirmedOf(F.id, F.hex) : null };
   }
-  function done(F, out, ms) {
-    S.ms += ms; S.msMax = Math.max(S.msMax, ms); F.routeAt = now(); F.dirty = false; F.computing = false;
+  // (t0: when the job was taken - a mark to work it out again set since stays for the next round)
+  function done(F, out, ms, t0) {
+    S.ms += ms; S.msMax = Math.max(S.msMax, ms); F.routeAt = now(); F.dirty = false; F.computing = false; if (!(F.soon > (t0 || 0))) F.soon = 0;
     if (!out || out.err) { S.failed++; S.lastErr = String((out && out.err) || 'no answer').slice(0, 160); return null; }
     S.computed++; F.route = out.r; F.origin = out.origin; if (fin(out.maxAlt)) F.st.maxAlt = Math.max(F.st.maxAlt, out.maxAlt);
+    // (1.1.0: every answer noted - its score once the flight is down: scores.cjs)
+    if (env.onAnswer && F.route) { try { env.onAnswer(F, F.route); } catch (e) { S.lastErr = 'onAnswer: ' + String(e && e.message || e).slice(0, 120); } }
     return F.route;
   }
   // On the main thread, now (no workers): the answer
   function compute(F) {
     if (!calc.ctx || !F.pos) return null;
-    const t0 = Date.now(); let out;
+    const t0 = Date.now(), at = now(); let out;
     try { out = calc.run(jobOf(F)); } catch (e) { out = { err: String(e && e.message || e) }; }
     const ms = Date.now() - t0; spent.push([now(), ms]);
-    return done(F, out, ms);
+    return done(F, out, ms, at);
   }
   // On the flight's worker: when it is in
   function computeAsync(F) {
     if (!F.pos) return Promise.resolve(null);
     if (!pool) return Promise.resolve(compute(F));
     if (F.computing) return F.computing;
-    const p = pool.run(jobOf(F)).then(m => done(F, m && m.err ? m : m, (m && m.ms) || 0), e => done(F, { err: String(e && e.message || e) }, 0));
+    const at = now(), p = pool.run(jobOf(F)).then(m => done(F, m, (m && m.ms) || 0, at), e => done(F, { err: String(e && e.message || e) }, 0, at));
     F.computing = p;
     return p;
   }
@@ -356,7 +371,10 @@ function createCentral(env) {
     return F;
   }
   // (worked out again when there is more to go on and its last answer is over `every` seconds old)
-  const due = F => !!F && !!F.pos && !F.computing && (!F.routeAt || (F.dirty && now() - F.routeAt >= C.every * 1000));
+  const due = F => !!F && !!F.pos && !F.computing && (!F.routeAt || F.soon || (F.dirty && now() - F.routeAt >= C.every * 1000));
+  // (what the monitor knows of a flight besides its track has changed - a destination confirmed in a browser: worked out
+  // again the next time it is asked for, whenever it last was)
+  function again(id) { const F = flights.get(+id); if (!F) return false; F.soon = now() + 1; return true; }
   // A flight's answer: worked out again when due - here within the minute's allowance, or on its worker (in a moment) -
   // the last one otherwise. null: none.
   function routeOf(id) {
@@ -391,7 +409,7 @@ function createCentral(env) {
     S.flights = flights.size;
   }
   function close() { if (pool) pool.close(); pool = null; S.workers = 0; }
-  return { start, take, compute, computeAsync, routeOf, answer, prune, close, self, due, flights, stats: S, overBudget: () => pool ? pool.busy() >= S.workers * C.perWorker : busy() || !!(env.busy && env.busy()),
+  return { start, take, compute, computeAsync, routeOf, answer, again, prune, close, self, due, flights, stats: S, overBudget: () => pool ? pool.busy() >= S.workers * C.perWorker : busy() || !!(env.busy && env.busy()),
     get ctx() { return calc.ctx; }, get pool() { return pool; }, wxMap, closedMap, histOf, surgeChanged, learnedOps };
 }
 

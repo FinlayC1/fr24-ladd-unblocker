@@ -8,7 +8,7 @@
 
 <br><br>
 
-<a href="CHANGELOG.md"><img alt="Version 1.0.2" src="https://img.shields.io/badge/version-1.0.2-1f6feb?style=flat&labelColor=23272e"></a>
+<a href="CHANGELOG.md"><img alt="Version 1.1.0" src="https://img.shields.io/badge/version-1.1.0-1f6feb?style=flat&labelColor=23272e"></a>
 <a href="PRIVACY.md#counting-installs"><img alt="Users" src="https://img.shields.io/endpoint?url=https%3A%2F%2F143-47-224-210.sslip.io%2Fbadge&style=flat&labelColor=23272e"></a>
 <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/actions/workflows/tests.yml"><img alt="Tests" src="https://github.com/FinlayC1/fr24-ladd-unblocker/actions/workflows/tests.yml/badge.svg"></a>
 <a href="LICENSE"><img alt="Licence: personal use" src="https://img.shields.io/badge/licence-personal%20use-1f6feb?style=flat&labelColor=23272e"></a>
@@ -48,8 +48,8 @@ Also:
   <img src="docs/assets/how-it-works-dark.svg" alt="Diagram: flightradar24.com in your browser tab exchanges data with the extension or userscript (a page interceptor and an engine). The extension exchanges reports, names and logs with the shared monitor. Public ADS-B networks (adsb.lol, adsb.fi, airplanes.live, OpenSky) feed both. The monitor also reads FR24's whole map every 2 minutes." width="100%">
 </picture>
 
-- **The monitor** is a small always-on server; every copy uses the shared one by default. It follows the worldwide LADD, military and PIA lists, reads FR24's whole map every two minutes to name every flight it shows without a callsign, logs every blocked aircraft's flights, and keeps the latest public ADS-B report of every aircraft it hears. It also keeps a world log: every aircraft's flights of every day of the past year, from adsb.lol's daily archive, kept for good and added to each day, so any aircraft's log page fills at once. With room for it, it also works out every route the browsers show, once, with the userscript's own code, so every browser shows the same answer.
-- **The extension** runs inside the FR24 tab. It takes the monitor's names the moment FR24 opens, works out destinations for what is on screen, and writes everything into FR24's own data before FR24 draws it. If the monitor is unreachable, it identifies flights on its own.
+- **The monitor** is a small always-on server; every copy uses the shared one by default. It follows the worldwide LADD, military and PIA lists, reads FR24's whole map every two minutes to name every flight it shows without a callsign, works out every route (the same answer for everyone), logs every blocked aircraft's flights, and keeps the latest public ADS-B report of every aircraft it hears. It also keeps a world log: every aircraft's flights of every day of the past year, from adsb.lol's daily archive, kept for good and added to each day, so any aircraft's log page fills at once. With room for it, it also works out every route the browsers show, once, with the userscript's own code, so every browser shows the same answer.
+- **The extension** runs inside the FR24 tab. It takes the monitor's names the moment FR24 opens, sends what it sees of the flights on screen and shows the monitor's route for each, and writes everything into FR24's own data before FR24 draws it. If the monitor is unreachable, it identifies flights on its own.
 - **The two share the work.** The view is polled from the monitor and from public ADS-B in turn, and what each browser fetches is shared, so no one hits the networks' rate limits.
 
 <details>
@@ -210,7 +210,7 @@ Test conventions, fixtures and the release checklist: [docs/development.md](docs
 │   ├── engine.js            route engine (shared by the browser and the monitor)
 │   ├── registry.js          aircraft registers (shared by the browser and the monitor)
 │   ├── main/NN-*.js         modules: core, resolver, data, routes, UI, boards, boot
-│   └── *.json               learned tables (packed into the build)
+│   └── *.json               learned tables (loaded by the monitor; not in the browser build since 1.1.0)
 ├── extension/               the extension's own parts: request shim, service worker, icons
 ├── monitor/
 │   ├── monitor.cjs          the monitor service

@@ -256,7 +256,9 @@ function makeWin() {
     // (the day's index made at the monitor: read next time, from the archive)
     MONH.arc = (hex, day) => hex === HX3 && day === dk(10) ? [200, file(10)] : NONE;
     asked.length = 0; const h11b = await L.loadHistory(HX3, n, null, { front: true });
-    check('... once the monitor has its index: that day read from the archive too, nothing else asked again', h11b.days[dd(10)] === 'l' && (h11b.legs || []).some(l => l.day === dd(10)) && asked.filter(a => a[1] === 'atrace').length === 1 && !/not read yet/.test(L.logGaps(HX3)), { mark: h11b.days[dd(10)], asked });
+    // (yesterday, in the first six hours of today: read again whatever its mark - its files may not be complete yet)
+    const early = Date.now() < Date.parse(dk(1) + 'T00:00:00Z') + 30 * 3600e3, again = asked.filter(a => !(early && (a[3] === dk(1) || a[1] === dd(1))));
+    check('... once the monitor has its index: that day read from the archive too, nothing else asked again', h11b.days[dd(10)] === 'l' && (h11b.legs || []).some(l => l.day === dd(10)) && again.filter(a => a[1] === 'atrace').length === 1 && !/not read yet/.test(L.logGaps(HX3)), { mark: h11b.days[dd(10)], asked, early });
     // (1.0.1: a day adsb.lol never published - 6 May, its outage: the monitor says so; the log says it as what it is, no
     // verification page to act on, nothing left "not read")
     { const HX4 = 'c0a1b6'; L.store.mergeHex(HX4, { reg: 'G-ORDP', type: 'FA7X' });

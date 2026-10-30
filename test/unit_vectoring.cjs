@@ -1,4 +1,5 @@
-// Vectored for an airport (the BUILT userscript in jsdom, its own engine and learned tables): N99GY, a Gulfstream IV-SP
+// Vectored for an airport (the BUILT userscript in jsdom, its engine with the monitor's tables - 1.1.0: every route is worked
+// out on the monitor, with this same code): N99GY, a Gulfstream IV-SP
 // from Wilmington, NC to Dublin on 14 Oct 2026, taken round the east of Dublin for its runway 28. Its arrival is
 // rebuilt from the user's screenshot (the map calibrated on Dublin Airport, Skerries and Amlwch), the Atlantic part on the
 // great circle. The panel showed "also possible: Anglesey" over the Irish Sea: an airport the engine gave a hundredth of a
@@ -39,7 +40,8 @@ function makeWin() {
   const w = makeWin(), L = w.__tweeksLadd;
   await until(() => L && L.engine.airports.length > 5000, 60000);
   L.engine.setRunways(RWY); L.engine.setRunwayLengths(RWL);
-  const t2 = await L.loadT2().catch(() => false), ap = await Promise.resolve(L.loadApprTable()).catch(() => false);
+  // (1.1.0: the tables are the monitor's - the route code it runs is the script's own, tested here with them)
+  await require('./monfake.cjs').tablesInto(L.engine); const t2 = !!L.engine.T2, ap = true;
   const E = L.engine, ilm = E.byIcao('KILM'), dub = E.byIcao('EIDW'), vly = E.byIcao('EGOV');
   check('the engine as the browser runs it: airports, the population tables, the arrival paths', E.airports.length > 5000 && !!t2 && !!ilm && !!dub && !!vly, { t2: !!t2, appr: !!ap });
 
