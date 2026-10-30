@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Flightradar24 LADD / N-A Unblocker (feed-level)
 // @namespace    tweeks.io
-// @version      1.1.0
+// @version      1.1.1
 // @description  Identifies every LADD / N/A / blocked military aircraft on Flightradar24 from public ADS-B, and injects callsign, registration, operator, age, country, MSN, squawk, vertical speed, GPS altitude, airspeeds, wind, photos, a reasoned origin/destination with a wind-corrected ETA (also for ordinary flights FR24 shows as N/A - military, private, GA, helicopters, with private landing sites; learned from 63 days of every aircraft worldwide, with live weather and closures), airport-board entries and a rebuilt 7-month flight log straight into FR24's own data - so it all renders like normal FR24 traffic.
 // @author       Finlay Clarke
 // @updateURL    https://raw.githubusercontent.com/FinlayC1/fr24-ladd-unblocker/main/dist/fr24-ladd-unblocker.user.js
@@ -91,7 +91,7 @@
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "1.1.0";
+    var BRIDGE_V = "1.1.1";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed
@@ -5588,7 +5588,7 @@
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '1.1.0';
+  const VERSION = '1.1.1';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
@@ -7921,7 +7921,7 @@
   function publicIdentity(hex, reg, opts) {
     hex = String(hex || '').toLowerCase(); if (!/^[0-9a-f]{6}$/.test(hex)) return Promise.resolve(null);
     const bg = !!(opts && opts.bg);
-    const hx = store.getHex(hex) || {};
+    let hx = store.getHex(hex) || {};
     // (an owner known only as "Private" where a register names it - the UK's, the Isle of Man's, the FAA's - is asked
     // for once more, whatever the age of the rest)
     // (asked again a day later when it came to nothing - a register that did not answer then, a first ask before the
@@ -7930,11 +7930,23 @@
     const ownerDue = regDue && !shownOwner(hx, hx.cs) && now() - (hx.ownerAskedAt || 0) > 864e5;
     // (and a register that did not answer last time - its serial number and build year with it - asked again in 5 minutes)
     const msnDue = regDue && !hx.msn && !!hx.ownerFailAt;
-    if (hx.pubAt && now() - hx.pubAt < 30 * 864e5 && (bg || hx.msn || hx.pubFull) && !ownerDue && !msnDue) return Promise.resolve(hx);
+    // (1.1.1: and the monitor not asked about it lately - it has every aircraft of the world's databases and registers)
+    const monDue = monUp() && now() - (hx.monOwnAt || 0) > 6 * 3600e3 && !(hx.msn && hx.year > 1900 && shownOwner(hx, hx.cs));
+    if (hx.pubAt && now() - hx.pubAt < 30 * 864e5 && (bg || hx.msn || hx.pubFull) && !ownerDue && !msnDue && !monDue) return Promise.resolve(hx);
     if (pubJobs.has(hex)) return pubJobs.get(hex);
     const job = (async () => {
       const seed = seedFromArea(hex);
       if (Object.keys(seed).length) store.mergeHex(hex, Object.assign({}, seed, hx));   // instant part first
+      // (1.1.1) the monitor next - every aircraft in the world's databases and registers, merged there: its serial number,
+      // age and owner in FR24's frame of it at once, before any register is asked here - an aircraft on screen before it is
+      // even opened (many in one request)
+      if (monDue) {
+        const mr = await monOwner(hex).catch(() => null), t = Object.assign({ hex }, store.getHex(hex) || hx), o = { monOwnAt: now() };
+        if (mr && await applyMonOwner(t, mr)) for (const k of ['reg', 'type', 'desc', 'owner', 'ownerCity', 'msn', 'year', 'country', 'countryId', 'ownerAskedAt', 'faaAt']) if (t[k] && t[k] !== hx[k]) o[k] = t[k];
+        hx = store.mergeHex(hex, o) || hx; if (Object.keys(o).length > 1) pushPubIds([hex]);
+        // (all of it known now, a register's answer among it: no register asked again here for a month)
+        if (!bg && hx.msn && hx.year > 1900 && shownOwner(hx, hx.cs) && !ownerDue) { const m = store.mergeHex(hex, { pubAt: now(), pubFull: true }); return m || hx; }
+      }
       const r = { hex, reg: reg || hx.reg || seed.reg || '', faaAt: ownerDue ? 0 : hx.faaAt || 0 };
       // the serial number of a non-US airframe is only on JetPhotos: asked in parallel, for the aircraft opened
       const jpJob = !bg && r.reg && !/^N\d/i.test(r.reg) && !hx.msn ? fetchJetphotos(r.reg).catch(() => null) : Promise.resolve(null);
@@ -8280,7 +8292,8 @@
     let changed = false;
     // (the monitor first: an aircraft it - or any browser - already looked up is not asked about again here)
     { const due = () => (!shownOwner(rec, rec.cs) && /^(G-|M-|HB-|N\d)/i.test(rec.reg || '') && now() - (rec.ownerAskedAt || 0) > 864e5) || ((!rec.reg || !rec.type || !rec.countryId || (/^N\d/.test(rec.reg || '') && !rec.faaAt)) && now() - (rec.idAt || 0) > 3 * 864e5) || (rec.reg && !rec.operatorId && !rec.fr24At);
-      if (monUp() && due() && now() - (rec.monOwnAt || 0) > 6 * 3600e3) {
+      // (1.1.1: and its serial number or age not known here - the monitor has every aircraft in the world's databases)
+      if (monUp() && (due() || !rec.msn || !(rec.year > 1900)) && now() - (rec.monOwnAt || 0) > 6 * 3600e3) {
         rec.monOwnAt = now();
         const r = await monOwner(rec.hex);
         if (r && await applyMonOwner(rec, r)) changed = true;
@@ -9436,16 +9449,6 @@
     const k = (1 - want) / Math.max(1e-9, 1 - c.p);
     return cands.map((x, j) => Object.assign({}, x, { p: j === i ? want : x.p * k })).sort((a, b) => b.p - a.p);
   }
-  // (1.1.0) A flight's route is the monitor's: worked out there, with the same tables for every browser, from what all of
-  // them send and the monitor's own logs. Nothing is worked out here (the tables are not in the script); this browser adds
-  // only what is its own - its user's confirmation, the progress bar from where the aircraft is now. None yet: null.
-  // (opts.quick: asked by the round of every flight identified - boards, labels, search - not for a panel: refreshed on its
-  // own schedule there)
-  function composeRoute(id, hex, opts) {
-    const r = centralOf(id, hex);
-    if (r && opts && opts.quick) r.quick = true;
-    return r;
-  }
   function composeRoute0(id, hex, opts) {
     const rec0 = live.get(id) || pubRecs.get(id) || null, rec = rec0 || {};
     if (hex && bootHold.has(hex) && !(opts && opts.pos)) return null;
@@ -9708,8 +9711,17 @@
         }
       }
     }
-    // (the candidates the user can confirm from - the likeliest first)
-    r.cands = cands.slice(0, 12).map(c => [c.airport.id, Math.round(c.p * 100)]);
+    // (the candidates the user can confirm from - the likeliest first - at the odds the panel shows: the destination's as
+    // shown, the others' as "also possible" has them, the rest sharing what the shown odds leave as those do - never the
+    // engine's own figures beside the shown ones: ISL 28% in the panel was ISL 38% in the list)
+    { const shown = new Map((r.alternatives || []).filter(a => a && a.iata).map(a => [a.iata, a.p]));
+      const raw0 = r.destId ? (cands.find(c => c.airport.id === r.destId) || { p: 0 }).p : 0;
+      const k = r.destP > 0 && r.destP < 100 && raw0 < 0.999 ? Math.min(3, Math.max(0, (1 - r.destP / 100) / (1 - raw0))) : 1;
+      const cap = r.destP > 0 ? Math.max(1, r.destP - 1) : 99;
+      r.cands = cands.slice(0, 12).map(c => {
+        const code = apCode(c.airport);
+        return [c.airport.id, c.airport.id === r.destId && r.destP > 0 ? r.destP : shown.has(code) ? shown.get(code) : Math.min(cap, Math.round(c.p * k * 100))];
+      }).sort((a, b) => (b[0] === r.destId) - (a[0] === r.destId) || b[1] - a[1]); }
     // A destination the user confirmed ("confirm": heard on the radio, seen on final, known): it stands, at 100%
     const uc = userDestOf(id, hex, r.departedAt);
     if (uc && !planDest) {
@@ -9754,6 +9766,23 @@
     return r;
   }
   // ==/ROUTE-CORE==
+  // (1.1.0) A flight's route is the monitor's: worked out there, with the same tables for every browser, from what all of
+  // them send and the monitor's own logs. Nothing is worked out here (the tables are not in the script); this browser adds
+  // only what is its own - its user's confirmation, the progress bar from where the aircraft is now. None yet: null.
+  // (opts.quick: asked by the round of every flight identified - boards, labels, search - not for a panel: refreshed on its
+  // own schedule there)
+  // (1.1.1) No answer of central calculation yet - the monitor busy, or just asked: the route the monitor's table of names
+  // has for it (the same for every browser), with its progress bar and time to go from where the aircraft is now - not a
+  // panel with "N/A" for the arrival and no progress bar until the answer comes (BOS -> LPI, a LADD jet mid-Atlantic)
+  function composeRoute(id, hex, opts) {
+    let r = centralOf(id, hex);
+    if (!r && id > 0 && hex) {
+      const row = srvIds.rows.get(id), t = row && String(row[1] || '').toLowerCase() === hex ? srvRoute(row) : null;
+      if (t && (t.destId || t.originId)) r = localView(Object.assign({}, t, { computedAt: now() }), id, hex, currentPos(id));
+    }
+    if (r && opts && opts.quick) r.quick = true;
+    return r;
+  }
   // ---- (1.0.1) central calculation: the monitor works each flight's route out once, the same for every browser ----------
   // Every flight shown here is sent to it as this browser sees it - its track so far (whole once, then what is new), FR24's
   // plan, the flights of the day, the weather and closures at the airports in question - and the route it answers with is
@@ -9785,6 +9814,8 @@
     }
     const destAp = apById(out.destId) || (out.destSite && fin(out.destSite.lat) ? out.destSite : null);
     if (pos && destAp && !pos.gnd) {
+      // (no time of arrival with it, or one gone by: from where the aircraft is now - the arrival FR24's panel shows)
+      if (!out.landed && !(out.eta > nowS() - 300)) out.eta = estimateEta(pos, destAp, ENGINE.classify(acOf(live.get(id) || pubRecs.get(id) || {})));
       const stage = out.phase === 'descent' ? 4 : out.phase === 'climb' && (pos.alt || 0) < 15000 ? 2 : 3;
       out.progress = buildProgress(pos, apById(out.originId) || (out.originSite && fin(out.originSite.lat) ? out.originSite : null), destAp, out.departedAt, out.eta, stage);
     }
@@ -9852,7 +9883,8 @@
     if (!flights.length && !ask.length) return;
     calcBusy = true;
     try {
-      const j = await monPost('/calc', { v: 1, flights, ids: ask });
+      // (sel: the flight opened here - worked out at once on the monitor, whatever else it has in hand)
+      const j = await monPost('/calc', { v: 1, flights, ids: ask, sel: sel > 0 && ids.includes(sel) ? sel : undefined });
       if (j && j.on) {
         for (const [id, e] of sent) calcSent.set(id, { t0: e.t0, lastT: e.lastT, at: now(), full: false });
         for (const id of Array.isArray(j.full) ? j.full : []) { const s = calcSent.get(+id); if (s) s.full = true; }
@@ -10677,13 +10709,8 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // the route in cells: the destination (predicted / confirmed / landed / flight plan) first, then the departure, then
   // what else it could be. what = 'departure airport' when FR24 has the destination and only the departure is ours.
   // the weather at the destination now (its METAR, when asked for): category and wind, as the strip shows it
-  const wxTxt = id => { const a = id ? apById(id) : null, w = a && a.icao ? wxMap.get(a.icao.toUpperCase()) : null; if (!w) return ''; const wind = fin(w.ws) ? (w.ws < 3 ? 'calm' : (fin(w.wd) ? String(Math.round(w.wd / 10) * 10).padStart(3, '0') + '°' : 'variable') + ' ' + Math.round(w.ws) + (fin(w.gust) ? 'G' + Math.round(w.gust) : '') + ' kt') : ''; return [w.cat, wind].filter(Boolean).join(', ') + ' there now'; };
-  // (an ETA more than five minutes gone, the aircraft not down: not one - a route kept from before, not shown as if it
-  // were still the plan)
-  const etaTxt = route => route.eta > 0 && route.eta >= nowS() - 300 ? 'ETA ' + hhmmZ(route.eta) : '';
-  // (the why - ETA, reasons, the weather there, how it was worked out - is the destination's tooltip, not more lines in
-  // the panel: `tip` is added to it)
-  function routeCells(route, what, tip) {
+  // (1.1.1: no tooltip on the destination - FR24's own panel has the ETA, and the reasons are not shown on hover)
+  function routeCells(route, what) {
     if (!route) return '';
     if (route.phase === 'parked' && !route.destIata) {
       const arr = route.arrivedFrom ? `arrived from ${esc(route.arrivedFrom)} at ${esc(hhmmZ(route.arrivedAt))}` : '';
@@ -10691,14 +10718,12 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     }
     const conf = isConfirmed(route);
     const oCell = route.originIata ? cellHtml(what === 'departure airport' ? 'Departure' + tagHtml('Predicted', 'pred') : 'Departure', apHtml(route.originIata, route.originCity), esc((route.originNote || 'from the track') + (route.departedAt > 0 ? ', ' + hhmmZ(route.departedAt) : ''))) : cellHtml('Departure', '<span class="tl-muted">unknown</span>', esc(route.originNote || ''));
-    let dLabel, dVal, dSub = '', why = [];
+    let dLabel, dVal, dSub = '';
     if (!route.destIata) { dLabel = 'Destination' + tagHtml('Predicted', 'pred'); dVal = '<span class="tl-muted">not known yet</span>'; }
     else if (route.landed) { dLabel = 'Landed at' + tagHtml('Confirmed', 'conf'); dVal = apHtml(route.destIata, route.destCity); dSub = route.ata ? 'landed ' + esc(hhmmZ(route.ata)) : ''; }
-    else if (conf) { dLabel = 'Destination' + tagHtml('Confirmed', 'conf'); dVal = apHtml(route.destIata, route.destCity); why = [etaTxt(route), 'confirmed: ' + (route.destReason || 'on final approach'), wxTxt(route.destId)]; }
-    else if (route.destConf === 'filed') { dLabel = 'Destination (flight plan)'; dVal = apHtml(route.destIata, route.destCity); why = [etaTxt(route), route.destReason]; }
-    else { dLabel = 'Destination' + tagHtml('Predicted', 'pred'); dVal = apHtml(route.destIata, route.destCity) + pBadge(route.destP); why = [etaTxt(route), route.destReason, wxTxt(route.destId)]; }
-    const tipTxt = why.concat([tip]).filter(Boolean).join(' · ');
-    if (tipTxt) dVal = `<span title="${esc(tipTxt)}">${dVal}</span>`;
+    else if (conf) { dLabel = 'Destination' + tagHtml('Confirmed', 'conf'); dVal = apHtml(route.destIata, route.destCity); }
+    else if (route.destConf === 'filed') { dLabel = 'Destination (flight plan)'; dVal = apHtml(route.destIata, route.destCity); }
+    else { dLabel = 'Destination' + tagHtml('Predicted', 'pred'); dVal = apHtml(route.destIata, route.destCity) + pBadge(route.destP); }
     const dCell = cellHtml(dLabel, dVal, dSub, true);
     const alts = !route.landed && !conf && route.destConf !== 'filed' && route.alternatives && route.alternatives.length ? cellHtml('Also possible', route.alternatives.map(a => `<b>${esc(a.iata)}</b>${pBadge(a.p)}`).join(' &nbsp;')) : '';
     return gridHtml([dCell, oCell, alts]);
@@ -10713,9 +10738,8 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       const badge = hx.ladd ? 'LADD' : hx.pia ? 'PIA' : hx.mil ? 'MIL' : 'ADS-B';
       const st = routeState.get(rec.id);
       const route = (st && st.route) || rec.route;
-      const nLog = route && route.legCount || 0, basis = route && (route.destIata || route.originIata) && !route.landed ? `${isConfirmed(route) ? 'confirmed' : 'worked out'} from its track, ${nLog ? `its own flight log (${nLog} earlier flight${nLog === 1 ? '' : 's'}${route.base ? ', based at ' + route.base : ''})` : 'no earlier flights of its own on record'}${popTxt()} and public ADS-B` : '';
       // (1.1.0: none yet - the monitor working it out, or why there is none: every route is worked out there)
-      const routeHtml = route ? routeCells(route, '', basis) : !centralUp() ? gridHtml([cellHtml('Destination' + tagHtml('Predicted', 'pred'), `<span class="tl-muted">${esc(calcWhy())}</span>`, '', true)])
+      const routeHtml = route ? routeCells(route, '') : !centralUp() ? gridHtml([cellHtml('Destination' + tagHtml('Predicted', 'pred'), `<span class="tl-muted">${esc(calcWhy())}</span>`, '', true)])
         : (st && st.working) || currentPos(rec.id) ? gridHtml([cellHtml('Destination' + tagHtml('Predicted', 'pred'), '<span class="tl-spin"></span> <span class="tl-muted">working out the route on the monitor…</span>', '', true)]) : '';
       // (no data-source credit: the hex, then whether it was just verified and the owner's town)
       const tail = [rec.verifiedAt && now() - rec.verifiedAt < 120000 ? 'verified' : '', hx.ownerCity ? esc(placeName(ENGINE.placeShort(hx.ownerCity))) : ''].filter(Boolean).join(' · ');
@@ -10870,16 +10894,11 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     const st = routeState.get(pub.id), route = (st && st.route) || pub.route;
     const s = schedOf(pub.id), what = s && s.d && !s.o ? 'departure airport' : 'destination';
     const el = strip(panel);
-    const sch = schedOf(pub.id), diag = `stream ${msgCount.follow || 0}/${msgCount.sched || 0}/${msgCount.pos || 0} · ${sch ? 'fr24 ' + (sch.o ? 'o' : '-') + (sch.d ? 'd' : '-') : pub.naDest ? 'panel N/A' : '?'}`;
-    const fromSchedule = !!(route && route.destConf === 'filed' && /FR24's own schedule/.test(route.destReason || ''));
-    // (the same engine as for a blocked aircraft, with the aircraft's own log: how much of it there was is said)
-    const nLog = route && route.legCount || 0, logTxt = nLog ? `its own flight log (${nLog} earlier flight${nLog === 1 ? '' : 's'}${route.base ? ', based at ' + esc(route.base) : ''})` : 'no earlier flights of its own on record';
-    const how = fromSchedule ? `FR24's panel has no airports for this flight - these are from FR24's own schedule` : `FR24 has no ${what} for this flight - ${isConfirmed(route) ? 'confirmed' : 'worked out'} from its track, ${logTxt}${popTxt()} and public ADS-B`;
-    const foot = bridgeWarnHtml(), tip = `${how.replace(/<[^>]+>/g, '')} · v${VERSION} · ${diag}`;
+    const foot = bridgeWarnHtml();
     let html;
     if (route && (route.destIata || route.originIata)) {
       el.dataset.state = 'resolved';
-      html = rowHtml('pin', routeCells(route, what, tip) + linksHtml(pub) + foot);
+      html = rowHtml('pin', routeCells(route, what) + linksHtml(pub) + foot);
     } else {
       // (still being worked out - or why it could not be: shown, never a silent blank)
       el.dataset.state = 'pending';
@@ -13722,9 +13741,6 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       <div class="tl-pop-row"><input id="tl-faa-id" type="password" autocomplete="off" placeholder="client_id" class="tl-in"> <input id="tl-faa-secret" type="password" autocomplete="off" placeholder="client_secret" class="tl-in"> <a href="#" data-tl-act="faaSave">save</a>${notamKey() ? ' · <a href="#" data-tl-act="faaClear">remove</a>' : ''}</div>
       <div class="tl-muted" style="margin-top:4px">Optional, free from api.faa.gov. With it, an airport closed by NOTAM at the arrival time is taken out of the predictions (the three likeliest fields of the aircraft you are looking at, every few hours). Weather (METARs) needs no key.</div>`;
   }
-  // (22.10) the population behind every prediction: what the tables were learned from
-  // (1.1.0: the population tables are the monitor's - how many days they were learned from, as its /status says)
-  const popTxt = () => { const d = monStat && monStat.central && +monStat.central.popDays; return d > 0 ? `, the habits of every aircraft seen over ${d} days` : ''; };
   function healthHtml() { return health.issues.length ? `<div class="tl-warn">⚠ ${esc(health.issues[0])} - some fields may not fill until the script is updated.</div>` : ''; }
   let popEl = null;
   function closePop() { if (popEl) { popEl.remove(); popEl = null; } }
@@ -13798,7 +13814,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // (the version whose "what's new" was put away, and the one whose dot on the button the window was opened for)
   const UB_SEEN_KEY = 'tweeks.fr24.ladd.seenver', UB_DOT_KEY = 'tweeks.fr24.ladd.dotver';
   // (the newest CHANGELOG section's headlines, written in by build.mjs: { v, items })
-  const UB_WHATS_NEW = {"v":"1.1.0","items":["Every route is now worked out on the shared monitor, so everyone sees exactly the same destination for a flight.","The script is much smaller and quicker to load, because it no longer carries the prediction tables.","A destination you confirm now shows as confirmed for everyone else too, and taking it back takes it back for everyone.","Airport boards open full straight away, with a week of flights either side of today, the same for everyone.","Flights FR24 shows without a destination get one on the boards and in Most tracked, worked out like blocked ones.","Aircraft of the same owner now help predict where each other is going."]};
+  const UB_WHATS_NEW = {"v":"1.1.1","items":["LADD flights show their progress bar and time of arrival again, even while the monitor is busy.","The odds in the \"confirm destination\" list now match the ones the panel shows.","The destination's percentage no longer opens a tooltip when you point at it.","The monitor now keeps the serial number, age and owner of about 760,000 aircraft worldwide, so they appear at once for any aircraft you open, on the map or a log page.","Bookmarks is back in FR24's Widgets list. It starts switched off, and you can switch it on there."]};
   // (an aircraft with an open padlock: FR24's outline style - 24 grid, 1.5 stroke in the text colour)
   const UB_ICON = '<svg data-tl-ub-icon="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
   const UB_X = '<svg viewBox="0 0 14 14" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5l11 11M12.5 1.5l-11 11"/></svg>';
@@ -14502,11 +14518,15 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     for (const leaf of all) { const b = boxOf(leaf, all); if (b && b !== leaf) b.setAttribute('data-tl-ub-hid', ''); }
   }
 
-  // ---- FR24's Bookmarks widget: switched off where FR24 keeps it, and never drawn ----------------------------------------
-  // Its row in FR24's Widgets list: its "On" pressed, so FR24 itself no longer puts the widget on the map (and keeps it so),
-  // and the row taken out of the list. Wherever FR24 puts the widget or the row, it is hidden as it is put in - a mutation
-  // observer's answer comes before the browser paints - so neither is ever seen, not even for a moment. All found by their
-  // words, not by FR24's class names (it is a Vue app); never in a menu, a link, a flight's or an airport's panel.
+  // ---- FR24's Bookmarks widget: off by default, the user's to switch on --------------------------------------------------
+  // (1.1.1) Its row is in FR24's Widgets list as FR24 has it. The first time the list is seen with Bookmarks "On", its "On"
+  // is pressed once, so FR24 itself keeps it off (and says so, "Off"); from then on it is left to the user - switched on
+  // there, FR24 puts it on the map as its own. Until that first time (the list never opened) the widget is hidden wherever
+  // FR24 puts it - a mutation observer's answer comes before the browser paints - so off by default is never seen as on.
+  // All found by their words, not by FR24's class names (it is a Vue app); never in a menu, a link, a flight's or an
+  // airport's panel.
+  const UB_BM_KEY = 'tweeks.fr24.ladd.bmdefault';
+  let bmDefaulted = lsGet(UB_BM_KEY) === '1';
   let bmPressedAt = 0;
   function leavesByText(wanted, root) {
     const out = new Map(wanted.map(w => [w, []]));
@@ -14533,20 +14553,27 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   }
   const ownWords = el => [...el.childNodes].filter(n => n.nodeType === 3).map(n => n.data).join('').trim();
   function bookmarksSweep(root) {
-    if (!opt.on || !root || !/bookmarks/i.test(root.textContent || '')) return;
+    if (!opt.on || bmDefaulted || !root || !/bookmarks/i.test(root.textContent || '')) return;
     const mine = leavesByText(['bookmarks'], root).get('bookmarks');
     if (!mine.length) return;
     const L = leavesByText(UB_WIDGET_TITLES), all = UB_WIDGET_TITLES.flatMap(t => L.get(t));
     for (const leaf of mine) {
       if (leaf.closest('a,nav,aside,header,[role="menu"],[role="menubar"],#aside-main-menu,[data-testid^="aircraft-panel"],[data-testid="airport-panel"],[data-testid^="search"]')) continue;
       const box = boxOf(leaf, all.filter(x => x !== leaf)); if (!box || box === leaf) continue;
-      if (!box.hasAttribute('data-tl-gone')) box.setAttribute('data-tl-gone', '');
-      // (its row in the Widgets list - the list says "Enable widgets": switched off there, if it is on)
+      // (its row in the Widgets list - the list says "Enable widgets": switched off there once, if it is on, and shown)
       let list = null; for (let a = box.parentElement, d = 0; a && a !== document.body && d < 6; a = a.parentElement, d++) if (/enable widgets/i.test(a.textContent || '')) { list = a; break; }
-      if (!list) continue;
-      const on = [...box.querySelectorAll('*')].find(e => /^on$/i.test(ownWords(e)));
-      if (on && now() - bmPressedAt > 2000) { bmPressedAt = now(); const b = on.closest('button,[role="button"],[role="switch"],label') || on; if (box.contains(b)) progClick(b); }
+      if (!list) { if (!box.hasAttribute('data-tl-gone')) box.setAttribute('data-tl-gone', ''); continue; }
+      const sw = [...box.querySelectorAll('*')].find(e => /^(on|off)$/i.test(ownWords(e)));
+      if (!sw) continue;
+      if (/^on$/i.test(ownWords(sw))) { if (now() - bmPressedAt < 2000) continue; bmPressedAt = now(); const b = sw.closest('button,[role="button"],[role="switch"],label') || sw; if (box.contains(b)) progClick(b); }
+      bmDone();
+      return;
     }
+  }
+  // (the default set: FR24 keeps Bookmarks off - nothing hidden from now on, the widget FR24's and the user's)
+  function bmDone() {
+    bmDefaulted = true; lsSet(UB_BM_KEY, '1');
+    for (const e of document.querySelectorAll('[data-tl-gone]')) e.removeAttribute('data-tl-gone');
   }
   function bookmarksMut(recs) {
     for (const r of recs) {

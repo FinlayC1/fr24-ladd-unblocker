@@ -187,13 +187,8 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // the route in cells: the destination (predicted / confirmed / landed / flight plan) first, then the departure, then
   // what else it could be. what = 'departure airport' when FR24 has the destination and only the departure is ours.
   // the weather at the destination now (its METAR, when asked for): category and wind, as the strip shows it
-  const wxTxt = id => { const a = id ? apById(id) : null, w = a && a.icao ? wxMap.get(a.icao.toUpperCase()) : null; if (!w) return ''; const wind = fin(w.ws) ? (w.ws < 3 ? 'calm' : (fin(w.wd) ? String(Math.round(w.wd / 10) * 10).padStart(3, '0') + '°' : 'variable') + ' ' + Math.round(w.ws) + (fin(w.gust) ? 'G' + Math.round(w.gust) : '') + ' kt') : ''; return [w.cat, wind].filter(Boolean).join(', ') + ' there now'; };
-  // (an ETA more than five minutes gone, the aircraft not down: not one - a route kept from before, not shown as if it
-  // were still the plan)
-  const etaTxt = route => route.eta > 0 && route.eta >= nowS() - 300 ? 'ETA ' + hhmmZ(route.eta) : '';
-  // (the why - ETA, reasons, the weather there, how it was worked out - is the destination's tooltip, not more lines in
-  // the panel: `tip` is added to it)
-  function routeCells(route, what, tip) {
+  // (1.1.1: no tooltip on the destination - FR24's own panel has the ETA, and the reasons are not shown on hover)
+  function routeCells(route, what) {
     if (!route) return '';
     if (route.phase === 'parked' && !route.destIata) {
       const arr = route.arrivedFrom ? `arrived from ${esc(route.arrivedFrom)} at ${esc(hhmmZ(route.arrivedAt))}` : '';
@@ -201,14 +196,12 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     }
     const conf = isConfirmed(route);
     const oCell = route.originIata ? cellHtml(what === 'departure airport' ? 'Departure' + tagHtml('Predicted', 'pred') : 'Departure', apHtml(route.originIata, route.originCity), esc((route.originNote || 'from the track') + (route.departedAt > 0 ? ', ' + hhmmZ(route.departedAt) : ''))) : cellHtml('Departure', '<span class="tl-muted">unknown</span>', esc(route.originNote || ''));
-    let dLabel, dVal, dSub = '', why = [];
+    let dLabel, dVal, dSub = '';
     if (!route.destIata) { dLabel = 'Destination' + tagHtml('Predicted', 'pred'); dVal = '<span class="tl-muted">not known yet</span>'; }
     else if (route.landed) { dLabel = 'Landed at' + tagHtml('Confirmed', 'conf'); dVal = apHtml(route.destIata, route.destCity); dSub = route.ata ? 'landed ' + esc(hhmmZ(route.ata)) : ''; }
-    else if (conf) { dLabel = 'Destination' + tagHtml('Confirmed', 'conf'); dVal = apHtml(route.destIata, route.destCity); why = [etaTxt(route), 'confirmed: ' + (route.destReason || 'on final approach'), wxTxt(route.destId)]; }
-    else if (route.destConf === 'filed') { dLabel = 'Destination (flight plan)'; dVal = apHtml(route.destIata, route.destCity); why = [etaTxt(route), route.destReason]; }
-    else { dLabel = 'Destination' + tagHtml('Predicted', 'pred'); dVal = apHtml(route.destIata, route.destCity) + pBadge(route.destP); why = [etaTxt(route), route.destReason, wxTxt(route.destId)]; }
-    const tipTxt = why.concat([tip]).filter(Boolean).join(' · ');
-    if (tipTxt) dVal = `<span title="${esc(tipTxt)}">${dVal}</span>`;
+    else if (conf) { dLabel = 'Destination' + tagHtml('Confirmed', 'conf'); dVal = apHtml(route.destIata, route.destCity); }
+    else if (route.destConf === 'filed') { dLabel = 'Destination (flight plan)'; dVal = apHtml(route.destIata, route.destCity); }
+    else { dLabel = 'Destination' + tagHtml('Predicted', 'pred'); dVal = apHtml(route.destIata, route.destCity) + pBadge(route.destP); }
     const dCell = cellHtml(dLabel, dVal, dSub, true);
     const alts = !route.landed && !conf && route.destConf !== 'filed' && route.alternatives && route.alternatives.length ? cellHtml('Also possible', route.alternatives.map(a => `<b>${esc(a.iata)}</b>${pBadge(a.p)}`).join(' &nbsp;')) : '';
     return gridHtml([dCell, oCell, alts]);
@@ -223,9 +216,8 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       const badge = hx.ladd ? 'LADD' : hx.pia ? 'PIA' : hx.mil ? 'MIL' : 'ADS-B';
       const st = routeState.get(rec.id);
       const route = (st && st.route) || rec.route;
-      const nLog = route && route.legCount || 0, basis = route && (route.destIata || route.originIata) && !route.landed ? `${isConfirmed(route) ? 'confirmed' : 'worked out'} from its track, ${nLog ? `its own flight log (${nLog} earlier flight${nLog === 1 ? '' : 's'}${route.base ? ', based at ' + route.base : ''})` : 'no earlier flights of its own on record'}${popTxt()} and public ADS-B` : '';
       // (1.1.0: none yet - the monitor working it out, or why there is none: every route is worked out there)
-      const routeHtml = route ? routeCells(route, '', basis) : !centralUp() ? gridHtml([cellHtml('Destination' + tagHtml('Predicted', 'pred'), `<span class="tl-muted">${esc(calcWhy())}</span>`, '', true)])
+      const routeHtml = route ? routeCells(route, '') : !centralUp() ? gridHtml([cellHtml('Destination' + tagHtml('Predicted', 'pred'), `<span class="tl-muted">${esc(calcWhy())}</span>`, '', true)])
         : (st && st.working) || currentPos(rec.id) ? gridHtml([cellHtml('Destination' + tagHtml('Predicted', 'pred'), '<span class="tl-spin"></span> <span class="tl-muted">working out the route on the monitor…</span>', '', true)]) : '';
       // (no data-source credit: the hex, then whether it was just verified and the owner's town)
       const tail = [rec.verifiedAt && now() - rec.verifiedAt < 120000 ? 'verified' : '', hx.ownerCity ? esc(placeName(ENGINE.placeShort(hx.ownerCity))) : ''].filter(Boolean).join(' · ');
@@ -380,16 +372,11 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     const st = routeState.get(pub.id), route = (st && st.route) || pub.route;
     const s = schedOf(pub.id), what = s && s.d && !s.o ? 'departure airport' : 'destination';
     const el = strip(panel);
-    const sch = schedOf(pub.id), diag = `stream ${msgCount.follow || 0}/${msgCount.sched || 0}/${msgCount.pos || 0} · ${sch ? 'fr24 ' + (sch.o ? 'o' : '-') + (sch.d ? 'd' : '-') : pub.naDest ? 'panel N/A' : '?'}`;
-    const fromSchedule = !!(route && route.destConf === 'filed' && /FR24's own schedule/.test(route.destReason || ''));
-    // (the same engine as for a blocked aircraft, with the aircraft's own log: how much of it there was is said)
-    const nLog = route && route.legCount || 0, logTxt = nLog ? `its own flight log (${nLog} earlier flight${nLog === 1 ? '' : 's'}${route.base ? ', based at ' + esc(route.base) : ''})` : 'no earlier flights of its own on record';
-    const how = fromSchedule ? `FR24's panel has no airports for this flight - these are from FR24's own schedule` : `FR24 has no ${what} for this flight - ${isConfirmed(route) ? 'confirmed' : 'worked out'} from its track, ${logTxt}${popTxt()} and public ADS-B`;
-    const foot = bridgeWarnHtml(), tip = `${how.replace(/<[^>]+>/g, '')} · v${VERSION} · ${diag}`;
+    const foot = bridgeWarnHtml();
     let html;
     if (route && (route.destIata || route.originIata)) {
       el.dataset.state = 'resolved';
-      html = rowHtml('pin', routeCells(route, what, tip) + linksHtml(pub) + foot);
+      html = rowHtml('pin', routeCells(route, what) + linksHtml(pub) + foot);
     } else {
       // (still being worked out - or why it could not be: shown, never a silent blank)
       el.dataset.state = 'pending';

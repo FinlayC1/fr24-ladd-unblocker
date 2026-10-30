@@ -6,7 +6,8 @@
 // switched off leaves FR24 alone but keeps the button. Then FR24's own windows, acted out (jsdom has no layout: the sizes
 // FR24's boxes would have are given): the window opens in FR24's Widgets window - titled LADD Unblock, FR24's list hidden,
 // this button drawn open and Widgets at rest; another button, Widgets itself, and its own button put it away as FR24's;
-// FR24's Bookmarks widget switched off in FR24's own list and never shown. (The same, frame by frame in a real browser on
+// FR24's Bookmarks widget switched off in FR24's own list by default - hidden until then - its row shown there, and the
+// user's to switch on again: then FR24's widget on the map. (The same, frame by frame in a real browser on
 // a page made with Vue: test/unit_native.cjs)
 // usage: node test/unit_window.cjs <node_modules dir>
 const fs = require('fs'), path = require('path');
@@ -197,7 +198,7 @@ function actFR24(win) {
     click(w3, b3); await sleep(30);
     click(w3, q('nav.bar .tl-ub-face')); await sleep(200);
     const fw2 = q('.fr24-win');
-    check('Widgets (its copy) pressed while this is open: this goes, then FR24\'s own Widgets opens - its title, its list, no Bookmarks row', S.open === 'widgets' && !!fw2 && fw2.querySelector('h2').textContent === 'Widgets' && !fw2.hasAttribute('data-tl-ub-host') && shown(w3, fw2.querySelector('.list')) && !shown(w3, q('#bmrow')) && real.classList.contains('bar-btn--active') && shown(w3, real) && !b3.classList.contains('bar-btn--active'));
+    check('Widgets (its copy) pressed while this is open: this goes, then FR24\'s own Widgets opens - its title, its list, its Bookmarks row (Off)', S.open === 'widgets' && !!fw2 && fw2.querySelector('h2').textContent === 'Widgets' && !fw2.hasAttribute('data-tl-ub-host') && shown(w3, fw2.querySelector('.list')) && shown(w3, q('#bmrow')) && q('#bmrow .sw').textContent === 'Off' && real.classList.contains('bar-btn--active') && shown(w3, real) && !b3.classList.contains('bar-btn--active'));
     click(w3, b3); await sleep(300);
     const fw3 = q('.fr24-win');
     check('this pressed while Widgets is open: Widgets goes first, then it opens again for this', S.open === 'widgets' && !!fw3 && fw3 !== fw2 && fw3.querySelector('h2').textContent === 'LADD Unblock' && b3.classList.contains('bar-btn--active'));
@@ -207,6 +208,14 @@ function actFR24(win) {
     click(w3, q('.fr24-win .x')); await sleep(30);
     check('FR24\'s close button in its title bar puts it away', !q('.fr24-win') && !b3.classList.contains('bar-btn--active'));
     check('FR24 itself no longer puts the Bookmarks widget on the map', !card());
+    check('... the default kept for next time; nothing left hidden', w3.localStorage.getItem('tweeks.fr24.ladd.bmdefault') === '1' && !q('[data-tl-gone]'));
+    // (the user's to switch on: FR24's Widgets, Bookmarks "Off" pressed - left on, and FR24's widget on the map shown)
+    click(w3, q('nav.bar .tl-ub-face, [data-testid="map-bar__widgets"]')); await sleep(50);
+    check('(FR24\'s Widgets open, Bookmarks Off)', S.open === 'widgets' && q('#bmrow .sw').textContent === 'Off');
+    click(w3, q('#bmrow .sw')); await sleep(2600);
+    check('Bookmarks switched on by the user in FR24\'s list: left on (not pressed off again)', S.bm === true && q('#bmrow .sw').textContent === 'On' && shown(w3, q('#bmrow')));
+    click(w3, q('.fr24-win .x')); await sleep(2600);
+    check('... FR24\'s Bookmarks widget on the map, shown', !!card() && shown(w3, card()) && !card().hasAttribute('data-tl-gone'));
     w3.close();
   }
   console.log(fails ? `\n${fails} failed` : '\nall passed');

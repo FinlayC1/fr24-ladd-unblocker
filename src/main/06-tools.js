@@ -341,9 +341,6 @@
       <div class="tl-pop-row"><input id="tl-faa-id" type="password" autocomplete="off" placeholder="client_id" class="tl-in"> <input id="tl-faa-secret" type="password" autocomplete="off" placeholder="client_secret" class="tl-in"> <a href="#" data-tl-act="faaSave">save</a>${notamKey() ? ' · <a href="#" data-tl-act="faaClear">remove</a>' : ''}</div>
       <div class="tl-muted" style="margin-top:4px">Optional, free from api.faa.gov. With it, an airport closed by NOTAM at the arrival time is taken out of the predictions (the three likeliest fields of the aircraft you are looking at, every few hours). Weather (METARs) needs no key.</div>`;
   }
-  // (22.10) the population behind every prediction: what the tables were learned from
-  // (1.1.0: the population tables are the monitor's - how many days they were learned from, as its /status says)
-  const popTxt = () => { const d = monStat && monStat.central && +monStat.central.popDays; return d > 0 ? `, the habits of every aircraft seen over ${d} days` : ''; };
   function healthHtml() { return health.issues.length ? `<div class="tl-warn">⚠ ${esc(health.issues[0])} - some fields may not fill until the script is updated.</div>` : ''; }
   let popEl = null;
   function closePop() { if (popEl) { popEl.remove(); popEl = null; } }

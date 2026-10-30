@@ -377,12 +377,13 @@ function createCentral(env) {
   function again(id) { const F = flights.get(+id); if (!F) return false; F.soon = now() + 1; return true; }
   // A flight's answer: worked out again when due - here within the minute's allowance, or on its worker (in a moment) -
   // the last one otherwise. null: none.
-  function routeOf(id) {
+  // (now: the flight a browser has open - worked out whatever the allowance, so its panel never waits on the others)
+  function routeOf(id, now1) {
     const F = self(id);
     if (!F) return null;
     if (S.on && due(F)) {
-      if (pool) { if (pool.busy() < S.workers * C.perWorker) computeAsync(F); else S.overBudget++; }
-      else if (!busy() && !(env.busy && env.busy())) compute(F); else S.overBudget++;
+      if (pool) { if (now1 || pool.busy() < S.workers * C.perWorker) computeAsync(F); else S.overBudget++; }
+      else if (now1 || (!busy() && !(env.busy && env.busy()))) compute(F); else S.overBudget++;
     }
     if (!F.route) return null;
     S.served++; return { at: F.routeAt, age: Math.max(0, now() - F.routeAt), r: F.route };
@@ -395,9 +396,11 @@ function createCentral(env) {
     const list = body && Array.isArray(body.flights) ? body.flights.slice(0, 60) : [];
     for (const x of list) { if (!x || typeof x !== 'object') continue; if (take(x) === 'full') out.full.push(+x.id); }
     const more = body && Array.isArray(body.ids) ? body.ids.slice(0, 200) : [];
-    const fill = () => { for (const x of list) { const r = x && routeOf(x.id); if (r) out.routes[x.id] = r; } for (const id of more) { const r = routeOf(id); if (r) out.routes[id] = r; } S.flights = flights.size; return out; };
+    const sel = body && +body.sel > 0 ? +body.sel : 0;
+    const fill = () => { for (const x of list) { const r = x && routeOf(x.id, +x.id === sel); if (r) out.routes[x.id] = r; } for (const id of more) { const r = routeOf(id, +id === sel); if (r) out.routes[id] = r; } S.flights = flights.size; return out; };
     if (!pool) return fill();
     const waits = []; for (const x of list) { const F = x && flights.get(+x.id); if (F && due(F)) waits.push(computeAsync(F)); }
+    { const F = sel ? self(sel) : null; if (F && due(F) && !waits.length) waits.push(computeAsync(F)); }
     if (!waits.length) return fill();
     return Promise.race([Promise.all(waits), new Promise(r => setTimeout(r, 1000))]).then(fill);
   }

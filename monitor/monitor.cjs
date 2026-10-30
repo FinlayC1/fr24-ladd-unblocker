@@ -1327,7 +1327,36 @@ const ident = createIdent({ E, cfg: CFG.ident, live, ac, blocked, legs, ownerOf:
   } });
 // The owners and operators of the blocked aircraft (owners.cjs): looked up once, kept for good; a name in the names table
 // whose owner is newly known goes to the browsers again
-const owners = createOwners({ createRegistry, cfg: CFG.owners, fetch: (u, o) => global.fetch(u, o), log: (...a) => log('owners', ...a), onChange: hex => ident.touch(hex) });
+const owners = createOwners({ createRegistry, cfg: CFG.owners, fetch: (u, o) => global.fetch(u, o), log: (...a) => log('owners', ...a), onChange: hex => ident.touch(hex), bulk: hex => AC.lookup(hex) });
+// (1.1.1) Every aircraft in the world: the open aircraft databases and registers merged, rebuilt once a week (acdb.cjs) -
+// any aircraft's serial number, age and owner at once; and every aircraft they leave something out of, looked up here in
+// turn: the ones browsers open first, then each day's aircraft of the world log
+const { createAcdb } = require('./acdb.cjs');
+const AC = createAcdb({ store: STORE, worker: true, log: (...a) => log('aircraft', ...a), cfg: CFG.acdb && typeof CFG.acdb === 'object' ? CFG.acdb : {} });
+const ACS = { at: 0, day: '', queued: 0 };
+async function acdbSweep() {
+  const days = [...WORLD.days.keys()].sort(), d = days[days.length - 1];
+  if (!AC.stats.n || !d || d === ACS.day) return 0;
+  ACS.day = d; ACS.at = Date.now(); let n = 0;
+  await WORLD.each(d, hex => {
+    if (owners.q.length >= owners.C.queueMax - 1000) return;
+    const b = AC.lookup(hex), r = owners.db.get(hex);
+    if ((b && b.msn && b.year && b.owner) || (r && r.at)) return;
+    if (owners.want(hex, b && b.reg)) n++;
+  }, () => new Promise(res => setImmediate(res)));
+  ACS.queued += n; return n;
+}
+async function acdbLoop() {
+  for (;;) {
+    // (built in a worker thread - about 250 MB for a minute or two - only with that much memory free on the machine)
+    try {
+      const freeMb = +((CFG.acdb && CFG.acdb.freeMb) || 300);
+      if (CFG.acdb !== false && AC.due() && !WS.full) { if (memAvail() > freeMb * 1048576) await AC.build(); else log('aircraft', `database not rebuilt: under ${freeMb} MB of memory free - again in 6 hours`); }
+      await acdbSweep();
+    } catch (e) { log('aircraft', String(e && e.stack || e)); }
+    await sleep(6 * 3600e3);
+  }
+}
 async function ownersLoop() { for (;;) { await sleep(owners.C.every); try { await owners.pumpOne(); } catch (e) { log('owners', String(e && e.stack || e)); } } }
 const dest = createDest({ E, cfg: CFG.dest, ac, legs, surge: () => surgeNow().map, fromCentral: id => centralFor(id) });
 // (a named flight's route as central calculation has it, worked out in the last two minutes - in the rough destinations'
@@ -2021,7 +2050,7 @@ function monStatus() {
       archive: { names: names.size, added: names.stats.added, withdrawn: names.stats.dropped, servedToPlayback: names.stats.served }, crowd: { public: PUBLIC, refused: ident.stats.crowdRefused || 0, waiting: ident.stats.crowdPending || 0 } },
     wx: { cells: wx.stats.cells, requests: wx.stats.requests, today: wx.stats.used, fails: wx.stats.fails, lastErr: wx.stats.lastErr, estimated: wx.stats.estimated, waiting: wx.want.size },
     tel: { aircraft: tel.size, added: tel.stats.added, fromBrowsers: tel.stats.crowd || 0, refused: tel.stats.crowdBad || 0, served: tel.stats.served, asked: tel.stats.asked, missed: tel.stats.missed },
-    owners: owners.status(),
+    owners: owners.status(), aircraft: Object.assign(AC.status(), { sweptDay: ACS.day, sweptQueued: ACS.queued }),
     areas: CFG.areas.concat(userAreas).map(a => a.slice(0, 2)), paused: Object.fromEntries(Object.entries(pause).filter(([, t]) => t > now).map(([h, t]) => [h, Math.round((t - now) / 1000)])) };
 }
 function dashStats() {
@@ -2208,7 +2237,13 @@ function answer(u, nowS, ctx) {
     return hs.length > 1 ? { list: hs.map(one) } : one(hs[0] || String(q('hex') || '').toLowerCase());
   }
   if (p === '/airport') return airportAnswer(+q('ap'), nowS, Math.min(14, Math.max(1, +(q('days') || 7))), Math.min(31, Math.max(0, +(q('hist') || 0))));
-  if (p === '/owners') return { list: owners.rows(hexList(q('hex'), 500), { public: !admin && PUBLIC }) };
+  if (p === '/owners') {
+    const hx = hexList(q('hex'), 500), list = owners.rows(hx, { public: !admin && PUBLIC }), got = new Map(list.map(r => [r[0], r]));
+    // (1.1.1: one asked about with its serial number, age or owner not known: looked up here next - the registers, hexdb,
+    // adsbdb - for the next browser to open it)
+    for (const h of hx) { const r = got.get(h); if (!r || !r[8] || !r[9] || (!r[4] && !r[15])) owners.want(h, r && r[1], true); }
+    return { list };
+  }
   if (p === '/learn') return Object.assign({ v: 1 }, learnSince(String(q('from') || '')));
   if (p === '/surge') { const sc = surgeNow(nowS); return { v: 1, day: sc.day, list: sc.list }; }
   // (the same increments the browser already has: only that it has them)
@@ -2350,9 +2385,10 @@ if (require.main === module) {
   // (every blocked aircraft's owner not known yet: looked up, fifteen a minute at most, those flying now first)
   for (const [hex, b] of blocked) owners.want(hex, b.reg);
   ownersLoop();
+  setTimeout(acdbLoop, 60000);
   setInterval(() => { wx.pump().catch(e => log('wx', String(e))); }, 2000);
   // (airports' schedules read from FR24 here, for the boards browsers open)
   setInterval(() => { BD.pump().catch(e => log('boards', String(e))); }, 5000);
 }
-module.exports = { central, centralStart, centralRound, CR, SC, fleetOf, FL, naF, naTrack, selfEvidence, F24ref2: () => F24, WORLD, WS, AS, BD, boardRows, airportAnswer, apLegs, fr24Track, F24T, worldDay, worldWants, worldRoom, worldStatus, worldRecheck: () => { freeAt = 0; }, pollTat, TAT, TAT_HOST, carriesOn, liveExtra, logOf, heardPts, archBreath, memAvail, archTrace, archiveJob, indexDay, idxLookup, idxHave, archIdx, idxFile, ARC, setArcRange: f => { arcRange = f; }, surgeNow, datalink, datalinkRound, dlSeen, classifyTrace, traceGet, netSt, archiveDay, archiveState, archiveNext, archMark, archTried, archDays, archRunning, traceOf, AR, apliveTrace, HIST_V, HIST_RESET, resetHistLogs, histResetMark, get histResetN() { return histResetN; }, adminAnswer, ctl, logRing, log, MON_VER, learnCheck, learnFromCrowd, crowdLearnSave, crowdRows, LC, tracks, waiting, waitRound, waitLive, waitNamed, waitClaims, WAIT, saveWaiting, loadWaiting, pbMatch, learnedBuild, learnedDue, learnedLoad, learnedRef: () => learnedOut, liveBusy, backWaits, E, CFG, loadEngine, ingest, buildLegs, fr24Legs, fr24Leg, F24ref: () => F24, owners, ownersLoop, APT, legRunways, names, nearAnswer, telAnswer, tel, wx, pbNames, get PUBLIC() { return PUBLIC; }, get RATE() { return RATE; }, limited, tokenOk, installs, opts, optionsSet, optionsLoad, latestCheck, latestVer, helloAnswer, badge, wakeQuiet, parkedAt, boardLegs, flightsOfCs, lastHeard, legs, ac, backfillOne, backQ, blocked, markBlocked, seed, gapFill, addArea, userAreas,
+module.exports = { AC, acdbSweep, central, centralStart, centralRound, CR, SC, fleetOf, FL, naF, naTrack, selfEvidence, F24ref2: () => F24, WORLD, WS, AS, BD, boardRows, airportAnswer, apLegs, fr24Track, F24T, worldDay, worldWants, worldRoom, worldStatus, worldRecheck: () => { freeAt = 0; }, pollTat, TAT, TAT_HOST, carriesOn, liveExtra, logOf, heardPts, archBreath, memAvail, archTrace, archiveJob, indexDay, idxLookup, idxHave, archIdx, idxFile, ARC, setArcRange: f => { arcRange = f; }, surgeNow, datalink, datalinkRound, dlSeen, classifyTrace, traceGet, netSt, archiveDay, archiveState, archiveNext, archMark, archTried, archDays, archRunning, traceOf, AR, apliveTrace, HIST_V, HIST_RESET, resetHistLogs, histResetMark, get histResetN() { return histResetN; }, adminAnswer, ctl, logRing, log, MON_VER, learnCheck, learnFromCrowd, crowdLearnSave, crowdRows, LC, tracks, waiting, waitRound, waitLive, waitNamed, waitClaims, WAIT, saveWaiting, loadWaiting, pbMatch, learnedBuild, learnedDue, learnedLoad, learnedRef: () => learnedOut, liveBusy, backWaits, E, CFG, loadEngine, ingest, buildLegs, fr24Legs, fr24Leg, F24ref: () => F24, owners, ownersLoop, APT, legRunways, names, nearAnswer, telAnswer, tel, wx, pbNames, get PUBLIC() { return PUBLIC; }, get RATE() { return RATE; }, limited, tokenOk, installs, opts, optionsSet, optionsLoad, latestCheck, latestVer, helloAnswer, badge, wakeQuiet, parkedAt, boardLegs, flightsOfCs, lastHeard, legs, ac, backfillOne, backQ, blocked, markBlocked, seed, gapFill, addArea, userAreas,
   serve, fr24, ident, dest, F24, report, identRound, fr24Round, saveIdent, loadIdent, histUnknown, learnSince, learnWrite, diskLegs, KEEP_LADD, save, loadStore, dirtyDays, pollOpenSky, adsbxUse, live, liveList, answer, step, P, piaState, apiGet, gate, stats, lastOk, noteWatch, watch, watchedAll, flew, closeDays, histQ, histPend, histOne, histDay, histOf, histRead, histWrite, histFile, fillHist, fillAsked, queueHist, photos, nextHist, saveState, loadState, lastW, get closed() { return closed; }, set closed(v) { closed = v; }, pause };

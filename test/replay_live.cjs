@@ -78,11 +78,10 @@ const b = s => new Uint8Array(Buffer.from(s, 'base64'));
   const sp = w.document.querySelector('.tl-strip');
   // (DUMP_STRIP=<file>: the rendered strip and the stylesheet, to look at on the live site)
   if (process.env.DUMP_STRIP) fs.writeFileSync(process.env.DUMP_STRIP, JSON.stringify({ html: sp ? sp.outerHTML : '', css: (w.document.getElementById('tl-style') || {}).textContent || '' }));
-  // (its reasons and the flight log it was worked out from - the same engine as a blocked aircraft's, in words - are the
-  // destination's tooltip: the panel itself carries no paragraph about it)
+  // (1.1.1: the panel carries no paragraph about its reasons, and no tooltip with them either)
   const spTxt = sp ? sp.textContent.replace(/\s+/g, ' ') : '';
-  const tip = sp ? [...sp.querySelectorAll('[title]')].map(e => e.getAttribute('title')).find(x => /from its track|schedule/.test(x)) || '' : '';
-  check('reasoned destination shown in FR24\'s panel; reasons and the flight log used in its tooltip, not as extra lines', !!r && !!r.destIata && q('arrival-iata').replace(/\?$/, '') === r.destIata && !!r.destReason && /earlier flight|no earlier flights of its own|schedule/.test(tip) && !/FR24 has no|worked out from|there now/.test(spTxt), { arrival: arrCell(), strip: spTxt.trim().slice(0, 220), tip: tip.slice(0, 200) });
+  const tip = sp ? [...sp.querySelectorAll('[title]')].map(e => e.getAttribute('title')).find(x => /from its track|schedule|earlier flight/.test(x)) || '' : '';
+  check('reasoned destination shown in FR24\'s panel; no reasons in a tooltip, nor as extra lines', !!r && !!r.destIata && q('arrival-iata').replace(/\?$/, '') === r.destIata && !!r.destReason && !tip && !/FR24 has no|worked out from|there now/.test(spTxt), { arrival: arrCell(), strip: spTxt.trim().slice(0, 220), tip: tip.slice(0, 200) });
   // M-ARNZ (25 Sep): FR24 kept one flight id through a turnaround at Barrow - its trail held the Farnborough -> Barrow leg
   // too, and the panel still said "Farnborough -> Barrow, 100%" after it took off again from Barrow
   {
