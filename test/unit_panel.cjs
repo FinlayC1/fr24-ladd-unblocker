@@ -31,6 +31,8 @@ const tday = t => new Date(t * 1000).toLocaleDateString('en-CA', { timeZone: 'Eu
 const yest = Date.parse(tday(nowS - 86400) + 'T11:00:00Z') / 1000, yLand = yest + 3600;   // (yesterday around noon, the airport's time)
 const tNow = tday(nowS - 3600) === tday(nowS) ? nowS - 3600 : nowS - 30;   // (today's flight: an hour ago, or just now in the airport's first hour of the day)
 M.legs.set('43c0de', new Map([[1, legAt('43c0de', yLand - 1800, { reg: 'G-LADD', type: 'C25A', ladd: true, startedOnGround: true, tOn: yLand, tEnd: yLand + 60, from: { id: E.byIcao('EGNS').id, code: 'IOM', conf: 'ground' }, to: { id: qkc.id, code: 'QKC', conf: 'ground' }, rwyOn: '07' })]]));
+// (1.1.0) FR24's own rows of the airport's board yesterday - 4 take-offs, 5 landings - as a browser that read them sent them on
+for (const [kind, n, st] of [['departures', 4, 'departed'], ['arrivals', 5, 'landed']]) M.BD.put(qkc.id, kind, Array.from({ length: n }, (_, i) => ({ k: 'f' + kind[0] + (100 + i).toString(16), src: 'sched', fid: (0x3c000 + i + (kind === 'arrivals' ? 50 : 0)).toString(16), t: yest + i * 60, sch: yest + i * 60, st })), 'crowd');
 
 // ---- FR24's own answers: its airport list, an airport's runways, its schedule (one page each way)
 const sch = mode => { const k = mode === 'arrivals' ? 'arrival' : 'departure', fl = [];
@@ -95,12 +97,12 @@ const PANEL = `<div data-testid="airport-panel"><div class="head"><h2>Caernarfon
   check('"Runway usage": the locked picture (found under its title) gives way to the runways the monitor\'s tracked flights used - 25 (a take-off, a landing), 20 (a take-off), 07 (a landing), 02 none; how many it saw said', !!use && q('.r2 .lock').style.display === 'none' && /25\s*1 \/ 1/.test(ut) && /20\s*1 \/ 0/.test(ut) && /07\s*0 \/ 1/.test(ut) && /02\s*0 \/ 0/.test(ut) && /5 movements the monitor tracked here/.test(ut) && /clear from the track for 4/.test(ut), ut);
   const det = q('.tl-rwy'), dt = det ? det.textContent : '';
   check('"Airport & runway details": every runway in full (07/25 880 m, 23 m wide, asphalt, lit; 02/20), each end (heading, elevation, displaced threshold), the radio frequencies', /07\/25/.test(dt) && /880\/2,887/.test(dt) && /23/.test(dt) && /Asphalt/.test(dt) && /Yes/.test(dt) && /02\/20/.test(dt) && /Runway ends/.test(dt) && /25.*251°.*11 ft.*292 ft/.test(dt) && /Radio frequencies/.test(dt) && /122\.225/.test(dt) && q('[data-testid="airport-panel__promo-runway_details"]').closest('button').style.display === 'none', dt);
-  // (FR24's own schedule counted once the panel has been open a moment)
+  // (1.1.0) each day's take-offs and landings from the monitor, the same for everyone: yesterday's FR24 rows of the airport
+  // (4 take-offs, 5 landings - kept there from a browser that read them) with the blocked jet's landing FR24 does not show
   const mv = await until(() => { const x = q('.tl-panel[data-kind="moves"]'); return x && /\d+ \/ \d+/.test(x.textContent) ? x : null; }, 15000);
   const mt = mv ? mv.textContent : '', yd = new Date(tday(yest) + 'T12:00:00Z').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
-  check('"Movements per day": the locked picture (by its name) gives way to each day\'s take-offs and landings - FR24\'s own schedule counted', !!mv && q('.r1 .lock').style.display === 'none' && mt.includes(yd) && /\(so far\)/.test(mt) && asked.some(u => /plugin\[\]=schedule/.test(u)), mt);
-  const mv2 = await until(() => { const x = q('.tl-panel[data-kind="moves"]'); return x && /blocked flight/.test(x.textContent) ? x : null; }, 8000), mt2 = mv2 ? mv2.textContent : mt;
-  check('... yesterday: FR24\'s 4 take-offs and 5 landings, and the blocked jet\'s landing it does not show on top: 4 / 6', new RegExp(yd + '\\s*4 / 6').test(mt2) && /with 1 blocked flight it does not show/.test(mt2), mt2);
+  check('"Movements per day": the locked picture (by its name) gives way to each day\'s take-offs and landings - the monitor\'s, nothing of FR24\'s schedule read here', !!mv && q('.r1 .lock').style.display === 'none' && mt.includes(yd) && /\(so far\)/.test(mt) && !asked.some(u => /plugin\[\]=schedule/.test(u)), mt);
+  check('... yesterday: FR24\'s 4 take-offs and 5 landings, and the blocked jet\'s landing it does not show on top: 4 / 6 (more than public ADS-B heard)', new RegExp(yd + '\\s*4 / 6').test(mt) && /with the blocked ones it does not show/.test(mt), mt);
   // ---- another airport opened: its own
   const panel = q('[data-testid="airport-panel"]'); panel.remove();
   await until(() => !q('.tl-panel'), 3000);

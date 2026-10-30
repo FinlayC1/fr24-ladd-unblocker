@@ -12,7 +12,8 @@
   //  - FR24's own flown and scheduled flights of the aircraft whose FR24 schedule or log page it reads
   //  - FR24's own rows of that board from earlier visits
   // Kept per airport on disk (the 'hist' store, 'b:<airport id>'), so a board keeps them across refreshes.
-  const BOARD_BACK = 3 * 86400, BOARD_AHEAD = 3 * 86400, BOARD_V = 2, BOARD_MAX = 3000;
+  // (1.1.0: seven days each way - the monitor keeps every airport's FR24 rows of them, so a board opens whole)
+  const BOARD_BACK = 7 * 86400, BOARD_AHEAD = 7 * 86400, BOARD_V = 2, BOARD_MAX = 12000;
   // (a flight rebuilt from its whole track beats what was guessed while it flew: M-ARNZ "from Woking" - first heard in
   // the air near Fairoaks - when its track shows it taking off at Farnborough)
   const BOARD_RANK = { fr24: 4, sched: 4, log: 3, live: 2 };
@@ -23,6 +24,10 @@
   const boardOk = id => fin(id) && id > 0 && id < SITE_BASE;   // (FR24's own airports have boards; a strip or landing place has none)
   function boardPut(apId, kind, row) {
     if (!boardOk(apId) || !row || !fin(row.t) || Math.abs(row.t - nowS()) > Math.max(BOARD_BACK, BOARD_AHEAD)) return;
+    // (1.1.0) FR24's own rows read here - its map board's, its schedule's, its flight numbers' lists - go to the monitor for
+    // every other browser; those that came from it do not go back
+    if (row.fromMon) { row = Object.assign({}, row); delete row.fromMon; delete row.u; }
+    else if (row.src === 'fr24' || row.src === 'sched') boardUp(apId, kind, row);
     (boardPend.get(apId) || boardPend.set(apId, []).get(apId)).push([kind, row]);
     // (kept in a while, in one go - within a second or two for a board that is open)
     const wait = boardAsked.has(apId) ? 1500 : 20000;
@@ -31,12 +36,31 @@
     boardTimerAt = now() + wait;
     boardTimer = setTimeout(() => { boardTimer = 0; boardDrain().catch(e => log('board archive', e)); }, wait);
   }
+  // (sent on in one request every eight seconds at most - sooner with a few hundred waiting; up to 2,000 rows a time)
+  const upQ = new Map(); let upT = 0;
+  function boardUp(apId, kind, row) {
+    const q = upQ.get(apId) || upQ.set(apId, { arrivals: new Map(), departures: new Map() }).get(apId);
+    q[kind].set(row.src + '|' + row.k, row);
+    let n = 0; for (const x of upQ.values()) n += x.arrivals.size + x.departures.size;
+    if (!upT) upT = setTimeout(boardUpFlush, n > 400 ? 500 : 8000);
+  }
+  function boardUpFlush() {
+    upT = 0; const list = []; let n = 0;
+    for (const [ap, q] of upQ) for (const kind of ['arrivals', 'departures']) {
+      if (!q[kind].size || n >= 2000) continue;
+      const rows = [...q[kind].values()].slice(0, 2000 - n); for (const r of rows) q[kind].delete(r.src + '|' + r.k);
+      n += rows.length; list.push({ ap, kind, rows });
+    }
+    for (const [ap, q] of upQ) if (!q.arrivals.size && !q.departures.size) upQ.delete(ap);
+    if (list.length) monPost('/boardrows', { list }).catch(() => {});
+    if (upQ.size && !upT) upT = setTimeout(boardUpFlush, 3000);
+  }
   function boardLoad(apId) {
     let b = boardMem.get(apId);
     if (b) return b.loading || Promise.resolve(b);
     b = { arr: {}, dep: {}, dirty: false }; boardMem.set(apId, b);
     // (only once the store is open: read before that, an airport's kept rows would look empty - and be written over)
-    b.loading = Promise.resolve(store.kvReady).then(() => { b.noDisk = store.mode() !== 'idb'; return store.getBoard(apId); }).then(v => { if (v && (v.v === BOARD_V || v.v === 1)) { Object.assign(b.arr, v.arr || {}); Object.assign(b.dep, v.dep || {}); boardScrub(apId, b); } }).catch(() => { /* none kept */ }).then(() => { b.loading = null; return b; });
+    b.loading = Promise.resolve(store.kvReady).then(() => { b.noDisk = store.mode() !== 'idb'; return store.getBoard(apId); }).then(v => { if (v && (v.v === BOARD_V || v.v === 1)) { Object.assign(b.arr, v.arr || {}); Object.assign(b.dep, v.dep || {}); if (fin(v.monSync)) b.monSync = v.monSync; boardScrub(apId, b); } }).catch(() => { /* none kept */ }).then(() => { b.loading = null; return b; });
     if (boardMem.size > 120) for (const [k, x] of boardMem) { if (boardMem.size <= 100) break; if (!x.loading && !x.dirty && !boardAsked.has(k)) boardMem.delete(k); }
     return b.loading;
   }
@@ -123,7 +147,7 @@
     if (b.noDisk && store.mode() === 'idb') { const old = b; boardMem.delete(apId); b = await boardLoad(apId); for (const r of Object.values(old.arr)) boardMerge(b, 'arrivals', r, apId); for (const r of Object.values(old.dep)) boardMerge(b, 'departures', r, apId); }
     return b;
   }
-  function boardSave(apId, b) { boardPrune(b); b.savedAt = now(); if (!b.noDisk) { store.setBoard(apId, { v: BOARD_V, at: now(), arr: b.arr, dep: b.dep }); b.dirty = false; } }
+  function boardSave(apId, b) { boardPrune(b); b.savedAt = now(); if (!b.noDisk) { store.setBoard(apId, { v: BOARD_V, at: now(), arr: b.arr, dep: b.dep, monSync: b.monSync || 0 }); b.dirty = false; } }
   // (while an airport fills up - Manchester has some 600 flight numbers - its board is written at most every 20 s and
   // sent to the page at most every 4 s, not every time a few rows come in)
   function boardSoon(apId, b) {
@@ -315,7 +339,9 @@
     boardSchedFill(apId, b);
     { const ap = apById(apId); if (ap) monArea(ap.lat, ap.lon); }
     monP.then(() => boardInfoFill(apId)).catch(e => log('board monitor', e));
-    boardFr24Fill(apId).catch(e => log('board schedule', e));
+    // (FR24's schedule of the airport read here only when the monitor's is older than a quarter of an hour - its read, or
+    // another browser's, is what every board has)
+    monP.then(at => { if (!(at > nowS() - 900)) return boardFr24Fill(apId); }).catch(e => log('board schedule', e));
   }
   // FR24's own rows of a board as it served them (kept for when they have dropped off its free day)
   function onBoardRows(d) {
@@ -543,9 +569,20 @@
     return list;
   }
   // The permanent monitor's flights at the airport, the last three days
+  // (1.1.0) and every FR24 row of the board kept there - seven days each way: those changed since this browser's last answer
+  // of it once it has had one - put in at once (the rows are merged and the board sent as soon as they are in). Returns when
+  // FR24's data of the airport last came in there (0: never)
   async function boardMonFill(apId) {
-    const j = await monGet(`/board?ap=${apId}&from=${Math.round(nowS() - BOARD_BACK)}&to=${Math.round(nowS())}`).catch(() => null);
+    const b0 = await boardFresh(apId), t = Math.round(nowS()), since = b0.monSync || 0;
+    const j = await monGet(`/board?ap=${apId}&from=${t - BOARD_BACK}&to=${t + BOARD_AHEAD}&rows=1${since ? '&since=' + (since - 120) : ''}`, { timeout: 30000 }).catch(() => null);
     for (const a of (j && j.aircraft) || []) { if (a.reg && !store.getHex(a.hex)) store.mergeHex(a.hex, { reg: a.reg, type: a.type, ladd: !!a.ladd }); boardNoteLegs(a.hex, a.legs, { reg: a.reg, type: a.type }); }
+    const rows = j && j.rows;
+    if (rows && typeof rows === 'object') {
+      for (const kind of ['arrivals', 'departures']) for (const r of Array.isArray(rows[kind]) ? rows[kind] : []) if (r && (r.src === 'fr24' || r.src === 'sched')) boardPut(apId, kind, Object.assign({}, r, { fromMon: true }));
+      // (the time of the monitor's answer: the next asks for what changed since - kept with the board; once its rows are in)
+      if (fin(j.now)) { const at = j.now; boardDrain().then(() => boardFresh(apId)).then(b => { b.monSync = at; b.dirty = true; boardSoon(apId, b); }).catch(() => {}); }
+    }
+    return j && fin(j.fr24At) ? j.fr24At : 0;
   }
   // FR24's own schedule of an aircraft (its list.json, or the rows of its log page): flown and still to fly
   function boardNoteSched(hex, rows, rec) {
@@ -657,7 +694,11 @@
     routesOf(ap.id).then(list => postToPage('routesAdd', { apId: ap.id, list })).catch(e => log('routes', e));
     // (1.0.2) and every one of the last two weeks' take-offs and landings there - every aircraft public ADS-B heard, counted
     // by the monitor as each day's world log is built (daily)
-    const j = monUp() ? await monGet(`/airport?ap=${ap.id}&days=7&hist=14`).catch(() => null) : null;
+    // (asked whether or not the monitor's check has answered yet - monGet waits for it: an airport opened as the page
+    // loaded said "the monitor is not connected"; and asked again once should the first not answer)
+    const ask = () => monGet(`/airport?ap=${ap.id}&days=7&hist=14`, { timeout: 15000 }).catch(() => null);
+    let j = await ask(); if (!(j && j.known) && monUp()) j = await sleep(1500).then(ask);
+    if (!(j && j.known)) panelAsked.set(code, now() - 45000);   // (another try within a quarter of a minute)
     if (j && j.known) Object.assign(out, { runways: Array.isArray(j.runways) ? j.runways : [], freqs: Array.isArray(j.freqs) ? j.freqs : [], usage: Array.isArray(j.usage) ? j.usage : [], moves: j.moves || 0, withRunway: j.withRunway || 0, monitor: true, daily: Array.isArray(j.daily) ? j.daily : null, allDays: j.allDays || 0 });
     else out.ends = await runwaysOf(ap).catch(() => []);
     postToPage('airportPanel', out);

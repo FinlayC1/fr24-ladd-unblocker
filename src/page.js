@@ -1460,7 +1460,7 @@
         }) || null;
       };
       var pick = rows.filter(function (r) {
-        var t = r.sch || r.t; if (!(t >= nowS - 3 * 86400 && t <= nowS + 3 * 86400)) return false;
+        var t = r.sch || r.t; if (!(t >= nowS - 7 * 86400 && t <= nowS + 7 * 86400)) return false;
         var hit = (r.fid && fids[r.fid]) || near(nmt, String(r.num || '').toUpperCase(), r.sch || r.t, 1800) || nearCs(String(r.cs || '').toUpperCase(), r);
         if (!hit) return true;
         // (FR24's own row of it stands - what it leaves out, "N/A" where the flight went or came from, the aircraft of
@@ -1964,16 +1964,16 @@
       });
       return out;
     }
-    // (the movements of each of the last days: FR24's own counts and the blocked flights the userscript knows - and, 1.0.2,
-    // every finished day the monitor has counted: every aircraft public ADS-B heard take off or land there, its world log)
+    // (the movements of each of the last days: from the monitor - 1.1.0 - every day its own, the same for everyone: the more
+    // of every aircraft public ADS-B heard there and FR24's own rows of its board (Portimao, out of the receivers' reach);
+    // without it, FR24's own counts read here and the blocked flights the userscript knows)
     function panelMoves(code, d) {
-      var c = code.toLowerCase(), tz = d.tz || 'UTC', today = dayOf(Date.now() / 1000, tz);
+      var c = code.toLowerCase(), tz = d.tz || 'UTC', today = dayOf(Date.now() / 1000, tz), utcToday = new Date().toISOString().slice(0, 10);
+      var mon = (Array.isArray(d.daily) ? d.daily : []).filter(function (x) { return Array.isArray(x) && /^\d{4}-\d\d-\d\d$/.test(String(x[0])) && (x[3] === 'all' || x[3] === 'live'); });
+      if (d.monitor && mon.length) return mon.slice().sort(function (a, b) { return String(b[0]).localeCompare(String(a[0])); }).slice(0, 7).map(function (x) { return { day: x[0], today: x[0] === utcToday, off: +x[1] || 0, on: +x[2] || 0, blocked: 0, all: true, fr24: !!x[4] }; });
       var days = mvKept(c).days || {}, add = {}, inc = function (t, k) { var x = dayOf(t, tz); (add[x] = add[x] || { off: 0, on: 0 })[k]++; };
       (routesAdd.get(d.apId) || []).forEach(function (m) { if (m.from.id === d.apId) (m.offs || []).forEach(function (t) { inc(t, 'off'); }); if (m.to.id === d.apId) (m.ons || []).forEach(function (t) { inc(t, 'on'); }); });
-      var mon = {}; (Array.isArray(d.daily) ? d.daily : []).forEach(function (x) { if (Array.isArray(x) && x[3] === 'all' && /^\d{4}-\d\d-\d\d$/.test(String(x[0])) && x[0] !== today) mon[x[0]] = { off: +x[1] || 0, on: +x[2] || 0 }; });
-      var keys = Object.keys(days).concat(Object.keys(mon)).filter(function (k, i, a) { return a.indexOf(k) === i; }).sort().reverse().slice(0, 7);
-      return keys.map(function (k) {
-        if (mon[k]) return { day: k, today: false, off: mon[k].off, on: mon[k].on, blocked: 0, all: true };
+      return Object.keys(days).sort().reverse().slice(0, 7).map(function (k) {
         var x = days[k], e = add[k] || { off: 0, on: 0 }; return { day: k, today: k === today, off: x.takeoffs + e.off, on: x.landings + e.on, blocked: e.off + e.on };
       });
     }
@@ -2007,8 +2007,8 @@
       var max = Math.max.apply(null, rows.map(function (r) { return r.off + r.on; }));
       grid(box, rows.map(function (r) { return { label: dayLabel(r.day) + (r.today ? ' (so far)' : ''), off: r.off, on: r.on }; }), max);
       var bl = rows.reduce(function (s, r) { return s + r.blocked; }, 0), all = rows.filter(function (r) { return r.all; }).length;
-      legend(box, all === rows.length ? 'Take-offs / landings each day (UTC) - every aircraft public ADS-B heard there, counted by the monitor.'
-        : (all ? 'Finished days (UTC): every aircraft public ADS-B heard there, counted by the monitor; the others: ' : 'Take-offs / landings by the airport\'s local day - ') + 'FR24\'s own schedule' + (bl ? ', with ' + bl + ' blocked flight' + (bl > 1 ? 's' : '') + ' it does not show' : '') + '.');
+      legend(box, all === rows.length ? 'Take-offs / landings each day (UTC), counted by the monitor: every aircraft public ADS-B heard there - or FR24\'s own flights of the airport, with the blocked ones it does not show, where that is more.'
+        : 'Take-offs / landings by the airport\'s local day - FR24\'s own schedule' + (bl ? ', with ' + bl + ' blocked flight' + (bl > 1 ? 's' : '') + ' it does not show' : '') + '.');
       return JSON.stringify(rows);
     }
     function usageBlock(box, d) {
@@ -2041,7 +2041,7 @@
       panelWant(code); rwyPanel();
       var d = panelData[code] || panelFromKept(code);
       // (FR24's own counts of the last days: once the panel has been open a moment - a click through airports asks nothing)
-      if (d && Date.now() - panelOpen.at > 2500) mvCount(code.toLowerCase(), d.tz || 'UTC');
+      if (d && !d.monitor && Date.now() - panelOpen.at > 2500) mvCount(code.toLowerCase(), d.tz || 'UTC');
       // (the panel as it was last done, unchanged: nothing to do)
       if (panelSigs[code] === panelSig(panel, code, d)) return;
       panelHide(panel);

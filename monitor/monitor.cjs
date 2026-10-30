@@ -41,6 +41,7 @@ const fs = require('fs');
 const path = require('path');
 const http = require('http');
 const crypto = require('crypto');
+const zlib = require('zlib');
 const DIR = __dirname, DATA = process.env.MON_DATA || path.join(DIR, 'data'), STORE = process.env.MON_STORE || path.join(DIR, 'store');
 const PORT = +(process.env.PORT || process.env.MON_PORT || 47524), HOST = process.env.MON_HOST || '127.0.0.1';
 // (on a server: MON_TOKEN is the owner's secret - header X-Monitor-Token. A public monitor (monitor.json "public", the
@@ -74,6 +75,7 @@ const { createTracks } = require('./tracks.cjs');
 const ARCH = require('./archive.cjs');
 const W = require('./world.cjs');
 const { createApStats } = require('./apstats.cjs');
+const { createBoards } = require('./boards.cjs');
 const { createCentral } = require('./central.cjs');
 const DL = require('./datalink.cjs');
 const { createWaiting } = require('./waiting.cjs');
@@ -683,6 +685,8 @@ function archiveNext(nowS) {
 const WORLD = W.createWorld(path.join(STORE, 'world'));
 // (every airport's movements and runway use, each day of the world log - apstats.cjs)
 const AS = createApStats({ store: STORE });
+// (1.1.0) every airport's board - FR24's own rows, seven days either side - kept here for every browser (boards.cjs)
+const BD = createBoards({ store: STORE, E, log: (...a) => log('boards', ...a), fetch: (u, o) => global.fetch(u, o), ua: () => fr24.st.ua, cfg: CFG.boards });
 const worldTried = new Map(), WS = { running: '', days: 0, aircraft: 0, legs: 0, bad: 0, ms: 0, full: false, freeGb: null, err: '', last: null };
 let freeAt = 0;
 function worldRoom() {
@@ -1612,6 +1616,7 @@ function work(final) {
   for (const [k, a] of adds) if (a.t !== Math.floor(nowS / 3600)) adds.delete(k);
   // (the tracks: written every ten minutes - a day's file is a few MB - and on stop; the old days removed once a day)
   if (final || nowS - tracksSaved >= 600) { tracksSaved = nowS; tracks.save(); }
+  try { BD.save(nowS); } catch (e) { log('boards', String(e && e.message || e)); }
   if (tracksPruned !== dayOf(nowS)) { tracksPruned = dayOf(nowS); tracks.prune(nowS); }
   // (the installs counted: written at most once a minute when changed - its own timer too - and on stop)
   try { installs.save(final); } catch (e) { log('installs', String(e && e.message || e)); }
@@ -1768,6 +1773,60 @@ function diskLegs(day) {
 // (back down where it took off without having flown - a taxi with the transponder saying "airborne", a take-off seen in
 // two pieces: not a flight on any board)
 const flewOk = l => !E.localFlew || E.localFlew(l, E.classify({ hex: l.hex || '', type: l.type || '', reg: l.reg || '', cs: l.cs || '' }));
+// (1.1.0) Each airport's flights in the live log, gathered once a minute - an airport's answer reads its own, not every
+// aircraft's (Heathrow's took over a second)
+let apIdx = { at: 0, m: new Map() };
+function apLegs(apId) {
+  const t = Date.now();
+  if (t - apIdx.at > 60000) {
+    const m = new Map(), add = (id, l) => { if (id) (m.get(id) || m.set(id, []).get(id)).push(l); };
+    for (const lm of legs.values()) for (const l of lm.values()) { const a = l.from && l.from.id, b = l.to && l.to.id; add(a, l); if (b !== a) add(b, l); }
+    apIdx = { at: t, m };
+  }
+  return apIdx.m.get(apId) || [];
+}
+// /airport: its runways and frequencies, runway use and each day's movements (airport.cjs answer, apstats.cjs counts) - a
+// day's take-offs and landings the more of public ADS-B's count and FR24's own rows of it (boards.cjs: Portimao, out of
+// public receivers' reach, had none). Worked out at most once a minute an airport; asked for, its board is wanted here
+const apAnswers = new Map();
+function airportAnswer(apId, nowS, days, hist) {
+  BD.want(apId);
+  const key = apId + ':' + days + ':' + hist, c = apAnswers.get(key);
+  if (c && Date.now() - c.at < 60000) return c.v;
+  const v = APT.answer(apId, apLegs(apId), nowS, days, AS, hist);
+  if (v && v.known && Array.isArray(v.daily)) {
+    // (FR24's own count of a day: its rows, and the blocked aircraft's take-offs and landings there it does not show -
+    // seen here)
+    const fc = BD.counts(apId), bl = new Map(), sure = e => !!e && (e.conf === 'ground' || e.conf === 'low');
+    for (const l of apLegs(apId)) {
+      if (!(l.ladd || blocked.has(l.hex))) continue;
+      const tO = l.tOff || l.tStart, tL = l.tOn || l.tEnd;
+      if (l.from && l.from.id === apId && sure(l.from) && tO <= nowS) { const c = bl.get(dayOf(tO)) || bl.set(dayOf(tO), [0, 0]).get(dayOf(tO)); c[0]++; }
+      if (l.to && l.to.id === apId && sure(l.to) && !l.open && tL <= nowS) { const c = bl.get(dayOf(tL)) || bl.set(dayOf(tL), [0, 0]).get(dayOf(tL)); c[1]++; }
+    }
+    const fr = d => { const f = fc.get(d); if (!f) return null; const b = bl.get(d) || [0, 0]; return [f[0] + b[0], f[1] + b[1]]; };
+    v.daily = v.daily.map(x => { const f = fr(x[0]); return f && (f[0] > x[1] || f[1] > x[2]) ? [x[0], Math.max(x[1], f[0]), Math.max(x[2], f[1]), x[3], 1] : x; });
+    // (a day FR24's rows have and ADS-B's count has not: added)
+    const have = new Set(v.daily.map(x => x[0]));
+    for (let k = 0; k < hist; k++) { const d = dayOf(nowS - k * 86400), f = fr(d); if (f && !have.has(d)) v.daily.push([d, f[0], f[1], 'live', 1]); }
+    v.daily.sort((a, b) => b[0].localeCompare(a[0]));
+  }
+  apAnswers.set(key, { at: Date.now(), v }); if (apAnswers.size > 2000) apAnswers.delete(apAnswers.keys().next().value);
+  return v;
+}
+// POST /boardrows: FR24's own rows of airport boards a browser read - { list: [{ ap, kind, rows }] } - kept for every browser
+// (boards.cjs; only FR24's data, every field checked; 60,000 rows an hour from one address at most)
+const bdHits = new Map();
+function boardRows(d, ctx) {
+  const list = d && Array.isArray(d.list) ? d.list.slice(0, 40) : [], h = Math.floor(Date.now() / 3600e3), key = ctx && ctx.ip || '';
+  let c = bdHits.get(key); if (!c || c.h !== h) { c = { h, n: 0 }; bdHits.set(key, c); if (bdHits.size > 5000) bdHits.delete(bdHits.keys().next().value); }
+  let taken = 0;
+  for (const x of list) {
+    if (!x || !Array.isArray(x.rows) || (!(ctx && ctx.admin) && c.n >= 60000)) continue;
+    c.n += x.rows.length; taken += BD.put(+x.ap, x.kind, x.rows, ctx && ctx.admin ? 'owner' : 'crowd');
+  }
+  return { v: 1, taken };
+}
 function boardLegs(apId, lo, hi) {
   const out = [], memFrom = Date.now() / 1000 - KEEP_LADD;
   if (lo < memFrom) {
@@ -1861,7 +1920,7 @@ function monStatus() {
   return { polls: stats.polls, hexPolls: stats.hexPolls, fails: stats.fails, lastErr: stats.lastErr, laddAt: lastLadd.at, aircraft: ac.size, blocked: blocked.size, withLegs: legs.size, legs: [...legs.values()].reduce((n, m) => n + m.size, 0), backfillQueue: backQ.length,
     live: live.size, listAge: { ladd: age('ladd'), mil: age('mil'), fi: age('fi'), pia: age('pia'), hex: age('hex'), area: age('area'), fiArea: age('fiArea'), adsbx: age('adsbx'), osky: age('osky'), tat: age('tat') }, tat: { polls: TAT.polls, fails: TAT.fails, last: TAT.last, aircraft: TAT.aircraft, taken: TAT.taken, every: +CFG.tatEvery || 0 }, listPolls: stats.listPolls, adsbx: { key: !!CFG.adsbxKey, today: adsbxUse.n, cap: CFG.adsbxDaily }, apiLastMin: gate.sent.filter(t => now - t < 60000).length,
     hist: Object.assign({ queue: histQ.length, closed }, histStats),
-    central: Object.assign({}, central.stats, { round: CR }), nets: netSt, archive: Object.assign({ on: +CFG.archiveDays || 0, have: archHave(), idx: idxHave(), atrace: ARC }, AR, { world: worldStatus() }),
+    central: Object.assign({}, central.stats, { round: CR }), boards: Object.assign({}, BD.stats, { wanted: BD.wanted.size }), nets: netSt, archive: Object.assign({ on: +CFG.archiveDays || 0, have: archHave(), idx: idxHave(), atrace: ARC }, AR, { world: worldStatus() }),
     datalink: Object.assign({ on: !!CFG.datalink, aircraft: datalink.byReg.size }, datalink.stats),
     tracks: Object.assign({ days: tracks.days }, tracks.stats), playback: PB,
     waiting: { flights: waiting.size, playback: waiting.count('pb'), live: waiting.count('live'), named: waiting.stats.named, tries: waiting.stats.tries, expired: waiting.stats.expired, rounds: WAIT.rounds, lastMs: WAIT.lastMs },
@@ -2045,13 +2104,20 @@ function answer(u, nowS, ctx) {
   if (p === '/live') { const now = Date.now(), since = +(q('since') || 0); return liveList(now, since > 0 && now - since < 60000 ? since : 0); }
   // (every name, or - with since, the time of the last answer - what changed since; a very old "since" gets everything)
   if (p === '/fr24ids') { const now = Date.now(), since = +(q('since') || 0), full = !(since > 0) || now - since > 6 * 3600e3; return Object.assign({ v: 1, now, full, scanOk: !!fr24.st.lastOkAt && now - fr24.st.lastOkAt < 300000 }, ident.table(full ? 0 : since)); }
-  if (p === '/board') return { aircraft: boardLegs(+q('ap'), +(q('from') || nowS - 3 * 86400), +(q('to') || nowS)) };
+  // (1.1.0) and FR24's own rows of the airport's board kept here - those changed since `since` only, when given - with
+  // when FR24's data of it last came in (fr24At). Asked for: the monitor reads its schedule from FR24 too while wanted.
+  if (p === '/board') {
+    const ap = +q('ap'), from = +(q('from') || nowS - 3 * 86400), to = +(q('to') || nowS); BD.want(ap);
+    const out = { v: 2, aircraft: boardLegs(ap, from, Math.min(to, nowS)) };
+    if (q('rows') === '1') { const r = BD.rows(ap, from, to, +(q('since') || 0)); out.rows = { arrivals: r.arrivals, departures: r.departures }; out.fr24At = r.fr24At; out.now = Math.round(nowS); }
+    return out;
+  }
   if (p === '/flights') return { list: flightsOfCs(q('cs')) };
   if (p === '/legs') {
     const hs = hexList(q('hex'), 50), one = h => { const m = legs.get(h); return { hex: h, legs: m ? chained(m) : [] }; };
     return hs.length > 1 ? { list: hs.map(one) } : one(hs[0] || String(q('hex') || '').toLowerCase());
   }
-  if (p === '/airport') return APT.answer(+q('ap'), legs, nowS, Math.min(14, Math.max(1, +(q('days') || 7))), AS, Math.min(31, Math.max(0, +(q('hist') || 0))));
+  if (p === '/airport') return airportAnswer(+q('ap'), nowS, Math.min(14, Math.max(1, +(q('days') || 7))), Math.min(31, Math.max(0, +(q('hist') || 0))));
   if (p === '/owners') return { list: owners.rows(hexList(q('hex'), 500), { public: !admin && PUBLIC }) };
   if (p === '/learn') return Object.assign({ v: 1 }, learnSince(String(q('from') || '')));
   if (p === '/surge') { const sc = surgeNow(nowS); return { v: 1, day: sc.day, list: sc.list }; }
@@ -2103,7 +2169,7 @@ function serve() {
       return;
     }
     if (req.method === 'POST') {
-      if (u.pathname !== '/report' && u.pathname !== '/pbmatch' && u.pathname !== '/hello' && u.pathname !== '/calc') { res.writeHead(404); res.end(); return; }
+      if (u.pathname !== '/report' && u.pathname !== '/pbmatch' && u.pathname !== '/hello' && u.pathname !== '/calc' && u.pathname !== '/boardrows') { res.writeHead(404); res.end(); return; }
       const parts = [], cap = u.pathname === '/hello' ? 4096 : 4e6; let size = 0;
       req.on('data', c => { size += c.length; if (size > cap) { if (!res.headersSent) { res.writeHead(413); res.end(); } req.destroy(); } else parts.push(c); });
       req.on('end', () => {
@@ -2113,7 +2179,7 @@ function serve() {
           if (!h) { res.writeHead(400); res.end(); return; }
           res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(h)); return;
         }
-        let out; try { const d = JSON.parse(Buffer.concat(parts).toString('utf8') || '{}'); out = u.pathname === '/pbmatch' ? { v: 1, t: +d.t || 0, list: pbMatch(+d.t || 0, d.f) } : u.pathname === '/calc' ? central.answer(d) : report(d, Date.now(), ctx); } catch (e) { res.writeHead(400); res.end(); return; }
+        let out; try { const d = JSON.parse(Buffer.concat(parts).toString('utf8') || '{}'); out = u.pathname === '/pbmatch' ? { v: 1, t: +d.t || 0, list: pbMatch(+d.t || 0, d.f) } : u.pathname === '/calc' ? central.answer(d) : u.pathname === '/boardrows' ? boardRows(d, ctx) : report(d, Date.now(), ctx); } catch (e) { res.writeHead(400); res.end(); return; }
         res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(out));
       });
       return;
@@ -2130,8 +2196,15 @@ function serve() {
         if (b.gz) h['Content-Encoding'] = 'gzip';
         res.writeHead(b.status, h); res.end(body); return;
       }
+      // (1.1.0) a big answer - an airport's board of fifteen days - gzipped where the asker takes it
+      const txt = typeof b.raw === 'string' ? b.raw : JSON.stringify(b);
+      if (txt.length > 32768 && /\bgzip\b/.test(String(req.headers['accept-encoding'] || ''))) {
+        const z = zlib.gzipSync(txt, { level: 5 });
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Encoding': 'gzip', 'Content-Length': z.length, Vary: 'Accept-Encoding', 'Access-Control-Allow-Origin': 'https://www.flightradar24.com' });
+        res.end(z); return;
+      }
       res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': 'https://www.flightradar24.com' });
-      res.end(typeof b.raw === 'string' ? b.raw : JSON.stringify(b));
+      res.end(txt);
     }, e => { if (!res.headersSent) { res.writeHead(500); res.end(String(e)); } });
   }).listen(PORT, HOST, () => log('listening on ' + HOST + ':' + PORT));
 }
@@ -2182,6 +2255,8 @@ if (require.main === module) {
   for (const [hex, b] of blocked) owners.want(hex, b.reg);
   ownersLoop();
   setInterval(() => { wx.pump().catch(e => log('wx', String(e))); }, 2000);
+  // (airports' schedules read from FR24 here, for the boards browsers open)
+  setInterval(() => { BD.pump().catch(e => log('boards', String(e))); }, 5000);
 }
-module.exports = { central, centralStart, centralRound, CR, WORLD, WS, AS, fr24Track, F24T, worldDay, worldWants, worldRoom, worldStatus, worldRecheck: () => { freeAt = 0; }, pollTat, TAT, TAT_HOST, carriesOn, liveExtra, logOf, heardPts, archBreath, memAvail, archTrace, archiveJob, indexDay, idxLookup, idxHave, archIdx, idxFile, ARC, setArcRange: f => { arcRange = f; }, surgeNow, datalink, datalinkRound, dlSeen, classifyTrace, traceGet, netSt, archiveDay, archiveState, archiveNext, archMark, archTried, archDays, archRunning, traceOf, AR, apliveTrace, HIST_V, HIST_RESET, resetHistLogs, histResetMark, get histResetN() { return histResetN; }, adminAnswer, ctl, logRing, log, MON_VER, learnCheck, learnFromCrowd, crowdLearnSave, crowdRows, LC, tracks, waiting, waitRound, waitLive, waitNamed, waitClaims, WAIT, saveWaiting, loadWaiting, pbMatch, learnedBuild, learnedDue, learnedLoad, learnedRef: () => learnedOut, liveBusy, backWaits, E, CFG, loadEngine, ingest, buildLegs, fr24Legs, fr24Leg, F24ref: () => F24, owners, ownersLoop, APT, legRunways, names, nearAnswer, telAnswer, tel, wx, pbNames, get PUBLIC() { return PUBLIC; }, get RATE() { return RATE; }, limited, tokenOk, installs, opts, optionsSet, optionsLoad, latestCheck, latestVer, helloAnswer, badge, wakeQuiet, parkedAt, boardLegs, flightsOfCs, lastHeard, legs, ac, backfillOne, backQ, blocked, markBlocked, seed, gapFill, addArea, userAreas,
+module.exports = { central, centralStart, centralRound, CR, WORLD, WS, AS, BD, boardRows, airportAnswer, apLegs, fr24Track, F24T, worldDay, worldWants, worldRoom, worldStatus, worldRecheck: () => { freeAt = 0; }, pollTat, TAT, TAT_HOST, carriesOn, liveExtra, logOf, heardPts, archBreath, memAvail, archTrace, archiveJob, indexDay, idxLookup, idxHave, archIdx, idxFile, ARC, setArcRange: f => { arcRange = f; }, surgeNow, datalink, datalinkRound, dlSeen, classifyTrace, traceGet, netSt, archiveDay, archiveState, archiveNext, archMark, archTried, archDays, archRunning, traceOf, AR, apliveTrace, HIST_V, HIST_RESET, resetHistLogs, histResetMark, get histResetN() { return histResetN; }, adminAnswer, ctl, logRing, log, MON_VER, learnCheck, learnFromCrowd, crowdLearnSave, crowdRows, LC, tracks, waiting, waitRound, waitLive, waitNamed, waitClaims, WAIT, saveWaiting, loadWaiting, pbMatch, learnedBuild, learnedDue, learnedLoad, learnedRef: () => learnedOut, liveBusy, backWaits, E, CFG, loadEngine, ingest, buildLegs, fr24Legs, fr24Leg, F24ref: () => F24, owners, ownersLoop, APT, legRunways, names, nearAnswer, telAnswer, tel, wx, pbNames, get PUBLIC() { return PUBLIC; }, get RATE() { return RATE; }, limited, tokenOk, installs, opts, optionsSet, optionsLoad, latestCheck, latestVer, helloAnswer, badge, wakeQuiet, parkedAt, boardLegs, flightsOfCs, lastHeard, legs, ac, backfillOne, backQ, blocked, markBlocked, seed, gapFill, addArea, userAreas,
   serve, fr24, ident, dest, F24, report, identRound, fr24Round, saveIdent, loadIdent, histUnknown, learnSince, learnWrite, diskLegs, KEEP_LADD, save, loadStore, dirtyDays, pollOpenSky, adsbxUse, live, liveList, answer, step, P, piaState, apiGet, gate, stats, lastOk, noteWatch, watch, watchedAll, flew, closeDays, histQ, histPend, histOne, histDay, histOf, histRead, histWrite, histFile, fillHist, fillAsked, queueHist, photos, nextHist, saveState, loadState, lastW, get closed() { return closed; }, set closed(v) { closed = v; }, pause };
