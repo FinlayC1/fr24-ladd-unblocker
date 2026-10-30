@@ -158,7 +158,6 @@
     airports.list = list; airports.byId = new Map(); airports.byIata = new Map();
     for (const a of list) { airports.byId.set(a.id, a); if (a.iata) airports.byIata.set(a.iata, a); if (a.country && a.countryId) countryIdByName.set(a.country.toUpperCase(), a.countryId); }
     ENGINE.setAirports(list);
-    applyLearnedUsage();
     return list;
   }
   function fetchAirports() {
@@ -410,27 +409,15 @@
   // the route engine's, by where it is)
   const fr24Ap = id => !id ? 0 : id < 1e7 ? id : (a => a ? siteIdAt(a.lat, a.lon) : 0)(ENGINE.byId(id));
   const apCode = a => a ? (a.iata || a.icao || String(a.id)) : '';
-  // Learned usage: every flight log this script reconstructs, and every parked LADD aircraft it sees, adds to the
-  // business-aviation usage prior on top of the shipped table - so the model keeps getting better where it is used.
-  let usageLearned = null, usageTimer = 0;
-  function applyLearnedUsage() { usageLearned = usageLearned || store.kvGet('usage') || {}; for (const [k, v] of Object.entries(usageLearned)) { const [kind, icao] = k.includes(':') ? k.split(':') : ['use', k]; ENGINE.addUsage(icao, v, kind); } }
-  function usageAdd(icao, w, kind) {
-    if (!icao) return; usageLearned = usageLearned || store.kvGet('usage') || {};
-    kind = kind || 'use'; const key = kind + ':' + icao;
-    if ((usageLearned[key] || 0) >= 60) return;
-    usageLearned[key] = (usageLearned[key] || 0) + w; ENGINE.addUsage(icao, w, kind);
-    if (!usageTimer) usageTimer = setTimeout(() => { usageTimer = 0; store.kvSet('usage', usageLearned); }, 5000);
-  }
-
   // Learning from use: every completed flight in a log this script reconstructs (the selected aircraft's, and the logs
-  // it backfills for everything it identifies) teaches the engine where business aviation goes from where, how the
-  // transponder's code block / FMS altitude relate to the trip length, and when flights land - once per flight, kept on
-  // disk (the latest 100,000) and replayed after start, in idle moments. The shipped tables are the starting point; this
-  // is what the user's own corner of the world adds to them - and the destinations the user confirms ("confirm").
+  // it backfills for everything it identifies) - where business aviation goes from where, how the transponder's code
+  // block / FMS altitude relate to the trip length, when flights land - goes to the monitor, which learns it with every
+  // other browser's and its own (1.1.0: the tables and the learning are the monitor's alone - nothing is learned into an
+  // engine here). Each flight once: the ones sent are kept on disk (the latest 100,000), so none goes twice.
   // (kept in chunks of 5,000 in the logs store, read after start: a new flight rewrites only the newest chunk; the oldest
   // chunk goes as a whole when there are more than 100,000. The older single kv copy, learn2, is moved there once.)
   const LEARN_MAX = 100000, LEARN_CHUNK = 5000;
-  let learned = [], learnedKeys = new Set(), learnTimer = 0, learnedApplied = false, learnLoaded = false, learnLoading = null;
+  let learned = [], learnedKeys = new Set(), learnTimer = 0, learnLoaded = false, learnLoading = null;
   let learnMeta = { first: 0, last: 0 }, learnChunks = new Map();   // chunk index -> entries
   // (learn2 adds the take-off time, callsign, type and the flow-field cells passed through: what the 22.10 tables learn)
   function learnLoad() {
@@ -473,10 +460,11 @@
     return true;
   }
   function learnedStore() { if (!learnLoaded) learnLoad(); return learned; }
-  // (22.25) Every flight learned here goes to the monitor too (02 reportToMonitor): learned there with every other
-  // browser's and its own, every browser's engine has it with its next /learned. A flight the monitor took is marked
-  // with the number it gave that report (x[12]), kept with it: a learning of the monitor's that has it says so
-  // (builtSeq), and it is not counted twice here (srvCovers)
+  // (1.1.0: what an older version kept to learn into its own engine - the monitor's learning, a few MB, and the airports'
+  // usage counts - is of no use here any more: removed once)
+  store.kvReady.then(() => { if (store.kvGet('usage')) store.kvSet('usage', null); if (!store.kvGet('srvLearnGone')) { store.setBlob('srvLearned', undefined); store.kvSet('srvLearnGone', 1); } }).catch(() => {});
+  // (22.25) Every flight learned here goes to the monitor (02 reportToMonitor): learned there with every other browser's
+  // and its own. A flight the monitor took is marked with the number it gave that report (x[12]), kept with it
   const learnOut = [];
   function learnOutTake(n) { return learnOut.splice(0, n); }
   function learnOutBack(rows) { if (rows && rows.length) learnOut.unshift(...rows); if (learnOut.length > 2000) learnOut.splice(2000); }
@@ -488,48 +476,6 @@
     // (the chunks they are in written again - the newest two: a flight is sent within a minute or two of being learned)
     if (learnLoaded) for (const i of [learnMeta.last - 1, learnMeta.last]) { const c = learnChunks.get(i); if (c && rows.some(x => c.includes(x))) store.setBlob('learn3:' + i, c); }
   }
-  // (a flight of a blocked aircraft within the days the monitor's learning covers is in it already - and one sent from
-  // here that it has: not counted twice)
-  let srvLearned = null;   // { ver, from, asOf, builtSeq } of the monitor's learning added to the tables on this page
-  const srvCovers = x => {
-    if (!srvLearned || typeof x[0] !== 'string') return false;
-    const [hex, t] = x[0].split('|'), ts = +t || +x[8] || 0;
-    if (!(ts >= Date.parse(srvLearned.from + 'T00:00:00Z') / 1000 && ts < Date.parse(srvLearned.asOf + 'T00:00:00Z') / 1000 + 86400)) return false;
-    return (/^[0-9a-f]{6}$/.test(hex) && !!(store.getHex(hex) || {}).ladd) || (x[12] > 0 && x[12] <= (srvLearned.builtSeq || 0));
-  };
-  function replayLearned(x) { if (!srvCovers(x)) ENGINE.learnRow(x); }
-  // (read, then replayed in idle slices: 100,000 flights at once would hold the page for seconds)
-  async function applyLearned() {
-    if (learnedApplied || !airportsReady()) return; learnedApplied = true;
-    // (the monitor's learning kept from before: added first, so this browser's own flights it covers are not counted twice)
-    const kept = await store.getBlob('srvLearned').catch(() => null);
-    if (kept && kept.ver && Array.isArray(kept.ops)) await addSrvLearned(kept);
-    try { const l = (await learnLoad()).slice(); await sliced(l, replayLearned, { ms: 8 }); if (l.length) log('learned from use', l.length, 'flights'); } catch (e) { log('learned replay', e); }
-  }
-  async function addSrvLearned(j) {
-    srvLearned = { ver: j.ver, from: j.from, asOf: j.asOf, builtSeq: j.builtSeq || 0 };
-    let n = 0; await sliced(j.ops, o => { if (ENGINE.addLearnedOp(o)) n++; }, { ms: 8 });
-    log('learned on the monitor', j.flights, 'flights of', j.days, 'days (' + j.from + ' to ' + j.asOf + '),', n, 'increments');
-  }
-  // The monitor's learning: every blocked aircraft's completed flights of the last 90 days, worldwide, learned there into
-  // increments of the tables (GET /learned, a few MB, rebuilt a few times a day) - where business aviation goes from
-  // where, its squawk blocks, levels and flows, today's habits of every LADD jet. Kept here and added as the page opens; a
-  // newer one is fetched in an idle moment and used from the next page load: one already added cannot be taken out
-  // again, and this page's own flights it covers have been counted already.
-  let srvLearnBusy = false;
-  async function syncSrvLearn() {
-    if (srvLearnBusy || !monUp() || !learnedApplied) return;
-    srvLearnBusy = true;
-    try {
-      const have = srvLearned ? srvLearned.ver : String(((await store.getBlob('srvLearned').catch(() => null)) || {}).ver || '');
-      const j = await monGet('/learned?have=' + encodeURIComponent(have), { idle: true, timeout: 120000 });
-      if (!j || j.same || j.none || !j.ver || !Array.isArray(j.ops)) return;
-      await store.setBlob('srvLearned', j);
-      log('learned on the monitor: a copy of', j.flights, 'flights kept for the next page load', j.ver);
-    } catch (e) { log('monitor learning', String(e && e.message || e)); }
-    finally { srvLearnBusy = false; }
-  }
-  setTimeout(() => { syncSrvLearn().catch(() => {}); }, 30000); setInterval(() => { syncSrvLearn().catch(() => {}); }, 3 * 3600e3);
   // (lx: what the monitor worked out from the positions of a flight it rebuilt - [squawk blocks, FMS levels, flow keys] -
   // for a flight this browser has the summary of only)
   function learnFromLeg(hex, raw, s, cls, mil, lx) {
@@ -549,7 +495,6 @@
     const ok = Array.isArray(lx) && lx.length === 3, flow = ok ? String(lx[2] || '') : ENGINE.flowKeysOf((raw && raw.pts) || [], ENGINE.byId(s.to.id)).slice(0, 16).join('|');
     const x = [key, s.from.id, s.to.id, Math.round(s.tEnd), ok ? String(lx[0] || '') : [...sq].join(','), ok ? String(lx[1] || '') : [...fm].join(','), cls, mil ? 1 : 0, Math.round(s.tStart), s.cs || '', (acOfHex(hex).type || ''), flow];
     if (!learnAppend(x)) return;
-    if (learnedApplied) replayLearned(x);
     // (rebuilt by the monitor's own learning already - from its lx: not sent back)
     if (!ok) { learnOut.push(x); if (learnOut.length > 2000) learnOut.shift(); }
   }
@@ -1593,8 +1538,8 @@
     return ENGINE.chainLegs(ENGINE.stitchLegs(legs), legCtx(hex));
   }
 
-  // ---- the population tables (22.10): packed into the script at build time (gzip, base64), unpacked once at start ------
-  // in the background - the page never waits for them; the engine reasons without them until they are in (a second).
+  // ---- the population tables (22.10) as packed: unpacked by the monitor (monitor/central.cjs reads this block) - 1.1.0: they
+  // are not in the script, every route is worked out there
   // (packed: airports as indexes into one list, keys nested by origin / map cell - test/pack_t2.cjs checks this round trip)
   /* ==UNPACKT2== */
   // (a generator: the loader runs it a few milliseconds at a time, so the page never stalls on it; unpackT2 = all at once)
@@ -1620,16 +1565,6 @@
     return t;
   }
   /* ==/UNPACKT2== */
-  // the build writes the packed tables as lines ("key<TAB>json", each table in parts of ~150 KB) so that no single
-  // JSON.parse holds the page either; an older single-JSON build still loads
-  function* parseT2Lines(txt, p) {
-    for (let i = txt.indexOf('\n') + 1; i > 0 && i < txt.length;) {
-      let j = txt.indexOf('\n', i); if (j < 0) j = txt.length;
-      const tab = txt.indexOf('\t', i), k = txt.slice(i, tab), v = JSON.parse(txt.slice(tab + 1, j));
-      if (k === '_') Object.assign(p, v); else if (Array.isArray(v) || !v || typeof v !== 'object') p[k] = v; else Object.assign(p[k] || (p[k] = {}), v);
-      i = j + 1; yield;
-    }
-  }
   // ---- build year by serial number (AGE, padlocked by FR24) -------------------------------------------------------
   // No open source has a build year for every aircraft (hexdb and adsbdb none, OpenSky's database ~0.1%, airframes.org
   // allows no scripts). The registers that publish one are asked (FAA, UK G-INFO, Isle of Man); for the rest, the FAA
@@ -1650,30 +1585,6 @@
       return ageTable;
     })().catch(e => { log('age table', e); return null; });
     return ageTableLoading;
-  }
-  // The learned arrival paths (build.mjs apprPack): unpacked into the engine a slice at a time, a while after start
-  let apprLoading = null;
-  function loadApprTable() {
-    if (apprLoading) return apprLoading;
-    apprLoading = (async () => {
-      if (typeof APPR_TABLE_GZ !== 'string' || !APPR_TABLE_GZ || typeof DecompressionStream !== 'function') return null;
-      const bin = atob(APPR_TABLE_GZ), u8 = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
-      const b = new Uint8Array(await new Response(new Blob([u8]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer());
-      // (kept as sorted typed arrays - a few MB, where a Map of them would be ~25 - and looked up by halving)
-      const nl = b.indexOf(10), head = JSON.parse(new TextDecoder().decode(b.subarray(0, nl))), N = head.n;
-      const K = new Float64Array(N), A = new Uint32Array(N), T = new Uint32Array(N), M = new Uint32Array(N);
-      let i = nl + 1, key = 0;
-      const vint = () => { let v = 0, m = 1, x; do { x = b[i++]; v += (x & 127) * m; m *= 128; } while (x >= 128); return v; };
-      for (let k = 0; k < N; k++) {
-        key += vint(); K[k] = key; A[k] = vint(); T[k] = vint(); M[k] = vint();
-        if (k % 20000 === 19999) await idleSlice();
-      }
-      const get = k => { let lo = 0, hi = N - 1; while (lo <= hi) { const mid = (lo + hi) >> 1, v = K[mid]; if (v === k) return [head.aps[A[mid]], T[mid] - M[mid], T[mid]]; if (v < k) lo = mid + 1; else hi = mid - 1; } return undefined; };
-      ENGINE.setApproach({ bin: head.bin, thr: head.thr, minN: head.minN, cells: { get, size: N } });
-      return N;
-    })().catch(e => { log('arrival paths', e); return null; });
-    return apprLoading;
   }
   const normSerial = s =>String(s || '').toUpperCase().replace(/\s+/g, '').replace(/^0+(?=\d)/, '');
   const serialKey = s => { const m = s.match(/^(.*?)(\d+)([A-Z]?)$/); return m ? [m[1] + '#' + m[3], +m[2]] : null; };
@@ -1708,25 +1619,6 @@
     return (b.est ? '~' : '') + (a ? `${a} year${a === 1 ? '' : 's'}` : '< 1 year');
   }
   const ageTitle = hx => { const b = builtYear(hx); return b ? `Built ${b.est ? 'about ' : ''}${b.year} (from ${b.how})` : ''; };
-  // runs a generator in slices of ~8 ms, giving the page its turn in between
-  async function runSliced(it) { for (;;) { const t0 = Date.now(); while (Date.now() - t0 < 8) if (it.next().done) return; await sleep(0); } }
-  let t2Ready = null;
-  function loadT2() {
-    if (t2Ready) return t2Ready;
-    t2Ready = (async () => {
-      if (typeof ROUTE_T2_GZ !== 'string' || !ROUTE_T2_GZ || typeof DecompressionStream !== 'function') return false;
-      const t0 = now(), bin = atob(ROUTE_T2_GZ), u8 = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
-      const txt = await new Response(new Blob([u8]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
-      let p; if (txt.startsWith('T2L1\n')) { p = {}; await runSliced(parseT2Lines(txt, p)); } else p = JSON.parse(txt);
-      let t = p; if (p && p.pk === 2) { t = {}; await runSliced(unpackT2Steps(p, t)); }
-      ENGINE.setTables2(t);
-      log('population tables', Math.round(txt.length / 1e6 * 10) / 10 + ' MB in', now() - t0, 'ms');
-      return true;
-    })().catch(e => { log('population tables', String(e && e.message || e)); return false; });
-    return t2Ready;
-  }
-
   // ---- conditions at the candidate airports: METARs (aviationweather.gov) ------------------------------------------------
   // Below landing minima, IFR for a light aircraft flying VFR, a crosswind beyond what the class lands in on any runway -
   // and which runways are in use, for the approach geometry. Asked for the few likeliest fields of the aircraft being

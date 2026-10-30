@@ -470,13 +470,15 @@
     const leg = td && td.legs && td.legs.length ? td.legs[td.legs.length - 1] : null;
     const trail = leg && !leg.ended ? [leg.start].concat(leg.pts) : [];
     const cached = store.allIds().filter(r => r.hex === hex).sort((a, b) => b.savedAt - a.savedAt)[0];
-    const fakeId = -1;
-    live.set(fakeId, { id: fakeId, hex, reg, type: (store.getHex(hex) || {}).type || (cur && cur.type) || '', cat: cur && cur.cat, mil: cur && cur.mil });
-    try {
-      const r = composeRoute(fakeId, hex, { pos, trail });
-      if (!r) return null;
-      return Object.assign(r, { cs: (cur && cur.cs) || (leg && leg.cs) || '', fr24Id: cached && now() - cached.savedAt < 6 * 3600e3 ? cached.id : 0 });
-    } finally { live.delete(fakeId); }
+    // (1.1.0) worked out on the monitor, as every route is: what this page has of the flight sent - under an id of its own,
+    // the aircraft's address made into one - the answer waited for
+    const hx = store.getHex(hex) || {}, rec = { hex, reg, type: hx.type || (cur && cur.type) || '', cat: cur && cur.cat, mil: !!(cur && cur.mil) || !!hx.mil, ladd: !!hx.ladd, pia: !!hx.pia };
+    const id = hexCalcId(hex), sums = td && td.sums ? td.sums.filter(l => l.ended) : [];
+    const thin = []; for (const p of trail) if (!thin.length || p.t - thin[thin.length - 1].t >= 15) thin.push(p);
+    const r0 = await calcNow({ id, hex, kind: hx.ladd || hx.fr24Blocked || hx.pia || hx.mil ? 'live' : 'pub', ac: acOf(rec), pos: ptOut(pos), trail: { full: true, pts: thin.map(ptOut) }, today: sums, lastLeg: sums.filter(l => l.to).pop() || null });
+    if (!r0) return null;
+    const r = localView(Object.assign({}, r0, { computedAt: now() }), id, hex, pos);
+    return Object.assign(r, { cs: (cur && cur.cs) || (leg && leg.cs) || '', fr24Id: cached && now() - cached.savedAt < 6 * 3600e3 ? cached.id : 0 });
   }
   async function bootAircraftPage() {
     const reg = decodeURIComponent((location.pathname.match(/^\/data\/aircraft\/([^/?#]+)/i) || [])[1] || '').toUpperCase();

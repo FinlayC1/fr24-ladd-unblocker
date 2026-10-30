@@ -55,7 +55,10 @@ const sameAp = (a, b) => (!a && !b) || (!!a && !!b && a.id === b.id && a.code ==
   const want = new Map();
   while (want.size < 1000) { const hex = Math.floor(rnd() * 0xffffff).toString(16).padStart(6, '0'); if (!want.has(hex)) want.set(hex, rnd() < 0.2 ? [] : pool[Math.floor(rnd() * pool.length)]); }
   const wr = w.writer(D);
-  for (const [hex, legs] of [...want].sort((a, b) => a[0].slice(-2).localeCompare(b[0].slice(-2)))) wr.add(hex, legs);   // (the archive's order: by the last two digits)
+  // (1.1.0: an aircraft's type, registration, flags and category after its flights - here every other one, the rest as a
+  // day built before 1.1.0 has them)
+  const acOf = hex => parseInt(hex, 16) % 2 ? null : ['GLF6', 'N' + hex.slice(0, 4).toUpperCase(), 8, 'A3'];
+  for (const [hex, legs] of [...want].sort((a, b) => a[0].slice(-2).localeCompare(b[0].slice(-2)))) wr.add(hex, legs, acOf(hex) || undefined);   // (the archive's order: by the last two digits)
   const h = wr.finish();
   check('a day\'s file: 1,000 aircraft in blocks of 32, sorted by address', h.n === 1000 && h.nb === Math.ceil(1000 / W.PER_BLOCK) && w.has(D, W.WORLD_V) && !fs.existsSync(w.fileOf(D) + '.rows') && !fs.existsSync(w.fileOf(D) + '.tmp'), h);
   let wrong = 0; const t0 = Date.now();
@@ -64,6 +67,9 @@ const sameAp = (a, b) => (!a && !b) || (!!a && !!b && a.id === b.id && a.code ==
   check(`... every aircraft's flights found again, the same (${ms} ms for 1,000)`, wrong === 0, { wrong });
   const none = [...want].find(x => !x[1].length);
   check('... an aircraft heard that day that did not fly: [] - one not in the day: null - a day not kept: undefined', JSON.stringify(w.lookup(D, none[0])) === '[]' && w.lookup(D, '000001') === null && w.lookup(D, 'fffffe') === null && w.lookup('2026-10-20', none[0]) === undefined);
+  // (no breath given: the whole day read before each returns)
+  { let bad = 0, n = 0; w.each(D, (hex, legs, ac) => { n++; const x = acOf(hex); if (x ? !ac || ac.type !== 'GLF6' || ac.reg !== x[1] || ac.flags !== 8 || ac.cat !== 'A3' : ac !== null) bad++; if (legs.length !== want.get(hex).length) bad++; });
+    check('... (1.1.0) each aircraft\'s type, registration, flags and category with its flights; a line without them (a day built before) read as before', n === 1000 && bad === 0, { n, bad }); }
   const first = [...want.keys()].sort()[0], last = [...want.keys()].sort().pop();
   check('... the first and the last address of the day', Array.isArray(w.lookup(D, first)) && Array.isArray(w.lookup(D, last)));
   // (a day half written - the monitor stopped mid-day: its rows file left, no day file - is not taken; it is built again)
@@ -108,6 +114,8 @@ const sigs = legs => legs.map(l => (l.from ? code(l.from.id) : '?') + '-' + (l.t
   check('(the world log on by default: 366 days, not built with under 4 GB free)', M.CFG.worldDays === 366 && M.CFG.worldFreeGb === 4 && M.worldRoom());
   const st = await M.archiveDay(D, io);
   check('a day of the archive read for its blocked aircraft: the world log of it built in the same read - every aircraft in it that reads', st.published && M.WORLD.has(D, W.WORLD_V) && M.WORLD.days.get(D).n === 3 && st.taken === 1 && M.archIdx.has(D) && st.bad === 1, { st, w: M.WORLD.days.get(D) });
+  { const got = {}; await M.WORLD.each(D, (hex, legs, ac) => { got[hex] = ac; });
+    check('... (1.1.0) each aircraft\'s type, registration and flags kept with its flights (G-PLAIN, an A320; G-PARK, a C172)', !!got.aaaaaa && got.aaaaaa.type === 'A320' && got.aaaaaa.reg === 'G-PLAIN' && got.aaaaaa.flags === 0 && !!got.bbbbbc && got.bbbbbc.type === 'C172', got); }
   // (an ordinary aircraft's day - as its day's log is built from adsb.lol's file)
   const info = { hex: 'aaaaaa', type: 'A320' }, cls = E.classify(info);
   const exp = E.legsFromPoints(E.parseTrace(PLAIN), { heli: false, patrol: false, cls, type: 'A320', rangeKm: E.typeRangeKm(info), dataEnd: dayS(D) + 86400 }).map(l => E.summarizeLeg(l, { visits: new Map(), base: 0, mil: false, grp: E.groupOf(cls), cls, type: 'A320' }));

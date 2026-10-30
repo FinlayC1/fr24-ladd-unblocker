@@ -1,10 +1,13 @@
-// 22.25 - what one browser works out reaches every other, through the shared monitor: the BUILT userscript in jsdom, two
-// browsers (two windows, two addresses) with the real monitor code between them, offline. The route a browser works out
-// for a flight the monitor names - in the other browser at once, the flight on the map or opened, marked as another
-// browser's; a destination confirmed in one confirmed in all, and standing; never sent back. The flights a browser
-// learns from - to the monitor, into every browser's engine with the next /learned, counted once; one the monitor did
-// not take learned on in that browser. And a playback flight the monitor has no name for yet - asked about again,
-// named once the monitor has worked it out.
+// What one browser sees reaches every other, through the shared monitor: the BUILT userscript in jsdom, two browsers (two
+// windows, two addresses) with the real monitor code between them, offline.
+//   - (1.1.0) a flight the monitor names: its route worked out on the monitor (central calculation) from what the
+//     browsers send - each shows that one answer, the very same, and sends none of it back;
+//   - a destination confirmed in one browser: to the monitor, and in its answer to every other - "confirmed in another
+//     browser", 100%; a guess sent by a browser of an older version does not take its place; checked against the flight
+//     on the monitor as the browsers once did (TC-AKB: one it has flown away from is not shown); a destination a browser
+//     worked out itself (an older version) never in the monitor's answer;
+//   - the flights a browser learns from: to the monitor, learned there - no browser fetches any learning;
+//   - a playback flight the monitor has no name for yet: asked about again, named once the monitor has worked it out.
 // usage: node test/unit_shared.cjs <node_modules dir> <data dir>
 const fs = require('fs');
 const path = require('path');
@@ -39,6 +42,7 @@ async function monitor(url, headers, o, ip) {
       return { status: 200, text: JSON.stringify(rep) };
     }
     if (u.pathname === '/pbmatch') { pbAsks.push({ ip, d }); return { status: 200, text: JSON.stringify({ v: 1, t: +d.t || 0, list: M.pbMatch(+d.t || 0, d.f) }) }; }
+    if (u.pathname === '/calc') return { status: 200, text: JSON.stringify(await M.central.answer(d)) };
     return { status: 404, text: '' };
   }
   const b = await M.answer(u, Date.now() / 1000, ctx);
@@ -87,6 +91,9 @@ const posted = (w, kind) => w.__posted.filter(m => m && m.__tweeksLadd === kind)
 const lastReport = ip => { for (let i = reports.length - 1; i >= 0; i--) if (reports[i].ip === ip) return reports[i]; return null; };
 
 (async () => {
+  // (central calculation on the monitor, on this thread)
+  M.CFG.centralWorkers = 0; await M.centralStart();
+  check('(the monitor\'s central calculation on)', M.central.stats.on, M.central.stats.why);
   const IPA = '198.51.100.1', IPB = '198.51.100.2';
   const netA = makeNet(IPA), netB = makeNet(IPB), idbA = new FIDB.IDBFactory(), idbB = new FIDB.IDBFactory();
   const { w: A, L: LA } = await boot(netA, idbA), { w: B, L: LB } = await boot(netB, idbB);
@@ -107,98 +114,78 @@ const lastReport = ip => { for (let i = reports.length - 1; i >= 0; i--) if (rep
   await until(() => LA.live.has(ID), 3000);
   await until(() => !(LA.routeState.get(ID) || {}).working, 5000); await sleep(300);
   check('A has it on its map: identified from the monitor\'s name', (LA.live.get(ID) || {}).hex === HEX);
-  check('... its own guess, made without the aircraft\'s log or its take-off, not sent (the monitor\'s rough one is as good)', !LA.routesOut.has(ID), LA.routesOut.get(ID));
-
-  // ---- A opens it: its route, worked out with the aircraft's log, to the monitor -----------------------------------
-  const ETA = nowS + 4 * 3600, ATD = nowS - 3 * 3600;
-  const routeA = { computedAt: Date.now(), quick: false, originId: LTN.id, originIata: 'LTN', originConf: 'ground', originNote: 'departed LTN', destId: TEB.id, destIata: 'TEB', destConf: 'likely', destP: 85, destReason: 'its own log', eta: ETA, atd: ATD, departedAt: ATD, legCount: 14 };
-  LA.publishRoute(ID, routeA);
-  check('A\'s route (its engine with the aircraft\'s log): kept for the monitor - origin, destination, chance, word, ETA, departure', JSON.stringify(LA.routesOut.get(ID)) === JSON.stringify([ID, HEX, LTN.id, 'ground', TEB.id, 85, 'likely', ETA, ATD]), LA.routesOut.get(ID));
-  await LA.reportToMonitor();
-  let rep = lastReport(IPA);
-  check('... sent with A\'s next report, taken by the monitor', !!rep && (rep.d.routes || []).length === 1 && rep.rep.routes === 1 && !LA.routesOut.has(ID), rep && { routes: rep.d.routes, taken: rep.rep.routes });
-  LA.publishRoute(ID, Object.assign({}, routeA, { computedAt: Date.now() }));
-  check('... and not again while it stays the same', !LA.routesOut.has(ID));
+  const sig = r => r ? [r.originIata, r.destIata, r.destConf, r.destP, r.destReason].join('|') : 'none';
+  // ---- A shows it: the monitor's answer - worked out there from what A sent ------------------------------------------
+  const ETA = nowS + 4 * 3600;
+  check('... nothing of A\'s own to send for it', !LA.routesOut.has(ID), LA.routesOut.get(ID));
+  await until(() => (LA.composeRoute(ID, HEX), LA.calcGot.has(ID)), 8000);
+  const rA = LA.composeRoute(ID, HEX), mA = M.central.routeOf(ID);
+  check('A: the monitor\'s answer for it, worked out from what A sent of the flight', !!rA && !!rA.central && !!mA && sig(rA) === sig(mA.r), { a: sig(rA), mon: mA && sig(mA.r) });
+  LA.publishRoute(ID, rA);
+  check('... not sent back to the monitor (it is the monitor\'s)', !LA.routesOut.has(ID), LA.routesOut.get(ID));
   // (a moment with nothing - its track and log not to be had, the sites walling the browser and the monitor slow: an
   // empty route - the page keeps the one it has: taken away, FR24's panel lost the airports, their time zones and the
   // progress bar, 23 Oct)
   A.__posted.length = 0;
   LA.publishRoute(ID, { computedAt: Date.now(), quick: false, onGround: false });
   check('a route that comes out empty for a moment, in the air: the page keeps the one it has (no "no route" sent)', !posted(A, 'route').some(m => m.id === ID), posted(A, 'route'));
-  LA.publishRoute(ID, Object.assign({}, routeA, { computedAt: Date.now() }));
-  check('... the route again: the page has it', posted(A, 'route').some(m => m.id === ID && m.route && m.route.destIata === 'TEB'));
+  LA.publishRoute(ID, rA);
+  check('... the route again: the page has it', posted(A, 'route').some(m => m.id === ID && m.route && (m.route.destIata || '') === (rA.destIata || '')));
 
-  // ---- B: the flight not on its map - the name and A's route together ----------------------------------------------
-  await sleep(5); B.__posted.length = 0; await LB.pullSrvIds();
-  const rB = (posted(B, 'routes').flatMap(m => m.list || []).find(x => x.id === ID) || {}).route;
-  check('B: the name arrives with A\'s route, marked as another browser\'s (origin, destination, chance, ETA, departure)', !!rB && rB.originIata === 'LTN' && rB.destIata === 'TEB' && rB.destConf === 'likely' && rB.destP === 85 && rB.destReason === 'worked out by another browser' && rB.eta === ETA && rB.atd === ATD, rB);
-  check('... the origin too', LB.srvRoute(LB.srvIds.rows.get(ID)).originNote === 'worked out by another browser');
-  // (B's own engine on its own, for comparison: the same moment without A's route)
-  const pos = { t: nowS, lat: 50, lon: -30, alt: 41000, trk: 262, gs: 470, gnd: false };
-  const rowB = LB.srvIds.rows.get(ID), bare = rowB.slice(); bare[24] = 0; bare[25] = ''; bare[26] = 0; bare[8] = 0; bare[10] = 0;
-  LB.srvIds.rows.set(ID, bare); const own = LB.composeRoute(ID, HEX, { pos }) || {}; LB.srvIds.rows.set(ID, rowB);
-  // ---- B opens it: A's route in its panel ---------------------------------------------------------------------------
+  // ---- B opens it: the very same answer --------------------------------------------------------------------------------
   B.__posted.length = 0; feed(B, [fl]);
   await until(() => LB.live.has(ID), 3000);
-  const rB2 = LB.composeRoute(ID, HEX, { pos }) || {};
-  check('B opens the flight before its own log of the aircraft is in: A\'s route in the panel (B\'s own guess was weaker)', rB2.destId === TEB.id && rB2.destReason === 'worked out by another browser' && rB2.destP === 85 && rB2.originId === LTN.id && rB2.originNote === 'worked out by another browser' && rB2.departedAt === ATD, { own: { dest: own.destIata, p: own.destP }, got: { dest: rB2.destIata, p: rB2.destP, why: rB2.destReason, o: rB2.originIata } });
-  const pg = await until(() => posted(B, 'route').find(m => m.id === ID && m.route && m.route.destIata === 'TEB'), 3000);
-  check('... and on its map at once, as identified', !!pg && pg.route.destReason === 'worked out by another browser', pg && pg.route);
-  LB.publishRoute(ID, rB2);
-  check('... never sent back from B (the parts that came from another browser left out: nothing of its own)', !LB.routesOut.has(ID), LB.routesOut.get(ID));
-  // (A's origin, seen on the ground there, with a guess of B's own for the destination: the guess not sent either)
-  { const x = Object.assign({}, rB2, { destId: BOS.id, destIata: 'BOS', destConf: 'possible', destP: 30, crowdD: false, computedAt: Date.now() });
-    LB.publishRoute(ID, x);
-    check('... nor a guess of B\'s own made without the log, though the origin it came with was seen', !LB.routesOut.has(ID), LB.routesOut.get(ID)); }
-  // (an origin of B's own, worked out with the log, A's destination kept in B's panel: only the origin goes - and A's
-  // destination stays with it at the monitor, for every other browser)
-  { const x = Object.assign({}, rB2, { originId: WIC.id, originIata: 'WIC', originConf: 'likely', originNote: 'its own log', crowdO: false, legCount: 5, computedAt: Date.now() });
-    LB.publishRoute(ID, x);
-    check('an origin of B\'s own with the log, the destination A\'s: only the origin for the monitor', JSON.stringify((LB.routesOut.get(ID) || []).slice(2, 7)) === JSON.stringify([WIC.id, 'likely', 0, 0, '']), LB.routesOut.get(ID));
-    await LB.reportToMonitor();
-    const t = M.ident.table(0).rows.find(r => r[0] === ID) || [];
-    check('... taken there, A\'s destination kept with it', (lastReport(IPB).rep || {}).routes === 1 && t[8] === WIC.id && t[26] === 1 && t[10] === TEB.id && t[11] === 85 && t[25] === 'likely', t.slice(8, 13).concat(t.slice(24))); }
-  // (a route of B's own as good: kept - another browser's only where it is better by ten points)
-  { const r = LB.srvIds.rows.get(ID).slice(); r[10] = BOS.id; r[11] = 5; r[25] = 'possible'; r[26] = 0;
-    LB.srvIds.rows.set(ID, bare); const mine = LB.composeRoute(ID, HEX, { pos }) || {};
-    LB.srvIds.rows.set(ID, r); const x = LB.composeRoute(ID, HEX, { pos }) || {};
-    check('another browser\'s destination not as good as B\'s own: B\'s own stands', mine.destId ? x.destId === mine.destId && x.destReason === mine.destReason : x.destId === BOS.id, { own: mine.destIata, got: x.destIata, why: x.destReason });
-    LB.srvIds.rows.set(ID, rowB); }
+  await until(() => (LB.composeRoute(ID, HEX), LB.calcGot.has(ID)), 8000);
+  const rB = LB.composeRoute(ID, HEX);
+  check('B opens the flight: the very same answer as A - the monitor\'s, nothing worked out in either browser', !!rB && !!rB.central && sig(rB) === sig(rA), { b: sig(rB), a: sig(rA) });
 
-  // ---- a destination confirmed in A: confirmed everywhere, and standing ---------------------------------------------
-  const routeC = Object.assign({}, routeA, { destId: BED.id, destIata: 'BED', destConf: 'confirmed', destP: 100, destReason: 'confirmed by you', userConfirmed: true, eta: ETA - 600, computedAt: Date.now() });
-  LA.publishRoute(ID, routeC); await LA.reportToMonitor();
-  check('A\'s user confirms Bedford: sent again, taken', (lastReport(IPA).rep || {}).routes === 1 && (M.ident.table(0).rows.find(r => r[0] === ID) || [])[24] === 2);
-  // (B's own work on the flight done - its route not worked out again for minutes of itself)
-  await until(() => LB.todayCache.get(HEX) && !(LB.routeState.get(ID) || {}).working, 8000); await sleep(100);
-  B.__posted.length = 0; await LB.pullSrvIds();
-  const pgC = await until(() => posted(B, 'route').find(m => m.id === ID && m.route && m.route.destIata === 'BED'), 1000);
-  check('B\'s map told at once (the flight is identified there: its route worked out again when another browser\'s word for it arrives)', !!pgC && pgC.route.confirmed === true && pgC.route.destReason === 'confirmed in another browser', pgC && pgC.route);
-  const rC = LB.composeRoute(ID, HEX, { pos }) || {};
-  check('B: Bedford, confirmed in another browser - 100%, over any guess of its own', rC.destId === BED.id && rC.destConf === 'confirmed' && rC.destP === 100 && rC.destReason === 'confirmed in another browser', { dest: rC.destIata, conf: rC.destConf, p: rC.destP, why: rC.destReason });
-  // (B's engine later guesses Boston with the aircraft's log: not over a destination confirmed in a browser)
-  LB.publishRoute(ID, { computedAt: Date.now(), quick: false, originId: 0, destId: BOS.id, destIata: 'BOS', destConf: 'likely', destP: 75, destReason: 'its own log', eta: ETA, legCount: 3 });
-  check('B\'s own route with the log goes to the monitor too', JSON.stringify((LB.routesOut.get(ID) || []).slice(2, 7)) === JSON.stringify([0, '', BOS.id, 75, 'likely']), LB.routesOut.get(ID));
-  await LB.reportToMonitor();
-  const tb = M.ident.table(0).rows.find(r => r[0] === ID);
-  check('... a guess does not take the place of a destination confirmed in a browser', (lastReport(IPB).rep || {}).routes === 0 && tb[10] === BED.id && tb[24] === 2, { taken: (lastReport(IPB).rep || {}).routes, d: tb[10] });
-  // (a landing: where the aircraft is - every browser sees that itself, and FR24 keeps the id while it taxis out again)
-  LA.publishRoute(ID, Object.assign({}, routeA, { destConf: 'landed', destP: 0, destReason: 'landed at TEB', landed: true, computedAt: Date.now() }));
-  check('a landing seen in A: only its origin for the monitor', JSON.stringify((LA.routesOut.get(ID) || []).slice(2, 7)) === JSON.stringify([LTN.id, 'ground', 0, 0, '']), LA.routesOut.get(ID));
-  LA.routesOut.delete(ID);
-  // ---- a destination worked out in A that the flight comes no nearer to in an hour: dropped, B's map told ----------
+  // ---- a destination confirmed in A: in the monitor's answer to every browser --------------------------------------
+  const n0 = reports.length;
+  LA.userConfirm(ID, LA.live.get(ID), BED.id);
+  const uA = LA.composeRoute(ID, HEX);
+  check('A\'s user confirms Bedford: A shows it, 100%, confirmed by you', !!uA && uA.destIata === 'BED' && uA.userConfirmed && uA.destP === 100 && /^confirmed by you/.test(uA.destReason), uA && sig(uA));
+  LA.publishRoute(ID, uA);
+  check('... kept for the monitor: the destination alone (the origin is the monitor\'s own already)', JSON.stringify((LA.routesOut.get(ID) || []).slice(2, 7)) === JSON.stringify([0, '', BED.id, 100, 'confirmed']) || reports.slice(n0).some(x => x.ip === IPA && x.rep.routes === 1), LA.routesOut.get(ID));
+  await LA.reportToMonitor();
+  check('... sent with A\'s next report, taken: confirmed in a browser at the monitor', reports.slice(n0).some(x => x.ip === IPA && x.rep.routes === 1) && (M.ident.table(0).rows.find(r => r[0] === ID) || [])[24] === 2);
+  B.__posted.length = 0;
+  const rC = await until(() => { const r = LB.composeRoute(ID, HEX); return r && r.destIata === 'BED' ? r : null; }, 8000) || LB.composeRoute(ID, HEX) || {};
+  check('B: Bedford, confirmed in another browser - 100% - in the monitor\'s answer (worked out again at once)', rC.destId === BED.id && rC.destConf === 'confirmed' && rC.destP === 100 && rC.destReason === 'confirmed in another browser' && !rC.userConfirmed && !!rC.central, sig(rC));
+  const pgC = await until(() => posted(B, 'route').find(m => m.id === ID && m.route && m.route.destIata === 'BED'), 3000);
+  check('... and on B\'s map', !!pgC && pgC.route.confirmed === true && pgC.route.destReason === 'confirmed in another browser', pgC && pgC.route);
+  LB.publishRoute(ID, rC);
+  check('... never sent back from B', !LB.routesOut.has(ID), LB.routesOut.get(ID));
+  await until(() => LA.calcGot.has(ID) && LA.calcGot.get(ID).r.destIata === 'BED', 8000);
+  const uA2 = LA.composeRoute(ID, HEX);
+  check('... A, the monitor\'s answer Bedford too: still "confirmed by you" there', !!uA2 && uA2.destIata === 'BED' && uA2.userConfirmed && /^confirmed by you/.test(uA2.destReason), uA2 && sig(uA2));
+  // (a browser of an older version - its own engine - later guesses Boston: not over a destination confirmed in a browser)
+  { const r5 = M.report({ routes: [[ID, HEX, 0, '', BOS.id, 75, 'likely', ETA, 0]] }, Date.now(), { ip: '198.51.100.9' }), tb = M.ident.table(0).rows.find(r => r[0] === ID);
+    check('... a guess from a browser of an older version does not take its place', r5.routes === 0 && tb[10] === BED.id && tb[24] === 2, { taken: r5.routes, d: tb[10] }); }
+  // (a landing seen in A: where the aircraft is - the monitor sees that itself)
+  LA.publishRoute(ID, Object.assign({}, rA, { destConf: 'landed', destP: 0, destReason: 'landed at TEB', landed: true, userConfirmed: false, computedAt: Date.now() }));
+  check('a landing seen in A: nothing for the monitor', !LA.routesOut.has(ID), LA.routesOut.get(ID));
+  // (A's user takes it back: taken back at the monitor, for every browser)
+  LA.userConfirm(ID, LA.live.get(ID), 0);
+  check('A\'s user takes Bedford back: that goes to the monitor too', JSON.stringify((LA.routesOut.get(ID) || []).slice(2, 7)) === JSON.stringify([0, '', BED.id, 0, 'withdrawn']), LA.routesOut.get(ID));
+  await LA.reportToMonitor();
+  check('... taken back there: confirmed for no one', !LA.routesOut.has(ID) && !(M.ident.ids.get(ID).crowd && M.ident.ids.get(ID).crowd.d) && (M.ident.table(0).rows.find(r => r[0] === ID) || [])[24] === 0, M.ident.ids.get(ID).crowd);
+  const rW = await until(() => { const r = LB.composeRoute(ID, HEX); return r && r.destReason !== 'confirmed in another browser' ? r : null; }, 8000) || {};
+  check('... B: the monitor\'s answer worked out again without it', !!rW.central && rW.destReason !== 'confirmed in another browser' && !rW.userConfirmed, sig(rW));
+  // ---- a destination a browser of an older version worked out itself: the monitor's table, never its answer ----------
   { M.ident.ids.get(ID).crowd = null;
-    LA.publishRoute(ID, Object.assign({}, routeA, { originId: 0, originIata: '', originConf: '', originNote: '', destP: 97, computedAt: Date.now() }));
-    await LA.reportToMonitor();
-    await sleep(5); B.__posted.length = 0; await LB.pullSrvIds();
-    const row = LB.srvIds.rows.get(ID) || [], p1 = await until(() => posted(B, 'route').find(m => m.id === ID && m.route && m.route.destReason === 'worked out by another browser'), 1000);
-    check('A\'s destination alone (no origin with it): B has it with the name, on its map', row[24] === 1 && row[10] === TEB.id && row[26] === 0 && !!p1 && p1.route.destIata === 'TEB', { row: row.slice(8, 13).concat(row.slice(24)), map: p1 && p1.route });
+    M.report({ routes: [[ID, HEX, 0, '', TEB.id, 97, 'likely', ETA, 0]] }, Date.now(), { ip: '198.51.100.9' });
+    await sleep(5); await LB.pullSrvIds();
+    const row = LB.srvIds.rows.get(ID) || [];
+    check('a destination a browser of an older version worked out (no origin with it): in the monitor\'s table of names, while central calculation has given it none', row[24] === 1 && row[10] === TEB.id && row[26] === 0, row.slice(8, 13).concat(row.slice(24)));
+    const r7 = LB.composeRoute(ID, HEX) || {};
+    check('... B, which shows the flight: the monitor\'s answer, not that browser\'s', !!r7.central && r7.destReason !== 'worked out by another browser', sig(r7));
+    M.ident.ids.get(ID).central = true;
+    const t7 = M.ident.table(0).rows.find(r => r[0] === ID) || [];
+    check('... central calculation\'s route the table\'s: that browser\'s left out of it too', t7[24] === 0 && t7[10] !== TEB.id, t7.slice(8, 13).concat(t7.slice(24)));
+    M.ident.ids.get(ID).central = false;
     M.ident.ids.get(ID).crowd.kmAt -= 3700; M.ident.prune(Date.now());
-    await sleep(5); B.__posted.length = 0; await LB.pullSrvIds();
-    // (a route post for the flight still on its way from the pull before can land after the clear: wait for the one
-    // that tells the drop)
-    const p2 = await until(() => posted(B, 'route').find(m => m.id === ID && (!m.route || m.route.destReason !== 'worked out by another browser')), 1000);
-    check('... the flight no nearer it an hour on: dropped at the monitor, and B\'s map told at once', !M.ident.ids.get(ID).crowd && (LB.srvIds.rows.get(ID) || [])[24] === 0 && !!p2 && (!p2.route || p2.route.destReason !== 'worked out by another browser'), p2 && p2.route); }
+    await sleep(5); await LB.pullSrvIds();
+    check('... the flight no nearer it an hour on: dropped at the monitor, and from B\'s table', !M.ident.ids.get(ID).crowd && (LB.srvIds.rows.get(ID) || [])[24] === 0); }
 
   // ---- (22.30) another browser's destination the flight has since left behind: checked again here, every time ---------
   // TC-AKB (GLF4, Farnborough 20:08Z, 15 Oct) descending through 24,300 ft on 137 past Chambery for Turin at 22:16Z was
@@ -229,83 +216,60 @@ const lastReport = ip => { for (let i = reports.length - 1; i >= 0; i--) if (rep
     check('... Turin worked out, its ETA 50 minutes gone, the aircraft still far from it: dropped', R2.crowd && !R2.crowd.d, R2.crowd);
     Object.assign(R2.crowd, { d: TRN.id, p: 60, dc: 'likely', eta: nowS + 1200, dt: nowS - 60, km: 120, kmAt: nowS - 60 });
     R2.crowd = null;
+    // (1.1.0) The route code on the monitor - every browser's answer: TC-AKB as the browsers send it, its whole track
+    M.central.take({ id: ID2, hex: HEX2, kind: 'live', ac: { reg: 'TC-AKB', type: 'GLF4', ladd: true }, pos: pos2, trail: { full: true, pts: trail2 } });
+    const F2 = M.central.flights.get(ID2), run = c => { R2.crowd = c; return M.central.compute(F2) || {}; };
+    const offOf = r => { const a = r.destId ? E.byId(r.destId) : null; return a ? Math.round(E.angDiff(pos2.trk, E.brg(pos2.lat, pos2.lon, a.lat, a.lon))) : null; };
+    const rN = run(null);
+    check('the monitor\'s answer for TC-AKB descending on 137 past Chambery: ahead of it, from Farnborough, no ETA already gone', !!rN.destId && offOf(rN) < 75 && rN.originId === FAB.id && (!rN.eta || rN.eta > nowS), { dest: rN.destIata, p: rN.destP, off: offOf(rN), o: rN.originIata, eta: rN.eta });
+    const cr = o => Object.assign({ o: 0, oc: '', atd: 0, ot: 0, oOwn: 0, p: 100, dc: 'confirmed', dt: nowS - 60, dOwn: 1, km: 120, kmAt: nowS - 60, at: nowS - 60 }, o);
+    const rT = run(cr({ d: TRN.id, eta: nowS + 1200 }));
+    check('... Turin confirmed in a browser, ahead of it: in the monitor\'s answer, 100%', rT.destIata === 'TRN' && rT.destReason === 'confirmed in another browser' && rT.destP === 100, { dest: rT.destIata, why: rT.destReason });
+    const rC2 = run(cr({ d: LBG.id, eta: nowS - 420 }));
+    check('... Le Bourget confirmed in a browser, 450 km behind it: not in it', rC2.destIata !== 'LBG' && !rC2.crowdD, { dest: rC2.destIata, why: rC2.destReason });
+    const rL = run(cr({ d: LBG.id, p: 74, dc: 'likely', eta: nowS - 420 }));
+    check('... a destination a browser worked out (not confirmed): never in it - the monitor\'s own stands', rL.destIata === rN.destIata && !rL.crowdD, { dest: rL.destIata, own: rN.destIata });
+    R2.crowd = null; M.central.flights.delete(ID2);
     for (const L of [LB]) { await until(() => !L.srvIds.busy, 5000); L.srvIds.since = 0; await L.pullSrvIds(); }
-    feed(B, [{ id: ID2, lat: pos2.lat, lon: pos2.lon, alt: pos2.alt, spd: Math.round(pos2.gs), trk: Math.round(pos2.trk), ts: nowS, gnd: false, src: 5, type: 'GLF4', reg: '' }]);
-    await until(() => LB.live.has(ID2), 3000);
-    await until(() => !(LB.routeState.get(ID2) || {}).working, 5000); await sleep(200);
     // (B's row for it as it was: another browser's Le Bourget at 74%, its ETA seven minutes gone)
     const row0 = LB.srvIds.rows.get(ID2) || [], rowL = row0.slice(); rowL[8] = FAB.id; rowL[9] = 'ground'; rowL[10] = LBG.id; rowL[11] = 74; rowL[12] = nowS - 5400; rowL[13] = pos2.lat; rowL[14] = pos2.lon; rowL[15] = pos2.alt; rowL[16] = 0; rowL[17] = nowS; rowL[18] = nowS - 420; rowL[19] = t0; rowL[24] = 1; rowL[25] = 'likely'; rowL[26] = 1;
-    LB.srvIds.rows.set(ID2, rowL);
-    const rL = LB.composeRoute(ID2, HEX2, { pos: pos2, trail: trail2 }) || {};
-    const offOf = r => { const a = r.destId ? LB.apById(r.destId) : null; return a ? Math.round(E.angDiff(pos2.trk, E.brg(pos2.lat, pos2.lon, a.lat, a.lon))) : null; };
-    check('B: another browser\'s Le Bourget, 450 km behind the aircraft descending on 137 - not shown; B\'s own, ahead of it', rL.destIata !== 'LBG' && !rL.crowdD && rL.destReason !== 'worked out by another browser' && !!rL.destId && offOf(rL) < 75, { dest: rL.destIata, p: rL.destP, why: rL.destReason, off: offOf(rL), alts: rL.alternatives });
-    check('... no ETA already gone', !rL.eta || rL.eta > nowS, rL.eta);
-    check('... the origin it came with still shown (Farnborough)', rL.originId === FAB.id, rL.originIata);
-    // (Turin, confirmed in another browser - over any guess of B's own, whatever its odds - and ahead of it: shown)
-    const rowT = rowL.slice(); rowT[10] = TRN.id; rowT[11] = 100; rowT[18] = nowS + 1200; rowT[24] = 2; rowT[25] = 'confirmed'; LB.srvIds.rows.set(ID2, rowT);
-    const rT = LB.composeRoute(ID2, HEX2, { pos: pos2, trail: trail2 }) || {};
-    check('... Turin confirmed in another browser, ahead of it: still shown as before', rT.destIata === 'TRN' && rT.destReason === 'confirmed in another browser', { dest: rT.destIata, why: rT.destReason });
-    // (Le Bourget confirmed in another browser - a destination it has since flown away from: not that either)
-    const rowC = rowL.slice(); rowC[11] = 100; rowC[24] = 2; rowC[25] = 'confirmed'; LB.srvIds.rows.set(ID2, rowC);
-    const rC2 = LB.composeRoute(ID2, HEX2, { pos: pos2, trail: trail2 }) || {};
-    check('... Le Bourget confirmed in another browser, 450 km behind it: not shown', rC2.destIata !== 'LBG' && !rC2.crowdD, { dest: rC2.destIata, why: rC2.destReason });
+    const rowT = rowL.slice(); rowT[10] = TRN.id; rowT[11] = 100; rowT[18] = nowS + 1200; rowT[24] = 2; rowT[25] = 'confirmed';
     // (before the flight is opened - the name and the route the monitor handed out: no destination whose ETA is long gone)
     // (no track in the row: its ETA a quarter of an hour gone and more, the aircraft still airborne and far away)
     const rowS = rowL.slice(); rowS[18] = nowS - 1500;
     check('the route handed out with the name: a destination 25 minutes past its ETA, the aircraft 450 km from it, left out (7 minutes: kept)', !LB.srvRoute(rowS).destId && LB.srvRoute(rowS).originId === FAB.id && LB.srvRoute(rowL).destId === LBG.id && LB.srvRoute(rowT).destId === TRN.id, { stale: LB.srvRoute(rowS).destIata, late7: LB.srvRoute(rowL).destIata, ahead: LB.srvRoute(rowT).destIata });
     LB.srvIds.rows.set(ID2, row0); }
 
-  // ---- the flights a browser learns from, learned by every browser ---------------------------------------------------
-  const base = (L, a, b) => L.engine.odWeight(a, b);
-  const b0 = [base(LB, 'EGNL', 'LFLB'), base(LB, 'EGPC', 'LEMH')], a0 = [base(LA, 'EGNL', 'LFLB'), base(LA, 'EGPC', 'LEMH')];
+  // ---- the flights a browser learns from: to the monitor, learned there --------------------------------------------------
   const day0 = Math.floor(nowS / 86400) * 86400 - 86400, t1 = day0 + 10 * 3600, t2 = day0 + 15 * 3600;
   const leg = (from, to, t, dur) => ({ from: { id: from.id, code: from.iata, conf: 'ground' }, to: { id: to.id, code: to.iata, conf: 'ground' }, tStart: t, tOff: t, tEnd: t + dur, cs: 'NJE7Q' });
-  const n0 = LA.learnOutN;
+  const l0 = LA.learnOutN;
   LA.learnFromLeg('400d01', { pts: [] }, leg(BWF, CMF, t1, 9000), 'bizjet', false);
   LA.learnFromLeg('400d02', { pts: [] }, leg(WIC, MAH, t2, 13000), 'bizjet', false);
   LA.learnFromLeg('400d03', { pts: [] }, leg(LTN, CMF, t2, 6000), 'bizjet', false, ['', '', '']);
-  check('A learns from two flights it rebuilt itself: both for the monitor (one the monitor rebuilt and sent here: not back)', LA.learnOutN === n0 + 2, { was: n0, now: LA.learnOutN });
+  check('A rebuilds two flights itself: both for the monitor (one the monitor rebuilt and sent here: not back)', LA.learnOutN === l0 + 2, { was: l0, now: LA.learnOutN });
   // (anyone's browser: so many flights an hour)
   M.CFG.learnPerHour = 1;
   await LA.reportToMonitor();
-  rep = lastReport(IPA);
+  const rep = lastReport(IPA);
   const sent = (rep.d.learn || []);
   check('... sent with the next report, the monitor\'s own rows exactly (12 columns)', sent.length === 2 && sent.every(x => x.length === 12) && sent[0][0] === '400d01|' + t1 && sent[0][1] === BWF.id && sent[0][2] === CMF.id && sent[0][3] === t1 + 9000, sent);
   check('... one taken, the other past this browser\'s share for the hour', rep.rep.learned === 1 && JSON.stringify(rep.rep.learnNot) === '[1]', rep.rep);
   const mine = k => LA.learnedStore().find(x => x[0] === k) || [];
-  check('... A marks the one taken with the number the monitor gave the report (its learning will say it has it), not the other', rep.rep.learnSeq > 0 && mine('400d01|' + t1)[12] === rep.rep.learnSeq && !mine('400d02|' + t2)[12], [rep.rep.learnSeq, mine('400d01|' + t1)[12], mine('400d02|' + t2)[12]]);
-  await until(async () => ((await LA.store.getBlob('learn3:0')) || []).some(x => x[0] === '400d01|' + t1 && x[12] > 0), 5000);
+  check('... A marks the one taken with the number the monitor gave the report, not the other', rep.rep.learnSeq > 0 && mine('400d01|' + t1)[12] === rep.rep.learnSeq && !mine('400d02|' + t2)[12], [rep.rep.learnSeq, mine('400d01|' + t1)[12], mine('400d02|' + t2)[12]]);
   // (the monitor's learning rebuilt: the browsers' flights with its own)
   M.crowdLearnSave();
   const built = await M.learnedBuild(nowS);
   check('the monitor learns the flight with its own (a day\'s flights from the browsers kept apart)', !!built && built.crowd === 1 && built.flights >= 1, built && { crowd: built.crowd, flights: built.flights });
-  await LA.syncSrvLearn(); await LB.syncSrvLearn();
-  const keptB = await LB.store.getBlob('srvLearned');
-  check('... both browsers fetch it for their next page load', !!keptB && keptB.ver === built.ver && keptB.crowd === 1 && ((await LA.store.getBlob('srvLearned')) || {}).ver === built.ver);
-  check('... with the number of the last report it has', built.builtSeq >= rep.rep.learnSeq && JSON.parse(M.learnedRef().json).builtSeq === built.builtSeq, { builtSeq: built.builtSeq, seq: rep.rep.learnSeq });
-  // (the next page load of each - leaving a page writes everything: the monitor's learning in its engine)
-  LA.store.flushNow(); LB.store.flushNow(); await sleep(200);
-  const { L: LB2 } = await boot(netB, idbB), { L: LA2 } = await boot(netA, idbA);
-  await until(() => LB2.srvLearned && base(LB2, 'EGNL', 'LFLB') > b0[0], 15000);
-  await until(() => LA2.srvLearned && base(LA2, 'EGPC', 'LEMH') > a0[1], 15000); await sleep(300);
-  const d = (L, a, b, z) => Math.round((base(L, a, b) - z) * 100) / 100;
-  check('B\'s next page: its engine has the flight A learned from (Barrow to Chambery)', d(LB2, 'EGNL', 'LFLB', b0[0]) === 1, d(LB2, 'EGNL', 'LFLB', b0[0]));
-  check('... and not the one the monitor did not take', d(LB2, 'EGPC', 'LEMH', b0[1]) === 0, d(LB2, 'EGPC', 'LEMH', b0[1]));
-  check('A\'s next page: the flight it sent counted once (from the monitor; its own copy left out)', d(LA2, 'EGNL', 'LFLB', a0[0]) === 1, d(LA2, 'EGNL', 'LFLB', a0[0]));
-  check('... the one not taken still learned there, from its own copy', d(LA2, 'EGPC', 'LEMH', a0[1]) === 1, d(LA2, 'EGPC', 'LEMH', a0[1]));
+  check('... no browser fetches a learning, nor learns into an engine of its own (1.1.0: the tables are the monitor\'s alone)', ![...netA.asked, ...netB.asked].some(a => /\/learned/.test(a.url)) && typeof LA.syncSrvLearn === 'undefined' && !LA.engine.T2);
   // (an older monitor - no word of what it learned: nothing marked sent; a monitor not answering: kept for the next report)
   M.CFG.learnPerHour = 600;
   mode.old = true; LA.learnFromLeg('400d04', { pts: [] }, leg(BWF, MAH, t1, 12000), 'bizjet', false); await LA.reportToMonitor(); mode.old = false;
-  check('a monitor from before this version: nothing marked sent (it learns none of them)', !mine('400d04|' + t1)[12] && LA.learnOutN === 0, mine('400d04|' + t1)[12]);
+  check('a monitor from before 22.25: nothing marked sent (it learns none of them)', !mine('400d04|' + t1)[12] && LA.learnOutN === 0, mine('400d04|' + t1)[12]);
   mode.down = true; LA.learnFromLeg('400d05', { pts: [] }, leg(WIC, CMF, t1, 9000), 'bizjet', false); await LA.reportToMonitor(); mode.down = false;
   check('the monitor not answering: the flight kept for the next report', LA.learnOutN === 1 && !mine('400d05|' + t1)[12]);
   await LA.reportToMonitor();
   check('... sent then', LA.learnOutN === 0 && mine('400d05|' + t1)[12] > 0 && (lastReport(IPA).d.learn || []).some(x => x[0] === '400d05|' + t1));
-  { const k5 = mine('400d05|' + t1), sl = LA.srvLearned;
-    LA.srvLearned = { ver: 'x', from: built.from, asOf: built.asOf, builtSeq: k5[12] - 1 }; const before = LA.srvCovers(k5);
-    LA.srvLearned = { ver: 'y', from: built.from, asOf: built.asOf, builtSeq: k5[12] }; const after = LA.srvCovers(k5);
-    LA.srvLearned = sl;
-    check('a flight the monitor took after its learning was built: still learned here, until a learning that has it', !before && after, { before, after }); }
 
   // ---- a playback flight the monitor cannot name yet: asked about again, named once it has worked it out --------------
   { const PID = 0x7b100001, HX = 'c30001', tA = day0 + 9 * 3600, T1 = tA + 5400;

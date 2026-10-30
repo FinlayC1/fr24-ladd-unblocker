@@ -5,10 +5,12 @@
 //   - started: the tables as the userscript has them; not started with too little memory, or turned off - said why
 //   - what browsers send: a whole track, then what is new; a part sent without the whole asked for whole; a new leg
 //     after the one held; nothing kept that is not a flight's; a point's fields only
-//   - the same answer as the browser's own on the same flight (N1868M over the Atlantic, the userscript built, in jsdom)
-//   - end to end: the browser sends the flight, the monitor works it out, the browser shows the monitor's answer; a
-//     second browser that sent nothing gets the very same; the user's own confirmation stands; a landing seen here
-//     first stands; the monitor off: the browser's own
+//   - what the browser sends is all the route code reads: the monitor's answer from it is the one the same code gives with
+//     everything the browser has (N1868M over the Atlantic, the userscript built, in jsdom); the userscript carries no
+//     tables (1.1.0)
+//   - end to end: the browser sends the flight, the monitor works it out, the browser shows the monitor's answer - none
+//     before it; a second browser that sent nothing gets the very same; the user's own confirmation stands; the monitor
+//     off: its last answer ten minutes at most, then none
 //   - within the minute's allowance: the last answer past it; a flight the monitor named itself worked out from its own
 //     track
 // usage: node test/unit_central.cjs <node_modules dir> <data dir>
@@ -53,10 +55,9 @@ const HEX = 'a15a72';
   clearInterval(tick);
   check(`... loaded a slice at a time: the server answers meanwhile (longest wait ${stall} ms, the population tables' parse)`, stall < 1500, stall);
   check('started: the userscript\'s tables, the population tables, the arrival paths, the landing sites', st.on && st.sites > 50000 && !!E.T2 && !!cen.ctx, { on: st.on, mb: st.mb, sites: st.sites, why: st.why });
-  // (the route tables as the build compacts them: the same as in the built userscript)
-  { const b = fs.readFileSync(path.join(ROOT, 'dist', 'fr24-ladd-unblocker.user.js'), 'utf8'), i = b.indexOf('const ROUTE_TABLES = '), e = b.indexOf(';\n', i);
-    const built = JSON.parse(b.slice(i + 21, e)), mine = C.compactTables(JSON.parse(fs.readFileSync(path.join(SRC, 'tables.json'), 'utf8')));
-    check('the route tables compacted as the build compacts them for the userscript: the same', JSON.stringify(built) === JSON.stringify(mine), { builtKeys: Object.keys(built).length, mine: Object.keys(mine).length }); }
+  // (1.1.0: the tables are the monitor's alone - the built userscript carries none of them)
+  { const b = fs.readFileSync(path.join(ROOT, 'dist', 'fr24-ladd-unblocker.user.js'), 'utf8'), names = ['ROUTE_TABLES', 'ROUTE_LOGIT', 'ROUTE_T2_GZ', 'APPR_TABLE_GZ'].filter(n => b.includes('const ' + n));
+    check('the built userscript carries no route tables (every route is the monitor\'s): ' + Math.round(b.length / 1e5) / 10 + ' MB', !names.length && b.length < 4e6, { names, mb: b.length / 1e6 }); }
 
   // ---- what browsers send ----------------------------------------------------------------------------------------------
   const pts = E.parseTrace(NOWJ), leg = E.legsFromPoints(pts, { cls: 'bizjet', type: 'GLF6' }).pop(), tr = []; for (const p of [leg.start].concat(leg.pts)) if (!tr.length || p.t - tr[tr.length - 1].t >= 15) tr.push(p);
@@ -120,7 +121,6 @@ const HEX = 'a15a72';
   async function browser() {
     const w = makeWin(), L = w.__tweeksLadd;
     await until(() => L && L.engine.airports.length > 5000, 60000);
-    await L.loadT2(); await L.loadApprTable();
     return { w, L };
   }
   function flightIn(L, id) {
@@ -131,12 +131,17 @@ const HEX = 'a15a72';
   }
   const sig = r => r && { o: r.originIata, oc: r.originConf, d: r.destIata || '', dc: r.destConf, p: r.destP || 0, why: r.destReason, alts: (r.alternatives || []).map(a => a.iata + ':' + a.p).join(','), phase: r.phase, legs: r.legCount };
   const same = (a, b) => !!a && !!b && a.o === b.o && a.oc === b.oc && a.d === b.d && a.dc === b.dc && Math.abs(a.p - b.p) <= 1 && a.phase === b.phase && a.legs === b.legs && a.alts.split(',').map(x => x.split(':')[0]).join() === b.alts.split(',').map(x => x.split(':')[0]).join();
+  // (1.1.0: the script has no tables and works nothing out - the route code run here with the tables put into its engine,
+  // everything this browser has of the flight: what it sends the monitor is all that code reads)
   { const { L } = await browser(); monitorCentral = cen;
     flightIn(L, 9101);
-    const local = L.composeRoute(9101, HEX), e = L.calcEvidence(9101);
+    check('(the script itself: no route of its own without the monitor - no tables in it)', L.composeRoute(9101, HEX) === null && !L.engine.T2);
+    await require('./monfake.cjs').tablesInto(L.engine);   // (a few seconds: the flight put in again after)
+    flightIn(L, 9101);
+    const local = L.composeRoute0(9101, HEX), e = L.calcEvidence(9101);
     const mon = C.createCentral({ E, logOf: () => [] }); await mon.start({ free: 4e9, srcDir: SRC, mainDir: MAIN });
     mon.take(e.x); const F = mon.flights.get(9101), r = mon.compute(F);
-    check('N1868M over the Atlantic: the monitor\'s answer from what the browser sent is the browser\'s own (origin, destination and odds, the others, the phase)', same(sig(local), sig(r)), { browser: sig(local), monitor: sig(r) });
+    check('N1868M over the Atlantic: the monitor\'s answer from what the browser sent is the one the same route code gives with everything the browser has (origin, destination and odds, the others, the phase)', !!local && same(sig(local), sig(r)), { browser: sig(local), monitor: sig(r) });
     check('... the browser sent its whole track, the aircraft, where it is', e.x.trail.full && e.x.trail.pts.length === F.trail.length && e.x.trail.pts.length > 100 && e.x.ac.reg === 'N1868M' && e.x.kind === 'live' && Math.abs(e.x.pos.t - pts[pts.length - 1].t) < 60, { n: e.x.trail.pts.length, kept: F.trail.length, pos: e.x.pos && e.x.pos.t }); }
 
   // ---- end to end: two browsers, one answer --------------------------------------------------------------------------------
@@ -145,10 +150,10 @@ const HEX = 'a15a72';
     for (const X of [A, B]) { X.L.store.kvSet('monRemote', { url: MON, token: 'tok' }); X.L.store.flushNow(); await X.L.monCheck(true).catch(() => {}); }
     flightIn(A.L, 9201);
     const first = A.L.composeRoute(9201, HEX);
-    check('(the monitor answering, its central calculation on)', A.L.monUp() && !first.central, { up: A.L.monUp() });
+    check('(the monitor answering, its central calculation on) - nothing shown before its answer', A.L.monUp() && first === null && /working it out/.test(A.L.calcWhy()), { up: A.L.monUp(), first, why: A.L.calcWhy() });
     await until(() => A.L.calcGot.has(9201), 8000);
-    const a = A.L.composeRoute(9201, HEX), sent = posts.find(p => p.flights && p.flights.some(f => f.id === 9201));
-    check('browser A: the flight sent (its whole track), the monitor\'s answer shown - the same route as its own', !!sent && sent.flights.find(f => f.id === 9201).trail.full && !!a.central && same(sig(a), sig(first)), { a: sig(a), own: sig(first), central: a.central });
+    const a = A.L.composeRoute(9201, HEX), sent = posts.find(p => p.flights && p.flights.some(f => f.id === 9201)), m = mon.routeOf(9201);
+    check('browser A: the flight sent (its whole track), the monitor\'s answer shown', !!sent && sent.flights.find(f => f.id === 9201).trail.full && !!a && !!a.central && !!m && same(sig(a), sig(m.r)) && a.originIata === 'TEB', { a: sig(a), mon: m && sig(m.r) });
     check('... its progress bar from where the aircraft is now', !!a.progress && a.progress.remaining > 0 && a.progress.eta === a.eta, a.progress);
     // (browser B shows the flight, has nothing of its track: it gets the monitor's answer all the same)
     B.L.live.set(9201, { id: 9201, hex: HEX, reg: 'N1868M', type: 'GLF6', cs: 'N1868M', ladd: true });
@@ -157,23 +162,23 @@ const HEX = 'a15a72';
     const bOwn = B.L.composeRoute(9201, HEX);
     await until(() => B.L.calcGot.has(9201), 8000);
     const b = B.L.composeRoute(9201, HEX);
-    check('browser B, which has only the last minute of its track: the very same answer as browser A - not its own', !!b.central && JSON.stringify(sig(b)) === JSON.stringify(sig(a)) && b.originIata === 'TEB', { b: sig(b), a: sig(a), bOwn: sig(bOwn) });
+    check('browser B, which has only the last minute of its track: the very same answer as browser A', bOwn === null && !!b && !!b.central && JSON.stringify(sig(b)) === JSON.stringify(sig(a)) && b.originIata === 'TEB', { b: sig(b), a: sig(a) });
     // (sent again: only what is new)
     const n0 = posts.length; A.L.calcSent.get(9201).at = 0; A.L.calcAsk.add(9201); await A.L.calcFlush();
     const again = posts.slice(n0).map(p => (p.flights || []).find(f => f.id === 9201)).find(Boolean);
     check('... sent again: only what is new of its track', !!again && !again.trail.full && again.trail.pts.length < 5, again && { full: again.trail.full, n: again.trail.pts.length });
-    // (the user's own confirmation stands; a landing seen here first stands; the monitor off: the browser's own)
+    // (the user's own confirmation stands; the monitor off: its last answer for ten minutes, then none - and why)
     const bgr = A.L.engine.byIcao('LEBL');
     A.L.userConfirm(9201, A.L.live.get(9201), bgr.id);
     const u = A.L.composeRoute(9201, HEX);
-    check('the user\'s own confirmation of a destination: it stands over the monitor\'s answer', u.userConfirmed && !u.central && u.destIata === 'BCN', { user: u.userConfirmed, d: u.destIata, central: u.central });
+    check('the user\'s own confirmation of a destination: it stands over the monitor\'s answer, the rest of it the monitor\'s', !!u && u.userConfirmed && u.destIata === 'BCN' && u.destP === 100 && u.originIata === 'TEB', u && { user: u.userConfirmed, d: u.destIata, o: u.originIata });
     A.L.userConfirm(9201, A.L.live.get(9201), 0);
-    const g = A.L.centralOf(9201, HEX, Object.assign({}, first, { landed: true, onGround: true }));
-    check('... a landing seen here and not in the monitor\'s answer yet: the browser\'s own', !g.central && g.landed);
-    monOn = false; await A.L.monCheck(true).catch(() => {});
-    const o = B.L.centralOf(9201, HEX, bOwn); await B.L.monCheck(true).catch(() => {});
-    const o2 = await until(() => { const x = B.L.centralOf(9201, HEX, bOwn); return x.central ? null : x; }, 5000) || B.L.centralOf(9201, HEX, bOwn);
-    check('the monitor\'s central calculation off: the browser\'s own answer', !o2.central && JSON.stringify(sig(o2)) === JSON.stringify(sig(bOwn)), { before: !!o.central, after: !!o2.central });
+    check('... taken back: the monitor\'s own again', A.L.composeRoute(9201, HEX).destIata === a.destIata);
+    monOn = false; await B.L.monCheck(true).catch(() => {});
+    const o = B.L.centralOf(9201, HEX);
+    B.L.calcGot.get(9201).until = Date.now() - 1;
+    const o2 = B.L.centralOf(9201, HEX);
+    check('the monitor\'s central calculation off: its last answer (ten minutes at most), then none - nothing worked out here - and why', !!o && !!o.central && o2 === null && /isn't working routes out/.test(B.L.calcWhy()), { before: !!o, after: o2, why: B.L.calcWhy() });
     monOn = true; }
 
   // ---- the minute's allowance; a flight the monitor named itself --------------------------------------------------------

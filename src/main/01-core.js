@@ -1,7 +1,7 @@
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '1.0.2';
+  const VERSION = '1.1.0';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
@@ -220,8 +220,6 @@
   }
 
   const ENGINE = createRouteEngine();
-  ENGINE.setTables(ROUTE_TABLES);
-  ENGINE.setLogit(ROUTE_LOGIT);
   const dist = ENGINE.dist, angDiff = ENGINE.angDiff;
   function project(lat, lon, gsKt, trk, seconds) {
     if (!(seconds > 0) || !(gsKt > 0) || !fin(trk)) return [lat, lon];

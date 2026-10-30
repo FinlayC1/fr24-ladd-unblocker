@@ -41,7 +41,9 @@ function makeWin() {
   const w = makeWin(), L = w.__tweeksLadd;
   await until(() => L && L.engine.airports.length > 5000, 60000);
   L.engine.setRunways(RWY); L.engine.setRunwayLengths(RWL);
-  await L.loadT2().catch(() => false); await Promise.resolve(L.loadApprTable()).catch(() => false);
+  // (1.1.0: where such a flight is going is the monitor's answer - its central calculation here, the route code and the
+  // tables as on the monitor, given what this browser saw of the flight after each report)
+  const fake = await require('./monfake.cjs').createFakeMonitor({ data: DATA });
   const E = L.engine, lpl = E.byIcao('EGGP'), blk = E.byIcao('EGNH');
   check('the engine as the browser runs it: Liverpool and Blackpool', !!lpl && !!blk && E.airports.length > 5000);
   const nowS = Math.round(Date.now() / 1000);
@@ -54,7 +56,16 @@ function makeWin() {
       id,
       at(t, lat, lon, alt, spd, trk, gnd) { pts.push({ id, lat, lon, alt, spd, trk, ts: t, gnd: !!gnd, cs: o.cs, reg: o.reg, type: o.type, hex: parseInt(o.hex, 16), from: o.from || '' }); },
       // each report given to the script as the page does, and the route worked out after each (as the 45 s rounds do)
-      run() { const out = []; for (const p of pts) { L.noteNa([p], p.ts * 1000); const e = L.naFeed.get(id); const r = L.naRouteOf(e); e.pub = r; out.push(r); } return out; },
+      run() {
+        const out = [];
+        for (const p of pts) {
+          L.noteNa([p], p.ts * 1000); const e = L.naFeed.get(id), x = L.naEvidenceOf(id, e);
+          // (the monitor's answer from what was sent: as /calc gives it)
+          if (x) { x.pos.t = p.ts; fake.central.take(x); const F = fake.central.flights.get(id), r = F && fake.central.compute(F); if (r) L.calcGot.set(id, { at: Date.now(), until: Date.now() + 600000, r: JSON.parse(JSON.stringify(r)) }); else L.calcGot.delete(id); }
+          const r = L.naRouteOf(e, id); e.pub = r; out.push(r);
+        }
+        return out;
+      },
       pts
     };
   }

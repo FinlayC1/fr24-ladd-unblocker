@@ -111,7 +111,7 @@ const walk = (d, pre = '') => fs.readdirSync(d, { withFileTypes: true }).flatMap
     });
     check('a folder of another version, or with no manifest, is refused; the extension\'s own is taken', /isn't the folder Chrome loads/.test(wrong[0]) && /doesn't hold FR24 LADD Unblocker/.test(wrong[1]) && wrong[2] === '', wrong);
 
-    gh.corrupt = 'data-2.js';
+    gh.corrupt = 'data-1.js';
     const bad = await up.evaluate(() => __tlUpdate.getPlan('9.0.0').then(() => 'no error', e => e.message));
     check('a file that does not match its SHA-256 stops the update before anything is written', /checksum is wrong/.test(bad), bad);
     gh.corrupt = '';

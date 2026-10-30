@@ -102,6 +102,7 @@ function createDest(env) {
       // (no departure now, and the one kept is from before the aircraft was last heard ahead of the hole this flight began
       // after - a stop out of coverage in between: not kept)
       else if (R.origin && r.lostAt && R.origin.t > 0 && R.origin.t < r.lostAt - 300) R.origin = null;
+      R.central = !!r.central;   // (1.1.0: central calculation's route - a browser's own working out gives way to it: ident table)
       // (and a browser's departure for it from that earlier flight, the same: the one served is this side's own then)
       const cr = R.crowd; if (cr && cr.o && cr.atd > 0 && r.lostAt && cr.atd < r.lostAt - 300) { Object.assign(cr, { o: 0, oc: '', atd: 0, ot: 0, oOwn: 0 }); if (!cr.d) R.crowd = null; R.chg = nowMs; }
       if (JSON.stringify([R.dest && R.dest.id, R.dest && Math.round(R.dest.p * 20), R.origin && R.origin.id]) !== before) R.chg = nowMs;

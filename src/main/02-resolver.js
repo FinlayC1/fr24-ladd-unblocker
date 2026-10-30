@@ -427,7 +427,6 @@
       log('LADD/military list', globalList.items.length, 'aircraft', lv ? '(monitor)' : '');
       // (military aircraft FR24 does show get their padlocked fields unlocked from this data too)
       pushPubTel(globalList.items.filter(c => !c.ladd && now() - seenAt(c) < 90000));
-      for (const c of globalList.items) if (c.gnd) learnParked(c);
       return globalList.items;
     })().finally(() => { globalList.loading = null; });
     return globalList.loading;
@@ -449,7 +448,7 @@
       globalList.items = [...globalList.byHex.values()]; globalList.src = 'monitor'; monLive.n = globalList.byHex.size;
       if (lv.milOk) globalList.at = now();
       const parts = []; for (let i = 0; i < got.length; i += 200) parts.push(got.slice(i, i + 200));
-      await sliced(parts, part => { noteCands(part); pushPubTel(part.filter(c => !c.ladd && now() - seenAt(c) < 90000)); for (const c of part) if (c.gnd) learnParked(c); });
+      await sliced(parts, part => { noteCands(part); pushPubTel(part.filter(c => !c.ladd && now() - seenAt(c) < 90000)); });
       await idleSlice(); verifyAgainstList();
     }).catch(() => {}).finally(() => { liveBusy = false; });
   }, 5000);
@@ -458,7 +457,7 @@
   // (monitor/ident.cjs) - over oceans and deserts too, where a flight keeps the name it was given while it was heard. All of
   // it comes here the moment FR24 opens (/fr24ids: everything, then every 20 s what changed), and goes straight to the page:
   // FR24's very first frame of any of those flights is drawn named. A flight on screen becomes a full identification at once
-  // (photos, owner, the browser's own route); the rest stay light until they are on screen. This browser's own
+  // (photos, owner, its route from the monitor); the rest stay light until they are on screen. This browser's own
   // identification stays the backup: flights the monitor has no name for are matched here as before.
   // rows: [id, hex, reg, type, callsign, flags (1 LADD 2 mil 4 PIA), how, named at, origin id, origin conf, dest id, dest %, ...,
   // (22.25) 24: whose route - 0 the monitor's rough destination, 1 another browser's, 2 confirmed in another browser; 25: the
@@ -479,6 +478,7 @@
   }
   // (its rough destination, as a route of the page's kind - until this browser works out its own for a flight on screen;
   // 22.25: the route another browser worked out for it, its own engine and the aircraft's whole log, or confirmed there)
+  // ==ROUTE-CROWD== (to its end mark: run by the monitor too - monitor/central.cjs - for a destination confirmed in a browser)
   const crowdOf = r => {
     if (!Array.isArray(r) || !(r[24] >= 1)) return null;
     const d = !!r[25], o = !!r[26];
@@ -496,6 +496,7 @@
     // (more than half: the track of one moment alone, with nothing of the minutes before, never rules it out)
     return ENGINE.offTrack(pos, trail || [], a, { origin: originAp || null, elapsedMin }) > 0.5;
   }
+  // ==/ROUTE-CROWD==
   function srvRoute(r) {
     const o = r[8] ? apById(r[8]) : null, d0 = r[10] ? apById(r[10]) : null;
     // (no track in the row: only the ETA against where FR24 last had it)
@@ -580,23 +581,26 @@
   const ownersOut = new Map();   // hex -> what this browser found of a blocked aircraft's owner / operator, for the monitor
   function noteFeedHdr(h) { if (h && typeof h === 'object' && h['fr24-device-id']) { if (!feedHdr || JSON.stringify(feedHdr) !== JSON.stringify(h)) feedHdrSent = false; feedHdr = h; } }
   const rnd4 = v => Math.round(v * 1e4) / 1e4;
-  // (22.25) The routes this browser worked out itself (04 publishRoute) for flights the monitor names - the flight
-  // opened: its own engine with the aircraft's whole log, its take-off seen, a destination seen or confirmed: with the
-  // next report, the monitor hands them out with the names, and every other browser shows them the moment the flight is
-  // opened or searched. Not a guess made without any of those (the monitor's own rough one is as good); never one that
-  // came from another browser, nor a landing (where the aircraft is: every browser sees that itself - and FR24 keeps the
-  // id while it taxis out again); each again only when its airports, chance or word change.
-  // [id, hex, origin id, its word, destination id, its chance (%), its word, ETA, departed]
+  // (1.1.0) Every route is the monitor's (central calculation) - the one thing of it that is this browser's own is a
+  // destination its user confirmed (heard on the radio, seen on final, known) for a flight the monitor names: with the
+  // next report, the monitor has it in its answer to every other browser ("confirmed in another browser"); taken back
+  // here, taken back there. Each again only when it changes; never a landing (the monitor sees that itself).
+  // [id, hex, origin id (0), its word, destination id, its chance (%), its word ('confirmed' or 'withdrawn'), ETA, departed]
   const routesOut = new Map(), routesSent = new Map();
   function noteRouteOut(id, route) {
     const r = srvIds.rows.get(id), rec = live.get(id);
-    if (!r || !rec || !rec.hex || rec.hex !== String(r[1] || '').toLowerCase() || !route || route.quick || route.crowd || route.central) return;
-    if (!(route.legCount > 0 || (route.originConf === 'ground' && !route.crowdO) || (route.destConf === 'confirmed' && !route.crowdD))) return;
-    const o = !route.crowdO && route.originId > 0 ? route.originId : 0, d = !route.crowdD && route.destId > 0 && route.destConf !== 'landed' ? route.destId : 0;
-    if (!o && !d) return;
-    const row = [id, rec.hex, o, o ? String(route.originConf || '') : '', d, d ? Math.round(route.destP || 0) : 0, d ? String(route.destConf || '') : '', d && route.eta > 0 ? Math.round(route.eta) : 0, o ? Math.round(route.atd || route.departedAt || 0) : 0];
+    if (!r || !rec || !rec.hex || rec.hex !== String(r[1] || '').toLowerCase() || !route || !route.userConfirmed || route.landed || !(route.destId > 0)) return;
+    const row = [id, rec.hex, 0, '', route.destId, 100, 'confirmed', route.eta > 0 ? Math.round(route.eta) : 0, 0];
     if (routesSent.get(id) === row.slice(2, 7).join('|')) return;
     routesOut.set(id, row); if (routesOut.size > 500) routesOut.delete(routesOut.keys().next().value);
+  }
+  // (the user's confirmation taken back: one sent goes back too - one not sent yet simply is not)
+  function noteRouteWithdrawn(id, destId) {
+    const q = routesOut.get(id); if (q && q[6] === 'confirmed') routesOut.delete(id);
+    const hex = String((srvIds.rows.get(id) || [])[1] || '').toLowerCase();
+    if (!hex || !(destId > 0) || routesSent.get(id) !== [0, '', destId, 100, 'confirmed'].join('|')) return;
+    routesSent.delete(id);
+    routesOut.set(id, [id, hex, 0, '', destId, 0, 'withdrawn', 0, 0]);
   }
   async function reportToMonitor() {
     if (!monUp()) return;
@@ -617,7 +621,8 @@
     if (j && j.ok) {
       for (const [h, o] of own) if (ownersOut.get(h) === o) ownersOut.delete(h); for (const r of pbIds) if (pbOut.get(r[0]) === r) pbOut.delete(r[0]);
       for (const [h, l] of pics) if (photosOut.get(h) === l) photosOut.delete(h);
-      for (const r of routes) { routesSent.set(r[0], r.slice(2, 7).join('|')); if (routesOut.get(r[0]) === r) routesOut.delete(r[0]); }
+      // (and one noted again while the report was on its way, the same as the one sent: not sent twice)
+      for (const r of routes) { const key = r.slice(2, 7).join('|'), q = routesOut.get(r[0]); routesSent.set(r[0], key); if (q && (q === r || q.slice(2, 7).join('|') === key)) routesOut.delete(r[0]); }
       if (routesSent.size > 3000) for (const k of [...routesSent.keys()].slice(0, 1000)) routesSent.delete(k);
       // (a monitor older than 22.25 learns none of them: none marked sent)
       if (typeof j.learned === 'number' && j.learnSeq > 0) learnSentMark(learn, j.learnNot, j.learnSeq);
@@ -645,16 +650,6 @@
     if (rows.length) await monPost('/report', { tel: rows }).catch(e => log('report to monitor', String(e && e.message || e)));
   }
   setInterval(() => { idleSlice().then(reportTel).catch(() => {}); }, 30000);
-  // Parked LADD aircraft show which fields business aviation actually uses: every sighting feeds the usage prior.
-  const parkedSeen = new Map();
-  function learnParked(c) {
-    if (!airportsReady()) return;
-    const k = c.hex; if (parkedSeen.has(k)) return;
-    const n = ENGINE.airportAt(c.lat, c.lon, 4); if (!n || !n.airport.icao) return;
-    parkedSeen.set(k, n.airport.id);
-    usageAdd(n.airport.icao, 0.5, c.mil && !c.ladd ? 'useMil' : 'use');
-  }
-
   // ---- matching -------------------------------------------------------------------------------------------------
   function fr24Age(f, t) { const base = f.serverTime && f.ts ? Math.max(0, f.serverTime / 1000 - f.ts) : 0; return base + Math.max(0, (t - f.receivedAt) / 1000); }
   const typeFamily = t => ENGINE.typeFamily(clean(t));   // (a maker's line: GA7C and GLF6 alike - engine TYPE_LINES)

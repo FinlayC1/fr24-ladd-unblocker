@@ -102,7 +102,9 @@ function createAirportInfo(env) {
     const live = new Map();   // day -> [take-offs, landings] of the flights tracked here
     const lv = d => live.get(d) || live.set(d, [0, 0]).get(d);
     const hFrom = hist > 0 ? nowS - hist * 86400 : from;
-    for (const m of legs.values()) for (const l of m.values()) {
+    // (legs: every aircraft's flights - a Map of Maps - or this airport's alone, a list)
+    let each = legs; if (!Array.isArray(legs)) { each = []; for (const m of legs.values()) for (const l of m.values()) each.push(l); }
+    for (const l of each) {
       const tO = l.tOff || l.tStart, tL = l.tOn || l.tEnd;
       if (l.from && l.from.id === apId && tO >= Math.min(from, hFrom) && tO <= nowS) {
         const d = utcDay(tO); lv(d)[0]++;
@@ -117,7 +119,7 @@ function createAirportInfo(env) {
     for (let k = 0; k < (hist || 0); k++) {
       const d = utcDay(nowS - k * 86400), o = dayStat(d), x = o && o.ap[key];
       if (o) daily.push([d, x ? x[0] || 0 : 0, x ? x[1] || 0 : 0, 'all']);
-      else if (live.has(d)) daily.push([d, live.get(d)[0], live.get(d)[1], 'live']);
+      else if (live.has(d) || k === 0) daily.push([d, live.has(d) ? live.get(d)[0] : 0, live.has(d) ? live.get(d)[1] : 0, 'live']);   // (today always: so far)
     }
     return { ap: apId, icao, known: true, days, runways: info[icao] || [], freqs: freqs[icao] || [], usage: [...use].map(([r, u]) => [r, u[0], u[1]]).sort((x, y) => (y[1] + y[2]) - (x[1] + x[2]) || x[0].localeCompare(y[0])), moves, withRunway: withRwy, daily, allDays: counted.size };
   }

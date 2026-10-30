@@ -35,6 +35,8 @@ function makeDom() {
   const w = makeDom(); w.eval(SRC);
   const L = () => w.__tweeksLadd;
   for (let i = 0; i < 60 && !(L() && L().engine.airports.length > 5000); i++) await sleep(500);
+  // (1.1.0: the route code the monitor runs, with the tables as the monitor has them - here on what this browser has)
+  if (L() && L().engine.airports.length > 5000) await require('./monfake.cjs').tablesInto(L().engine);
   let fails = 0;
   for (const c of cases) {
     const t = Date.parse(c.at) / 1000, id = parseInt(c.fid, 16), hex = c.hex.toLowerCase();
@@ -50,9 +52,9 @@ function makeDom() {
     await L().loadToday(hex, 0, { priority: true }).catch(e => console.log('today', String(e)));
     await sleep(400);
     const P = Object.assign({ gnd: pos.alt <= 0 && pos.gs < 40 }, pos);
-    L().composeRoute(id, hex, { pos: P });
+    L().composeRoute0(id, hex, { pos: P });
     await sleep(+(process.env.SETTLE || 8000));   // (what it asks for in the background - place names, platforms ahead - comes in)
-    const r = L().composeRoute(id, hex, { pos: P });
+    const r = L().composeRoute0(id, hex, { pos: P });
     const from = r ? (r.originIata || '-') : '-', to = r ? (r.destIata || '-') : '-', fromName = r ? r.originCity || '' : '', toName = r ? r.destCity || '' : '';
     const ok = (!c.expect.from || c.expect.from === from) && (!c.expect.to || c.expect.to === to) && (!c.expect.fromName || c.expect.fromName === fromName) && (!c.expect.toNot || c.expect.toNot !== to) && (!c.expect.toName || new RegExp(c.expect.toName, 'i').test(toName));
     if (!ok) fails++;

@@ -48,7 +48,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
 // ==UserScript==
 // @name         Flightradar24 LADD / N-A Unblocker (feed-level)
 // @namespace    tweeks.io
-// @version      1.0.2
+// @version      1.1.0
 // @description  Identifies every LADD / N/A / blocked military aircraft on Flightradar24 from public ADS-B, and injects callsign, registration, operator, age, country, MSN, squawk, vertical speed, GPS altitude, airspeeds, wind, photos, a reasoned origin/destination with a wind-corrected ETA (also for ordinary flights FR24 shows as N/A - military, private, GA, helicopters, with private landing sites; learned from 63 days of every aircraft worldwide, with live weather and closures), airport-board entries and a rebuilt 7-month flight log straight into FR24's own data - so it all renders like normal FR24 traffic.
 // @author       Finlay Clarke
 // @updateURL    https://raw.githubusercontent.com/FinlayC1/fr24-ladd-unblocker/main/dist/fr24-ladd-unblocker.user.js
@@ -138,7 +138,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "1.0.2";
+    var BRIDGE_V = "1.1.0";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed
@@ -1594,7 +1594,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
         }) || null;
       };
       var pick = rows.filter(function (r) {
-        var t = r.sch || r.t; if (!(t >= nowS - 3 * 86400 && t <= nowS + 3 * 86400)) return false;
+        var t = r.sch || r.t; if (!(t >= nowS - 7 * 86400 && t <= nowS + 7 * 86400)) return false;
         var hit = (r.fid && fids[r.fid]) || near(nmt, String(r.num || '').toUpperCase(), r.sch || r.t, 1800) || nearCs(String(r.cs || '').toUpperCase(), r);
         if (!hit) return true;
         // (FR24's own row of it stands - what it leaves out, "N/A" where the flight went or came from, the aircraft of
@@ -2098,16 +2098,16 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       });
       return out;
     }
-    // (the movements of each of the last days: FR24's own counts and the blocked flights the userscript knows - and, 1.0.2,
-    // every finished day the monitor has counted: every aircraft public ADS-B heard take off or land there, its world log)
+    // (the movements of each of the last days: from the monitor - 1.1.0 - every day its own, the same for everyone: the more
+    // of every aircraft public ADS-B heard there and FR24's own rows of its board (Portimao, out of the receivers' reach);
+    // without it, FR24's own counts read here and the blocked flights the userscript knows)
     function panelMoves(code, d) {
-      var c = code.toLowerCase(), tz = d.tz || 'UTC', today = dayOf(Date.now() / 1000, tz);
+      var c = code.toLowerCase(), tz = d.tz || 'UTC', today = dayOf(Date.now() / 1000, tz), utcToday = new Date().toISOString().slice(0, 10);
+      var mon = (Array.isArray(d.daily) ? d.daily : []).filter(function (x) { return Array.isArray(x) && /^\d{4}-\d\d-\d\d$/.test(String(x[0])) && (x[3] === 'all' || x[3] === 'live'); });
+      if (d.monitor && mon.length) return mon.slice().sort(function (a, b) { return String(b[0]).localeCompare(String(a[0])); }).slice(0, 7).map(function (x) { return { day: x[0], today: x[0] === utcToday, off: +x[1] || 0, on: +x[2] || 0, blocked: 0, all: true, fr24: !!x[4] }; });
       var days = mvKept(c).days || {}, add = {}, inc = function (t, k) { var x = dayOf(t, tz); (add[x] = add[x] || { off: 0, on: 0 })[k]++; };
       (routesAdd.get(d.apId) || []).forEach(function (m) { if (m.from.id === d.apId) (m.offs || []).forEach(function (t) { inc(t, 'off'); }); if (m.to.id === d.apId) (m.ons || []).forEach(function (t) { inc(t, 'on'); }); });
-      var mon = {}; (Array.isArray(d.daily) ? d.daily : []).forEach(function (x) { if (Array.isArray(x) && x[3] === 'all' && /^\d{4}-\d\d-\d\d$/.test(String(x[0])) && x[0] !== today) mon[x[0]] = { off: +x[1] || 0, on: +x[2] || 0 }; });
-      var keys = Object.keys(days).concat(Object.keys(mon)).filter(function (k, i, a) { return a.indexOf(k) === i; }).sort().reverse().slice(0, 7);
-      return keys.map(function (k) {
-        if (mon[k]) return { day: k, today: false, off: mon[k].off, on: mon[k].on, blocked: 0, all: true };
+      return Object.keys(days).sort().reverse().slice(0, 7).map(function (k) {
         var x = days[k], e = add[k] || { off: 0, on: 0 }; return { day: k, today: k === today, off: x.takeoffs + e.off, on: x.landings + e.on, blocked: e.off + e.on };
       });
     }
@@ -2141,8 +2141,8 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       var max = Math.max.apply(null, rows.map(function (r) { return r.off + r.on; }));
       grid(box, rows.map(function (r) { return { label: dayLabel(r.day) + (r.today ? ' (so far)' : ''), off: r.off, on: r.on }; }), max);
       var bl = rows.reduce(function (s, r) { return s + r.blocked; }, 0), all = rows.filter(function (r) { return r.all; }).length;
-      legend(box, all === rows.length ? 'Take-offs / landings each day (UTC) - every aircraft public ADS-B heard there, counted by the monitor.'
-        : (all ? 'Finished days (UTC): every aircraft public ADS-B heard there, counted by the monitor; the others: ' : 'Take-offs / landings by the airport\'s local day - ') + 'FR24\'s own schedule' + (bl ? ', with ' + bl + ' blocked flight' + (bl > 1 ? 's' : '') + ' it does not show' : '') + '.');
+      legend(box, all === rows.length ? 'Take-offs / landings each day (UTC), counted by the monitor: every aircraft public ADS-B heard there - or FR24\'s own flights of the airport, with the blocked ones it does not show, where that is more.'
+        : 'Take-offs / landings by the airport\'s local day - FR24\'s own schedule' + (bl ? ', with ' + bl + ' blocked flight' + (bl > 1 ? 's' : '') + ' it does not show' : '') + '.');
       return JSON.stringify(rows);
     }
     function usageBlock(box, d) {
@@ -2175,7 +2175,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       panelWant(code); rwyPanel();
       var d = panelData[code] || panelFromKept(code);
       // (FR24's own counts of the last days: once the panel has been open a moment - a click through airports asks nothing)
-      if (d && Date.now() - panelOpen.at > 2500) mvCount(code.toLowerCase(), d.tz || 'UTC');
+      if (d && !d.monitor && Date.now() - panelOpen.at > 2500) mvCount(code.toLowerCase(), d.tz || 'UTC');
       // (the panel as it was last done, unchanged: nothing to do)
       if (panelSigs[code] === panelSig(panel, code, d)) return;
       panelHide(panel);
@@ -5630,15 +5630,11 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   }
   /* ==/REGISTRY== */
 
-  const ROUTE_TABLES = globalThis.__tlData.ROUTE_TABLES;
-  const ROUTE_LOGIT = globalThis.__tlData.ROUTE_LOGIT;
-  const ROUTE_T2_GZ = globalThis.__tlData.ROUTE_T2_GZ;
   const AGE_TABLE_GZ = globalThis.__tlData.AGE_TABLE_GZ;
-  const APPR_TABLE_GZ = globalThis.__tlData.APPR_TABLE_GZ;
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '1.0.2';
+  const VERSION = '1.1.0';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
@@ -5857,8 +5853,6 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   }
 
   const ENGINE = createRouteEngine();
-  ENGINE.setTables(ROUTE_TABLES);
-  ENGINE.setLogit(ROUTE_LOGIT);
   const dist = ENGINE.dist, angDiff = ENGINE.angDiff;
   function project(lat, lon, gsKt, trk, seconds) {
     if (!(seconds > 0) || !(gsKt > 0) || !fin(trk)) return [lat, lon];
@@ -6681,7 +6675,6 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       log('LADD/military list', globalList.items.length, 'aircraft', lv ? '(monitor)' : '');
       // (military aircraft FR24 does show get their padlocked fields unlocked from this data too)
       pushPubTel(globalList.items.filter(c => !c.ladd && now() - seenAt(c) < 90000));
-      for (const c of globalList.items) if (c.gnd) learnParked(c);
       return globalList.items;
     })().finally(() => { globalList.loading = null; });
     return globalList.loading;
@@ -6703,7 +6696,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       globalList.items = [...globalList.byHex.values()]; globalList.src = 'monitor'; monLive.n = globalList.byHex.size;
       if (lv.milOk) globalList.at = now();
       const parts = []; for (let i = 0; i < got.length; i += 200) parts.push(got.slice(i, i + 200));
-      await sliced(parts, part => { noteCands(part); pushPubTel(part.filter(c => !c.ladd && now() - seenAt(c) < 90000)); for (const c of part) if (c.gnd) learnParked(c); });
+      await sliced(parts, part => { noteCands(part); pushPubTel(part.filter(c => !c.ladd && now() - seenAt(c) < 90000)); });
       await idleSlice(); verifyAgainstList();
     }).catch(() => {}).finally(() => { liveBusy = false; });
   }, 5000);
@@ -6712,7 +6705,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   // (monitor/ident.cjs) - over oceans and deserts too, where a flight keeps the name it was given while it was heard. All of
   // it comes here the moment FR24 opens (/fr24ids: everything, then every 20 s what changed), and goes straight to the page:
   // FR24's very first frame of any of those flights is drawn named. A flight on screen becomes a full identification at once
-  // (photos, owner, the browser's own route); the rest stay light until they are on screen. This browser's own
+  // (photos, owner, its route from the monitor); the rest stay light until they are on screen. This browser's own
   // identification stays the backup: flights the monitor has no name for are matched here as before.
   // rows: [id, hex, reg, type, callsign, flags (1 LADD 2 mil 4 PIA), how, named at, origin id, origin conf, dest id, dest %, ...,
   // (22.25) 24: whose route - 0 the monitor's rough destination, 1 another browser's, 2 confirmed in another browser; 25: the
@@ -6733,6 +6726,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   }
   // (its rough destination, as a route of the page's kind - until this browser works out its own for a flight on screen;
   // 22.25: the route another browser worked out for it, its own engine and the aircraft's whole log, or confirmed there)
+  // ==ROUTE-CROWD== (to its end mark: run by the monitor too - monitor/central.cjs - for a destination confirmed in a browser)
   const crowdOf = r => {
     if (!Array.isArray(r) || !(r[24] >= 1)) return null;
     const d = !!r[25], o = !!r[26];
@@ -6750,6 +6744,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     // (more than half: the track of one moment alone, with nothing of the minutes before, never rules it out)
     return ENGINE.offTrack(pos, trail || [], a, { origin: originAp || null, elapsedMin }) > 0.5;
   }
+  // ==/ROUTE-CROWD==
   function srvRoute(r) {
     const o = r[8] ? apById(r[8]) : null, d0 = r[10] ? apById(r[10]) : null;
     // (no track in the row: only the ETA against where FR24 last had it)
@@ -6834,23 +6829,26 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   const ownersOut = new Map();   // hex -> what this browser found of a blocked aircraft's owner / operator, for the monitor
   function noteFeedHdr(h) { if (h && typeof h === 'object' && h['fr24-device-id']) { if (!feedHdr || JSON.stringify(feedHdr) !== JSON.stringify(h)) feedHdrSent = false; feedHdr = h; } }
   const rnd4 = v => Math.round(v * 1e4) / 1e4;
-  // (22.25) The routes this browser worked out itself (04 publishRoute) for flights the monitor names - the flight
-  // opened: its own engine with the aircraft's whole log, its take-off seen, a destination seen or confirmed: with the
-  // next report, the monitor hands them out with the names, and every other browser shows them the moment the flight is
-  // opened or searched. Not a guess made without any of those (the monitor's own rough one is as good); never one that
-  // came from another browser, nor a landing (where the aircraft is: every browser sees that itself - and FR24 keeps the
-  // id while it taxis out again); each again only when its airports, chance or word change.
-  // [id, hex, origin id, its word, destination id, its chance (%), its word, ETA, departed]
+  // (1.1.0) Every route is the monitor's (central calculation) - the one thing of it that is this browser's own is a
+  // destination its user confirmed (heard on the radio, seen on final, known) for a flight the monitor names: with the
+  // next report, the monitor has it in its answer to every other browser ("confirmed in another browser"); taken back
+  // here, taken back there. Each again only when it changes; never a landing (the monitor sees that itself).
+  // [id, hex, origin id (0), its word, destination id, its chance (%), its word ('confirmed' or 'withdrawn'), ETA, departed]
   const routesOut = new Map(), routesSent = new Map();
   function noteRouteOut(id, route) {
     const r = srvIds.rows.get(id), rec = live.get(id);
-    if (!r || !rec || !rec.hex || rec.hex !== String(r[1] || '').toLowerCase() || !route || route.quick || route.crowd || route.central) return;
-    if (!(route.legCount > 0 || (route.originConf === 'ground' && !route.crowdO) || (route.destConf === 'confirmed' && !route.crowdD))) return;
-    const o = !route.crowdO && route.originId > 0 ? route.originId : 0, d = !route.crowdD && route.destId > 0 && route.destConf !== 'landed' ? route.destId : 0;
-    if (!o && !d) return;
-    const row = [id, rec.hex, o, o ? String(route.originConf || '') : '', d, d ? Math.round(route.destP || 0) : 0, d ? String(route.destConf || '') : '', d && route.eta > 0 ? Math.round(route.eta) : 0, o ? Math.round(route.atd || route.departedAt || 0) : 0];
+    if (!r || !rec || !rec.hex || rec.hex !== String(r[1] || '').toLowerCase() || !route || !route.userConfirmed || route.landed || !(route.destId > 0)) return;
+    const row = [id, rec.hex, 0, '', route.destId, 100, 'confirmed', route.eta > 0 ? Math.round(route.eta) : 0, 0];
     if (routesSent.get(id) === row.slice(2, 7).join('|')) return;
     routesOut.set(id, row); if (routesOut.size > 500) routesOut.delete(routesOut.keys().next().value);
+  }
+  // (the user's confirmation taken back: one sent goes back too - one not sent yet simply is not)
+  function noteRouteWithdrawn(id, destId) {
+    const q = routesOut.get(id); if (q && q[6] === 'confirmed') routesOut.delete(id);
+    const hex = String((srvIds.rows.get(id) || [])[1] || '').toLowerCase();
+    if (!hex || !(destId > 0) || routesSent.get(id) !== [0, '', destId, 100, 'confirmed'].join('|')) return;
+    routesSent.delete(id);
+    routesOut.set(id, [id, hex, 0, '', destId, 0, 'withdrawn', 0, 0]);
   }
   async function reportToMonitor() {
     if (!monUp()) return;
@@ -6871,7 +6869,8 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     if (j && j.ok) {
       for (const [h, o] of own) if (ownersOut.get(h) === o) ownersOut.delete(h); for (const r of pbIds) if (pbOut.get(r[0]) === r) pbOut.delete(r[0]);
       for (const [h, l] of pics) if (photosOut.get(h) === l) photosOut.delete(h);
-      for (const r of routes) { routesSent.set(r[0], r.slice(2, 7).join('|')); if (routesOut.get(r[0]) === r) routesOut.delete(r[0]); }
+      // (and one noted again while the report was on its way, the same as the one sent: not sent twice)
+      for (const r of routes) { const key = r.slice(2, 7).join('|'), q = routesOut.get(r[0]); routesSent.set(r[0], key); if (q && (q === r || q.slice(2, 7).join('|') === key)) routesOut.delete(r[0]); }
       if (routesSent.size > 3000) for (const k of [...routesSent.keys()].slice(0, 1000)) routesSent.delete(k);
       // (a monitor older than 22.25 learns none of them: none marked sent)
       if (typeof j.learned === 'number' && j.learnSeq > 0) learnSentMark(learn, j.learnNot, j.learnSeq);
@@ -6899,16 +6898,6 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     if (rows.length) await monPost('/report', { tel: rows }).catch(e => log('report to monitor', String(e && e.message || e)));
   }
   setInterval(() => { idleSlice().then(reportTel).catch(() => {}); }, 30000);
-  // Parked LADD aircraft show which fields business aviation actually uses: every sighting feeds the usage prior.
-  const parkedSeen = new Map();
-  function learnParked(c) {
-    if (!airportsReady()) return;
-    const k = c.hex; if (parkedSeen.has(k)) return;
-    const n = ENGINE.airportAt(c.lat, c.lon, 4); if (!n || !n.airport.icao) return;
-    parkedSeen.set(k, n.airport.id);
-    usageAdd(n.airport.icao, 0.5, c.mil && !c.ladd ? 'useMil' : 'use');
-  }
-
   // ---- matching -------------------------------------------------------------------------------------------------
   function fr24Age(f, t) { const base = f.serverTime && f.ts ? Math.max(0, f.serverTime / 1000 - f.ts) : 0; return base + Math.max(0, (t - f.receivedAt) / 1000); }
   const typeFamily = t => ENGINE.typeFamily(clean(t));   // (a maker's line: GA7C and GLF6 alike - engine TYPE_LINES)
@@ -7545,7 +7534,6 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     airports.list = list; airports.byId = new Map(); airports.byIata = new Map();
     for (const a of list) { airports.byId.set(a.id, a); if (a.iata) airports.byIata.set(a.iata, a); if (a.country && a.countryId) countryIdByName.set(a.country.toUpperCase(), a.countryId); }
     ENGINE.setAirports(list);
-    applyLearnedUsage();
     return list;
   }
   function fetchAirports() {
@@ -7797,27 +7785,15 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   // the route engine's, by where it is)
   const fr24Ap = id => !id ? 0 : id < 1e7 ? id : (a => a ? siteIdAt(a.lat, a.lon) : 0)(ENGINE.byId(id));
   const apCode = a => a ? (a.iata || a.icao || String(a.id)) : '';
-  // Learned usage: every flight log this script reconstructs, and every parked LADD aircraft it sees, adds to the
-  // business-aviation usage prior on top of the shipped table - so the model keeps getting better where it is used.
-  let usageLearned = null, usageTimer = 0;
-  function applyLearnedUsage() { usageLearned = usageLearned || store.kvGet('usage') || {}; for (const [k, v] of Object.entries(usageLearned)) { const [kind, icao] = k.includes(':') ? k.split(':') : ['use', k]; ENGINE.addUsage(icao, v, kind); } }
-  function usageAdd(icao, w, kind) {
-    if (!icao) return; usageLearned = usageLearned || store.kvGet('usage') || {};
-    kind = kind || 'use'; const key = kind + ':' + icao;
-    if ((usageLearned[key] || 0) >= 60) return;
-    usageLearned[key] = (usageLearned[key] || 0) + w; ENGINE.addUsage(icao, w, kind);
-    if (!usageTimer) usageTimer = setTimeout(() => { usageTimer = 0; store.kvSet('usage', usageLearned); }, 5000);
-  }
-
   // Learning from use: every completed flight in a log this script reconstructs (the selected aircraft's, and the logs
-  // it backfills for everything it identifies) teaches the engine where business aviation goes from where, how the
-  // transponder's code block / FMS altitude relate to the trip length, and when flights land - once per flight, kept on
-  // disk (the latest 100,000) and replayed after start, in idle moments. The shipped tables are the starting point; this
-  // is what the user's own corner of the world adds to them - and the destinations the user confirms ("confirm").
+  // it backfills for everything it identifies) - where business aviation goes from where, how the transponder's code
+  // block / FMS altitude relate to the trip length, when flights land - goes to the monitor, which learns it with every
+  // other browser's and its own (1.1.0: the tables and the learning are the monitor's alone - nothing is learned into an
+  // engine here). Each flight once: the ones sent are kept on disk (the latest 100,000), so none goes twice.
   // (kept in chunks of 5,000 in the logs store, read after start: a new flight rewrites only the newest chunk; the oldest
   // chunk goes as a whole when there are more than 100,000. The older single kv copy, learn2, is moved there once.)
   const LEARN_MAX = 100000, LEARN_CHUNK = 5000;
-  let learned = [], learnedKeys = new Set(), learnTimer = 0, learnedApplied = false, learnLoaded = false, learnLoading = null;
+  let learned = [], learnedKeys = new Set(), learnTimer = 0, learnLoaded = false, learnLoading = null;
   let learnMeta = { first: 0, last: 0 }, learnChunks = new Map();   // chunk index -> entries
   // (learn2 adds the take-off time, callsign, type and the flow-field cells passed through: what the 22.10 tables learn)
   function learnLoad() {
@@ -7860,10 +7836,11 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     return true;
   }
   function learnedStore() { if (!learnLoaded) learnLoad(); return learned; }
-  // (22.25) Every flight learned here goes to the monitor too (02 reportToMonitor): learned there with every other
-  // browser's and its own, every browser's engine has it with its next /learned. A flight the monitor took is marked
-  // with the number it gave that report (x[12]), kept with it: a learning of the monitor's that has it says so
-  // (builtSeq), and it is not counted twice here (srvCovers)
+  // (1.1.0: what an older version kept to learn into its own engine - the monitor's learning, a few MB, and the airports'
+  // usage counts - is of no use here any more: removed once)
+  store.kvReady.then(() => { if (store.kvGet('usage')) store.kvSet('usage', null); if (!store.kvGet('srvLearnGone')) { store.setBlob('srvLearned', undefined); store.kvSet('srvLearnGone', 1); } }).catch(() => {});
+  // (22.25) Every flight learned here goes to the monitor (02 reportToMonitor): learned there with every other browser's
+  // and its own. A flight the monitor took is marked with the number it gave that report (x[12]), kept with it
   const learnOut = [];
   function learnOutTake(n) { return learnOut.splice(0, n); }
   function learnOutBack(rows) { if (rows && rows.length) learnOut.unshift(...rows); if (learnOut.length > 2000) learnOut.splice(2000); }
@@ -7875,48 +7852,6 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     // (the chunks they are in written again - the newest two: a flight is sent within a minute or two of being learned)
     if (learnLoaded) for (const i of [learnMeta.last - 1, learnMeta.last]) { const c = learnChunks.get(i); if (c && rows.some(x => c.includes(x))) store.setBlob('learn3:' + i, c); }
   }
-  // (a flight of a blocked aircraft within the days the monitor's learning covers is in it already - and one sent from
-  // here that it has: not counted twice)
-  let srvLearned = null;   // { ver, from, asOf, builtSeq } of the monitor's learning added to the tables on this page
-  const srvCovers = x => {
-    if (!srvLearned || typeof x[0] !== 'string') return false;
-    const [hex, t] = x[0].split('|'), ts = +t || +x[8] || 0;
-    if (!(ts >= Date.parse(srvLearned.from + 'T00:00:00Z') / 1000 && ts < Date.parse(srvLearned.asOf + 'T00:00:00Z') / 1000 + 86400)) return false;
-    return (/^[0-9a-f]{6}$/.test(hex) && !!(store.getHex(hex) || {}).ladd) || (x[12] > 0 && x[12] <= (srvLearned.builtSeq || 0));
-  };
-  function replayLearned(x) { if (!srvCovers(x)) ENGINE.learnRow(x); }
-  // (read, then replayed in idle slices: 100,000 flights at once would hold the page for seconds)
-  async function applyLearned() {
-    if (learnedApplied || !airportsReady()) return; learnedApplied = true;
-    // (the monitor's learning kept from before: added first, so this browser's own flights it covers are not counted twice)
-    const kept = await store.getBlob('srvLearned').catch(() => null);
-    if (kept && kept.ver && Array.isArray(kept.ops)) await addSrvLearned(kept);
-    try { const l = (await learnLoad()).slice(); await sliced(l, replayLearned, { ms: 8 }); if (l.length) log('learned from use', l.length, 'flights'); } catch (e) { log('learned replay', e); }
-  }
-  async function addSrvLearned(j) {
-    srvLearned = { ver: j.ver, from: j.from, asOf: j.asOf, builtSeq: j.builtSeq || 0 };
-    let n = 0; await sliced(j.ops, o => { if (ENGINE.addLearnedOp(o)) n++; }, { ms: 8 });
-    log('learned on the monitor', j.flights, 'flights of', j.days, 'days (' + j.from + ' to ' + j.asOf + '),', n, 'increments');
-  }
-  // The monitor's learning: every blocked aircraft's completed flights of the last 90 days, worldwide, learned there into
-  // increments of the tables (GET /learned, a few MB, rebuilt a few times a day) - where business aviation goes from
-  // where, its squawk blocks, levels and flows, today's habits of every LADD jet. Kept here and added as the page opens; a
-  // newer one is fetched in an idle moment and used from the next page load: one already added cannot be taken out
-  // again, and this page's own flights it covers have been counted already.
-  let srvLearnBusy = false;
-  async function syncSrvLearn() {
-    if (srvLearnBusy || !monUp() || !learnedApplied) return;
-    srvLearnBusy = true;
-    try {
-      const have = srvLearned ? srvLearned.ver : String(((await store.getBlob('srvLearned').catch(() => null)) || {}).ver || '');
-      const j = await monGet('/learned?have=' + encodeURIComponent(have), { idle: true, timeout: 120000 });
-      if (!j || j.same || j.none || !j.ver || !Array.isArray(j.ops)) return;
-      await store.setBlob('srvLearned', j);
-      log('learned on the monitor: a copy of', j.flights, 'flights kept for the next page load', j.ver);
-    } catch (e) { log('monitor learning', String(e && e.message || e)); }
-    finally { srvLearnBusy = false; }
-  }
-  setTimeout(() => { syncSrvLearn().catch(() => {}); }, 30000); setInterval(() => { syncSrvLearn().catch(() => {}); }, 3 * 3600e3);
   // (lx: what the monitor worked out from the positions of a flight it rebuilt - [squawk blocks, FMS levels, flow keys] -
   // for a flight this browser has the summary of only)
   function learnFromLeg(hex, raw, s, cls, mil, lx) {
@@ -7936,7 +7871,6 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     const ok = Array.isArray(lx) && lx.length === 3, flow = ok ? String(lx[2] || '') : ENGINE.flowKeysOf((raw && raw.pts) || [], ENGINE.byId(s.to.id)).slice(0, 16).join('|');
     const x = [key, s.from.id, s.to.id, Math.round(s.tEnd), ok ? String(lx[0] || '') : [...sq].join(','), ok ? String(lx[1] || '') : [...fm].join(','), cls, mil ? 1 : 0, Math.round(s.tStart), s.cs || '', (acOfHex(hex).type || ''), flow];
     if (!learnAppend(x)) return;
-    if (learnedApplied) replayLearned(x);
     // (rebuilt by the monitor's own learning already - from its lx: not sent back)
     if (!ok) { learnOut.push(x); if (learnOut.length > 2000) learnOut.shift(); }
   }
@@ -8980,8 +8914,8 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     return ENGINE.chainLegs(ENGINE.stitchLegs(legs), legCtx(hex));
   }
 
-  // ---- the population tables (22.10): packed into the script at build time (gzip, base64), unpacked once at start ------
-  // in the background - the page never waits for them; the engine reasons without them until they are in (a second).
+  // ---- the population tables (22.10) as packed: unpacked by the monitor (monitor/central.cjs reads this block) - 1.1.0: they
+  // are not in the script, every route is worked out there
   // (packed: airports as indexes into one list, keys nested by origin / map cell - test/pack_t2.cjs checks this round trip)
   /* ==UNPACKT2== */
   // (a generator: the loader runs it a few milliseconds at a time, so the page never stalls on it; unpackT2 = all at once)
@@ -9007,16 +8941,6 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     return t;
   }
   /* ==/UNPACKT2== */
-  // the build writes the packed tables as lines ("key<TAB>json", each table in parts of ~150 KB) so that no single
-  // JSON.parse holds the page either; an older single-JSON build still loads
-  function* parseT2Lines(txt, p) {
-    for (let i = txt.indexOf('\n') + 1; i > 0 && i < txt.length;) {
-      let j = txt.indexOf('\n', i); if (j < 0) j = txt.length;
-      const tab = txt.indexOf('\t', i), k = txt.slice(i, tab), v = JSON.parse(txt.slice(tab + 1, j));
-      if (k === '_') Object.assign(p, v); else if (Array.isArray(v) || !v || typeof v !== 'object') p[k] = v; else Object.assign(p[k] || (p[k] = {}), v);
-      i = j + 1; yield;
-    }
-  }
   // ---- build year by serial number (AGE, padlocked by FR24) -------------------------------------------------------
   // No open source has a build year for every aircraft (hexdb and adsbdb none, OpenSky's database ~0.1%, airframes.org
   // allows no scripts). The registers that publish one are asked (FAA, UK G-INFO, Isle of Man); for the rest, the FAA
@@ -9037,30 +8961,6 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       return ageTable;
     })().catch(e => { log('age table', e); return null; });
     return ageTableLoading;
-  }
-  // The learned arrival paths (build.mjs apprPack): unpacked into the engine a slice at a time, a while after start
-  let apprLoading = null;
-  function loadApprTable() {
-    if (apprLoading) return apprLoading;
-    apprLoading = (async () => {
-      if (typeof APPR_TABLE_GZ !== 'string' || !APPR_TABLE_GZ || typeof DecompressionStream !== 'function') return null;
-      const bin = atob(APPR_TABLE_GZ), u8 = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
-      const b = new Uint8Array(await new Response(new Blob([u8]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer());
-      // (kept as sorted typed arrays - a few MB, where a Map of them would be ~25 - and looked up by halving)
-      const nl = b.indexOf(10), head = JSON.parse(new TextDecoder().decode(b.subarray(0, nl))), N = head.n;
-      const K = new Float64Array(N), A = new Uint32Array(N), T = new Uint32Array(N), M = new Uint32Array(N);
-      let i = nl + 1, key = 0;
-      const vint = () => { let v = 0, m = 1, x; do { x = b[i++]; v += (x & 127) * m; m *= 128; } while (x >= 128); return v; };
-      for (let k = 0; k < N; k++) {
-        key += vint(); K[k] = key; A[k] = vint(); T[k] = vint(); M[k] = vint();
-        if (k % 20000 === 19999) await idleSlice();
-      }
-      const get = k => { let lo = 0, hi = N - 1; while (lo <= hi) { const mid = (lo + hi) >> 1, v = K[mid]; if (v === k) return [head.aps[A[mid]], T[mid] - M[mid], T[mid]]; if (v < k) lo = mid + 1; else hi = mid - 1; } return undefined; };
-      ENGINE.setApproach({ bin: head.bin, thr: head.thr, minN: head.minN, cells: { get, size: N } });
-      return N;
-    })().catch(e => { log('arrival paths', e); return null; });
-    return apprLoading;
   }
   const normSerial = s =>String(s || '').toUpperCase().replace(/\s+/g, '').replace(/^0+(?=\d)/, '');
   const serialKey = s => { const m = s.match(/^(.*?)(\d+)([A-Z]?)$/); return m ? [m[1] + '#' + m[3], +m[2]] : null; };
@@ -9095,25 +8995,6 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     return (b.est ? '~' : '') + (a ? `${a} year${a === 1 ? '' : 's'}` : '< 1 year');
   }
   const ageTitle = hx => { const b = builtYear(hx); return b ? `Built ${b.est ? 'about ' : ''}${b.year} (from ${b.how})` : ''; };
-  // runs a generator in slices of ~8 ms, giving the page its turn in between
-  async function runSliced(it) { for (;;) { const t0 = Date.now(); while (Date.now() - t0 < 8) if (it.next().done) return; await sleep(0); } }
-  let t2Ready = null;
-  function loadT2() {
-    if (t2Ready) return t2Ready;
-    t2Ready = (async () => {
-      if (typeof ROUTE_T2_GZ !== 'string' || !ROUTE_T2_GZ || typeof DecompressionStream !== 'function') return false;
-      const t0 = now(), bin = atob(ROUTE_T2_GZ), u8 = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
-      const txt = await new Response(new Blob([u8]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
-      let p; if (txt.startsWith('T2L1\n')) { p = {}; await runSliced(parseT2Lines(txt, p)); } else p = JSON.parse(txt);
-      let t = p; if (p && p.pk === 2) { t = {}; await runSliced(unpackT2Steps(p, t)); }
-      ENGINE.setTables2(t);
-      log('population tables', Math.round(txt.length / 1e6 * 10) / 10 + ' MB in', now() - t0, 'ms');
-      return true;
-    })().catch(e => { log('population tables', String(e && e.message || e)); return false; });
-    return t2Ready;
-  }
-
   // ---- conditions at the candidate airports: METARs (aviationweather.gov) ------------------------------------------------
   // Below landing minima, IFR for a light aircraft flying VFR, a crosswind beyond what the class lands in on any runway -
   // and which runways are in use, for the approach geometry. Asked for the few likeliest fields of the aircraft being
@@ -9601,11 +9482,15 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     const k = (1 - want) / Math.max(1e-9, 1 - c.p);
     return cands.map((x, j) => Object.assign({}, x, { p: j === i ? want : x.p * k })).sort((a, b) => b.p - a.p);
   }
+  // (1.1.0) A flight's route is the monitor's: worked out there, with the same tables for every browser, from what all of
+  // them send and the monitor's own logs. Nothing is worked out here (the tables are not in the script); this browser adds
+  // only what is its own - its user's confirmation, the progress bar from where the aircraft is now. None yet: null.
+  // (opts.quick: asked by the round of every flight identified - boards, labels, search - not for a panel: refreshed on its
+  // own schedule there)
   function composeRoute(id, hex, opts) {
-    let r;
-    try { r = composeRoute0(id, hex, opts); } catch (e) { const rr = live.get(id) || pubRecs.get(id); if (rr) rr.routeErr = String((e && e.message) || e).slice(0, 160); log('route failed', id, e); return null; }
-    // (a moment of its own - the log page's flight in progress: this browser's answer)
-    return opts && opts.pos ? r : centralOf(id, hex, r);
+    const r = centralOf(id, hex);
+    if (r && opts && opts.quick) r.quick = true;
+    return r;
   }
   function composeRoute0(id, hex, opts) {
     const rec0 = live.get(id) || pubRecs.get(id) || null, rec = rec0 || {};
@@ -9920,32 +9805,71 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   // plan, the flights of the day, the weather and closures at the airports in question - and the route it answers with is
   // the one shown: every browser showing the flight gets that same one (monitor/central.cjs runs this script's own route
   // code, ==ROUTE-CORE== above). The progress bar and the time to go are from where the aircraft is now.
-  // This browser's own answer stands where the monitor has none (not on, not answering, nothing of the flight, its answer
-  // over 90 s old), where the user confirmed a destination here, and while a landing or take-off seen here is not in the
-  // monitor's answer yet.
-  const calcGot = new Map();     // fr24 id -> { at (worked out there), until (good here until: 90 s from when it was worked out, by its own clock), r }
+  // (1.1.0) The monitor's answer is the only one: none here until it comes (a second or two), none without the monitor. An
+  // answer is shown for ten minutes after it came at most - asked for again every few seconds while the flight is shown.
+  const calcGot = new Map();     // fr24 id -> { at (worked out there), until (shown here until), r }
   const calcSent = new Map();    // fr24 id -> { t0, lastT, at, full } - what of its track the monitor has from here
-  const calcAsk = new Set(); let calcT = 0, calcBusy = false;
+  const calcAsk = new Set(); let calcT = 0, calcBusy = false, calcSoon = false;
   const centralUp = () => !!(monOk && monBase && monStat && monStat.central && monStat.central.on);
   // (a point as sent: numbers that are numbers, booleans, strings, nulls - nothing else)
   const ptOut = p => { if (!p || typeof p !== 'object') return null; const o = {}; for (const k of Object.keys(p)) { const v = p[k]; if (typeof v === 'number' ? isFinite(v) : v === null || typeof v === 'boolean' || typeof v === 'string') o[k] = v; } return o; };
-  function centralOf(id, hex, r) {
-    if (!r || !(id > 0) || !centralUp()) return r;
-    calcWant(id);
-    const c = calcGot.get(id); if (!c || !c.r || now() > c.until) return r;
-    if (r.userConfirmed || !!r.landed !== !!c.r.landed || !!r.onGround !== !!c.r.onGround) return r;
-    const out = Object.assign({}, c.r, { computedAt: now(), quick: !!r.quick, central: c.at });
-    const pos = currentPos(id), destAp = apById(out.destId) || (out.destSite && fin(out.destSite.lat) ? out.destSite : null);
+  function centralOf(id, hex) {
+    if (!(id > 0)) return null;
+    if (centralUp()) calcWant(id);
+    const c = calcGot.get(id); if (!c || !c.r || now() > c.until) return null;
+    return localView(Object.assign({}, c.r, { computedAt: now(), central: c.at }), id, hex, currentPos(id));
+  }
+  // (what of an answer is this browser's own: a destination its user confirmed - it stands at 100% - and the progress bar and
+  // time to go from where the aircraft is now)
+  function localView(out, id, hex, pos) {
+    const uc = userDestOf(id, hex, out.departedAt), planDest = out.destConf === 'filed' || out.destConf === 'landed';
+    const ua = uc && !planDest && !out.landed ? apById(uc.destId) : null;
+    if (ua) {
+      const prev = uc.prev || (out.userConfirmed ? '' : out.destIata || '');
+      Object.assign(out, { destId: ua.id, destIata: apCode(ua), destCity: ua.city || ua.name, destConf: 'confirmed', destReason: 'confirmed by you' + (prev && prev !== apCode(ua) ? ` (it was predicting ${prev})` : ''), destP: 100, destSite: null, alternatives: [], userConfirmed: true, confirmed: true, crowdD: false });
+      if (pos && !pos.gnd) out.eta = estimateEta(pos, ua, ENGINE.classify(acOf(live.get(id) || pubRecs.get(id) || {})));
+    }
+    const destAp = apById(out.destId) || (out.destSite && fin(out.destSite.lat) ? out.destSite : null);
     if (pos && destAp && !pos.gnd) {
       const stage = out.phase === 'descent' ? 4 : out.phase === 'climb' && (pos.alt || 0) < 15000 ? 2 : 3;
       out.progress = buildProgress(pos, apById(out.originId) || (out.originSite && fin(out.originSite.lat) ? out.originSite : null), destAp, out.departedAt, out.eta, stage);
     }
     return out;
   }
-  function calcWant(id) { calcAsk.add(id); if (!calcT) calcT = setTimeout(calcFlush, 1500); }
+  // (why there is no route yet - for the panel)
+  const calcWhy = () => !monOk || !monBase ? 'the monitor isn\'t answering - routes are worked out there' : !centralUp() ? 'the monitor isn\'t working routes out at the moment' : 'the monitor is working it out';
+  // (1.1.0) One flight's answer now, for what is not on the map - the log page's flight in progress, a watched aircraft: its
+  // evidence sent, the answer waited for (the monitor waits for its worker)
+  const hexCalcId = hex => 2000000000 + (parseInt(hex, 16) % 100000000);
+  async function calcNow(x) {
+    if (!x || !centralUp()) return null;
+    try { const j = await monPost('/calc', { v: 1, flights: [x] }), v = j && j.routes && j.routes[x.id]; return v && v.r && typeof v.r === 'object' ? v.r : null; }
+    catch (e) { log('central calculation', String(e && e.message || e)); return null; }
+  }
+  function calcWant(id) {
+    calcAsk.add(id);
+    // (the flight opened, no answer for it yet: asked at once - its panel waits for it; the rest together, every 1.5 s)
+    const first = id === currentId() && !calcGot.has(id);
+    if (first && calcT && !calcSoon) { clearTimeout(calcT); calcT = 0; }
+    if (!calcT) { calcSoon = first; calcT = setTimeout(calcFlush, first ? 60 : 1500); }
+  }
+  // (what this browser has of a flight it shows that is neither a blocked one nor opened: FR24's own N/A flights on the
+  // boards, from its feed - id -> () => evidence)
+  const calcExtra = new Map();
   // What this browser sees of a flight, for the monitor
   function calcEvidence(id) {
-    const rec = live.get(id) || pubRecs.get(id); if (!rec || !rec.hex) return null;
+    const rec = live.get(id) || pubRecs.get(id);
+    // (one of FR24's flights with no destination: whole once, then what is new - its window of positions slides along)
+    if ((!rec || !rec.hex) && calcExtra.has(id)) {
+      try {
+        const x = calcExtra.get(id)(); if (!x) return null;
+        const pts = x.trail.pts, s0 = calcSent.get(id), lastT = pts.length ? pts[pts.length - 1].t : 0, whole = !s0 || s0.full;
+        if (!whole) x.trail = Object.assign({}, x.trail, { full: false, pts: pts.filter(p => p.t > s0.lastT) });
+        return { t0: pts.length ? pts[0].t : 0, lastT, x };
+      } catch (e) { log('central evidence', e); }
+      return null;
+    }
+    if (!rec || !rec.hex) return null;
     const pos = currentPos(id); if (!pos) return null;
     const hex = rec.hex, trail = trailFor(id, hex, pos), s = calcSent.get(id);
     const t0 = trail.length ? trail[0].t : 0, full = !s || s.full || Math.abs(s.t0 - t0) > 60;
@@ -9961,7 +9885,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   // (the flights wanted, every second and a half: what is new of each - the one looked at every 10 s, the others every 30 s,
   // 20 at a time - and the answers for the rest)
   async function calcFlush() {
-    calcT = 0;
+    calcT = 0; calcSoon = false;
     if (calcBusy || !centralUp()) { if (calcAsk.size && centralUp()) calcT = setTimeout(calcFlush, 3000); else calcAsk.clear(); return; }
     const sel = currentId(), ids = [...calcAsk].sort((a, b) => (b === sel) - (a === sel)).slice(0, 60); for (const id of ids) calcAsk.delete(id);
     const flights = [], ask = [], sent = new Map(); let npts = 0;
@@ -9981,8 +9905,12 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
         for (const [k, v] of Object.entries(j.routes && typeof j.routes === 'object' ? j.routes : {})) {
           if (!v || !v.r || typeof v.r !== 'object') continue;
           const id = +k, was = calcGot.get(id);
-          calcGot.set(id, { at: +v.at || 0, until: now() + Math.max(0, 90000 - (fin(v.age) ? v.age : 90000)), r: v.r });
-          if (!was || was.at !== +v.at) scheduleReplan(id, 10);
+          calcGot.set(id, { at: +v.at || 0, until: now() + 10 * 60000, r: v.r });
+          if (!was || was.at !== +v.at) {
+            scheduleReplan(id, 10);
+            // (one of FR24's flights with no destination - a board's, Most tracked's: to the page now, not at the next round)
+            const ne = naFeed.get(id); if (ne && !live.has(id)) { ne.routedAt = 0; naSoon(); }
+          }
         }
         for (const m of [calcGot, calcSent]) if (m.size > 3000) for (const k of [...m.keys()].slice(0, 1000)) m.delete(k);
       }
@@ -10007,7 +9935,6 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   function onHistElsewhere(hex) {
     if (!store.peekHist(hex) && !(histHook && histHook.hex === hex)) return;     // (one this tab has not read: nothing stale)
     store.reloadHist(hex).then(() => {
-      naHs.delete(hex);
       for (const [id, rec] of live) if (rec && rec.hex === hex) scheduleReplan(id, 50);
       for (const [id, p] of pubRecs) if (p && p.hex === hex && pubRouted(id)) scheduleReplan(id, 50);
       if (histHook) histHook(hex);
@@ -10191,7 +10118,6 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   // FR24's own estimated style. Worked out quietly, a few at a time, from what the feed has shown of it and its log if
   // one is kept; dropped again when the prediction weakens or the flight is no longer seen.
   const naFeed = new Map();     // fr24 id -> { f: latest report, trail: [points], at, routedAt, pub }
-  const naHs = new Map();       // hex -> { at, hs } (its kept log, as statistics)
   function noteNa(list, at) {
     for (const f of list) {
       if (live.has(f.id)) continue;
@@ -10202,18 +10128,18 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       e.f = f; e.at = at; naFeed.set(f.id, e);
     }
   }
-  function naHistStats(hex, t) {
-    if (!hex) return null; const c = naHs.get(hex); if (c && now() - c.at < 600000) return c.hs;
-    const h = store.peekHist(hex); let hs = null;
-    if (h && h.legs && h.legs.length) { try { hs = ENGINE.histStats(ENGINE.chainLegs(ENGINE.stitchLegs(h.legs.slice()), legCtx(hex)).filter(l => l.tEnd < t - 60), t); } catch (e) { hs = null; } }
-    naHs.set(hex, { at: now(), hs }); if (naHs.size > 500) naHs.delete(naHs.keys().next().value);
-    return hs;
-  }
   // (on the ground as the engine counts it - FR24 says so, or a fixed-wing aircraft under 40 kt: an airliner taxiing with
   // its transponder saying "airborne" - and flying: off the ground at flying speed)
   const naGnd = (p, heli) => !!p.gnd || (!heli && fin(p.gs) && p.gs < 40 && !(fin(p.alt) && p.alt > 12000));
   const naFlying = (p, cls) => !naGnd(p, cls === 'heli') && fin(p.gs) && p.gs >= (cls === 'heli' ? 20 : cls === 'piston' ? 45 : 60);
-  function naRouteOf(e) {
+  // (1.1.0) Where an N/A flight is going is the monitor's answer, as for any flight: its evidence - what FR24's feed showed
+  // of it here - sent, the answer taken when it is good enough for a board (on final for it, landed there, or 60% and more)
+  function naEvidenceOf(id, e) {
+    const f = e.f, trail = e.trail.slice(-400), pos = trail[trail.length - 1]; if (!pos) return null;
+    const hex = f.hex ? Number(f.hex).toString(16).padStart(6, '0') : '', fromAp = f.from ? airports.byIata.get(String(f.from).toUpperCase()) : null;
+    return { id, hex, kind: 'pub', ac: { hex, type: f.type || '', reg: f.reg || '', cs: f.cs || '' }, pos: ptOut(pos), trail: { full: true, pts: trail.map(ptOut) }, plan: fromAp ? { originId: fromAp.id, fr24: true } : null };
+  }
+  function naRouteOf(e, id) {
     const f = e.f, trail = e.trail.slice(), pos = trail[trail.length - 1]; if (!pos) return null;
     const hex = f.hex ? Number(f.hex).toString(16).padStart(6, '0') : '';
     const ac = { hex, type: f.type || '', reg: f.reg || '', cs: f.cs || '' }, cls = ENGINE.classify(ac), heli = cls === 'heli';
@@ -10222,43 +10148,32 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     // taxiing at Liverpool as RYR8SF was "Liverpool -> Liverpool, landed" on its arrivals)
     const fly = trail.filter(p => naFlying(p, cls)); if (fly.length < 2) return null;
     const i0 = trail.indexOf(fly[0]), startGnd = i0 > 0 && trail.slice(0, i0).some(p => naGnd(p, heli));
-    // (its take-off: the first report at flying speed after it was seen on the ground)
     const departedAt = startGnd ? fly[0].t : 0;
     const fromAp = f.from ? airports.byIata.get(String(f.from).toUpperCase()) : null;
-    const origin = fromAp ? { airport: fromAp, conf: 'fr24', departedAt } : null;
-    // (where it began - FR24's origin, else the field it was seen on the ground at - and back there only after a real flight)
+    // (where it began - FR24's origin, else the field it was seen on the ground at)
     const g0 = startGnd ? trail[i0 - 1] : null, home = fromAp || (g0 ? ((h => h && h.airport)(heli ? ENGINE.heliAirportAt(g0.lat, g0.lon) : ENGINE.placeAt(g0.lat, g0.lon, 7, 2)) || null) : null);
+    // (the monitor asked; its answer, once in)
+    if (id > 0) { calcExtra.set(id, () => { const x = naFeed.get(id) || e; return naEvidenceOf(id, x); }); if (calcExtra.size > 3000) calcExtra.delete(calcExtra.keys().next().value); if (centralUp()) calcWant(id); }
+    const c = id > 0 ? calcGot.get(id) : null, r = c && c.r && now() <= c.until ? c.r : null;
+    if (!r || !r.destId) return null;
+    const dest = apById(r.destId); if (!dest || dest.id >= 1e7) return null;
+    const sure = !!r.landed || r.destConf === 'confirmed' || r.destConf === 'filed' || r.destConf === 'landed' || (r.destP || 0) >= 60;
+    if (!sure) return null;
+    // (back where it began only after a real flight - circuits, a return an hour on - as the engine's rule has it)
     let pathKm = 0; for (let i = 1; i < fly.length; i++) pathKm += ENGINE.dist(fly[i - 1].lat, fly[i - 1].lon, fly[i].lat, fly[i].lon);
     const backOk = ap => !home || !ap || home.id !== ap.id || ENGINE.localFlew({ from: { id: ap.id }, to: { id: ap.id }, tOff: departedAt || fly[0].t, tOn: pos.t, maxAlt: Math.max(0, ...fly.map(p => fin(p.alt) ? p.alt : 0)), pathKm }, cls);
     // (an arrival comes in from further out: a take-off roll - FR24's ground flag flickering "airborne" at 110 kt, then
-    // "on the ground" - is no approach to, and no landing at, the field it is leaving)
+    // "on the ground" - is no landing at the field it is leaving)
     const cameFrom = ap => { const d0 = ENGINE.dist(pos.lat, pos.lon, ap.lat, ap.lon); return fly.some(p => ENGINE.dist(p.lat, p.lon, ap.lat, ap.lon) >= d0 + 3); };
-    if (naGnd(pos, heli)) {
-      // down: landed where it was going - just down from flying, and not back where it began without having flown
-      const prev = e.pub, here = heli ? ENGINE.heliAirportAt(pos.lat, pos.lon) : ENGINE.placeAt(pos.lat, pos.lon, 7, 2);
-      if (prev && here && here.airport.id === prev.destId && !prev.landed && pos.t - fly[fly.length - 1].t <= 900 && backOk(here.airport) && cameFrom(here.airport)) return Object.assign({}, prev, { landed: true, ata: pos.t, phase: 'landed' });
-      return null;
-    }
-    const hs = naHistStats(hex, pos.t) || ENGINE.histStats([], pos.t);
-    // (flying circuits - a light aircraft in the pattern of a field: that field, as for one opened)
-    const circ = /^(piston|fighter|heli)$/.test(cls) ? ENGINE.circuits(trail, pos, { heli }) : null;
-    if (circ && circ.airport.id < 1e7) return backOk(circ.airport) ? { originId: fromAp ? fromAp.id : circ.airport.id, originIata: apCode(fromAp || circ.airport), originCity: (fromAp || circ.airport).city, destId: circ.airport.id, destIata: apCode(circ.airport), destCity: circ.airport.city,
-      destConf: 'confirmed', destP: 100, eta: 0, atd: departedAt, std: 0, sta: 0, landed: false, phase: 'circuits', circuits: circ.laps } : null;
-    const r = ENGINE.predict({ surge: surgeNow(), ac, pos, trail, hs, now: pos.t, origin, wx: wxMap, closed: closedMap }); if (!r || !r.cands.length) return null;
-    const top = r.cands[0], elapsed = departedAt ? (pos.t - departedAt) / 60 : null;
-    const lfOk = !heli && !/^(piston|milheavy|fighter)$/.test(cls), rwyOk = a => !ENGINE.rwyImpossible(a, cls, ac.type);
-    const pathOk = ap => !!ap && r.cands.some(c => c.airport.id === ap.airport.id && c.p >= 0.02) && rwyOk(ap.airport) && !(home && home.id === ap.airport.id && elapsed != null && elapsed < 15) ? ap : null;
-    const appr = r.phase !== 'climb' ? (a => a && cameFrom(a.airport) ? a : null)(ENGINE.approachTo(pos, { heli, origin: home, elapsedMin: elapsed, rwyOk }) || (lfOk ? (lf => lf && lf.airport.id === top.airport.id ? lf : null)(ENGINE.longFinal(pos, trail, { origin: home, elapsedMin: elapsed, rwyOk })) : null) || pathOk(ENGINE.approachPath(pos, trail, cls))) : null;
-    const dest = appr ? appr.airport : top.airport, p = appr ? 1 : calibP(ENGINE.calibrated(top.p, cls));
-    if (!appr && p < 0.6) return null;
-    // (a field FR24 has no board for; back where it began - guessed, or without a real flight first)
-    if (dest.id >= 1e7 || (home && home.id === dest.id && (!appr || !backOk(dest)))) return null;
+    if (r.landed && !(cameFrom(dest) && backOk(dest))) return null;
+    // (back where it began without having flown somewhere first, or circuits there: not a flight for a board)
+    if (home && home.id === dest.id && !r.landed && !(r.circuits > 0 && backOk(dest))) return null;
     // (an airline's jet flying its number is not going back to the field it left, nor to one close by: a climb-out turning
     // over the field, or levelling off on a departure that points at the next airport - Ryanairs out of Manchester "to
     // Manchester" and "to Liverpool" on its boards)
     if (home && cls === 'airliner' && /^[A-Z]{3}\d/.test(String(f.cs || '').toUpperCase()) && ENGINE.dist(home.lat, home.lon, dest.lat, dest.lon) <= 80) return null;
-    return { originId: fromAp ? fromAp.id : 0, originIata: fromAp ? apCode(fromAp) : '', originCity: fromAp ? fromAp.city : '', destId: dest.id, destIata: apCode(dest), destCity: dest.city,
-      destConf: appr ? 'confirmed' : CONF_OF(p), destP: Math.round(p * 100), eta: estimateEta(pos, dest, cls) || 0, atd: departedAt, std: 0, sta: 0, landed: false, phase: r.phase || '' };
+    return { originId: fromAp ? fromAp.id : r.originId || 0, originIata: fromAp ? apCode(fromAp) : r.originIata || '', originCity: fromAp ? fromAp.city : r.originCity || '', destId: dest.id, destIata: apCode(dest), destCity: dest.city,
+      destConf: r.destConf, destP: r.destP || 0, eta: r.eta || 0, atd: r.atd || departedAt, std: 0, sta: 0, landed: !!r.landed, ata: r.ata || 0, phase: r.circuits > 0 && !r.landed ? 'circuits' : r.phase || '', circuits: r.circuits || 0 };
   }
   let naBusy = false;
   async function naTick() {
@@ -10272,7 +10187,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
         e.routedAt = now();
         // (one opened in the panel has its full route, posted with it - left to that, never dropped from here)
         { const pr = pubRecs.get(id); if (pr && pr.route && pubRouted(id)) return; }
-        let r = null; try { r = naRouteOf(e); } catch (err) { log('na route', err); }
+        let r = null; try { r = naRouteOf(e, id); } catch (err) { log('na route', err); }
         if (r) { const f0 = e.f, hx0 = f0.hex ? Number(f0.hex).toString(16).padStart(6, '0') : ''; try { const sig = (r.atd || 0) + ':' + (r.landed ? r.ata : 0) + ':' + r.destId; if (boardNoted.get(id) !== sig && (r.atd || r.landed)) { boardNoted.set(id, sig); boardNoteFlight(id, { hex: hx0, reg: f0.reg || '', type: f0.type || '', cs: f0.cs || '' }, r); } } catch (err) { log('board note', err); } }
         if (r) { e.pub = r; const f = e.f; list.push({ id, rec: { cs: f.cs || '', reg: f.reg || '', type: f.type || '', hex: f.hex ? Number(f.hex).toString(16).padStart(6, '0') : '', cat: '', fcat: fr24Cat({ type: f.type }), mil: false, operatorId: operatorIdOf({}, f.cs) }, route: routeForPage(r), pos: { lat: f.lat, lon: f.lon, alt: f.alt, gnd: !!f.gnd, at: e.at } }); }
         else if (e.pub) { e.pub = null; drop.push(id); }
@@ -10281,6 +10196,8 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     } finally { naBusy = false; }
   }
   setInterval(() => { naTick().catch(e => log('na boards', e)); }, 20000);
+  let naSoonT = 0;
+  const naSoon = () => { if (!naSoonT) naSoonT = setTimeout(() => { naSoonT = 0; naTick().catch(e => log('na boards', e)); }, 50); };
   // ---- a flight FR24 lists elsewhere with no destination (its Most tracked widget), anywhere in the world -----------------
   // Asked for by the page; worked out the same way from FR24's own track of the flight, fetched in the background one at a
   // time (the page's FollowFlight, its first frame). The answer goes to the page as the boards' N/A flights' do; FR24's
@@ -10310,7 +10227,10 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     for (const p of ft.pts) { if (!fin(p.lat) || !fin(p.lon) || !fin(p.t)) continue; const last = trail[trail.length - 1]; if (!last || p.t - last.t >= 20) trail.push({ t: p.t, lat: p.lat, lon: p.lon, alt: p.alt, gs: p.gs, trk: p.trk, gnd: false }); }
     const pos = trail[trail.length - 1]; if (!pos || nowS() - pos.t > 15 * 60) return null;
     const f = { id, cs: w.cs, reg: '', type: w.type, hex: 0, from: w.from, lat: pos.lat, lon: pos.lon, alt: pos.alt, spd: pos.gs, trk: pos.trk, gnd: false };
-    const r = naRouteOf({ f, trail: trail.slice(-400), pub: null }); if (!r) return null;
+    const e = { f, trail: trail.slice(-400), pub: null, at: now(), routedAt: now() };
+    // (kept as a board's N/A flight is: the monitor's answer, when it comes, picked up by the boards' round)
+    if (!naFeed.has(id)) naFeed.set(id, e);
+    const r = naRouteOf(e, id); if (!r) return null;
     postToPage('naBoard', { list: [{ id, rec: { cs: w.cs, reg: '', type: w.type, hex: '', cat: '', fcat: fr24Cat({ type: w.type }), mil: false, operatorId: operatorIdOf({}, w.cs) }, route: routeForPage(r), pos: { lat: pos.lat, lon: pos.lon, alt: pos.alt, gnd: false, at: pos.t * 1000 } }] });
     return r;
   }
@@ -10840,7 +10760,9 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       const st = routeState.get(rec.id);
       const route = (st && st.route) || rec.route;
       const nLog = route && route.legCount || 0, basis = route && (route.destIata || route.originIata) && !route.landed ? `${isConfirmed(route) ? 'confirmed' : 'worked out'} from its track, ${nLog ? `its own flight log (${nLog} earlier flight${nLog === 1 ? '' : 's'}${route.base ? ', based at ' + route.base : ''})` : 'no earlier flights of its own on record'}${popTxt()} and public ADS-B` : '';
-      const routeHtml = route ? routeCells(route, '', basis) : (st && st.working ? gridHtml([cellHtml('Destination' + tagHtml('Predicted', 'pred'), '<span class="tl-spin"></span> <span class="tl-muted">working out the route…</span>', '', true)]) : '');
+      // (1.1.0: none yet - the monitor working it out, or why there is none: every route is worked out there)
+      const routeHtml = route ? routeCells(route, '', basis) : !centralUp() ? gridHtml([cellHtml('Destination' + tagHtml('Predicted', 'pred'), `<span class="tl-muted">${esc(calcWhy())}</span>`, '', true)])
+        : (st && st.working) || currentPos(rec.id) ? gridHtml([cellHtml('Destination' + tagHtml('Predicted', 'pred'), '<span class="tl-spin"></span> <span class="tl-muted">working out the route on the monitor…</span>', '', true)]) : '';
       // (no data-source credit: the hex, then whether it was just verified and the owner's town)
       const tail = [rec.verifiedAt && now() - rec.verifiedAt < 120000 ? 'verified' : '', hx.ownerCity ? esc(placeName(ENGINE.placeShort(hx.ownerCity))) : ''].filter(Boolean).join(' · ');
       const idCell = cellHtml('Identified from public ADS-B' + tagHtml(badge, 'ladd'), `${esc(hexU || '?')}${tail ? ` <span class="tl-muted">· ${tail}</span>` : ''}`, '', true);
@@ -11008,7 +10930,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       // (still being worked out - or why it could not be: shown, never a silent blank)
       el.dataset.state = 'pending';
       const pos = currentPos(pub.id);
-      const why = pub.routeErr ? 'could not work it out: ' + pub.routeErr : !pub.routeStarted ? 'waiting for FR24\'s flight data' : !pos ? 'waiting for its position' : now() - (pub.routeAt || 0) > 8000 ? 'no airport fits its track yet' : 'working out the ' + what;
+      const why = pub.routeErr ? 'could not work it out: ' + pub.routeErr : !pub.routeStarted ? 'waiting for FR24\'s flight data' : !pos ? 'waiting for its position' : !centralUp() ? calcWhy() : now() - (pub.routeAt || 0) > 8000 ? 'no airport fits its track yet' : 'working out the ' + what + ' on the monitor';
       const diag = !pos ? `live positions: ${posStats.n ? posStats.n + ' received, none for this flight id' : 'none received yet'}` : '';
       html = rowHtml('pin', gridHtml([cellHtml((what === 'departure airport' ? 'Departure' : 'Destination') + tagHtml('Predicted', 'pred'), `${/^working/.test(why) ? '<span class="tl-spin"></span> ' : ''}<span class="tl-muted" title="${esc(diag)}">${esc(why)}…</span>`, '', true)]) + linksHtml(pub) + foot);
     }
@@ -11830,13 +11752,15 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     const leg = td && td.legs && td.legs.length ? td.legs[td.legs.length - 1] : null;
     const trail = leg && !leg.ended ? [leg.start].concat(leg.pts) : [];
     const cached = store.allIds().filter(r => r.hex === hex).sort((a, b) => b.savedAt - a.savedAt)[0];
-    const fakeId = -1;
-    live.set(fakeId, { id: fakeId, hex, reg, type: (store.getHex(hex) || {}).type || (cur && cur.type) || '', cat: cur && cur.cat, mil: cur && cur.mil });
-    try {
-      const r = composeRoute(fakeId, hex, { pos, trail });
-      if (!r) return null;
-      return Object.assign(r, { cs: (cur && cur.cs) || (leg && leg.cs) || '', fr24Id: cached && now() - cached.savedAt < 6 * 3600e3 ? cached.id : 0 });
-    } finally { live.delete(fakeId); }
+    // (1.1.0) worked out on the monitor, as every route is: what this page has of the flight sent - under an id of its own,
+    // the aircraft's address made into one - the answer waited for
+    const hx = store.getHex(hex) || {}, rec = { hex, reg, type: hx.type || (cur && cur.type) || '', cat: cur && cur.cat, mil: !!(cur && cur.mil) || !!hx.mil, ladd: !!hx.ladd, pia: !!hx.pia };
+    const id = hexCalcId(hex), sums = td && td.sums ? td.sums.filter(l => l.ended) : [];
+    const thin = []; for (const p of trail) if (!thin.length || p.t - thin[thin.length - 1].t >= 15) thin.push(p);
+    const r0 = await calcNow({ id, hex, kind: hx.ladd || hx.fr24Blocked || hx.pia || hx.mil ? 'live' : 'pub', ac: acOf(rec), pos: ptOut(pos), trail: { full: true, pts: thin.map(ptOut) }, today: sums, lastLeg: sums.filter(l => l.to).pop() || null });
+    if (!r0) return null;
+    const r = localView(Object.assign({}, r0, { computedAt: now() }), id, hex, pos);
+    return Object.assign(r, { cs: (cur && cur.cs) || (leg && leg.cs) || '', fr24Id: cached && now() - cached.savedAt < 6 * 3600e3 ? cached.id : 0 });
   }
   async function bootAircraftPage() {
     const reg = decodeURIComponent((location.pathname.match(/^\/data\/aircraft\/([^/?#]+)/i) || [])[1] || '').toUpperCase();
@@ -12154,7 +12078,8 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   //  - FR24's own flown and scheduled flights of the aircraft whose FR24 schedule or log page it reads
   //  - FR24's own rows of that board from earlier visits
   // Kept per airport on disk (the 'hist' store, 'b:<airport id>'), so a board keeps them across refreshes.
-  const BOARD_BACK = 3 * 86400, BOARD_AHEAD = 3 * 86400, BOARD_V = 2, BOARD_MAX = 3000;
+  // (1.1.0: seven days each way - the monitor keeps every airport's FR24 rows of them, so a board opens whole)
+  const BOARD_BACK = 7 * 86400, BOARD_AHEAD = 7 * 86400, BOARD_V = 2, BOARD_MAX = 12000;
   // (a flight rebuilt from its whole track beats what was guessed while it flew: M-ARNZ "from Woking" - first heard in
   // the air near Fairoaks - when its track shows it taking off at Farnborough)
   const BOARD_RANK = { fr24: 4, sched: 4, log: 3, live: 2 };
@@ -12165,6 +12090,10 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   const boardOk = id => fin(id) && id > 0 && id < SITE_BASE;   // (FR24's own airports have boards; a strip or landing place has none)
   function boardPut(apId, kind, row) {
     if (!boardOk(apId) || !row || !fin(row.t) || Math.abs(row.t - nowS()) > Math.max(BOARD_BACK, BOARD_AHEAD)) return;
+    // (1.1.0) FR24's own rows read here - its map board's, its schedule's, its flight numbers' lists - go to the monitor for
+    // every other browser; those that came from it do not go back
+    if (row.fromMon) { row = Object.assign({}, row); delete row.fromMon; delete row.u; }
+    else if (row.src === 'fr24' || row.src === 'sched') boardUp(apId, kind, row);
     (boardPend.get(apId) || boardPend.set(apId, []).get(apId)).push([kind, row]);
     // (kept in a while, in one go - within a second or two for a board that is open)
     const wait = boardAsked.has(apId) ? 1500 : 20000;
@@ -12173,12 +12102,31 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     boardTimerAt = now() + wait;
     boardTimer = setTimeout(() => { boardTimer = 0; boardDrain().catch(e => log('board archive', e)); }, wait);
   }
+  // (sent on in one request every eight seconds at most - sooner with a few hundred waiting; up to 2,000 rows a time)
+  const upQ = new Map(); let upT = 0;
+  function boardUp(apId, kind, row) {
+    const q = upQ.get(apId) || upQ.set(apId, { arrivals: new Map(), departures: new Map() }).get(apId);
+    q[kind].set(row.src + '|' + row.k, row);
+    let n = 0; for (const x of upQ.values()) n += x.arrivals.size + x.departures.size;
+    if (!upT) upT = setTimeout(boardUpFlush, n > 400 ? 500 : 8000);
+  }
+  function boardUpFlush() {
+    upT = 0; const list = []; let n = 0;
+    for (const [ap, q] of upQ) for (const kind of ['arrivals', 'departures']) {
+      if (!q[kind].size || n >= 2000) continue;
+      const rows = [...q[kind].values()].slice(0, 2000 - n); for (const r of rows) q[kind].delete(r.src + '|' + r.k);
+      n += rows.length; list.push({ ap, kind, rows });
+    }
+    for (const [ap, q] of upQ) if (!q.arrivals.size && !q.departures.size) upQ.delete(ap);
+    if (list.length) monPost('/boardrows', { list }).catch(() => {});
+    if (upQ.size && !upT) upT = setTimeout(boardUpFlush, 3000);
+  }
   function boardLoad(apId) {
     let b = boardMem.get(apId);
     if (b) return b.loading || Promise.resolve(b);
     b = { arr: {}, dep: {}, dirty: false }; boardMem.set(apId, b);
     // (only once the store is open: read before that, an airport's kept rows would look empty - and be written over)
-    b.loading = Promise.resolve(store.kvReady).then(() => { b.noDisk = store.mode() !== 'idb'; return store.getBoard(apId); }).then(v => { if (v && (v.v === BOARD_V || v.v === 1)) { Object.assign(b.arr, v.arr || {}); Object.assign(b.dep, v.dep || {}); boardScrub(apId, b); } }).catch(() => { /* none kept */ }).then(() => { b.loading = null; return b; });
+    b.loading = Promise.resolve(store.kvReady).then(() => { b.noDisk = store.mode() !== 'idb'; return store.getBoard(apId); }).then(v => { if (v && (v.v === BOARD_V || v.v === 1)) { Object.assign(b.arr, v.arr || {}); Object.assign(b.dep, v.dep || {}); if (fin(v.monSync)) b.monSync = v.monSync; boardScrub(apId, b); } }).catch(() => { /* none kept */ }).then(() => { b.loading = null; return b; });
     if (boardMem.size > 120) for (const [k, x] of boardMem) { if (boardMem.size <= 100) break; if (!x.loading && !x.dirty && !boardAsked.has(k)) boardMem.delete(k); }
     return b.loading;
   }
@@ -12265,7 +12213,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     if (b.noDisk && store.mode() === 'idb') { const old = b; boardMem.delete(apId); b = await boardLoad(apId); for (const r of Object.values(old.arr)) boardMerge(b, 'arrivals', r, apId); for (const r of Object.values(old.dep)) boardMerge(b, 'departures', r, apId); }
     return b;
   }
-  function boardSave(apId, b) { boardPrune(b); b.savedAt = now(); if (!b.noDisk) { store.setBoard(apId, { v: BOARD_V, at: now(), arr: b.arr, dep: b.dep }); b.dirty = false; } }
+  function boardSave(apId, b) { boardPrune(b); b.savedAt = now(); if (!b.noDisk) { store.setBoard(apId, { v: BOARD_V, at: now(), arr: b.arr, dep: b.dep, monSync: b.monSync || 0 }); b.dirty = false; } }
   // (while an airport fills up - Manchester has some 600 flight numbers - its board is written at most every 20 s and
   // sent to the page at most every 4 s, not every time a few rows come in)
   function boardSoon(apId, b) {
@@ -12457,7 +12405,9 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     boardSchedFill(apId, b);
     { const ap = apById(apId); if (ap) monArea(ap.lat, ap.lon); }
     monP.then(() => boardInfoFill(apId)).catch(e => log('board monitor', e));
-    boardFr24Fill(apId).catch(e => log('board schedule', e));
+    // (FR24's schedule of the airport read here only when the monitor's is older than a quarter of an hour - its read, or
+    // another browser's, is what every board has)
+    monP.then(at => { if (!(at > nowS() - 900)) return boardFr24Fill(apId); }).catch(e => log('board schedule', e));
   }
   // FR24's own rows of a board as it served them (kept for when they have dropped off its free day)
   function onBoardRows(d) {
@@ -12685,9 +12635,20 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     return list;
   }
   // The permanent monitor's flights at the airport, the last three days
+  // (1.1.0) and every FR24 row of the board kept there - seven days each way: those changed since this browser's last answer
+  // of it once it has had one - put in at once (the rows are merged and the board sent as soon as they are in). Returns when
+  // FR24's data of the airport last came in there (0: never)
   async function boardMonFill(apId) {
-    const j = await monGet(`/board?ap=${apId}&from=${Math.round(nowS() - BOARD_BACK)}&to=${Math.round(nowS())}`).catch(() => null);
+    const b0 = await boardFresh(apId), t = Math.round(nowS()), since = b0.monSync || 0;
+    const j = await monGet(`/board?ap=${apId}&from=${t - BOARD_BACK}&to=${t + BOARD_AHEAD}&rows=1${since ? '&since=' + (since - 120) : ''}`, { timeout: 30000 }).catch(() => null);
     for (const a of (j && j.aircraft) || []) { if (a.reg && !store.getHex(a.hex)) store.mergeHex(a.hex, { reg: a.reg, type: a.type, ladd: !!a.ladd }); boardNoteLegs(a.hex, a.legs, { reg: a.reg, type: a.type }); }
+    const rows = j && j.rows;
+    if (rows && typeof rows === 'object') {
+      for (const kind of ['arrivals', 'departures']) for (const r of Array.isArray(rows[kind]) ? rows[kind] : []) if (r && (r.src === 'fr24' || r.src === 'sched')) boardPut(apId, kind, Object.assign({}, r, { fromMon: true }));
+      // (the time of the monitor's answer: the next asks for what changed since - kept with the board; once its rows are in)
+      if (fin(j.now)) { const at = j.now; boardDrain().then(() => boardFresh(apId)).then(b => { b.monSync = at; b.dirty = true; boardSoon(apId, b); }).catch(() => {}); }
+    }
+    return j && fin(j.fr24At) ? j.fr24At : 0;
   }
   // FR24's own schedule of an aircraft (its list.json, or the rows of its log page): flown and still to fly
   function boardNoteSched(hex, rows, rec) {
@@ -12799,7 +12760,11 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     routesOf(ap.id).then(list => postToPage('routesAdd', { apId: ap.id, list })).catch(e => log('routes', e));
     // (1.0.2) and every one of the last two weeks' take-offs and landings there - every aircraft public ADS-B heard, counted
     // by the monitor as each day's world log is built (daily)
-    const j = monUp() ? await monGet(`/airport?ap=${ap.id}&days=7&hist=14`).catch(() => null) : null;
+    // (asked whether or not the monitor's check has answered yet - monGet waits for it: an airport opened as the page
+    // loaded said "the monitor is not connected"; and asked again once should the first not answer)
+    const ask = () => monGet(`/airport?ap=${ap.id}&days=7&hist=14`, { timeout: 15000 }).catch(() => null);
+    let j = await ask(); if (!(j && j.known) && monUp()) j = await sleep(1500).then(ask);
+    if (!(j && j.known)) panelAsked.set(code, now() - 45000);   // (another try within a quarter of a minute)
     if (j && j.known) Object.assign(out, { runways: Array.isArray(j.runways) ? j.runways : [], freqs: Array.isArray(j.freqs) ? j.freqs : [], usage: Array.isArray(j.usage) ? j.usage : [], moves: j.moves || 0, withRunway: j.withRunway || 0, monitor: true, daily: Array.isArray(j.daily) ? j.daily : null, allDays: j.allDays || 0 });
     else out.ends = await runwaysOf(ap).catch(() => []);
     postToPage('airportPanel', out);
@@ -13533,9 +13498,11 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     const leg = td.legs[td.legs.length - 1]; if (leg.ended) return null;
     const pts = [leg.start].concat(leg.pts), pos = pts[pts.length - 1]; if (!pos || pos.gnd || pos.gnd0) return null;
     const trail = []; for (const p of pts) if (!trail.length || p.t - trail[trail.length - 1].t >= 20) trail.push(p);
-    const ac = acOfHex(hex), hs = ENGINE.histStats(knownLegs(hex, { excludeOpen: true }).filter(l => l.tEnd < pts[0].t - 60 && l.tEnd > pts[0].t - ENGINE_HIST_DAYS * 86400), pos.t);
-    const origin = ENGINE.inferOrigin({ ac, pos, trail, hs, now: pos.t });
-    return ENGINE.predict({ surge: surgeNow(), ac, pos, trail, hs, now: pos.t, origin, fleet: fleetVisits(hex, pts[0].t) });
+    // (1.1.0) worked out on the monitor: its candidates, the likeliest first
+    const ac = acOfHex(hex), hx = store.getHex(hex) || {}, sums = td.sums ? td.sums.filter(l => l.ended) : [];
+    const r = await calcNow({ id: hexCalcId(hex), hex, kind: hx.ladd || hx.fr24Blocked || hx.pia || hx.mil ? 'live' : 'pub', ac, pos: ptOut(pos), trail: { full: true, pts: trail.map(ptOut) }, today: sums, lastLeg: sums.filter(l => l.to).pop() || null });
+    if (!r) return null;
+    return { cands: (Array.isArray(r.cands) ? r.cands : []).map(c => ({ airport: apById(c[0]), p: (+c[1] || 0) / 100 })).filter(c => c.airport) };
   }
   async function pollWatch(force) {
     const l = watchList(), hexes = Object.keys(l); if (!hexes.length || watchBusy || !airportsReady()) return;
@@ -13725,15 +13692,13 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   }
   function userConfirm(id, rec, apId) {
     const m = userConfStore(), r = (routeState.get(id) || {}).route || rec.route || {}, a = apId ? apById(apId) : null;
+    if (m[id] && m[id].destId && (!a || a.id !== m[id].destId)) noteRouteWithdrawn(id, m[id].destId);
     if (!a) delete m[id];
     else m[id] = { destId: a.id, code: apCode(a), hex: rec.hex || '', t0: r.departedAt || r.atd || nowS(), at: now(), prev: r.userConfirmed ? ((m[id] && m[id].prev) || '') : (r.destIata || '') };
     for (const k of Object.keys(m)) if (!m[k] || now() - (m[k].at || 0) > 2 * 864e5) delete m[k];
     store.kvSet('userConf1', m);
-    // (learned at once - from where it left to where you said - as a flight the engine has seen end there)
-    if (a && r.originId && r.originId !== a.id && apById(r.originId)) {
-      const cls = ENGINE.classify(acOf(rec)), x = ['u|' + id + '|' + a.id, r.originId, a.id, r.eta || nowS(), '', '', cls, rec.mil ? 1 : 0, r.departedAt || 0, rec.cs || '', rec.type || '', ''];
-      if (learnAppend(x) && learnedApplied) replayLearned(x);
-    }
+    // (1.1.0: to the monitor with the next report - every browser's answer has it - and the flight, once down, learned
+    // there as one that ended where you said: 03 learnFromLeg)
     scheduleReplan(id, 10); syncPanelSoon();
   }
   // airports by code, name or city (exact codes first, then the busiest); a strip FR24 does not list by its own code
@@ -13804,7 +13769,8 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       <div class="tl-muted" style="margin-top:4px">Optional, free from api.faa.gov. With it, an airport closed by NOTAM at the arrival time is taken out of the predictions (the three likeliest fields of the aircraft you are looking at, every few hours). Weather (METARs) needs no key.</div>`;
   }
   // (22.10) the population behind every prediction: what the tables were learned from
-  const popTxt = () => { const T = ENGINE.T2; return T && T.days ? `, the habits of every aircraft seen over ${T.days} days` : ''; };
+  // (1.1.0: the population tables are the monitor's - how many days they were learned from, as its /status says)
+  const popTxt = () => { const d = monStat && monStat.central && +monStat.central.popDays; return d > 0 ? `, the habits of every aircraft seen over ${d} days` : ''; };
   function healthHtml() { return health.issues.length ? `<div class="tl-warn">⚠ ${esc(health.issues[0])} - some fields may not fill until the script is updated.</div>` : ''; }
   let popEl = null;
   function closePop() { if (popEl) { popEl.remove(); popEl = null; } }
@@ -13878,7 +13844,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // (the version whose "what's new" was put away, and the one whose dot on the button the window was opened for)
   const UB_SEEN_KEY = 'tweeks.fr24.ladd.seenver', UB_DOT_KEY = 'tweeks.fr24.ladd.dotver';
   // (the newest CHANGELOG section's headlines, written in by build.mjs: { v, items })
-  const UB_WHATS_NEW = {"v":"1.0.2","items":["An aircraft lost in a mountain valley is no longer logged as landing on a strip too short for it. G-LOBY now shows St. Moritz, not Milan.","A flight far from home is no longer predicted to be flying back where it came from when it never could have. N162GB over France no longer says Lagos.","Logs now include take-offs that only FR24 saw, so a flight reads Lagos to Farnborough, not a blank to Farnborough.","Blocked aircraft whose flights FR24 lists as none, like M-PORT, now get their LADD tag in search and on their log page.","Opening an airport shows its movements per day and runway usage at once, for every airport, with no padlock flashing first.","Blocked aircraft are now worked out all the time, and one that FR24 loses and finds again keeps its identity."]};
+  const UB_WHATS_NEW = {"v":"1.1.0","items":["Every route is now worked out on the shared monitor, so everyone sees exactly the same destination for a flight.","The script is much smaller and quicker to load, because it no longer carries the prediction tables.","A destination you confirm now shows as confirmed for everyone else too, and taking it back takes it back for everyone.","Airport boards open full straight away, with a week of flights either side of today, the same for everyone.","Flights FR24 shows without a destination get one on the boards and in Most tracked, worked out like blocked ones.","Aircraft of the same owner now help predict where each other is going."]};
   // (an aircraft with an open padlock: FR24's outline style - 24 grid, 1.5 stroke in the text colour)
   const UB_ICON = '<svg data-tl-ub-icon="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
   const UB_X = '<svg viewBox="0 0 14 14" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5l11 11M12.5 1.5l-11 11"/></svg>';
@@ -15262,8 +15228,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   // (the population tables unpack once FR24 has drawn the page - a few hundred ms of work that must not hold up its own
   // start - and the routes on screen are worked out again with them)
   if (!isDataPage && !isFlightPage) {
-    setTimeout(() => loadT2().then(ok => { if (ok && typeof quickRouteAll === 'function') quickRouteAll(); }), 900);
-    setTimeout(() => { idleSlice().then(() => loadAgeTable()).then(() => loadApprTable()).catch(() => {}); }, 1500);   // (build years by serial number: AGE; arrival paths)
+    setTimeout(() => { idleSlice().then(() => loadAgeTable()).catch(() => {}); }, 1500);   // (build years by serial number: AGE)
   }
   // (log and flight-number pages: the page bridge too - FR24's search box there lists what this script knows)
   if (isAircraftPage) {
@@ -15291,7 +15256,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     const start = () => {
       addStyle(); syncPanel(); setInterval(syncPanel, 400); watchForTags();
       loadAirports().then(() => quickRouteAll()).catch(e => log('airports', e));
-      Promise.all([store.kvReady, loadAirports()]).then(() => { applyLearned(); quickRouteAll(); }).catch(e => log('learned', e));
+      Promise.all([store.kvReady, loadAirports()]).then(() => { learnedStore(); quickRouteAll(); }).catch(e => log('learned', e));
       store.kvReady.then(() => loadFir()).catch(() => {});
       loadAirports().then(() => loadSites()).catch(() => {});                // (the unlisted airfields, for the route engine)
       store.kvReady.then(() => loadRunways()).then(ok => { if (ok) quickRouteAll(); }).catch(() => {});
@@ -15318,7 +15283,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true }); else start();
   }
   }
-  try { (pageWindow()).__tweeksLadd = { version: VERSION, msgCount, datalinkPlan, datalinkRoutes, surgeNow, morphHtml, photoJob, photosOut, monPhotos, routeSearch, onNeedNaRoutes, naFromTrail, naWanted, fr24Trail, schedOf, trailFor, get shownId() { return shownId; }, posStats, get bridgeV() { return bridgeV; }, hexOfId, currentPos, idHex, engine: ENGINE, live, pending, telemetry, store, routeState, planState, globalList, fr24, todayCache, sweep, resolveTargeted, routeFor, composeRoute, centralOf, calcGot, calcSent, calcAsk, calcFlush, calcEvidence, altsOf, holdTerminal, termHold, worldScan, refreshLists, quickRouteAll, historyPump, histPumped, learnedStore, regCountry, fr24Sched, pubRouted, pubRecs, privatePlace, loadSites, siteNear, sites, onSched, pubMem: () => pubMem, publishRoute, syncPanel, normalizeReadsb, telemOf, noteCands, csOfRec, warmHist, hostStat, loadT2, wantWx, wxMap, wantNotams, closedMap, estimateEta, nNumberHex, watchList, pollWatch, accStore, accNote, statsHtml, fleetList, checkHealth, health, exportCsv, predictForHex, verifyAgainstList, strikes, revokedIds, fr24Named, noteFr24Named, loadHistory, loadToday, readTrace, classifyTrace, fetchTrace, netState, NETS, sourcesHtml, logGaps, fetchJetphotos, loadRunways, knownLegs, areaCache, pollView, saveSnapshot, boardNoteLegs, boardNoteFlight, boardNoteSched, boardScrub, boardLoad, boardList, naRouteOf, pbWhere, noteNa, naFeed, matchParked, matchByTraces, boardDrain, boardMem, onNeedBoard, operatorOf, shownOwner, enrich, userConfirm, userDestOf, loadApprTable, monGet, monPost, monCheck, noteFr24Blocked, monLive, monUp, MON_DEFAULTS, get monBase() { return monBase; }, liveSources, tatSource: TAT_SOURCE, telOut, noteTelOut, reportTel, pbOut, srvIds, pullSrvIds, srvAdopt, reportToMonitor, syncSrvLearn, applyLearned, srvRoute, srvRec, crowdOf, routesOut, routesSent, noteRouteOut, learnFromLeg, learnOutTake, learnOutBack, get learnOutN() { return learnOut.length; }, srvCovers, get srvLearned() { return srvLearned; }, set srvLearned(v) { srvLearned = v; }, addSrvLearned, get feedHdr() { return feedHdr; }, boardMonFill, natRowOf, fnRows, buildSnapshot, bootHold, firAt, loadFir, onAirAsk, pb, onPbFeed, onPbFollow, onPbHex, pbRouteFor, pbMatch, pbFromMonitor, onNeedRoutes, onNeedAirportData, onNeedAirportPanel, liveBoardRows, runwaysOf, parseRunwayEnds, flightsOfCallsign, bootFlightPage, unlockExports, exportFile, rowWindow, hexOfFid, onNeedSearch, osmPick, wantOsmPlace, osmPlaceAt, learnSite, siteIdAt, siteBk, siteRow, apById, operatorIdOf, airlineIdByName, fr24Cat, onHistElsewhere, get viewBox() { return viewBox; }, get selectedId() { return currentId(); }, opt, setOpt, notify, openUnblockWindow, closeUnblockWindow, ensureBarButton, findBar, checkLatest, installKind, sayHello, helloSt, ubBanners, ubOffer, installId }; } catch (_) { /* ignore */ }
+  try { (pageWindow()).__tweeksLadd = { version: VERSION, msgCount, datalinkPlan, datalinkRoutes, surgeNow, morphHtml, photoJob, photosOut, monPhotos, routeSearch, onNeedNaRoutes, naFromTrail, naWanted, fr24Trail, schedOf, trailFor, get shownId() { return shownId; }, posStats, get bridgeV() { return bridgeV; }, hexOfId, currentPos, idHex, engine: ENGINE, live, pending, telemetry, store, routeState, planState, globalList, fr24, todayCache, sweep, resolveTargeted, routeFor, composeRoute, composeRoute0, centralOf, calcWhy, calcGot, calcSent, calcAsk, calcFlush, calcEvidence, calcNow, calcExtra, localView, hexCalcId, altsOf, holdTerminal, termHold, worldScan, refreshLists, quickRouteAll, historyPump, histPumped, learnedStore, regCountry, fr24Sched, pubRouted, pubRecs, privatePlace, loadSites, siteNear, sites, onSched, pubMem: () => pubMem, publishRoute, syncPanel, normalizeReadsb, telemOf, noteCands, csOfRec, warmHist, hostStat, wantWx, wxMap, wantNotams, closedMap, estimateEta, nNumberHex, watchList, pollWatch, accStore, accNote, statsHtml, fleetList, checkHealth, health, exportCsv, predictForHex, verifyAgainstList, strikes, revokedIds, fr24Named, noteFr24Named, loadHistory, loadToday, readTrace, classifyTrace, fetchTrace, netState, NETS, sourcesHtml, logGaps, fetchJetphotos, loadRunways, knownLegs, areaCache, pollView, saveSnapshot, boardNoteLegs, boardNoteFlight, boardNoteSched, boardScrub, boardLoad, boardList, naRouteOf, naEvidenceOf, pbWhere, noteNa, naFeed, matchParked, matchByTraces, boardDrain, boardMem, onNeedBoard, operatorOf, shownOwner, enrich, userConfirm, userDestOf, monGet, monPost, monCheck, noteFr24Blocked, monLive, monUp, MON_DEFAULTS, get monBase() { return monBase; }, liveSources, tatSource: TAT_SOURCE, telOut, noteTelOut, reportTel, pbOut, srvIds, pullSrvIds, srvAdopt, reportToMonitor, srvRoute, srvRec, crowdOf, routesOut, routesSent, noteRouteOut, noteRouteWithdrawn, learnFromLeg, learnOutTake, learnOutBack, get learnOutN() { return learnOut.length; }, get feedHdr() { return feedHdr; }, boardMonFill, natRowOf, fnRows, buildSnapshot, bootHold, firAt, loadFir, onAirAsk, pb, onPbFeed, onPbFollow, onPbHex, pbRouteFor, pbMatch, pbFromMonitor, onNeedRoutes, onNeedAirportData, onNeedAirportPanel, liveBoardRows, runwaysOf, parseRunwayEnds, flightsOfCallsign, bootFlightPage, unlockExports, exportFile, rowWindow, hexOfFid, onNeedSearch, osmPick, wantOsmPlace, osmPlaceAt, learnSite, siteIdAt, siteBk, siteRow, apById, operatorIdOf, airlineIdByName, fr24Cat, onHistElsewhere, get viewBox() { return viewBox; }, get selectedId() { return currentId(); }, opt, setOpt, notify, openUnblockWindow, closeUnblockWindow, ensureBarButton, findBar, checkLatest, installKind, sayHello, helloSt, ubBanners, ubOffer, installId }; } catch (_) { /* ignore */ }
   log('loaded v' + VERSION);
 
 })();

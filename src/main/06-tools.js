@@ -71,9 +71,11 @@
     const leg = td.legs[td.legs.length - 1]; if (leg.ended) return null;
     const pts = [leg.start].concat(leg.pts), pos = pts[pts.length - 1]; if (!pos || pos.gnd || pos.gnd0) return null;
     const trail = []; for (const p of pts) if (!trail.length || p.t - trail[trail.length - 1].t >= 20) trail.push(p);
-    const ac = acOfHex(hex), hs = ENGINE.histStats(knownLegs(hex, { excludeOpen: true }).filter(l => l.tEnd < pts[0].t - 60 && l.tEnd > pts[0].t - ENGINE_HIST_DAYS * 86400), pos.t);
-    const origin = ENGINE.inferOrigin({ ac, pos, trail, hs, now: pos.t });
-    return ENGINE.predict({ surge: surgeNow(), ac, pos, trail, hs, now: pos.t, origin, fleet: fleetVisits(hex, pts[0].t) });
+    // (1.1.0) worked out on the monitor: its candidates, the likeliest first
+    const ac = acOfHex(hex), hx = store.getHex(hex) || {}, sums = td.sums ? td.sums.filter(l => l.ended) : [];
+    const r = await calcNow({ id: hexCalcId(hex), hex, kind: hx.ladd || hx.fr24Blocked || hx.pia || hx.mil ? 'live' : 'pub', ac, pos: ptOut(pos), trail: { full: true, pts: trail.map(ptOut) }, today: sums, lastLeg: sums.filter(l => l.to).pop() || null });
+    if (!r) return null;
+    return { cands: (Array.isArray(r.cands) ? r.cands : []).map(c => ({ airport: apById(c[0]), p: (+c[1] || 0) / 100 })).filter(c => c.airport) };
   }
   async function pollWatch(force) {
     const l = watchList(), hexes = Object.keys(l); if (!hexes.length || watchBusy || !airportsReady()) return;
@@ -263,15 +265,13 @@
   }
   function userConfirm(id, rec, apId) {
     const m = userConfStore(), r = (routeState.get(id) || {}).route || rec.route || {}, a = apId ? apById(apId) : null;
+    if (m[id] && m[id].destId && (!a || a.id !== m[id].destId)) noteRouteWithdrawn(id, m[id].destId);
     if (!a) delete m[id];
     else m[id] = { destId: a.id, code: apCode(a), hex: rec.hex || '', t0: r.departedAt || r.atd || nowS(), at: now(), prev: r.userConfirmed ? ((m[id] && m[id].prev) || '') : (r.destIata || '') };
     for (const k of Object.keys(m)) if (!m[k] || now() - (m[k].at || 0) > 2 * 864e5) delete m[k];
     store.kvSet('userConf1', m);
-    // (learned at once - from where it left to where you said - as a flight the engine has seen end there)
-    if (a && r.originId && r.originId !== a.id && apById(r.originId)) {
-      const cls = ENGINE.classify(acOf(rec)), x = ['u|' + id + '|' + a.id, r.originId, a.id, r.eta || nowS(), '', '', cls, rec.mil ? 1 : 0, r.departedAt || 0, rec.cs || '', rec.type || '', ''];
-      if (learnAppend(x) && learnedApplied) replayLearned(x);
-    }
+    // (1.1.0: to the monitor with the next report - every browser's answer has it - and the flight, once down, learned
+    // there as one that ended where you said: 03 learnFromLeg)
     scheduleReplan(id, 10); syncPanelSoon();
   }
   // airports by code, name or city (exact codes first, then the busiest); a strip FR24 does not list by its own code
@@ -342,7 +342,8 @@
       <div class="tl-muted" style="margin-top:4px">Optional, free from api.faa.gov. With it, an airport closed by NOTAM at the arrival time is taken out of the predictions (the three likeliest fields of the aircraft you are looking at, every few hours). Weather (METARs) needs no key.</div>`;
   }
   // (22.10) the population behind every prediction: what the tables were learned from
-  const popTxt = () => { const T = ENGINE.T2; return T && T.days ? `, the habits of every aircraft seen over ${T.days} days` : ''; };
+  // (1.1.0: the population tables are the monitor's - how many days they were learned from, as its /status says)
+  const popTxt = () => { const d = monStat && monStat.central && +monStat.central.popDays; return d > 0 ? `, the habits of every aircraft seen over ${d} days` : ''; };
   function healthHtml() { return health.issues.length ? `<div class="tl-warn">⚠ ${esc(health.issues[0])} - some fields may not fill until the script is updated.</div>` : ''; }
   let popEl = null;
   function closePop() { if (popEl) { popEl.remove(); popEl = null; } }

@@ -91,7 +91,9 @@ function dayLegs(hex, type, day, j) {
     check('apstats: a day\'s take-offs and landings at each airport - only ends seen (ground, low) - and the runway each used; read back after a restart', o && o.rw === 1 && o.ap[ltn.id][0] === 2 && o.ap[ltn.id][1] === 1 && o.ap[ltn.id][2]['26'].join() === '2,1' && o.ap[lpl.id][0] === 1 && o.ap[lpl.id][1] === 1 && AS2.has(d2), o && o.ap[ltn.id]);
     const APT = createAirportInfo({ E }); APT.load(D);
     // today's flights from the monitor's own log (a landing at Luton on runway 08), and one of a counted day (left to the counts)
-    const legs = new Map([['aaaaaa', new Map([['k1', { from: g(lpl.id), to: g(ltn.id), tStart: nowS - 3600, tEnd: nowS - 600, tOff: nowS - 3500, tOn: nowS - 700, rwyOn: '08' }], ['k2', { from: g(ltn.id), to: g(lpl.id), tStart: dayS(d1) + 3600, tEnd: dayS(d1) + 6000, tOff: dayS(d1) + 3700, tOn: dayS(d1) + 5900, rwyOff: '08' }]])]]);
+    // (today's landing within today whatever the hour - just after midnight too)
+    const tOnT = nowS - Math.min(700, Math.floor((nowS - dayS(dayOf(nowS))) / 2));
+    const legs = new Map([['aaaaaa', new Map([['k1', { from: g(lpl.id), to: g(ltn.id), tStart: tOnT - 2900, tEnd: tOnT + 100, tOff: tOnT - 2800, tOn: tOnT, rwyOn: '08' }], ['k2', { from: g(ltn.id), to: g(lpl.id), tStart: dayS(d1) + 3600, tEnd: dayS(d1) + 6000, tOff: dayS(d1) + 3700, tOn: dayS(d1) + 5900, rwyOff: '08' }]])]]);
     const r = APT.answer(ltn.id, legs, nowS, 7, AS2, 14), today = dayOf(nowS);
     const dl = Object.fromEntries(r.daily.map(x => [x[0], x.slice(1)]));
     check('/airport: each day\'s take-offs and landings - a counted day from its counts (every aircraft ADS-B heard), today from the flights tracked here', dl[d1] && dl[d1].join() === '2,1,all' && dl[d2] && dl[d2].join() === '1,0,all' && dl[today] && dl[today].join() === '0,1,live', r.daily);
