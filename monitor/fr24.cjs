@@ -63,8 +63,12 @@ const frame = msg => cat([Uint8Array.of(0, (msg.length >>> 24) & 255, (msg.lengt
 function liveFeedRequest(q) {
   const bounds = cat([fF32(1, q.n), fF32(2, q.s), fF32(3, q.w), fF32(4, q.e)]);
   const settings = cat([fLen(1, Uint8Array.from([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10])), fLen(2, Uint8Array.from(q.services || [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])), fVar(3, q.traffic || 3)]);
-  return cat([fLen(1, bounds), fLen(2, settings), fVar(6, 1), fVar(7, q.limit || 1500), fVar(8, q.maxage || 14400), fVar(9, 0), fLen(10, cat([fStr(1, 'type'), fStr(1, 'reg')]))]);
+  return cat([fLen(1, bounds), fLen(2, settings), fVar(6, 1), fVar(7, q.limit || 1500), fVar(8, q.maxage || 14400), fVar(9, 0), fLen(10, cat((Array.isArray(q.mask) && q.mask.length ? q.mask : ['type', 'reg']).map(f => fStr(1, f))))]);
 }
+// (1.1.0) The fields asked for in every record - each step down taken when FR24 refuses the one before: the route and the
+// aircraft's address too (every flight it shows without a destination worked out here), the route alone, type and
+// registration only (as the userscript asks)
+const MASKS = [['type', 'reg', 'route', 'icao_address'], ['type', 'reg', 'route'], ['type', 'reg']];
 // One Flight record as the userscript's page.js reads it (patchFlight)
 function flightOf(fb) {
   const fs = parse(fb), id = num(fs, 1); if (!id) return null;
@@ -161,11 +165,11 @@ async function scanWorld(client, opts) {
       for (const f of a.flights) byId.set(f.id, f);
       res.serverTime = a.serverTime || res.serverTime;
       if (a.flights.length >= opts.limit - 10 && it.depth < 2) for (const q of quarters(it.r)) work.push({ r: q, depth: it.depth + 1 });
-    } catch (e) { res.failed++; res.err = String(e && e.message || e); if (/paused|429|grpc (7|8|14|16)\b|HTTP 40[13]/.test(res.err)) break; }
+    } catch (e) { res.failed++; res.err = String(e && e.message || e); if (/paused|429|grpc (3|7|8|14|16)\b|HTTP 40[13]/.test(res.err)) break; }
     if (work.length && opts.gapMs) await new Promise(r => setTimeout(r, opts.gapMs));
   }
   res.flights = [...byId.values()];
   return res;
 }
 
-module.exports = { parse, frames, frame, liveFeedRequest, decodeLiveFeed, decodeTrail, flightOf, createClient, scanWorld, cleanHeaders, SCAN_REGIONS, quarters };
+module.exports = { parse, frames, frame, liveFeedRequest, decodeLiveFeed, decodeTrail, flightOf, createClient, scanWorld, cleanHeaders, SCAN_REGIONS, quarters, MASKS };
