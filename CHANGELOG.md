@@ -4,6 +4,23 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 
 1.0.0 is the first release. The versions before it are the betas, labelled B: B22.31.12 is version 22.31.12.
 
+## [1.1.4] - 2026-10-30
+
+### In short
+- An airport's runway details and runway usage fill in again. FR24 changed its airport address, and the script was reading the wrong part of it.
+- Opening an airport no longer freezes the page while its board is open.
+- Both were found on FR24's real page, which you saved and sent, and are tested against its own markup.
+
+### Fixed
+- **Runway details locked, runway usage empty, at every airport.** FR24's airport address is now `/airport/<its id>/<code>` (`/airport/2002/lpl`); it was `/airport/<code>`. The script read the id, "2002", as the airport's code. It asked for an airport that does not exist, so FR24's locked runway table and the empty usage box stayed.
+  - The code after the id is read now, and the old address still works.
+  - An id alone (`/airport/2002`) is no airport.
+- **The page freezing while a board is open.** Every 400 ms the script checks the airport panel for what it hides and fills (the events list, the coverage request, the empty bars, the locked boxes). Whenever anything in the panel had changed, it read every word of every board row again, three times, and FR24 changes its rows all the time.
+  - It now skips the flights' rows, where none of that ever is.
+  - It no longer counts a row changing as the panel changing.
+  - With no airport data (the address bug above), this ran on every tick.
+  - Measured in Chromium, with 1,040 rows updating twice a second, at `/airport/2002/lpl`, over 15 s: the page was held 11 times (1.25 s in all), against 39 times (3.3 s) on 1.1.3. Most of what remains is the test page's own drawing.
+
 ## [1.1.3] - 2026-10-30
 
 ### In short

@@ -48,7 +48,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
 // ==UserScript==
 // @name         Flightradar24 LADD / N-A Unblocker (feed-level)
 // @namespace    tweeks.io
-// @version      1.1.3
+// @version      1.1.4
 // @description  Identifies every LADD / N/A / blocked military aircraft on Flightradar24 from public ADS-B, and injects callsign, registration, operator, age, country, MSN, squawk, vertical speed, GPS altitude, airspeeds, wind, photos, a reasoned origin/destination with a wind-corrected ETA (also for ordinary flights FR24 shows as N/A - military, private, GA, helicopters, with private landing sites; learned from 63 days of every aircraft worldwide, with live weather and closures), airport-board entries and a rebuilt 7-month flight log straight into FR24's own data - so it all renders like normal FR24 traffic.
 // @author       Finlay Clarke
 // @updateURL    https://raw.githubusercontent.com/FinlayC1/fr24-ladd-unblocker/main/dist/fr24-ladd-unblocker.user.js
@@ -138,7 +138,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "1.1.3";
+    var BRIDGE_V = "1.1.4";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed
@@ -1888,7 +1888,10 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     // threshold) and the airport's radio frequencies, else FR24's own runway list - redrawn when another is opened (the
     // picture stays in its place, hidden, for FR24's own redraws)
     var SURF_NAME = { ASPH: 'Asphalt', BITU: 'Bitumen', CONC: 'Concrete', TARM: 'Tarmac', GRAS: 'Grass', TURF: 'Turf', GRVL: 'Gravel', DIRT: 'Dirt', SAND: 'Sand', CLAY: 'Clay', WATE: 'Water', SNOW: 'Snow', ICE: 'Ice', MATS: 'Mats', LATE: 'Laterite', CORL: 'Coral', UNPV: 'Unpaved', UNKN: 'Unknown' };
-    function panelCode() { return rwyKey((location.pathname.match(/^\/airport\/([a-z0-9]{3,4})(?:[/?#]|$)/i) || [])[1]); }
+    // (the airport the page is on: FR24's address is /airport/<its id>/<code> now - /airport/2002/lpl - and was /airport/<code>:
+    // the id read as the code, "2002", left the panel's runway details and usage locked, its data asked for an airport that
+    // does not exist)
+    function panelCode() { var m = location.pathname.match(/^\/airport\/(?:\d+\/)?([a-z0-9]{3,4})(?:[/?#]|$)/i); return m && !/^\d+$/.test(m[1]) ? rwyKey(m[1]) : ''; }
     function tlTable(box, head, rows, title) {
       var cell = 'px-1.5 py-1', tb = document.createElement('table'); tb.className = 'w-full';
       if (title) { var cap = document.createElement('caption'); cap.className = 'px-1.5 pt-2 pb-1 text-left text-xs font-semibold uppercase text-gray-900'; cap.textContent = title; tb.appendChild(cap); }
@@ -1933,8 +1936,16 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     function panelWant(code) { if (Date.now() - (panelAskedAt[code] || 0) > 120000) { panelAskedAt[code] = Date.now(); post('needAirportPanel', { code: code }); } }
     function textOf(el) { return String((el && el.textContent) || '').replace(/\s+/g, ' ').trim(); }
     // (the innermost elements saying this)
+    // (1.1.4: never inside a flight's row of a board - nothing looked for is ever in one; a board of a fortnight is most of
+    // the panel, and every row's every word read again each time the panel changed held the page for minutes)
+    var ROW_ID = 'airport_schedule_', ROW_TESTID = 'airport-panel__schedules__flight__';
+    // (a flight's row: its list item, or - should FR24 draw them otherwise - the box its test id marks)
+    var isRow = function (n) { if (n.id && n.id.lastIndexOf(ROW_ID, 0) === 0) return true; var t = n.getAttribute && n.getAttribute('data-testid'); return !!t && t.lastIndexOf(ROW_TESTID, 0) === 0; };
+    var skipRows = { acceptNode: function (n) { return n.nodeType === 3 ? NodeFilter.FILTER_ACCEPT : isRow(n) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_SKIP; } };
+    var sizeRows = { acceptNode: function (n) { return n.nodeType === 1 && isRow(n) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT; } };
     function saying(root, re) {
-      var out = [], w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT), t;
+      if (root && root.nodeType === 1 && isRow(root)) return [];
+      var out = [], w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, skipRows), t;
       while ((t = w.nextNode())) { var v = String(t.nodeValue || '').replace(/\s+/g, ' ').trim(); if (v && v.length < 160 && re.test(v)) { var e = t.parentElement; if (e && !e.closest('.tl-panel, .tl-rwy') && out.indexOf(e) < 0) out.push(e); } }
       return out;
     }
@@ -2198,7 +2209,14 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       if (d) promoSlots(panel).forEach(function (sl) { try { panelBlock(sl, code, d); } catch (e) { stats.errors++; stats.lastError = String(e); } });
       panelSigs[code] = panelSig(panel, code, d);
     }
-    function panelSig(panel, code, d) { return [panel.getElementsByTagName('*').length, textOf(panel).length, d ? d.at : 0, (lsGet('tl.mv.' + code.toLowerCase()) || '').length, ((d && routesAdd.get(d.apId)) || []).length, Math.floor(Date.now() / 60000)].join(':'); }
+    // (the panel's size and words, its boards' rows counted, not read: a row changing - its time, its status - is not the
+    // panel changing)
+    function panelSize(panel) {
+      var w = document.createTreeWalker(panel, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, sizeRows), n = 0, len = 0, rows = panel.querySelectorAll('li[id^="' + ROW_ID + '"],[data-testid^="' + ROW_TESTID + '"]').length, t;
+      while ((t = w.nextNode())) { if (t.nodeType === 3) len += (t.nodeValue || '').length; else n++; }
+      return n + ':' + len + ':' + rows;
+    }
+    function panelSig(panel, code, d) { return [panelSize(panel), d ? d.at : 0, (lsGet('tl.mv.' + code.toLowerCase()) || '').length, ((d && routesAdd.get(d.apId)) || []).length, Math.floor(Date.now() / 60000)].join(':'); }
     function acceptAirportPanel(d) {
       var code = rwyKey(d.code); if (!code) return;
       panelData[code] = { at: Date.now(), apId: Number(d.apId) || 0, tz: String(d.tz || ''), days: Number(d.days) || 7, runways: Array.isArray(d.runways) ? d.runways : null, freqs: Array.isArray(d.freqs) ? d.freqs : null, usage: Array.isArray(d.usage) ? d.usage : null, moves: Number(d.moves) || 0, withRunway: Number(d.withRunway) || 0, monitor: !!d.monitor, ends: Array.isArray(d.ends) ? d.ends : null, daily: Array.isArray(d.daily) ? d.daily : null, allDays: Number(d.allDays) || 0 };
@@ -5654,7 +5672,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '1.1.3';
+  const VERSION = '1.1.4';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
@@ -13988,7 +14006,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // (the version whose "what's new" was put away, and the one whose dot on the button the window was opened for)
   const UB_SEEN_KEY = 'tweeks.fr24.ladd.seenver', UB_DOT_KEY = 'tweeks.fr24.ladd.dotver';
   // (the newest CHANGELOG section's headlines, written in by build.mjs: { v, items })
-  const UB_WHATS_NEW = {"v":"1.1.3","items":["Opening a busy airport's board no longer freezes the page: it was the script, not FR24, doing most of the work.","The Bookmarks widget is now really off by default: the script keeps pressing FR24's switch until it says Off.","The monitor's dashboard has a console for the monitor's own commands, and a file browser for everything it stores.","The dashboard shows \"aircraft in view\" correctly again, plus the aircraft database and every figure the monitor reports.","The console can measure what the monitor is busy with, to find why it answers slowly."]};
+  const UB_WHATS_NEW = {"v":"1.1.4","items":["An airport's runway details and runway usage fill in again. FR24 changed its airport address, and the script was reading the wrong part of it.","Opening an airport no longer freezes the page while its board is open.","Both were found on FR24's real page, which you saved and sent, and are tested against its own markup."]};
   // (an aircraft with an open padlock: FR24's outline style - 24 grid, 1.5 stroke in the text colour)
   const UB_ICON = '<svg data-tl-ub-icon="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
   const UB_X = '<svg viewBox="0 0 14 14" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5l11 11M12.5 1.5l-11 11"/></svg>';

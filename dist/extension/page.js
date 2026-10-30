@@ -1,4 +1,4 @@
-// FR24 LADD Unblocker 1.1.3 - the page-world part (see src/page.js)
+// FR24 LADD Unblocker 1.1.4 - the page-world part (see src/page.js)
 (function () {
   'use strict';
   // ------------------------------------------------------------------------------------------------------------
@@ -7,7 +7,7 @@
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "1.1.3";
+    var BRIDGE_V = "1.1.4";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed
@@ -1757,7 +1757,10 @@
     // threshold) and the airport's radio frequencies, else FR24's own runway list - redrawn when another is opened (the
     // picture stays in its place, hidden, for FR24's own redraws)
     var SURF_NAME = { ASPH: 'Asphalt', BITU: 'Bitumen', CONC: 'Concrete', TARM: 'Tarmac', GRAS: 'Grass', TURF: 'Turf', GRVL: 'Gravel', DIRT: 'Dirt', SAND: 'Sand', CLAY: 'Clay', WATE: 'Water', SNOW: 'Snow', ICE: 'Ice', MATS: 'Mats', LATE: 'Laterite', CORL: 'Coral', UNPV: 'Unpaved', UNKN: 'Unknown' };
-    function panelCode() { return rwyKey((location.pathname.match(/^\/airport\/([a-z0-9]{3,4})(?:[/?#]|$)/i) || [])[1]); }
+    // (the airport the page is on: FR24's address is /airport/<its id>/<code> now - /airport/2002/lpl - and was /airport/<code>:
+    // the id read as the code, "2002", left the panel's runway details and usage locked, its data asked for an airport that
+    // does not exist)
+    function panelCode() { var m = location.pathname.match(/^\/airport\/(?:\d+\/)?([a-z0-9]{3,4})(?:[/?#]|$)/i); return m && !/^\d+$/.test(m[1]) ? rwyKey(m[1]) : ''; }
     function tlTable(box, head, rows, title) {
       var cell = 'px-1.5 py-1', tb = document.createElement('table'); tb.className = 'w-full';
       if (title) { var cap = document.createElement('caption'); cap.className = 'px-1.5 pt-2 pb-1 text-left text-xs font-semibold uppercase text-gray-900'; cap.textContent = title; tb.appendChild(cap); }
@@ -1802,8 +1805,16 @@
     function panelWant(code) { if (Date.now() - (panelAskedAt[code] || 0) > 120000) { panelAskedAt[code] = Date.now(); post('needAirportPanel', { code: code }); } }
     function textOf(el) { return String((el && el.textContent) || '').replace(/\s+/g, ' ').trim(); }
     // (the innermost elements saying this)
+    // (1.1.4: never inside a flight's row of a board - nothing looked for is ever in one; a board of a fortnight is most of
+    // the panel, and every row's every word read again each time the panel changed held the page for minutes)
+    var ROW_ID = 'airport_schedule_', ROW_TESTID = 'airport-panel__schedules__flight__';
+    // (a flight's row: its list item, or - should FR24 draw them otherwise - the box its test id marks)
+    var isRow = function (n) { if (n.id && n.id.lastIndexOf(ROW_ID, 0) === 0) return true; var t = n.getAttribute && n.getAttribute('data-testid'); return !!t && t.lastIndexOf(ROW_TESTID, 0) === 0; };
+    var skipRows = { acceptNode: function (n) { return n.nodeType === 3 ? NodeFilter.FILTER_ACCEPT : isRow(n) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_SKIP; } };
+    var sizeRows = { acceptNode: function (n) { return n.nodeType === 1 && isRow(n) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT; } };
     function saying(root, re) {
-      var out = [], w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT), t;
+      if (root && root.nodeType === 1 && isRow(root)) return [];
+      var out = [], w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, skipRows), t;
       while ((t = w.nextNode())) { var v = String(t.nodeValue || '').replace(/\s+/g, ' ').trim(); if (v && v.length < 160 && re.test(v)) { var e = t.parentElement; if (e && !e.closest('.tl-panel, .tl-rwy') && out.indexOf(e) < 0) out.push(e); } }
       return out;
     }
@@ -2067,7 +2078,14 @@
       if (d) promoSlots(panel).forEach(function (sl) { try { panelBlock(sl, code, d); } catch (e) { stats.errors++; stats.lastError = String(e); } });
       panelSigs[code] = panelSig(panel, code, d);
     }
-    function panelSig(panel, code, d) { return [panel.getElementsByTagName('*').length, textOf(panel).length, d ? d.at : 0, (lsGet('tl.mv.' + code.toLowerCase()) || '').length, ((d && routesAdd.get(d.apId)) || []).length, Math.floor(Date.now() / 60000)].join(':'); }
+    // (the panel's size and words, its boards' rows counted, not read: a row changing - its time, its status - is not the
+    // panel changing)
+    function panelSize(panel) {
+      var w = document.createTreeWalker(panel, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, sizeRows), n = 0, len = 0, rows = panel.querySelectorAll('li[id^="' + ROW_ID + '"],[data-testid^="' + ROW_TESTID + '"]').length, t;
+      while ((t = w.nextNode())) { if (t.nodeType === 3) len += (t.nodeValue || '').length; else n++; }
+      return n + ':' + len + ':' + rows;
+    }
+    function panelSig(panel, code, d) { return [panelSize(panel), d ? d.at : 0, (lsGet('tl.mv.' + code.toLowerCase()) || '').length, ((d && routesAdd.get(d.apId)) || []).length, Math.floor(Date.now() / 60000)].join(':'); }
     function acceptAirportPanel(d) {
       var code = rwyKey(d.code); if (!code) return;
       panelData[code] = { at: Date.now(), apId: Number(d.apId) || 0, tz: String(d.tz || ''), days: Number(d.days) || 7, runways: Array.isArray(d.runways) ? d.runways : null, freqs: Array.isArray(d.freqs) ? d.freqs : null, usage: Array.isArray(d.usage) ? d.usage : null, moves: Number(d.moves) || 0, withRunway: Number(d.withRunway) || 0, monitor: !!d.monitor, ends: Array.isArray(d.ends) ? d.ends : null, daily: Array.isArray(d.daily) ? d.daily : null, allDays: Number(d.allDays) || 0 };
