@@ -136,8 +136,11 @@ window.__F = null;
     check('... then FR24\'s slideshow with them: ours gone, FR24\'s alone - its first slide at FR24\'s size, one credit: "© yh0403_WSSS"', !!L.photo && !L.photo.ours && L.ours === 0 && L.photo.src === PS && f.filter(x => x.photo).every(x => Math.abs(x.photo.h - H0) <= 1) && f.every(x => x.credits.length <= 1) && L.credits.length === 1 && L.credits[0] === '© yh0403_WSSS', L);
 
     // ---- N50JE: its pictures still being looked up as it opens - an empty frame of FR24's photo size, never FR24's fallback
-    await page.evaluate(() => { window.__P.images = []; window.__P.n = 0; });
-    f = await rec(() => open(0x3c7b0004, 'a65f2c', 'N50JE', [], 0, 'N50JE'), 1200);
+    // (as FR24 does it: the new flight selected first, its panel redrawn after - emptying FR24's pictures while T7OKS was
+    // still selected had the script rightly fill them with T7OKS's own on a slow machine, for a frame or two)
+    await open(0x3c7b0004, 'a65f2c', 'N50JE', [], 0, 'N50JE');
+    await page.waitForFunction(id => { const p = document.querySelector('[data-testid="aircraft-panel"]'); return !!p && p.__tlId === id; }, 0x3c7b0004, { timeout: 5000 });
+    f = await rec(() => page.evaluate(() => { window.__P.images = []; window.__P.n = 0; }), 1200);
     const wait = await page.evaluate(() => { const w = document.querySelector('.tl-photo.tl-photo-wait'), r = w && w.getBoundingClientRect(); return w ? { h: Math.round(r.height * 10) / 10, w: Math.round(r.width) } : null; });
     const fb0 = f.findIndex(x => x.fb), w0 = f.findIndex(x => x.ours);
     check('N50JE, its pictures being looked up: an empty frame at FR24\'s photo size in place of FR24\'s fallback - the fallback not shown after it', !!wait && Math.abs(wait.h - H0) <= 1 && w0 >= 0 && w0 <= 3 && !f.slice(w0).some(x => x.fb || x.photo), { wait, H0, fb0, w0 });
