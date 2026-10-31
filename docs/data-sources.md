@@ -52,15 +52,16 @@ Automated reading of FR24's feed is the part of the project that FR24's terms ar
 | aviationweather.gov | METAR/TAF for the predicted destination | Public (US government) |
 | FAA NOTAM API | Airport closures (only with the user's own key) | Public (US government) |
 | FR24's own tiles (`tiles.flightradar24.com`) | Aeronautical charts and ATC boundaries, FR24's own pictures, when those map options are on | FR24's |
-| EUMETSAT geostationary ring, 10.8 µm (`view.eumetsat.int`, `mumi:worldcloudmap_ir108`) | FR24's Cloud weather layer | Free, with attribution to EUMETSAT |
+| EUMETSAT geostationary ring, 10.8 µm (`view.eumetsat.int`, `mumi:worldcloudmap_ir108`) | FR24's Cloud weather layer - 1.2.1: built into map tiles on the monitor (16 blocks of its own grid, every 3 hours) and served from there | Free, with attribution to EUMETSAT |
 | NASA GIBS, IMERG precipitation rate (`gibs.earthdata.nasa.gov`) | FR24's Total precipitation layer | Free (NASA EOSDIS) |
 | RainViewer radar mosaic (`api.rainviewer.com`, `tilecache.rainviewer.com`) | FR24's Intense precipitation and Australian radar layers | Free personal use, with attribution |
 | Iowa Environmental Mesonet NEXRAD mosaic (`mesonet.agron.iastate.edu`) | FR24's North American radar layer | Free (Iowa State University) |
 | Aviation Weather Center WAFS forecasts (`aviationweather.gov/data/products/wafs`) | FR24's Hi-res icing, Hi-res turbulence and High-level significant weather layers | Public (US government) |
 | aviationweather.gov METAR file, AIRMETs/SIGMETs, international SIGMETs | FR24's Current weather and AIRMETs/SIGMETs layers, where FR24 gives the account none | Public (US government) |
-| Open-Meteo GFS API, from the browser | FR24's Winds layer (barbs and gradient) | Free, non-commercial; CC BY 4.0 |
+| Open-Meteo GFS API, from the browser | FR24's Winds layer (barbs and gradient) when the monitor has no GFS grid (1.2.1: the monitor's own first) | Free, non-commercial; CC BY 4.0 |
 | Blitzortung.org live strikes (`ws1`/`ws7`/`ws8.blitzortung.org`) | FR24's Lightning layer | Free for private, non-commercial use |
-| FAA NAT track message (`www.notams.faa.gov`) | FR24's Oceanic tracks, where FR24 gives the account none | Public (US government) |
+| FAA NAT track messages (`nms.aim.faa.gov/datanat/nat.json`, 1.2.1) | FR24's Oceanic tracks, where FR24 gives the account none - read by the monitor every 10 minutes, the browser asking the FAA only when the monitor has none | Public (US government) |
+| NOAA GFS 1° (`nomads.ncep.noaa.gov`, its GRIB filter; 1.2.1) | FR24's Winds layer: u/v on 16 pressure levels, 0-36 h, read by the monitor once a run (13 files a run, four runs a day) | Public (US government) |
 
 ## Owner lookups on the monitor
 

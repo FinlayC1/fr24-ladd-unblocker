@@ -99,6 +99,24 @@ function open(opts, answer) {
   check('the NAT message read: tracks A, B (west) and W (east), each\'s points in latitude/longitude', nat.A && nat.A.d === 'WEST' && Object.keys(nat.A.p).length === 4 && nat.A.p[0].lat === 57 && nat.A.p[0].lon === -20 && nat.B.p[0].lat === 56.5 && nat.W && nat.W.d === 'EAST' && /OCT 31/.test(nat.A.from), nat);
   const t0 = Date.now(); H().mxNatParse('<pre>A ' + '/'.repeat(40) + '!\n</pre>');
   check('a long line of slashes in the NAT message is read at once, not stuck backtracking', Date.now() - t0 < 200, Date.now() - t0);
+  // ---- (1.2.1) the FAA's NAT list (its new NMS feed: a message a part, each with its own validity)
+  const nl = H().mxNatList([{ location_code: 'EGGX', start_datetime: 'x', part_no: 1, condition_message: 'NAT-1/1 TRACKS\r\nOCT 31/1130Z TO OCT 31/1900Z\r\nA ETIKI 58/20 59/30 59/40 58/50 PRAWN\r\nEAST LVLS NIL' },
+    { location_code: 'CZQX', start_datetime: 'y', part_no: 1, condition_message: 'NAT-1/1 TRACKS\r\nOCT 31/0100Z TO OCT 31/0800Z\r\nU ALLRY 51/50 53/40 54/30 55/20 RESNO\r\nEAST LVLS 340 350' }]);
+  check('the FAA\'s NAT list read: Shanwick\'s westbound A and Gander\'s eastbound U, each its own times', nl.A && nl.A.d === 'WEST' && /1130Z/.test(nl.A.from) && nl.U && nl.U.d === 'EAST' && /0100Z/.test(nl.U.from), nl);
+  check('FR24\'s own tracks answer taken only when it has tracks ({} or an error message: ours instead)', H().mxTrackOk(nl) && !H().mxTrackOk({}) && !H().mxTrackOk({ message: 'Unauthorized' }));
+  // ---- (1.2.1) a blocked flight's panel and search card: asked without the "restriction mode" FR24 refuses a free account
+  const rq = new P.w.Uint8Array([0, 0, 0, 0, 7, 0x0d, 1, 2, 3, 4, 0x10, 0x01]).buffer, rs = new Uint8Array(H().stripRestriction(rq));
+  check('FlightDetails / FollowFlight: field 2 (restriction mode 1) taken out, the flight id kept, the frame length right', rs.length === 10 && rs[4] === 5 && rs[5] === 0x0d && rs[9] === 4, Array.from(rs));
+  const rq0 = new P.w.Uint8Array([0, 0, 0, 0, 5, 0x0d, 1, 2, 3, 4]).buffer;
+  check('... a request without it left exactly as it was', H().stripRestriction(rq0) === rq0);
+  // ---- (1.2.1) bookmarks: one kept here when FR24's server keeps no more, listed with FR24's own, each once
+  P.w.localStorage.setItem('tl.mx.bookmarks', JSON.stringify({ aircraft: [H().mxBmItem({ type: 'aircraft', identifier: 'sp-ceo' })] }));
+  const bm = H().mxBmMerge({ data: { aircraft: [{ registration: 'G-ABCD' }], flights: [], airports: [], locations: [] } });
+  check('bookmarks: FR24\'s one and the one kept here, together', bm.data.aircraft.length === 2 && bm.data.aircraft[1].registration === 'SP-CEO', bm.data.aircraft);
+  const bm2 = H().mxBmMerge({ data: { aircraft: [{ registration: 'SP-CEO' }], flights: [], airports: [], locations: [] } });
+  check('... not twice when FR24 has it too', bm2.data.aircraft.length === 1);
+  // ---- (1.2.1) the category: SP-CEO's H25B (a Hawker 750) is no helicopter, whatever its transponder says
+  check('category: H25B a business jet, its transponder\'s "rotorcraft" not believed; an H60 still a helicopter', H().categoryOf({ type: 'H25B', cat: 'A7' }) === 3 && H().categoryOf({ type: 'H60' }) === 5 && H().categoryOf({ type: 'EC35' }) === 5);
   // ---- categories in the live feed's request
   const settings = { filters: { deselectedCategories: [0, 1] } }, fake = { _s: new Map([['settings', settings], ['user', { isPremiumUser: false }], ['filters', { deselectedCategories: [] }]]) };
   P.w.document.getElementById('app').__vue_app__ = { config: { globalProperties: { $pinia: fake } } };

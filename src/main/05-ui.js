@@ -482,6 +482,11 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // is never touched
   // A serial number FR24 itself shows (it often does while padlocking the AGE - TF-AKG, 33732): kept, so the age can be
   // dated from it
+  // (1.2.1) the ICAO type code FR24 shows in its heading, "Aircraft type (B752)" - not the model's name under it
+  function panelTypeCode(panel) {
+    for (const p of panel.querySelectorAll('p')) { const m = /^\s*aircraft type\s*\(([A-Z][A-Z0-9]{1,3})\)\s*$/i.exec(p.textContent || ''); if (m) return m[1].toUpperCase(); }
+    return '';
+  }
   function notePanelMsn(panel, rec) {
     const el = q(panel, SEL.msn); if (!el || !rec || !rec.hex || 'tlVal' in el.dataset) return;
     const v = clean(textOf(el)); if (!v || isNA(v) || !/^[A-Z0-9][A-Z0-9 ./-]{0,14}$/i.test(v)) return;
@@ -524,6 +529,12 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     }
     tagSearchResults();
   }
+  let regIdx = null, regIdxAt = 0;
+  function keptByRegIn(row) {
+    if (!regIdx || now() - regIdxAt > 60000) { regIdx = new Map(); regIdxAt = now(); for (const [hex, v] of store.allHex()) if (v && v.reg && (v.ladd || v.pia || v.mil || v.fr24Blocked)) regIdx.set(String(v.reg).toUpperCase().replace(/[^A-Z0-9]/g, ''), Object.assign({ hex }, v)); }
+    for (const w of clean(row.textContent).toUpperCase().split(/[^A-Z0-9-]+/)) { const k = w.replace(/[^A-Z0-9]/g, ''); if (k.length >= 3 && regIdx.has(k)) return regIdx.get(k); }
+    return null;
+  }
   function tagSearchResults() {
     const box = document.querySelector('[data-testid="search__results"]'); if (!box) return;
     for (const row of box.querySelectorAll('[data-testid="search__result-row"]')) {
@@ -536,6 +547,9 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       if (m && m[1] === 'aircraft') { const reg = m[2].toUpperCase(); for (const r of live.values()) if (r.reg && r.reg.toUpperCase() === reg) { rec = r; break; } if (!rec) { const hx = (searchHex.has(reg) && store.getHex(searchHex.get(reg))) || store.byReg(reg); if (hx && (hx.ladd || hx.mil)) rec = hx; } }
       else if (m && m[1] === 'live') rec = live.get(parseInt(m[2], 16)) || null;
       else if (live1) { const t = clean(row.textContent).toUpperCase(); for (const r of live.values()) if (r.cs && t.startsWith(r.cs.toUpperCase())) { rec = r; break; } }
+      // (1.2.1: a page with no flights of its own followed - a data page: the registration in the row, as the aircraft
+      // kept here knows it)
+      if (!rec && (live1 || (m && m[1] === 'live'))) rec = keptByRegIn(row);
       if (!rec || !(rec.ladd || rec.pia || rec.mil)) continue;
       const anchor = row.querySelector('[data-testid$="__type"]') || row.querySelector('[data-testid$="__name"]');
       if (!anchor) continue;
@@ -711,7 +725,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     if (!panelLooksBlocked(panel) || fr24Named.has(id)) {
       // an ordinary aircraft is recognised from the panel itself (its ICAO address is on screen) - no need to wait
       const shown = panelHex(panel);
-      if (!pub) { const hx0 = shown; if (/^[0-9a-f]{6}$/.test(hx0) && hx0 !== panel.__tlPrevHex) pub = notePublicAircraft(id, hx0, clean(q(panel, SEL.registration) && q(panel, SEL.registration).textContent), clean(q(panel, SEL.model) && q(panel, SEL.model).textContent), clean(q(panel, SEL.callsign) && q(panel, SEL.callsign).textContent)); }
+      if (!pub) { const hx0 = shown; if (/^[0-9a-f]{6}$/.test(hx0) && hx0 !== panel.__tlPrevHex) pub = notePublicAircraft(id, hx0, clean(q(panel, SEL.registration) && q(panel, SEL.registration).textContent), panelTypeCode(panel) || clean(q(panel, SEL.model) && q(panel, SEL.model).textContent), clean(q(panel, SEL.callsign) && q(panel, SEL.callsign).textContent)); }
       // an ordinary flight: FR24 shows it, but padlocks these fields - filled from public ADS-B / registry data
       // (and nothing is filled into a panel that shows another aircraft than the record: it is still being redrawn)
       if (pub && shown && shown !== pub.hex) { restore(panel); return; }

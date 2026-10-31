@@ -1,10 +1,9 @@
 {
-  "version": "1.2.0",
+  "version": "1.2.1",
   "files": {
-    "manifest.json": "7500a7a614b4fadbe353948a34f03512ba1ed9e32b983a7b93fc181698e673cc",
-    "page.js": "0c5c10a9eb53eab65c73c87832b47e9707797d88d3213692087b2c84c2e4268f",
-    "data-1.js": "7f673ad742bc3e649c7118c21fdee2b8c6477e126172d6de7ce79cc1e3b3457f",
-    "content.js": "4ec982f09e6dac56a7eb042d1b3619c9040915e946dfbaa9e6b31c059a5590ae",
+    "manifest.json": "4e9301f455c490a14c0b0e33f6d4d4776e6487c7f55995c60b5d34194b996705",
+    "page.js": "06ec75e710090bfcd05b3bf1cb375c7e9cb44f34ea4ba8deabb54e979e801814",
+    "content.js": "c52724592ead4bbc2d6d869bbb2bd198c2800282e335e343da08e2dfa072428e",
     "background.js": "5bdd140c91b8d41e28af7600062423c8a7fb0db1ead286cef55c32e60cea87c8",
     "grant.html": "d3b38c4e3f4c14b39695b6e27c080628166a70bd0a42a9d9073f9d39155e674e",
     "grant.js": "7d89bc80209c01630890f4b004c33be7f33380d3ec756f957fb1684116e687bd",

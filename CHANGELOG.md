@@ -4,6 +4,56 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 
 1.0.0 is the first release. The versions before it are the betas, labelled B: B22.31.12 is version 22.31.12.
 
+## [1.2.1] - 2026-10-31
+
+### In short
+- The weather layers are now built on the monitor for everyone and arrive ready, from one server: cloud covers the whole world without gaps, and winds, icing, turbulence, high-level significant weather, METARs and AIRMETs/SIGMETs load at once.
+- Oceanic tracks draw again: the FAA moved its NAT message, and the script now reads the new copy.
+- The Flag aircraft label, the logo label's text row, the Last clicked flights widget, and Misc's trail tooltip and photo switch are unlocked. Bookmarks are no longer limited to one.
+- Every aircraft gets an age, worked out on the monitor from its register, its serial number, its operator's fleet or its type. The ages shown before were often missing because the type was read wrongly.
+- A blocked flight's search result shows its details instead of N/A, and its route on any page, not only the map. An aircraft is no longer listed twice in search.
+- FR24's own name for an aircraft's model ("Raytheon Hawker 750") is used on boards and in search, and a Hawker is no longer called a helicopter.
+
+### Added
+- **The weather built on the monitor (`monitor/wxmap.cjs`).** Each source is read on a schedule, one job at a time, and kept on disk, so a restart has everything at once. Browsers ask the monitor first and each source only when the monitor has nothing.
+
+  | Layer | Built on the monitor |
+  | --- | --- |
+  | Cloud | EUMETSAT's 10.8 µm world picture in 16 blocks of its own latitude/longitude grid (2 to 15 s each; its map-projected pictures took it 37 s a quarter and sometimes came cut short), drawn into map tiles to zoom 5, faded out near the poles. Rebuilt when EUMETSAT's picture changes, every 3 hours |
+  | Total precipitation | NASA IMERG, four pictures of the world every half hour, cut into tiles to zoom 4 |
+  | Intense precipitation, Australian and North American radar | RainViewer's newest frame and Iowa State's NEXRAD: zooms 0-3 (2-4 for NEXRAD) fetched ahead, the rest kept as the first user asks for them |
+  | Icing, turbulence, high-level significant weather | Every WAFS picture of the newest run (16 kinds, 11 forecast hours) |
+  | Winds | NOAA's GFS at 1°, 16 pressure levels, 0 to 36 hours, read from its GRIB2 files (`monitor/grib2.cjs`, checked against Open-Meteo's GFS at six places); a 130 KB grid per level and hour |
+  | METARs, AIRMETs/SIGMETs, oceanic tracks | The files kept fresh every 10 minutes |
+
+  Tiles are PNG, read and written with Node's own zlib (`monitor/png.cjs`). The monitor answers `/wx/` with its own, larger per-IP allowance, and `MON_WXMAP=0` turns it off.
+- **Ages on the monitor (`monitor/ages.cjs`, `/age`, and `/owners`).** The best of, in order:
+  1. a register's year;
+  2. the airframe's own record in the age table (the FAA register, current and deregistered, now with OpenSky's 110,825 dated airframes - 98.4% agree with the FAA's to a year where both have one), and every dated airframe of the monitor's aircraft database;
+  3. the serials either side of it;
+  4. the six nearest serials within 300 (Boeing 95.5% within a year, Airbus 99.3%, Embraer 99.2%, Bombardier 99.0%, leaving each one out in turn), then the eight nearest within 2,000 (85.5% within two years);
+  5. its operator's fleet of the type (70% within two years, 89% within five);
+  6. its type's middle year.
+
+  The last four show "~". The table left the userscript, which is 280 KB smaller. FR24's own record leaves the date out for a free account (its server was asked: its "age available" flag set, no date); where it does give one, it is used first.
+- **Unlocked:** the Flag aircraft label and the logo label's text row (FR24's label table), all four label rows, the Last clicked flights widget, and Misc's "Show trail tooltip" and "Hide aircraft/airport photo" (FR24's premium check answered yes for those windows only).
+- **Bookmarks without a limit.** FR24's page gives a free account one; it is raised. If FR24's server keeps no more, the rest are kept in the browser in FR24's own form and listed with FR24's own.
+- **Search routes from the monitor.** A live flight FR24 lists with no route gets the monitor's answer before the list is drawn, on every page. Its LADD tag shows on data pages too.
+
+### Fixed
+- **Oceanic tracks:** the FAA's old NAT page no longer answers. The tracks now come from its NMS feed (`nms.aim.faa.gov/datanat/nat.json`), Shanwick's and Gander's messages each with their own validity, via the monitor. FR24's own answer is used only when it has tracks.
+- **Ages missing for most aircraft:** an ordinary aircraft's type was taken from the panel's model name ("Boeing 757-23N(PCF)"), so no table lookup ever matched. The ICAO code in FR24's "Aircraft type (B752)" heading is used now, and FR24's own record's code replaces a model name. B-223P: built 2000.
+- **A blocked flight's search card all N/A:** the request asked FR24 with a "restriction mode" a free account may not use, and FR24 refused it outright. The field is taken out, and FR24 answers it like any other flight.
+- **SP-CEO a "Helicopter":** a type designator starting "H" and a digit was read as a helicopter (H25B is a Hawker 750). A transponder set to "rotorcraft" is no longer believed over a known aeroplane type.
+- **"HAWKER BEECHCRAFT Hawker 750/850" on boards:** FR24's own model name for the aircraft is kept from its panel and used everywhere. A database's name is tidied: capitals written as a name, and the maker said once.
+- **An aircraft listed twice in search:** one row per registration however it is written.
+- **N/A – N/A in search away from the map:** see "Search routes from the monitor".
+
+### Not done
+- Flags on the map were not seen drawn in testing: the test browser drew no aircraft at all. The option is unlocked and its own preview shows.
+- Bookmarks kept in the browser stay in that browser, and FR24's server was not seen refusing a second one (no account to test with).
+- Radar zooms past those fetched ahead still come from the source the first time anyone asks for them.
+
 ## [1.2.0] - 2026-10-31
 
 ### In short

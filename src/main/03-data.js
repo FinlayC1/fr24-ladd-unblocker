@@ -649,19 +649,36 @@
     } else {
       // (made from the panel before FR24's stream named it: what the stream says now fills the gaps)
       if (!p.reg && reg) p.reg = clean(reg).toUpperCase();
-      if (!p.type && type) p.type = clean(type).toUpperCase();
+      // (an ICAO type code over a model's name: "B752", not "BOEING 757-23N(PCF)" - the age, the route engine's
+      // performance figures and the category all go by the code)
+      if (type && (!p.type || (!isTypeCode(p.type) && isTypeCode(clean(type).toUpperCase())))) p.type = clean(type).toUpperCase();
       if (!p.cs && cs) p.cs = clean(cs).toUpperCase();
     }
     if (pubRouted(id)) startPubRoute(p);
     return p;
   }
+  // (1.2.1) FR24's own name for an aircraft's model, from its panel: kept, and every record of the aircraft given it - its
+  // board cards, search results and logs say what FR24's panel says
+  function onFr24Model(d) {
+    const hex = String(d && d.hex || '').toLowerCase(), model = clean(d && d.model).slice(0, 80);
+    if (!/^[0-9a-f]{6}$/.test(hex) || !model) return;
+    const kept = store.getHex(hex) || {}; if (kept.fr24Model === model) return;
+    store.mergeHex(hex, { fr24Model: model });
+    const recs = [...live.values(), ...pubRecs.values()].filter(r => r && r.hex === hex);
+    recs.forEach(r => { r.fr24Model = model; r.desc = model; });
+    const ladd = recs.filter(r => live.has(r.id)); if (ladd.length) pushToPage(ladd);
+    syncPanelSoon();
+  }
   function onAircraftInfo(d) {
     const p = notePublicAircraft(Number(d.id), String(d.hex || '').toLowerCase(), d.reg, d.type, d.cs);
     if (p && d.adPhotos) p.adPhotos = true;
+    // (1.2.1: what FR24's own record of the aircraft holds behind its padlocks - its date of manufacture - kept for it)
+    const hex = String(d.hex || '').toLowerCase(), y = fr24BuiltYear(d.birth, d.age);
+    if (/^[0-9a-f]{6}$/.test(hex) && (y || d.msn)) { const kept = store.getHex(hex) || {}, upd = {}; if (y && !(kept.year > 1930)) upd.year = y; if (d.msn && !kept.msn) upd.msn = clean(d.msn); if (Object.keys(upd).length) store.mergeHex(hex, upd); if (p && y && !(p.year > 1930)) p.year = y; }
     if (p) syncPanelSoon();
   }
   function persist(rec) {
-    store.mergeHex(rec.hex, { reg: rec.reg, type: rec.type, desc: rec.desc, owner: rec.owner, ownerCity: rec.ownerCity, country: rec.country, countryId: rec.countryId, msn: rec.msn, year: rec.year, photos: rec.photos, photoAt: rec.photoAt, photoLevel: rec.photoLevel, photoV: rec.photoV, jpFailAt: rec.jpFailAt || 0, operatorId: rec.operatorId, operatorIcao: rec.operatorIcao, operatorName: rec.operatorName, fr24Equip: rec.fr24Equip, fr24At: rec.fr24At, faaAt: rec.faaAt, idAt: rec.idAt, ownerAskedAt: rec.ownerAskedAt, ownerFailAt: rec.ownerFailAt, cat: rec.cat, mil: rec.mil });
+    store.mergeHex(rec.hex, { reg: rec.reg, type: rec.type, desc: rec.desc, owner: rec.owner, ownerCity: rec.ownerCity, country: rec.country, countryId: rec.countryId, msn: rec.msn, year: rec.year, yearEst: rec.yearEst, yearHow: rec.yearHow, photos: rec.photos, photoAt: rec.photoAt, photoLevel: rec.photoLevel, photoV: rec.photoV, jpFailAt: rec.jpFailAt || 0, operatorId: rec.operatorId, operatorIcao: rec.operatorIcao, operatorName: rec.operatorName, fr24Equip: rec.fr24Equip, fr24At: rec.fr24At, faaAt: rec.faaAt, idAt: rec.idAt, ownerAskedAt: rec.ownerAskedAt, ownerFailAt: rec.ownerFailAt, cat: rec.cat, mil: rec.mil });
     if (rec.id) store.setId(rec.id, rec);
     if (rec.id) pushToPage([rec]);
     syncPanelSoon();
@@ -880,6 +897,9 @@
       if (info) {
         const sn = clean(info.serialNo), model = clean(info.model && info.model.text), op = clean(info.airline && info.airline.name);
         if (sn && !rec.msn) rec.msn = sn;
+        // (1.2.1: its age, where FR24's list gives it - { date, age } or a year - before any estimate)
+        const ag = info.age, ay = ag && typeof ag === 'object' ? fr24BuiltYear(ag.date || ag.value || ag.birthDate, ag.age) : fr24BuiltYear(ag, null);
+        if (ay && !(rec.year > 1930)) { rec.year = ay; if (rec.hex) store.mergeHex(rec.hex, { year: ay }); }
         // (FR24's own name for the model - what its panel shows, "Gulfstream G550" - over a database's "GULFSTREAM 5": the
         // board cards and search say the same as the panel)
         if (model && rec.desc !== model) { rec.desc = model; rec.fr24Model = model; }
@@ -948,7 +968,8 @@
     let ch = false;
     const fill = (k, v) => { if (v && typeof v === 'string' && (!rec[k] || (k === 'owner' && !ownerName(rec.owner)))) { rec[k] = v; ch = true; } };
     fill('reg', reg); fill('type', type); fill('desc', desc); fill('owner', owner); fill('ownerCity', ownerCity); fill('msn', msn);
-    if (year > 1900 && !rec.year) { rec.year = year; ch = true; }
+    // (1.2.1: a year the monitor worked out - from serial numbers, the operator's fleet, the type - kept as an estimate)
+    if (year > 1900 && (!rec.year || (rec.yearEst && !r[16]))) { rec.year = year; rec.yearEst = r[16] === 1; rec.yearHow = r[17] || ''; ch = true; }
     if (opId > 0 && !rec.operatorId) { rec.operatorId = opId; rec.operatorIcao = opIcao || rec.operatorIcao || ''; rec.operatorName = opName || rec.operatorName || ''; rec.fr24At = rec.fr24At || now(); ch = true; }
     // (a private person's name the public monitor does not give out: this browser asks the register itself, for its own use)
     if (ok && at > 0 && !withheld) { rec.idAt = now(); rec.ownerAskedAt = now(); rec.ownerFailAt = 0; if (/^N\d/i.test(rec.reg || '')) rec.faaAt = rec.faaAt || now(); ch = true; }
@@ -1590,66 +1611,51 @@
     return t;
   }
   /* ==/UNPACKT2== */
-  // ---- build year by serial number (AGE, padlocked by FR24) -------------------------------------------------------
-  // No open source has a build year for every aircraft (hexdb and adsbdb none, OpenSky's database ~0.1%, airframes.org
-  // allows no scripts). The registers that publish one are asked (FAA, UK G-INFO, Isle of Man); for the rest, the FAA
-  // register's 82,000 turbine aircraft and helicopters - on it now or gone abroad - by type and serial number, packed in
-  // (test/mkagetable.cjs). An airframe once N-registered has its own year there; another is dated from the serials either
-  // side of it, which manufacturers issue in sequence (left out where those disagree by more than a year: 98% within a
-  // year, 94% exact where they agree - leave-one-out over the register). TF-AKG, 747-400F 33732: 2004.
-  let ageTable = null, ageTableLoading = null;
-  const ageTypeCache = new Map();
-  function loadAgeTable() {
-    if (ageTable || ageTableLoading) return ageTableLoading;
-    ageTableLoading = (async () => {
-      if (typeof AGE_TABLE_GZ !== 'string' || !AGE_TABLE_GZ || typeof DecompressionStream !== 'function') return null;
-      const bin = atob(AGE_TABLE_GZ), u8 = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
-      ageTable = JSON.parse(await new Response(new Blob([u8]).stream().pipeThrough(new DecompressionStream('gzip'))).text());
-      syncPanelSoon();
-      return ageTable;
-    })().catch(e => { log('age table', e); return null; });
-    return ageTableLoading;
+  // ---- build year (AGE, padlocked by FR24) -----------------------------------------------------------------------------
+  // (1.2.1) Worked out on the monitor for every aircraft (monitor/ages.cjs): a register's year; the airframe's own record
+  // (the FAA register, current and deregistered, OpenSky's dated airframes, the world's aircraft databases); the serial
+  // numbers either side of it; its operator's fleet; its type. The monitor's /owners row brings it with the aircraft;
+  // what this browser found itself (a serial number from FR24's panel or JetPhotos) is asked of /age. An estimate
+  // shows "~". FR24's own record, sent to a visitor without a subscription, leaves the date out (checked: its "age
+  // available" flag set, no date).
+  const isTypeCode = t => /^[A-Z][A-Z0-9]{1,3}$/.test(String(t || ''));
+  // (FR24's date of manufacture - a time, a date written out, or a year - else its age in years: the build year, or 0)
+  function fr24BuiltYear(birth, age) {
+    const cy = new Date().getUTCFullYear(), b = Number(birth);
+    let y = isFinite(b) && b > 1e8 ? new Date(b > 1e11 ? b : b * 1000).getUTCFullYear() : 0;
+    if (!y) { const m = /\b(19[3-9]\d|20\d\d)\b/.exec(String(birth || '')); y = m ? +m[1] : 0; }
+    if (y >= 1930 && y <= cy + 1) return y;
+    const a = parseFloat(String(age == null ? '' : age)); return isFinite(a) && a > 0 && a < 90 ? cy - Math.round(a) : 0;
   }
-  const normSerial = s =>String(s || '').toUpperCase().replace(/\s+/g, '').replace(/^0+(?=\d)/, '');
-  const serialKey = s => { const m = s.match(/^(.*?)(\d+)([A-Z]?)$/); return m ? [m[1] + '#' + m[3], +m[2]] : null; };
-  // (1.2.0) Airbus numbers the whole A320 family - the neo too - in one sequence of serial numbers, and the A330 with the
-  // A340: a serial is dated from its neighbours of any of them (checked against the FAA's own record, each left out in
-  // turn: 99.5% of the A320 family dated, 99.4% within a year; 88.5% of the A330/A340, all within a year). Boeing's serial
-  // numbers go to customers in blocks when ordered - neighbours years apart - so each Boeing type stays on its own.
-  const AGE_FAMILIES = [['A318', 'A319', 'A320', 'A321', 'A19N', 'A20N', 'A21N'], ['A332', 'A333', 'A338', 'A339', 'A342', 'A343', 'A345', 'A346']];
-  const ageFamily = type => AGE_FAMILIES.find(f => f.includes(type)) || null;
-  function typeSerials(type) {
-    if (!ageTable) { loadAgeTable(); return null; }
-    if (ageTypeCache.has(type)) return ageTypeCache.get(type);
-    const s = (ageFamily(type) || [type]).map(t => ageTable[t]).filter(Boolean).join(',');
-    const l = s ? s.split(',').map(x => { const i = x.lastIndexOf(':'), sn = x.slice(0, i); return { sn, y: 1900 + Number(x.slice(i + 1)), k: serialKey(sn) }; }) : null;
-    ageTypeCache.set(type, l); if (ageTypeCache.size > 300) ageTypeCache.delete(ageTypeCache.keys().next().value);
-    return l;
-  }
-  // { year, est } - est: dated from neighbouring serials that differ by a year (shown "~")
-  function yearBySerial(type, msn) {
-    const l = type && msn ? typeSerials(String(type).toUpperCase()) : null; if (!l) return null;
-    const sn = normSerial(msn), hit = l.find(x => x.sn === sn); if (hit) return { year: hit.y, est: false, how: 'its own record' };
-    const k = serialKey(sn); if (!k) return null;
-    let lo = null, hi = null;
-    for (const x of l) { if (!x.k || x.k[0] !== k[0]) continue; if (x.k[1] <= k[1] && (!lo || x.k[1] > lo.k[1])) lo = x; if (x.k[1] >= k[1] && (!hi || x.k[1] < hi.k[1])) hi = x; }
-    const span = lo && hi ? hi.k[1] - lo.k[1] : Infinity;
-    if (lo && hi && Math.abs(hi.y - lo.y) <= 1 && span <= Math.max(30, k[1] * 0.04)) return { year: Math.round(lo.y + (hi.y - lo.y) * (span ? (k[1] - lo.k[1]) / span : 0)), est: lo.y !== hi.y, how: 'its serial number' };
-    // (the A320 family, its numbers in time order: no close neighbours either side - the middle year of the six nearest
-    // within 3,000 numbers, where they agree to three years; shown "~". Checked with every serial within 300 of the one
-    // dated left out: 94% dated, 95% within a year)
-    if (ageFamily(String(type).toUpperCase()) === AGE_FAMILIES[0]) {
-      const near = l.filter(x => x.k && x.k[0] === k[0] && Math.abs(x.k[1] - k[1]) <= 3000).sort((a, b) => Math.abs(a.k[1] - k[1]) - Math.abs(b.k[1] - k[1])).slice(0, 6);
-      const ys = near.map(x => x.y).sort((a, b) => a - b);
-      if (ys.length >= 3 && ys[ys.length - 1] - ys[0] <= 3) return { year: ys[ys.length >> 1], est: true, how: 'its serial number' };
-    }
+  const normSerial = s => String(s || '').toUpperCase().replace(/\s+/g, '').replace(/^0+(?=\d)/, '');
+  const ageAsked = new Map();   // "TYPE~SERIAL~OPERATOR" -> { year, est, how } | null (none) | 0 (asked, no answer yet)
+  let ageQ = [], ageT = 0;
+  function ageAsk(type, msn, op) {
+    const k = [type, normSerial(msn), String(op || '').slice(0, 40)].join('~');
+    if (ageAsked.has(k)) return ageAsked.get(k) || null;
+    ageAsked.set(k, 0); if (ageAsked.size > 3000) ageAsked.delete(ageAsked.keys().next().value);
+    ageQ.push(k); if (!ageT) ageT = setTimeout(flushAgeAsk, 120);
     return null;
   }
-  // the build year as known: a register's, else from the serial number; and the AGE text FR24 would show
+  async function flushAgeAsk() {
+    ageT = 0; const batch = ageQ.splice(0, 200); if (!batch.length) return;
+    let list = null;
+    try { const j = await monGet('/age?q=' + batch.map(k => k.split('~').map(encodeURIComponent).join('~')).join(';'), {}); list = j && Array.isArray(j.list) ? j.list : null; } catch (e) { log('monitor ages', String(e && e.message || e)); }
+    // (no answer: asked again the next time the aircraft is drawn)
+    batch.forEach((k, i) => { const r = list && list[i]; if (!list) ageAsked.delete(k); else ageAsked.set(k, r ? { year: +r[0], est: !!r[1], how: String(r[2] || '') } : null); });
+    if (list) syncPanelSoon();
+    if (ageQ.length && !ageT) ageT = setTimeout(flushAgeAsk, 120);
+  }
+  // the build year as known: a register's (or FR24's own); else the monitor's working out - by the serial number this
+  // browser holds where it has one; and the AGE text FR24 would show
   function builtYear(hx) {
-    const y = Number(hx && hx.year) || 0; if (y > 1930) return { year: y, est: false, how: 'the register' };
-    return hx ? yearBySerial(hx.type, hx.msn) : null;
+    if (!hx) return null;
+    const y = Number(hx.year) || 0;
+    if (y > 1930 && !hx.yearEst) return { year: y, est: false, how: hx.yearHow || 'the register' };
+    const kept = hx.hex ? store.getHex(hx.hex) || {} : {}, type = [hx.type, kept.type, hx.icaoType].map(t => String(t || '').toUpperCase()).find(isTypeCode);
+    const msn = hx.msn || kept.msn || '';
+    if (type && (msn || !(y > 1930))) { const a = ageAsk(type, msn, hx.operatorName || hx.opName || kept.operatorName || ''); if (a && (!(y > 1930) || !a.est || /serial/.test(a.how))) return a; }
+    return y > 1930 ? { year: y, est: true, how: hx.yearHow || 'an estimate' } : null;
   }
   function ageText(hx) {
     const b = builtYear(hx); if (!b) return '';
