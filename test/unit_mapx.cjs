@@ -97,6 +97,8 @@ function open(opts, answer) {
   // ---- NAT tracks
   const nat = H().mxNatParse('<pre>(NAT-1/2 TRACKS FLS 310/390 INCLUSIVE\nOCT 31/1130Z TO OCT 31/1900Z\nPART ONE OF TWO PARTS-\nA PIKIL 57/20 58/30 58/40 57/50 HOIST\nEAST LVLS NIL\nWEST LVLS 310 320 330\nB RESNO 5630/20 5730/30 5730/40 5630/50 NIFTY\nEAST LVLS NIL\nWEST LVLS 340 350\nW 4730/50 4830/40 4930/30 5030/20 SOMAX\nEAST LVLS 320 330 340\nWEST LVLS NIL\n</pre>');
   check('the NAT message read: tracks A, B (west) and W (east), each\'s points in latitude/longitude', nat.A && nat.A.d === 'WEST' && Object.keys(nat.A.p).length === 4 && nat.A.p[0].lat === 57 && nat.A.p[0].lon === -20 && nat.B.p[0].lat === 56.5 && nat.W && nat.W.d === 'EAST' && /OCT 31/.test(nat.A.from), nat);
+  const t0 = Date.now(); H().mxNatParse('<pre>A ' + '/'.repeat(40) + '!\n</pre>');
+  check('a long line of slashes in the NAT message is read at once, not stuck backtracking', Date.now() - t0 < 200, Date.now() - t0);
   // ---- categories in the live feed's request
   const settings = { filters: { deselectedCategories: [0, 1] } }, fake = { _s: new Map([['settings', settings], ['user', { isPremiumUser: false }], ['filters', { deselectedCategories: [] }]]) };
   P.w.document.getElementById('app').__vue_app__ = { config: { globalProperties: { $pinia: fake } } };

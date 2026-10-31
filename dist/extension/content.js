@@ -2939,7 +2939,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       var t = String(text || '').replace(/<[^>]+>/g, '\n').replace(/&nbsp;/g, ' '), out = {}, valid = (t.match(/([A-Z]{3}\s+\d{2}\/\d{4}Z)\s+TO\s+([A-Z]{3}\s+\d{2}\/\d{4}Z)/) || []);
       var lines = t.split('\n').map(function (l) { return l.trim(); }), cur = null;
       lines.forEach(function (l) {
-        var m = l.match(/^([A-Z])\s+((?:[A-Z0-9/]+\s*)+)$/);
+        var m = l.match(/^([A-Z])\s+([A-Z0-9/]+(?:\s+[A-Z0-9/]+)*)$/);
         if (m && /\d{2}(?:\d{2})?\/\d{2,3}/.test(m[2])) {
           var pts = {}, n = 0;
           m[2].split(/\s+/).forEach(function (w) { var c = w.match(/^(\d{2})(\d{2})?\/(\d{2,3})(\d{2})?$/); if (c) pts[n++] = { lat: +c[1] + (+c[2] || 0) / 60, lon: -(+c[3] + (+c[4] || 0) / 60), name: w }; });
