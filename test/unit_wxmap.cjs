@@ -91,6 +91,9 @@ const fakeFetch = async (url) => {
   check('WAFS: every picture of the newest run kept (16 kinds, 11 forecast hours)', meta.wafs.files === 176, meta.wafs);
   const wf = await W.handle('/wx/wafs/20261031_00_F12_wafs_250_wind_m.png');
   check('WAFS: a picture served from what is kept', wf.status === 200 && PNG.decode(wf.body).width === 9);
+  const n0 = asked.length, old = await W.handle('/wx/wafs/20240101_00_F12_wafs_250_wind_m.png'), odd = await W.handle('/wx/wafs/20261031_00_F12_wafs_999_xyz_m.png');
+  check('WAFS: a picture not of the runs in hand refused, and nothing fetched for it (nothing a browser writes is fetched)', old.status === 404 && odd.status === 404 && asked.length === n0);
+  check('a tile number out of range refused, nothing fetched', (await W.handle('/wx/t/radar/' + meta.radar.ver + '/5/99/1.png')).status === 404 && asked.length === n0);
   const wg = await W.handle('/wx/wind/' + meta.wind.run + '/9/250', true), g = new Int8Array(zlib.gunzipSync(wg.body));
   check('winds: a level\'s grid - u then v, 360 x 181, m/s - gzipped for the browser', wg.status === 200 && wg.enc === 'gzip' && g.length === 2 * 65160 && g[0] === 10 && g[65160] === -5, { len: g.length, u: g[0], v: g[65160] });
   check('winds: 13 forecast hours, 16 levels', meta.wind.fhrs.length === 13 && meta.wind.levels.length === 16);

@@ -388,14 +388,22 @@ function createWxMap(env) {
     let m;
     if (pathname === '/wx/meta') { const b = Buffer.from(JSON.stringify(meta())); return Promise.resolve({ status: 200, type: 'application/json', body: b, cache: 'no-store' }); }
     if ((m = pathname.match(/^\/wx\/t\/(cloud|precip|radar|naradar)\/([a-z0-9]+)\/(\d{1,2})\/(\d+)\/(\d+)\.png$/))) {
-      const name = m[1], p = P[name], z = +m[3], x = +m[4], y = +m[5], N = Math.pow(2, z);
+      // (the tile's numbers checked and made again as whole numbers in range - all a source's address is built from)
+      const name = m[1] === 'cloud' ? 'cloud' : m[1] === 'precip' ? 'precip' : m[1] === 'radar' ? 'radar' : 'naradar', p = P[name], z = Math.min(22, parseInt(m[3], 10)), N = Math.pow(2, z);
+      const x = Math.max(0, Math.min(N - 1, parseInt(m[4], 10))), y = Math.max(0, Math.min(N - 1, parseInt(m[5], 10)));
+      if (String(x) !== m[4] || String(y) !== m[5]) return Promise.resolve({ status: 404, type: 'text/plain', body: Buffer.from('no such tile') });
       if (!p.ver || z > p.maxZ || x >= N || y >= N) return Promise.resolve({ status: 404, type: 'text/plain', body: Buffer.from('no such tile') });
       if (name === 'cloud' || name === 'precip') return Promise.resolve(png(p.tiles.get(z + '/' + x + '/' + y)));
       return onDemand(name, z, x, y).then(png, () => ({ status: 502, type: 'text/plain', body: Buffer.from('source did not answer') }));
     }
     if ((m = pathname.match(/^\/wx\/wafs\/(\d{8}_\d{2}_F\d{2}_wafs_[a-z0-9_]+_m\.png)$/))) {
-      const name = m[1];
-      if (wafs.files.has(name)) return Promise.resolve(png(wafs.files.get(name)));
+      if (wafs.files.has(m[1])) return Promise.resolve(png(wafs.files.get(m[1])));
+      // (one not kept yet: only a picture of the run in hand or the one before - its name made here, never the one asked
+      // for: nothing a browser writes goes into what the monitor fetches)
+      const runs = wafs.run ? [wafs.run, wafs.run - 21600e3] : [];
+      let name = null;
+      for (const r of runs) for (const f of WAFS_FHRS) for (const pm of WAFS_PARAMS) { const n = wafsName(r, f, pm); if (n === m[1]) name = n; }
+      if (!name) return Promise.resolve({ status: 404, type: 'text/plain', body: Buffer.from('not a picture of the runs in hand') });
       if (!wafs.asked.has(name)) wafs.asked.set(name, get(wafsUrl(name), { timeout: 30000, tries: 1 }).then(b => { if (name.startsWith(wafsName(wafs.run, 6, '').slice(0, 11))) wafs.files.set(name, b); return b; }).finally(() => wafs.asked.delete(name)));
       return wafs.asked.get(name).then(png, e => ({ status: /HTTP 404/.test(String(e)) ? 404 : 502, type: 'text/plain', body: Buffer.from('not had') }));
     }
