@@ -8,7 +8,7 @@
 
 <br><br>
 
-<a href="CHANGELOG.md"><img alt="Version 1.1.5" src="https://img.shields.io/badge/version-1.1.5-1f6feb?style=flat&labelColor=23272e"></a>
+<a href="CHANGELOG.md"><img alt="Version 1.2.0" src="https://img.shields.io/badge/version-1.2.0-1f6feb?style=flat&labelColor=23272e"></a>
 <a href="PRIVACY.md#counting-installs"><img alt="Users" src="https://img.shields.io/endpoint?url=https%3A%2F%2F143-47-224-210.sslip.io%2Fbadge&style=flat&labelColor=23272e"></a>
 <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/actions/workflows/tests.yml"><img alt="Tests" src="https://github.com/FinlayC1/fr24-ladd-unblocker/actions/workflows/tests.yml/badge.svg"></a>
 <a href="LICENSE"><img alt="Licence: personal use" src="https://img.shields.io/badge/licence-personal%20use-1f6feb?style=flat&labelColor=23272e"></a>
@@ -104,7 +104,7 @@ To turn it off, or point it at [your own monitor](#run-your-own-monitor), click 
 Every setting is in one place: click **LADD Unblock** on FR24's bottom bar, next to Playback (or the version number on the strip under an aircraft's photo). It opens a window like FR24's own Widgets and Weather windows, with:
 
 - **Enable LADD Unblock**, to switch the whole thing off and leave FR24 as it is (applies after a reload).
-- A switch for each feature: the aircraft panel details, airport boards, search, aircraft and flight pages, take-off and landing alerts, and hiding ads and upgrade prompts.
+- A switch for each feature: the aircraft panel details, airport boards, search, aircraft and flight pages, take-off and landing alerts, hiding ads and upgrade prompts, and FR24's locked map options (weather layers, charts, ATC boundaries, oceanic tracks, aircraft category filters).
 - **Updates**: the version you have, the latest one, and an **Update** button.
 - **Data sources**: which feeds are answering, the monitor, and your optional ADS-B Exchange and FAA NOTAM keys.
 
@@ -272,6 +272,7 @@ Copyright © 2026 Finlay Clarke. Free to download and use for personal, non-comm
 | [OurAirports](https://ourairports.com) | Airfields, runways, radio frequencies | Public domain |
 | FAA, UK CAA G-INFO, Isle of Man, Swiss FOCA registers; hexdb.io, adsbdb.com | Owner names | Public registers; **names only, never addresses** |
 | aviationweather.gov, FAA NOTAM API | Weather and closures | Public; NOTAMs only with your own key |
+| EUMETSAT, NASA GIBS, RainViewer, Iowa State NEXRAD, AWC WAFS, Open-Meteo, Blitzortung | FR24's locked weather layers (cloud, precipitation, radar, icing, turbulence, SIGWX, winds, lightning) | Free public sources ([details](docs/data-sources.md)) |
 | OpenStreetMap | Names of private landing sites | [ODbL](https://www.openstreetmap.org/copyright) |
 
 The project is built to be a **good citizen** of the free services it depends on:
