@@ -61,7 +61,7 @@ The engine scores **every plausible airport**, plus the hypothesis "a local flig
 - **The aircraft's own history:** routes flown in each direction, what usually follows what, home base, overnight stops, weekdays and hours, cruise levels and the paths it flew.
 - **The flight so far:** distance and heading against each great circle, descent profile, selected altitude, squawk and callsign.
 - **Feasibility:** range, and runway length, width, surface and lighting for this aircraft type.
-- **Everyone else's habits:** learned from 63 days of every aircraft adsb.lol saw, plus every blocked aircraft's flights as the monitor logs them, scored on aircraft held out of training.
+- **Everyone else's habits:** stored on the monitor with more data being constantly built, calculations are ran against probabilities formed from this.
 - **Live conditions:** weather (METAR/TAF) and airport closures (NOTAMs, with an optional FAA key), and fields busier than usual with blocked aircraft these last three days (an event).
 - **The aircraft's own datalink:** many business jets send their route over ACARS (a flight plan uplinked to the FMS, position reports naming origin and destination). adsb.lol publishes what its receivers hear as open data, about an hour behind. Where a message names this flight's origin, its destination is taken as filed: on 21 Oct that was the airport landed at 362 times in 367. Only a few percent of business jets are heard this way.
 
