@@ -4,6 +4,15 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 
 1.0.0 is the first release. The versions before it are the betas, labelled B: B22.31.12 is version 22.31.12.
 
+## [1.2.2] - 2026-10-31
+
+### In short
+- The Firefox add-on has a new id, so it can be sent to Firefox Add-ons as a new listing.
+- Nothing else changes: the userscript and the Chrome extension are the same as 1.2.1.
+
+### Changed
+- **The Firefox add-on's id is now `ladd-unblocker-fr24@finlayc1.github.io`.** Firefox Add-ons keeps every id it has seen, so neither earlier one (`fr24-ladd-unblocker@finlayc1.github.io`, `ladd-unblocker@finlayc1.github.io`) can start a new listing. Firefox treats a different id as a different add-on: one installed under an old id is removed and this one installed, and its saved settings and logs do not carry over.
+
 ## [1.2.1] - 2026-10-31
 
 ### In short
