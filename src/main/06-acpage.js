@@ -745,7 +745,8 @@
       for (const [hex, v] of store.allHex()) {
         if (!v || !(v.ladd || v.fr24Blocked || v.pia)) continue;
         const reg = String(v.reg || '').toUpperCase(), rk = csKey(reg);
-        if (rk && rk.startsWith(q) && rows.length < 8) { const op = operatorIdOf(v), icao = op && fr24.airlines && fr24.airlines.get(op) ? fr24.airlines.get(op).icao || '' : '';
+        // (1.2.1: one row a registration - SP-CEO was listed twice, kept under two transponder addresses)
+        if (rk && rk.startsWith(q) && rows.length < 8 && !rows.some(r => r.type === 'aircraft' && csKey(r.id) === rk)) { const op = operatorIdOf(v), icao = op && fr24.airlines && fr24.airlines.get(op) ? fr24.airlines.get(op).icao || '' : '';
           rows.push({ type: 'aircraft', id: reg, label: `${reg}${v.type ? ' (' + v.type + ')' : ''}${icao ? ' - ' + icao : ''}`, match: 'begins', detail: { equip: v.type || '', hex: hex.toUpperCase(), operator_id: op || 0, owner: icao } }); }
         for (const x of v.recent || []) { const c = csKey(x[6]); if (c && c !== rk && c.startsWith(q)) note(c, hex, v, x[0] || 0); }
       }

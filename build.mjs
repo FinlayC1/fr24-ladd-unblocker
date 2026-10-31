@@ -7,11 +7,8 @@ import crypto from 'crypto';
 const root = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'));
 const rd = f => fs.readFileSync(path.join(root, f), 'utf8');
 // (1.1.0) The route tables, the weights, the population tables and the arrival paths are not in the script: every route is
-// worked out on the monitor (monitor/central.cjs reads them from src/). What the script carries of what was learned: the
-// build years of aircraft, for the panel's age.
-// build years by type and serial number (test/mkagetable.cjs: the FAA register, current and deregistered), packed
-const ageFile = path.join(root, 'src', 'agetable.json');
-const ageGz = fs.existsSync(ageFile) ? zlib.gzipSync(fs.readFileSync(ageFile), { level: 9 }).toString('base64') : '';
+// worked out on the monitor (monitor/central.cjs reads them from src/; the build years for the panel's age too:
+// monitor/ages.cjs).
 const engineSrc = rd('src/engine.js');
 const e0 = engineSrc.indexOf('/* ==ENGINE=='), e1 = engineSrc.indexOf('/* ==/ENGINE== */');
 if (e0 < 0 || e1 < 0) throw new Error('engine markers missing');
@@ -31,9 +28,8 @@ const whatsNew = (() => {
 })();
 const mods = fs.readdirSync(path.join(root, 'src', 'main')).filter(f => /^\d\d-.*\.js$/.test(f)).sort().map(f => rd('src/main/' + f).replace("'__TL_WHATSNEW__'", () => JSON.stringify(whatsNew)));
 // the learned data: [the name the script knows it by, what it is, its JSON]
-const DATA = [
-  ['AGE_TABLE_GZ', 'Build years of turbine aircraft and helicopters by type and serial number (test/mkagetable.cjs), packed', JSON.stringify(ageGz)]
-];
+// (1.2.1: none at present - the age table, src/agetable.json, is the monitor's: monitor/ages.cjs)
+const DATA = [];
 const DATA_MARK = '\u0000TL_DATA\u0000';
 const outWith = data => outParts.replace(DATA_MARK, () => data);
 const outParts = [

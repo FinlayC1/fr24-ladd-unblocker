@@ -799,7 +799,16 @@
   }
   // a model name written in capitals by a database ("GULFSTREAM 5", "BOEING 747-400") as a name is written; FR24's own
   // name when it has given one
-  const modelName = hx => { const d = clean((hx && (hx.fr24Model || hx.desc)) || ''); return /[a-z]/.test(d) ? d : d.replace(/\b([A-Z])([A-Z]{2,})\b/g, (m, a, b) => a + b.toLowerCase()); };
+  // (1.2.1: the capitals of a maker's name before a model written properly too - "HAWKER BEECHCRAFT Hawker 750/850", SP-CEO
+  // on the boards - and a maker's name said twice dropped: "Hawker 750/850". FR24's own name, "Raytheon Hawker 750", first)
+  const KEEP_CAPS = /^(ATR|BAE|MBB|PZL|CASA|IAI|AVIC|COMAC|DHC|GAF|SAAB|SIAI|EADS|ICON|AMD|HAL|LET|MXP|UTVA)$/;
+  const modelName = hx => {
+    const own = clean((hx && hx.fr24Model) || ''); if (own) return own;
+    let d = clean((hx && hx.desc) || '').replace(/\b([A-Z])([A-Z]{2,})\b/g, (m, a, b) => KEEP_CAPS.test(m) ? m : a + b.toLowerCase());
+    const w = d.split(' '), i = w.findIndex((x, k) => k > 0 && x.length > 2 && x.toLowerCase() === w[0].toLowerCase());
+    if (i > 0 && i < w.length - 1) d = w.slice(i).join(' ');
+    return d;
+  };
   function withStored(rec) {
     const hx = rec && rec.hex ? store.getHex(rec.hex) : null; if (!hx) return Object.assign({}, rec);
     const out = Object.assign({}, hx);
@@ -829,7 +838,7 @@
   function adopt(rec) {
     live.set(rec.id, rec); strikes.delete(rec.id);
     store.setId(rec.id, rec);
-    if (rec.hex) store.mergeHex(rec.hex, { hex: rec.hex, reg: rec.reg, type: rec.type, desc: rec.desc, owner: rec.owner, year: rec.year, msn: rec.msn, ladd: rec.ladd, pia: rec.pia, mil: rec.mil, cat: rec.cat, countryId: rec.countryId, country: rec.country });
+    if (rec.hex) store.mergeHex(rec.hex, { hex: rec.hex, reg: rec.reg, type: rec.type, desc: rec.desc, owner: rec.owner, year: rec.year, yearEst: rec.yearEst, yearHow: rec.yearHow, msn: rec.msn, ladd: rec.ladd, pia: rec.pia, mil: rec.mil, cat: rec.cat, countryId: rec.countryId, country: rec.country });
     const shown = onScreen(rec.id);
     if (shown) pushToPage([rec]); else pushSoon(rec);
     pushTelemetry(rec.id);

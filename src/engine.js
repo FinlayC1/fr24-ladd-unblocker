@@ -85,7 +85,9 @@ function createRouteEngine() {
   function classify(ac) {
     const t = String(ac && ac.type || '').toUpperCase(), cat = String(ac && ac.cat || '').toUpperCase(), mil = !!(ac && ac.mil);
     const td0 = typeDesc(t);
-    if (cat === 'A7' || (td0 ? td0[0] === 'H' : HELI.test(t))) return 'heli';
+    // (a type designator known says what it is: a transponder set to "rotorcraft" (A7) on a jet - SP-CEO, a Hawker 750,
+    // was a "Helicopter" on the boards - is not believed over it)
+    if (td0 ? td0[0] === 'H' : (cat === 'A7' || HELI.test(t))) return 'heli';
     if (FIGHTER.test(t) || (mil && cat === 'A6')) return 'fighter';
     if (mil && (MIL_HEAVY.test(t) || cat === 'A5')) return 'milheavy';
     if (HEAVY_BIZ.test(t) || (BIZ_AIRLINER.test(t) && !mil && flownPrivately(ac))) return 'heavybiz';

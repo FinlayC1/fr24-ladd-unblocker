@@ -689,6 +689,23 @@
     } catch (e) { log('central calculation', String(e && e.message || e)); }
     finally { calcBusy = false; if (calcAsk.size && !calcT) calcT = setTimeout(calcFlush, 1500); }
   }
+  // (1.2.1) The routes of flights a page shows with none - its search results on any page, not the map's alone: the
+  // monitor's own answer for each (it works out any flight it knows of, by its FR24 flight id), to the page as its routes
+  async function onRoutesAsk(d) {
+    const ids = (Array.isArray(d && d.ids) ? d.ids : []).map(Number).filter(x => x > 0).slice(0, 12), out = {};
+    if (ids.length) {
+      try {
+        const j = await monPost('/calc', { v: 1, flights: [], ids, sel: ids[0] });
+        for (const [k, v] of Object.entries(j && j.routes && typeof j.routes === 'object' ? j.routes : {})) {
+          if (!v || !v.r || typeof v.r !== 'object') continue;
+          calcGot.set(+k, { at: +v.at || 0, until: now() + 10 * 60000, r: v.r });
+          const r = v.r, o = apById(r.originId), de = apById(r.destId);
+          out[k] = Object.assign(routeForPage(r), { originIata: r.originIata || (o && (o.iata || o.icao)) || '', destIata: r.destIata || (de && (de.iata || de.icao)) || '', originCity: r.originCity || (o && (o.city || o.name)) || '', destCity: r.destCity || (de && (de.city || de.name)) || '' });
+        }
+      } catch (e) { log('search routes', String(e && e.message || e)); }
+    }
+    postToPage('routesGot', { rid: d && d.rid, routes: out });
+  }
   // (an airfield FR24 does not list goes to the page by its code and name only: FR24's own panel knows only its airports)
   const routeForPage = r => { const da = r.destId ? apById(r.destId) : null, oa = (r.originId && apById(r.originId)) || (r.originSite && fin(r.originSite.lat) ? r.originSite : null); return { originId: fr24Ap(r.originId), destId: fr24Ap(r.destId), originIata: r.originIata, destIata: r.destIata, originCity: r.originCity, destCity: r.destCity, progress: r.progress, std: r.std, sta: r.sta, atd: r.atd, ata: r.ata, eta: r.eta, etd: r.etd, groundAirportId: fr24Ap(r.groundAirportId), landed: r.landed, destConf: r.destConf, destP: r.destP || 0, destReason: r.destReason || '', confirmed: !!(r.confirmed || r.landed || r.destConf === 'confirmed'), quick: !!r.quick,
     // (where the destination is: a flight that goes quiet low beside it has landed, for the boards)

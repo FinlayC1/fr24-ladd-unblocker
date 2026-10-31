@@ -128,6 +128,8 @@
       case 'needPub': publicIdentity(d.hex, d.reg).then(() => pushPubIds([String(d.hex || '').toLowerCase()])).catch(() => {}); break;
       case 'osmRes': onOsmRes(d); break;
       case 'aircraftInfo': onAircraftInfo(d); break;
+      case 'fr24Model': onFr24Model(d); break;
+      case 'routesAsk': onRoutesAsk(d).catch(e => log('search routes', e)); break;
       case 'sched': onSched(d); break;
       case 'airAsk': onAirAsk(d).catch(e => log('airspace', e)); break;
       case 'feedReady': noteFeedHdr(d.hdr); if (!feedReady) { feedReady = true; log('feed headers captured'); worldScan('startup').catch(() => {}); } break;
@@ -273,7 +275,7 @@
   // (the population tables unpack once FR24 has drawn the page - a few hundred ms of work that must not hold up its own
   // start - and the routes on screen are worked out again with them)
   if (!isDataPage && !isFlightPage) {
-    setTimeout(() => { idleSlice().then(() => loadAgeTable()).catch(() => {}); }, 1500);   // (build years by serial number: AGE)
+
   }
   // (log and flight-number pages: the page bridge too - FR24's search box there lists what this script knows)
   if (isAircraftPage) {

@@ -350,8 +350,23 @@ function createAcdb(env) {
   // (built again when the one kept is a week old - or none)
   const due = nowS => !H || (nowS || Date.now() / 1000) - (H.at || 0) > C.everyDays * 86400;
   function status() { return { aircraft: S.n, builtAt: S.at, building: S.building, sources: S.src, lookups: S.lookups, found: S.found, ms: S.ms, err: S.err }; }
+  // (1.2.1) every aircraft in turn - block by block, a pause between them: { hex, reg, type, model, msn, year, ... }
+  async function each(fn, pause) {
+    if (!H || !recs) return 0;
+    let n = 0;
+    for (let at = 0; at < H.nb; at++) {
+      const off = recs.readUInt32LE(at * REC + 4), len = recs.readUInt32LE(at * REC + 8), z = Buffer.alloc(len);
+      fs.readSync(fd, z, 0, len, 4 + H.len + H.nb * REC + off);
+      for (const line of zlib.gunzipSync(z).toString('utf8').split('\n')) {
+        const i = line.indexOf('\t'); if (i <= 0) continue;
+        try { const a = JSON.parse(line.slice(i + 1)), o = { hex: line.slice(0, i) }; FIELDS.forEach((k, j) => { if (a[j]) o[k] = a[j]; }); fn(o); n++; } catch (e) { /* a bad line */ }
+      }
+      if (pause) await pause();
+    }
+    return n;
+  }
   open();
-  return { open, lookup, build, due, status, stats: S, file };
+  return { open, lookup, build, due, status, each, stats: S, file };
 }
 
 // (this file as the build's worker thread)

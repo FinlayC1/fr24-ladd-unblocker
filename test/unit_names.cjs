@@ -36,29 +36,43 @@ const lt = E.heliAirportAt(51.4710, -0.4540); check('a helicopter down by Heathr
     check(`registration ${r} -> ${want}`, (regCountry(r) || {}).iso === want, regCountry(r));
   check('China\'s B- (Taiwan registers under B- too) is left to the transponder address', regCountry('B-1234') === null, regCountry('B-1234'));
 }
-// AGE by serial number, from the packed table (the script's own code, the build's own table)
+// AGE (1.2.1): worked out on the monitor (monitor/ages.cjs) from the age table; the browser asks it
 (async () => {
-  const d = fs.readFileSync(path.join(__dirname, '..', 'src', 'main', '03-data.js'), 'utf8');
-  const a3 = d.indexOf('  let ageTable = null'), b3 = d.indexOf('  // runs a generator in slices');
-  const gz = require('zlib').gzipSync(fs.readFileSync(path.join(__dirname, '..', 'src', 'agetable.json'))).toString('base64');
-  const A = new Function('AGE_TABLE_GZ', 'syncPanelSoon', 'log', d.slice(a3, b3) + '; return { loadAgeTable, yearBySerial, ageText, ageTitle };')(gz, () => {}, () => {});
-  await A.loadAgeTable();
-  const thisYear = new Date().getFullYear();
-  const t = A.yearBySerial('B744', '33732');
-  check('TF-AKG (747-400F, serial 33732): built 2004, dated from its serial number', !!t && t.year === 2004, t);
-  check('its AGE as FR24 would show it', A.ageText({ type: 'B744', msn: '33732' }) === `${thisYear - 2004} years`, A.ageText({ type: 'B744', msn: '33732' }));
-  check('a register\'s year wins over the serial number', A.ageText({ type: 'B744', msn: '33732', year: 2003 }) === `${thisYear - 2003} years`);
-  check('no type or serial: no age (never made up)', A.ageText({ type: 'GLF5' }) === '' && A.ageText({ msn: '5432' }) === '');
-  // every airframe the table holds is dated as its own record says
+  const { createAges } = require('../monitor/ages.cjs');
+  const AG = createAges({ file: path.join(__dirname, '..', 'src', 'agetable.json') }), thisYear = new Date().getFullYear();
+  const of = q => AG.of(q) || {};
+  check('B-223P (757-23N(PCF), serial 30887 - once N-registered): built 2000, its own record', of({ type: 'B752', msn: '30887' }).year === 2000 && of({ type: 'B752', msn: '30887' }).est === false, of({ type: 'B752', msn: '30887' }));
+  check('TF-AKG (747-400F, serial 33732): 2004, dated from its serial number', of({ type: 'B744', msn: '33732' }).year === 2004, of({ type: 'B744', msn: '33732' }));
   const tbl = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'src', 'agetable.json'), 'utf8'));
   const [s0, y0] = tbl.GLF6.split(',')[10].split(':');
-  check('an airframe the FAA register has held: its own year', (A.yearBySerial('GLF6', s0) || {}).year === 1900 + Number(y0), { serial: s0, got: A.yearBySerial('GLF6', s0) });
-  // (1.2.0) Airbus's one sequence for the A320 family: D-AIBD (A319, serial 4455, built 2010 - never on the FAA's register)
-  // dated from its neighbours of any A320-family type; a Boeing serial with no neighbours close by still gets none
-  const aibd = A.yearBySerial('A319', '4455');
-  check('D-AIBD (A319, serial 4455): dated from the A320 family\'s serials around it - 2010, give or take a year', !!aibd && Math.abs(aibd.year - 2010) <= 1, aibd);
-  check('... the A321neo the same way (one sequence)', !!A.yearBySerial('A21N', '7000'), A.yearBySerial('A21N', '7000'));
-  check('a Boeing serial in a customer block with no close neighbours (EI-DWY, 737-800 33638): no age made up', A.yearBySerial('B738', '33638') === null, A.yearBySerial('B738', '33638'));
+  check('an airframe the table holds: its own year', of({ type: 'GLF6', msn: s0 }).year === 1900 + Number(y0), { serial: s0, got: of({ type: 'GLF6', msn: s0 }) });
+  const aibd = of({ type: 'A319', msn: '4455' });
+  check('D-AIBD (A319, serial 4455, built 2010 - never on the FAA\'s register): dated from the A320 family\'s serials, within a year', Math.abs(aibd.year - 2010) <= 1, aibd);
+  check('... the A321neo the same way (one sequence)', of({ type: 'A21N', msn: '7000' }).year > 2010, of({ type: 'A21N', msn: '7000' }));
+  check('a register\'s year wins', of({ type: 'B744', msn: '33732', year: 2003 }).year === 2003 && of({ type: 'B744', msn: '33732', year: 2003 }).how === 'the register');
+  // (an operator's fleet: the middle year of its others of the type)
+  AG.addFleet('Acme Air', 'B738', 2007); AG.addFleet('ACME AIR LTD', 'B738', 2008); AG.addFleet('Acme Air', 'B738', 2008);
+  const fl = of({ type: 'B738', msn: 'X1', op: 'Acme Air' });
+  check('no dated serial near it: its operator\'s fleet of the type, as an estimate ("Acme Air" and "ACME AIR LTD" the same)', fl.year === 2008 && fl.est && /fleet/.test(fl.how), fl);
+  const ty = of({ type: 'B738' });
+  check('known by its type alone: the type\'s middle year, as an estimate - every aircraft with a type has an age', ty.year > 1995 && ty.year < 2020 && ty.est && ty.how === 'its type', ty);
+  check('no type at all: none made up', AG.of({ msn: '5432' }) === null);
+  AG.learn({ type: 'H25B', msn: '258777', year: 2006, op: 'Jet Story' });
+  check('the aircraft database\'s own dated airframes join the table', of({ type: 'H25B', msn: '258777' }).year === 2006 && of({ type: 'H25B', msn: '258777' }).how === 'its own record');
+  // the browser: its build-year code with the monitor stood in for
+  const d = fs.readFileSync(path.join(__dirname, '..', 'src', 'main', '03-data.js'), 'utf8');
+  const a3 = d.indexOf('  // ---- build year (AGE'), b3 = d.indexOf('  const ageTitle = hx =>');
+  const asked = [], kv = {};
+  const B = new Function('monGet', 'store', 'syncPanelSoon', 'log', d.slice(a3, b3) + '; return { builtYear, ageText, fr24BuiltYear };')(
+    async p => { asked.push(p); const q = decodeURIComponent(p.split('q=')[1] || ''); return { v: 1, list: q.split(';').map(x => { const f = x.split('~'); const r = AG.of({ type: f[0], msn: f[1], op: f[2] }); return r ? [r.year, r.est ? 1 : 0, r.how] : null; }) }; },
+    { getHex: h => kv[h] || null }, () => {}, () => {});
+  check('B-223P in the browser: nothing at first (asked of the monitor)...', B.ageText({ type: 'B752', msn: '30887' }) === '');
+  await new Promise(r => setTimeout(r, 300));
+  check('... then its age as FR24 would show it, from the monitor', B.ageText({ type: 'B752', msn: '30887' }) === `${thisYear - 2000} years` && asked.length === 1, { text: B.ageText({ type: 'B752', msn: '30887' }), asked });
+  kv.abcdef = { type: 'B752' };
+  check('the model\'s name as the type ("BOEING 757-23N(PCF)"): the type code kept for the aircraft used instead', (() => { B.ageText({ hex: 'abcdef', type: 'BOEING 757-23N(PCF)', msn: '30887' }); return true; })() && B.ageText({ hex: 'abcdef', type: 'BOEING 757-23N(PCF)', msn: '30887' }) === `${thisYear - 2000} years`);
+  check('an estimated year from the monitor shows "~"', B.ageText({ year: 2010, yearEst: true, yearHow: 'its type' }) === `~${thisYear - 2010} years`);
+  check('FR24\'s own date of manufacture read as a date, a time or an age', B.fr24BuiltYear('2001-03-15', null) === 2001 && B.fr24BuiltYear(986601600, null) === 2001 && B.fr24BuiltYear('', 24) === new Date().getUTCFullYear() - 24 && B.fr24BuiltYear('', 0) === 0);
   console.log(fails ? `\n${fails} failed` : '\nall passed');
   process.exitCode = fails ? 1 : 0;
 })();
