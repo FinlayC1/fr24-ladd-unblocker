@@ -53,6 +53,12 @@ const lt = E.heliAirportAt(51.4710, -0.4540); check('a helicopter down by Heathr
   const tbl = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'src', 'agetable.json'), 'utf8'));
   const [s0, y0] = tbl.GLF6.split(',')[10].split(':');
   check('an airframe the FAA register has held: its own year', (A.yearBySerial('GLF6', s0) || {}).year === 1900 + Number(y0), { serial: s0, got: A.yearBySerial('GLF6', s0) });
+  // (1.2.0) Airbus's one sequence for the A320 family: D-AIBD (A319, serial 4455, built 2010 - never on the FAA's register)
+  // dated from its neighbours of any A320-family type; a Boeing serial with no neighbours close by still gets none
+  const aibd = A.yearBySerial('A319', '4455');
+  check('D-AIBD (A319, serial 4455): dated from the A320 family\'s serials around it - 2010, give or take a year', !!aibd && Math.abs(aibd.year - 2010) <= 1, aibd);
+  check('... the A321neo the same way (one sequence)', !!A.yearBySerial('A21N', '7000'), A.yearBySerial('A21N', '7000'));
+  check('a Boeing serial in a customer block with no close neighbours (EI-DWY, 737-800 33638): no age made up', A.yearBySerial('B738', '33638') === null, A.yearBySerial('B738', '33638'));
   console.log(fails ? `\n${fails} failed` : '\nall passed');
   process.exitCode = fails ? 1 : 0;
 })();

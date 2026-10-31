@@ -117,6 +117,7 @@
       case 'needRoutes': onNeedRoutes(d).catch(e => log('routes page', e)); break;
       case 'needAirportData': onNeedAirportData(d).catch(e => log('airport page', e)); break;
       case 'needAirportPanel': onNeedAirportPanel(d).catch(e => log('airport panel', e)); break;
+      case 'mxGet': onMxGet(d); break;
       case 'pbFeed': onPbFeed(d); break;
       case 'pbFollow': onPbFollow(d); break;
       case 'pbHex': onPbHex(d); break;
@@ -267,6 +268,7 @@
   if (opt.on) bootAll(); else log('switched off in the LADD Unblock window');
   startUnblockWindow();
   function bootAll() {
+  mxHidePrivacyAds();
   if (opt.noAds) addAdStyle();
   // (the population tables unpack once FR24 has drawn the page - a few hundred ms of work that must not hold up its own
   // start - and the routes on screen are worked out again with them)

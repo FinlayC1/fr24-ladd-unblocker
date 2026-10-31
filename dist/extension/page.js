@@ -1,4 +1,4 @@
-// FR24 LADD Unblocker 1.1.5 - the page-world part (see src/page.js)
+// FR24 LADD Unblocker 1.2.0 - the page-world part (see src/page.js)
 (function () {
   'use strict';
   // ------------------------------------------------------------------------------------------------------------
@@ -7,7 +7,7 @@
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "1.1.5";
+    var BRIDGE_V = "1.2.0";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed
@@ -152,20 +152,28 @@
       if (!b || b.length < 5 || b[0] !== 0) return body;
       var len = ((b[1] << 24) | (b[2] << 16) | (b[3] << 8) | b[4]) >>> 0;
       if (5 + len > b.length) return body;
-      var fs = parse(b.subarray(5, 5 + len)), paths = [], parts = [], i;
+      var fs = parse(b.subarray(5, 5 + len)), paths = [], parts = [], i, hadMask = false;
       try { noteView(fs); } catch (e) { /* ignore */ }
-      if (stats.maskDisabled) return body;
+      // (1.2.0) the aircraft categories unticked in FR24's filters window: left out of the categories its feed asks for
+      // (FR24 asks for all of them for a Basic account; its server answers with only those asked for, for any account)
+      var off = mx.on ? mxCategoriesOff() : null, catChanged = false;
       for (i = 0; i < fs.length; i++) {
-        if (fs[i].fn === 10 && fs[i].wt === 2) { var m = parse(fs[i].val); for (var j = 0; j < m.length; j++) if (m[j].fn === 1 && m[j].wt === 2) paths.push(dec.decode(m[j].val)); }
+        if (fs[i].fn === 10 && fs[i].wt === 2) { hadMask = true; var m = parse(fs[i].val); for (var j = 0; j < m.length; j++) if (m[j].fn === 1 && m[j].wt === 2) paths.push(dec.decode(m[j].val)); }
+        else if (off && fs[i].fn === 2 && fs[i].wt === 2) {
+          var sf = parse(fs[i].val), sp = [], cats = [];
+          for (var k = 0; k < sf.length; k++) { if (sf[k].fn === 2 && sf[k].wt === 2) { for (var q = 0; q < sf[k].val.length;) { var rv = readVarint(sf[k].val, q); cats.push(rv[0]); q = rv[1]; } } else if (sf[k].fn === 2 && sf[k].wt === 0) cats.push(sf[k].val); else sp.push(sf[k].raw); }
+          var keep = cats.filter(function (c) { return off.indexOf(c) < 0; });
+          if (keep.length !== cats.length) { catChanged = true; stats.catPatched = (stats.catPatched || 0) + 1; sp.push(fLen(2, Uint8Array.from([].concat.apply([], keep.map(function (c) { return varintBytes(c); }))))); parts.push(fLen(2, concat(sp))); }
+          else parts.push(fs[i].raw);
+        }
         else parts.push(fs[i].raw);
       }
-      var want = ['type', 'reg'], changed = false;
+      var want = stats.maskDisabled ? [] : ['type', 'reg'], changed = false;
       for (i = 0; i < want.length; i++) if (paths.indexOf(want[i]) < 0) { paths.push(want[i]); changed = true; }
-      if (!changed) return body;
-      var maskParts = []; for (i = 0; i < paths.length; i++) maskParts.push(fStr(1, paths[i]));
-      parts.push(fLen(10, concat(maskParts)));
+      if (!changed && !catChanged) return body;
+      if (paths.length || hadMask) { var maskParts = []; for (i = 0; i < paths.length; i++) maskParts.push(fStr(1, paths[i])); parts.push(fLen(10, concat(maskParts))); }
       var nb = concat(parts), out = concat([frameHeader(0, nb.length), nb, b.subarray(5 + len)]);
-      stats.maskPatched++;
+      if (changed) stats.maskPatched++;
       return out;
     }
 
@@ -2316,6 +2324,609 @@
       });
     }
 
+    // ---- (1.2.0) FR24's locked map options, worked natively ------------------------------------------------------------
+    // FR24 decides what a plan may use from a table of plans per option in its own core module - exported, so the table
+    // FR24 reads is reachable from here: the options this script supplies the data for get "basic" (and "guest") added,
+    // nothing else - the account stays what it is everywhere else (a premium-only view stays FR24's to sell). The data:
+    //   - aeronautical charts, ATC boundaries: FR24's own tiles (tiles.flightradar24.com answers any visitor)
+    //   - oceanic tracks, current weather, AIRMETs/SIGMETs: FR24's own answer where it gives one; else built here from
+    //     public sources (the FAA's NAT message; aviationweather.gov's METARs, AIRMETs/SIGMETs and international SIGMETs)
+    //   - the layers FR24 buys from DTN: its weather "authorization" answered here, naming this script as the tile server,
+    //     and each tile FR24 then asks for drawn from a free source - EUMETSAT's geostationary ring (cloud), NASA's IMERG
+    //     (total precipitation), RainViewer's radar mosaic (intense precipitation, Australia), Iowa State's NEXRAD mosaic
+    //     (North America), the Aviation Weather Center's WAFS forecasts (icing, turbulence, CB and jets), Open-Meteo
+    //     (winds), Blitzortung (lightning)
+    // FR24's own layers, toggles, sliders, legends and popups draw all of it.
+    var mx = { on: optOn('mapx'), opts: 0, filterMax: 0, cats: false, tiles: 0, data: 0, fails: 0, lastError: '' };
+    stats.mapx = mx;
+    var MX_OPTS = ['map.layer.weather', 'map.layer.weather.radar', 'map.layer.weather.radar.global', 'map.layer.weather.satellite', 'map.layer.weather.naradar', 'map.layer.weather.auradar', 'map.layer.weather.wind', 'map.layer.weather.lightning', 'map.layer.weather.airmet', 'map.layer.weather.highlevel', 'map.layer.weather.icing', 'map.layer.weather.ict',
+      'map.layer.atc', 'map.layer.tracks.oceanic', 'map.layer.ndb', 'map.layer.ndb.alt.low', 'map.layer.ndb.alt.high', 'map.widgets.last_clicked_flights'];
+    function mxFail(e) { mx.fails++; mx.lastError = String(e && e.message || e).slice(0, 160); }
+    var mxNs = null, mxWrap = null;
+    // (FR24's map wrapper - in its core module, usable once the map is made: its Google map, its picture layers)
+    function mxWrapper() {
+      if (mxWrap) return mxWrap;
+      Object.keys(mxNs || {}).forEach(function (k) { if (mxWrap) return; try { var v = mxNs[k]; if (v && typeof v.getMap === 'function' && typeof v.addImageLayer === 'function' && v.getMap()) mxWrap = v; } catch (e) { /* not it, or not made yet */ } });
+      return mxWrap;
+    }
+    // (the tables found by their shape - FR24's export names change with every build: the plans per option, keyed by the
+    // options' own names; the custom filters each plan may keep, silver 10 / gold 25 / business 60)
+    function mxPatchCore(ns) {
+      // (the plan as FR24's page gives it: "Basic" - the table's own names are lower case; both added)
+      var plans = ['basic', 'Basic', 'BASIC', 'guest', 'Guest', 'GUEST'];
+      Object.keys(ns || {}).forEach(function (k) {
+        // (an export that throws when looked into - FR24's map wrapper before the map is made - is none of these)
+        try {
+          var v = ns[k];
+          if (!v || typeof v !== 'object' || Array.isArray(v)) return;
+          if (Array.isArray(v['map.layer.weather.wind']) && Array.isArray(v['map.layer.atc'])) {
+            MX_OPTS.forEach(function (f) { var a = v[f]; if (!Array.isArray(a) || !a.length) return; plans.forEach(function (p) { if (a.indexOf(p) < 0) a.push(p); }); mx.opts++; });
+          } else if (v.silver === 10 && v.gold === 25 && v.business === 60 && Object.keys(v).length <= 6) { plans.forEach(function (p) { v[p] = 60; }); mx.filterMax = 60; }
+        } catch (e) { /* not a table */ }
+      });
+    }
+    // (FR24's core module, as its page links it: imported here - the same module, so the same tables FR24 reads)
+    function mxCoreUrl() { var l = document.querySelector('link[rel="modulepreload"][href*="/__modulepreload__-"],script[src*="/__modulepreload__-"]'); return l ? (l.href || l.src || '') : ''; }
+    function mxFindCore(n) {
+      var u = mxCoreUrl();
+      if (u) { import(u).then(function (ns) { mxNs = ns; mxPatchCore(ns); }, mxFail); return; }
+      if (n < 600) oSetTimeout(function () { mxFindCore(n + 1); }, n < 200 ? 25 : 250);
+    }
+    // Aircraft categories: FR24's filters window lets only a premium account untick one (its live feed then asks for the
+    // categories left ticked - FR24's server honours that for anyone). Premium stays as it is for everything else: only
+    // the filters window's own reading of it is answered "yes".
+    var MX_CHUNK = /\/build\/assets\/([A-Za-z0-9_.]+)-[A-Za-z0-9_-]{8}\.js/;
+    function mxCaller() {
+      var ls = String(new Error().stack || '').split('\n');
+      for (var i = 1; i < ls.length && i < 18; i++) { var m = ls[i].match(MX_CHUNK); if (!m || /__modulepreload__/.test(ls[i])) continue; return m[1]; }
+      return '';
+    }
+    function mxPinia() { try { var el = document.getElementById('app'), app = el && el.__vue_app__, p = app && app.config && app.config.globalProperties && app.config.globalProperties.$pinia; return p && p._s ? p : null; } catch (e) { return null; } }
+    function mxCats() {
+      var p = mxPinia(), us = p && p._s.get('user'); if (!us) return false;
+      var raw = us.__v_raw || us, d = Object.getOwnPropertyDescriptor(raw, 'isPremiumUser');
+      if (!d || d.get) return true;
+      var ref = d.value;
+      Object.defineProperty(raw, 'isPremiumUser', { configurable: true, enumerable: true, get: function () { var real = ref && ref.__v_isRef ? ref.value : ref; return real || mxCaller() === 'Filters'; } });
+      // (the categories unticked, as FR24's own filters store gives them to its window and its counters: FR24's store
+      // hands a Basic account none - read here from where FR24 keeps the choice, its settings)
+      var fst = p._s.get('filters'), sst = p._s.get('settings');
+      if (fst && sst) Object.defineProperty(fst.__v_raw || fst, 'deselectedCategories', { configurable: true, enumerable: true, get: function () { var d = sst.filters && sst.filters.deselectedCategories; return Array.isArray(d) ? d : []; } });
+      mx.cats = true; return true;
+    }
+    // the categories left ticked, for FR24's live feed (null: all of them)
+    function mxCategoriesOff() { try { var p = mxPinia(), st = p && p._s.get('settings'), f = st && st.filters; if (!f || f.disabled) return null; var d = f.deselectedCategories; return Array.isArray(d) && d.length ? d.map(Number) : null; } catch (e) { return null; } }
+    if (mx.on) { mxFindCore(0); (function waitPinia(n) { if (!mxCats() && n < 240) oSetTimeout(function () { waitPinia(n + 1); }, 500); })(0); }
+
+    // ---- what the page part cannot reach itself: fetched by the userscript (any site; binary or text) --------------------
+    var mxWait = new Map(), mxSeq = 0;
+    function mxGet(url, bin, ms) {
+      return new Promise(function (res, rej) {
+        var rid = 'mx' + (++mxSeq), t = oSetTimeout(function () { mxWait.delete(rid); rej(new Error('timeout')); }, ms || 25000);
+        mxWait.set(rid, function (d) { oClearTimeout(t); mxWait.delete(rid); if (d.status >= 200 && d.status < 300 && d.body != null) res(d.body); else rej(new Error('HTTP ' + (d.status || 0))); });
+        post('mxGet', { rid: rid, url: url, bin: !!bin });
+      });
+    }
+    function mxGotMsg(d) { var f = mxWait.get(d.rid); if (f) f(d); }
+    var mxJsonCache = new Map();
+    function mxJson(url, ttl) {
+      var c = mxJsonCache.get(url); if (c && Date.now() - c.at < (ttl || 300000)) return c.p;
+      var p = mxGet(url, false).then(function (t) { return JSON.parse(t); });
+      mxJsonCache.set(url, { at: Date.now(), p: p }); p.catch(function () { mxJsonCache.delete(url); });
+      return p;
+    }
+
+    // ---- tiles: drawing ---------------------------------------------------------------------------------------------
+    function mxCanvas(w, h) { if (typeof OffscreenCanvas === 'function') return new OffscreenCanvas(w, h); var c = document.createElement('canvas'); c.width = w; c.height = h; return c; }
+    function mxPng(cv) {
+      if (cv.convertToBlob) return cv.convertToBlob({ type: 'image/png' });
+      return new Promise(function (res) { cv.toBlob(function (b) { res(b); }, 'image/png'); });
+    }
+    var MX_EMPTY = null;
+    function mxEmpty() { if (!MX_EMPTY) MX_EMPTY = mxPng(mxCanvas(1, 1)); return MX_EMPTY.then(function (b) { return new Response(b, { status: 200, headers: { 'content-type': 'image/png' } }); }); }
+    function mxResp(cv) { return mxPng(cv).then(function (b) { return new Response(b, { status: 200, headers: { 'content-type': 'image/png', 'cache-control': 'no-store' } }); }); }
+    // (a source image, kept: the same tile asked for again at another layer opacity, or panned back to)
+    var mxImgs = new Map();
+    function mxImage(url) {
+      var c = mxImgs.get(url); if (c) return c;
+      var p = mxGet(url, true).then(function (buf) { return createImageBitmap(new Blob([buf])); });
+      mxImgs.set(url, p); p.catch(function () { mxImgs.delete(url); });
+      if (mxImgs.size > 500) mxImgs.delete(mxImgs.keys().next().value);
+      return p;
+    }
+    // web mercator: a tile's corners in degrees, a point's place in the tile
+    var MX_R = 6378137, MX_HALF = Math.PI * MX_R;
+    function mxLon(x, z) { return x / Math.pow(2, z) * 360 - 180; }
+    function mxLat(y, z) { var n = Math.PI - 2 * Math.PI * y / Math.pow(2, z); return 180 / Math.PI * Math.atan(Math.sinh(n)); }
+    function mxMercY(lat) { var r = Math.max(-85.0511, Math.min(85.0511, lat)) * Math.PI / 180; return Math.log(Math.tan(Math.PI / 4 + r / 2)); }
+    function mxBox(z, x, y) { var s = 2 * MX_HALF / Math.pow(2, z); return [-MX_HALF + x * s, MX_HALF - (y + 1) * s, -MX_HALF + (x + 1) * s, MX_HALF - y * s]; }
+    // a source's tile at this zoom - or its nearest ancestor scaled up, past the source's deepest zoom
+    function mxTileFrom(src, z, x, y, maxZ) {
+      var dz = Math.max(0, z - maxZ), az = z - dz, ax = x >> dz, ay = y >> dz;
+      return mxImage(src(az, ax, ay)).then(function (img) {
+        var cv = mxCanvas(256, 256), g = cv.getContext('2d'), s = img.width / Math.pow(2, dz);
+        g.imageSmoothingEnabled = true;
+        g.drawImage(img, (x - (ax << dz)) * s, (y - (ay << dz)) * s, s, s, 0, 0, 256, 256);
+        return cv;
+      });
+    }
+    // only where a box of lon/lat intersects the tile: drawn; the rest left clear
+    function mxClip(cv, z, x, y, w, s, e, n) {
+      var g = cv.getContext('2d'), px = function (lon) { return (lon - mxLon(x, z)) / (mxLon(x + 1, z) - mxLon(x, z)) * 256; };
+      var t0 = mxMercY(mxLat(y, z)), t1 = mxMercY(mxLat(y + 1, z)), py = function (lat) { return (t0 - mxMercY(lat)) / (t0 - t1) * 256; };
+      var l = px(w), r = px(e), t = py(n), b = py(s);
+      g.save(); g.globalCompositeOperation = 'destination-in'; g.fillStyle = '#000'; g.fillRect(l, t, r - l, b - t); g.restore();
+      return cv;
+    }
+    function mxTileIn(z, x, y, w, s, e, n) { return !(mxLon(x + 1, z) < w || mxLon(x, z) > e || mxLat(y, z) < s || mxLat(y + 1, z) > n); }
+
+    // ---- the weather tiles -------------------------------------------------------------------------------------------
+    // cloud: EUMETSAT's geostationary ring at 10.8 µm (every geostationary satellite round the world, as FR24's own global
+    // IR) - cold, high tops bright: drawn white, the warm ground and sea left clear
+    function mxCloud(z, x, y) {
+      var b = mxBox(z, x, y), slot = Math.floor(Date.now() / 900000);
+      var u = 'https://view.eumetsat.int/geoserver/wms?service=WMS&version=1.3.0&request=GetMap&layers=mumi:worldcloudmap_ir108&styles=&format=image/png&crs=EPSG:3857&width=256&height=256&bbox=' + b.map(function (v) { return v.toFixed(2); }).join(',') + '&tl=' + slot;
+      return mxImage(u).then(function (img) {
+        var cv = mxCanvas(256, 256), g = cv.getContext('2d'); g.drawImage(img, 0, 0, 256, 256);
+        var d = g.getImageData(0, 0, 256, 256), p = d.data;
+        for (var i = 0; i < p.length; i += 4) { var a = (p[i] - 92) / 80; a = a <= 0 ? 0 : a >= 1 ? 1 : a; var al = p[i + 3]; p[i] = p[i + 1] = p[i + 2] = 255; p[i + 3] = Math.round(Math.pow(a, 0.85) * 235 * al / 255); }
+        g.putImageData(d, 0, 0); return cv;
+      });
+    }
+    // total precipitation: NASA's IMERG (satellites, every half hour, the whole world - oceans too)
+    function mxImerg(z, x, y) {
+      var slot = Math.floor(Date.now() / 1800000);
+      return mxTileFrom(function (Z, X, Y) { return 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/IMERG_Precipitation_Rate_30min/default/default/GoogleMapsCompatible_Level6/' + Z + '/' + Y + '/' + X + '.png?tl=' + slot; }, z, x, y, 6);
+    }
+    // intense precipitation and Australia: RainViewer's mosaic of the world's weather radars, its newest frame
+    function mxRvBase() {
+      return mxJson('https://api.rainviewer.com/public/weather-maps.json', 300000).then(function (j) { var p = j && j.radar && j.radar.past, l = p && p[p.length - 1]; if (!l) throw new Error('no radar frame'); return String(j.host || 'https://tilecache.rainviewer.com') + l.path; });
+    }
+    function mxRadar(z, x, y) { return mxRvBase().then(function (base) { return mxTileFrom(function (Z, X, Y) { return base + '/256/' + Z + '/' + X + '/' + Y + '/2/1_1.png'; }, z, x, y, 7); }); }
+    function mxAuRadar(z, x, y) { if (!mxTileIn(z, x, y, 108, -46, 160, -9)) return null; return mxRadar(z, x, y).then(function (cv) { return mxClip(cv, z, x, y, 108, -46, 160, -9); }); }
+    // North America: Iowa State's mosaic of the NEXRAD radars (refreshed every five minutes)
+    function mxNexrad(z, x, y) {
+      if (!mxTileIn(z, x, y, -170, 14, -50, 72)) return null;
+      var slot = Math.floor(Date.now() / 300000);
+      return mxTileFrom(function (Z, X, Y) { return 'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q-900913/' + Z + '/' + X + '/' + Y + '.png?tl=' + slot; }, z, x, y, 10);
+    }
+    // icing, turbulence and high-level significant weather: the Aviation Weather Center's WAFS forecasts - one picture of
+    // the world per level and forecast hour (6 to 36 hours after each 00/06/12/18 UTC run), in Mercator to 75.94°
+    var MX_WAFS_TOP = mxMercY(75.940536), mxWafs = null;
+    function mxYmd(t) { var d = new Date(t); return d.getUTCFullYear() + ('0' + (d.getUTCMonth() + 1)).slice(-2) + ('0' + d.getUTCDate()).slice(-2); }
+    function mxWafsUrl(run, fhr, param) { var hh = ('0' + new Date(run).getUTCHours()).slice(-2), ymd = mxYmd(run); return 'https://aviationweather.gov/data/products/wafs/' + ymd + '/' + hh + '/' + ymd + '_' + hh + '_F' + ('0' + fhr).slice(-2) + '_wafs_' + param + '_m.png'; }
+    // (the newest run published: looked for from four hours ago back, kept half an hour)
+    function mxWafsRun() {
+      if (mxWafs && Date.now() - mxWafs.at < 1800000) return mxWafs.p;
+      var t0 = Math.floor((Date.now() - 4 * 3600e3) / 21600e3) * 21600e3;
+      var p = (function look(i) { if (i > 4) return Promise.reject(new Error('no WAFS run found')); var run = t0 - i * 21600e3; return mxImage(mxWafsUrl(run, 6, '301_edr')).then(function () { return run; }, function () { return look(i + 1); }); })(0);
+      mxWafs = { at: Date.now(), p: p }; p.catch(function () { mxWafs = null; });
+      return p;
+    }
+    function mxNearest(levels, v) { var best = levels[0]; levels.forEach(function (l) { if (Math.abs(l[0] - v) < Math.abs(best[0] - v)) best = l; }); return best[1]; }
+    var MX_ICE = [[60, 812], [100, 697], [140, 595], [180, 506], [240, 393], [300, 301]];
+    var MX_TURB = [[140, 595], [180, 506], [240, 393], [270, 344], [300, 301], [340, 250], [390, 197], [450, 148]];
+    function mxWafsDraw(g, img, z, x, y) {
+      var W = img.width, H = img.height, lon0 = mxLon(x, z), lon1 = mxLon(x + 1, z), m0 = mxMercY(mxLat(y, z)), m1 = mxMercY(mxLat(y + 1, z));
+      var sx0 = (lon0 + 180) / 360 * W, sx1 = (lon1 + 180) / 360 * W, sy0 = (MX_WAFS_TOP - m0) / (2 * MX_WAFS_TOP) * H, sy1 = (MX_WAFS_TOP - m1) / (2 * MX_WAFS_TOP) * H;
+      var cy0 = Math.max(0, sy0), cy1 = Math.min(H, sy1); if (cy1 <= cy0) return;
+      g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
+      g.drawImage(img, sx0, cy0, sx1 - sx0, cy1 - cy0, 0, (cy0 - sy0) / (sy1 - sy0) * 256, 256, (cy1 - cy0) / (sy1 - sy0) * 256);
+    }
+    function mxWafsTile(z, x, y, params, vt, alphas) {
+      return mxWafsRun().then(function (run) {
+        var fhr = Math.max(6, Math.min(36, Math.round((vt - run) / 10800e3) * 3));
+        return Promise.all(params.map(function (pm) { return mxImage(mxWafsUrl(run, fhr, pm)).catch(function () { return null; }); }));
+      }).then(function (imgs) {
+        var cv = mxCanvas(256, 256), g = cv.getContext('2d');
+        imgs.forEach(function (img, i) {
+          if (!img) return;
+          // (the jets: only their cores - the fastest winds, green to yellow; the wide band round them left out)
+          if (/_wind$/.test(params[i])) {
+            var t = mxCanvas(256, 256), tg = t.getContext('2d'); mxWafsDraw(tg, img, z, x, y);
+            var d = tg.getImageData(0, 0, 256, 256), px = d.data; for (var k = 0; k < px.length; k += 4) if (px[k + 2] > 130) px[k + 3] = 0;
+            tg.putImageData(d, 0, 0); g.globalAlpha = alphas ? alphas[i] : 1; g.drawImage(t, 0, 0); return;
+          }
+          g.globalAlpha = alphas ? alphas[i] : 1; mxWafsDraw(g, img, z, x, y);
+        });
+        return cv;
+      });
+    }
+    // winds: Open-Meteo's GFS - speed and direction on the two pressure levels round the altitude asked for, on a grid as
+    // fine as the zoom wants (one barb every 50-60 pixels), kept; barbs or FR24's own colour scale drawn from it
+    var MX_PL = [1000, 975, 950, 925, 900, 850, 800, 700, 600, 500, 400, 300, 250, 200, 150, 100];
+    function mxPressure(ft) { return ft < 36089 ? 1013.25 * Math.pow(1 - 6.8756e-6 * ft, 5.2559) : 226.32 * Math.exp(-(ft - 36089) / 20806); }
+    function mxLevels(kft) {
+      var p = mxPressure(kft * 1000), a = 1000, b = 1000;
+      for (var i = 0; i < MX_PL.length; i++) { if (MX_PL[i] >= p) a = MX_PL[i]; if (MX_PL[i] <= p) { b = MX_PL[i]; break; } }
+      if (p >= 1000) return { a: 1000, b: 1000, w: 0 };
+      return { a: a, b: b, w: a === b ? 0 : Math.log(a / p) / Math.log(a / b) };
+    }
+    function mxGridDeg(z) { return z <= 2 ? 20 : z === 3 ? 10 : z === 4 ? 5 : z === 5 ? 2.5 : z === 6 ? 1.25 : z === 7 ? 0.625 : 0.3125; }
+    var mxWind = new Map(), mxWindAsk = new Map(), mxWindStop = 0;
+    function mxWindKey(lat, lon, lv) { return lat.toFixed(4) + ',' + lon.toFixed(4) + ',' + lv.a + ',' + lv.b; }
+    // (missing points asked for together, a hundred a request; a refusal (429) leaves Open-Meteo alone for ten minutes)
+    function mxWindPoints(pts, lv) {
+      var need = pts.filter(function (q) { var c = mxWind.get(mxWindKey(q[0], q[1], lv)); return !c || Date.now() - c.at > 3 * 3600e3; });
+      var waits = [];
+      for (var i = 0; i < need.length; i += 100) {
+        var part = need.slice(i, i + 100), key = part.map(function (q) { return mxWindKey(q[0], q[1], lv); }).join(';');
+        if (mxWindAsk.has(key)) { waits.push(mxWindAsk.get(key)); continue; }
+        if (Date.now() < mxWindStop) continue;
+        var vars = [lv.a, lv.b].filter(function (v, k, s) { return s.indexOf(v) === k; }).map(function (P) { return 'wind_speed_' + P + 'hPa,wind_direction_' + P + 'hPa'; }).join(',');
+        var u = 'https://api.open-meteo.com/v1/gfs?latitude=' + part.map(function (q) { return q[0].toFixed(3); }).join(',') + '&longitude=' + part.map(function (q) { return q[1].toFixed(3); }).join(',') + '&hourly=' + vars + '&wind_speed_unit=kn&forecast_days=3&timeformat=unixtime';
+        var pr = (function (part) {
+          return mxGet(u, false).then(function (t) {
+            var j = JSON.parse(t), arr = Array.isArray(j) ? j : [j];
+            arr.forEach(function (r, k) { var q = part[k]; if (!q || !r || !r.hourly) return; mxWind.set(mxWindKey(q[0], q[1], lv), { at: Date.now(), h: r.hourly }); });
+            if (mxWind.size > 20000) Array.from(mxWind.keys()).slice(0, 5000).forEach(function (k2) { mxWind.delete(k2); });
+          }, function (e) { if (/HTTP 429/.test(String(e))) mxWindStop = Date.now() + 600000; throw e; });
+        })(part);
+        mxWindAsk.set(key, pr); (function (key) { pr.then(function () { mxWindAsk.delete(key); }, function () { mxWindAsk.delete(key); }); })(key);
+        waits.push(pr);
+      }
+      return Promise.all(waits.map(function (w) { return w.catch(function () { return null; }); }));
+    }
+    // (speed (kt) and the direction it blows from, at a grid point and time: between the two levels)
+    function mxWindAt(lat, lon, lv, vt) {
+      var c = mxWind.get(mxWindKey(lat, lon, lv)); if (!c) return null;
+      var h = c.h, ts = h.time || [], k = 0; for (var i = 0; i < ts.length; i++) if (Math.abs(ts[i] * 1000 - vt) < Math.abs(ts[k] * 1000 - vt)) k = i;
+      var sa = (h['wind_speed_' + lv.a + 'hPa'] || [])[k], da = (h['wind_direction_' + lv.a + 'hPa'] || [])[k], sb = (h['wind_speed_' + lv.b + 'hPa'] || [])[k], db = (h['wind_direction_' + lv.b + 'hPa'] || [])[k];
+      if (sa == null || da == null) return null; if (sb == null || db == null) { sb = sa; db = da; }
+      var r = Math.PI / 180, ua = -sa * Math.sin(da * r), va = -sa * Math.cos(da * r), ub = -sb * Math.sin(db * r), vb = -sb * Math.cos(db * r);
+      var u = ua + (ub - ua) * lv.w, v = va + (vb - va) * lv.w;
+      return { s: Math.sqrt(u * u + v * v), d: (Math.atan2(-u, -v) / r + 360) % 360, u: u, v: v };
+    }
+    function mxWindGrid(z, x, y, lv) {
+      var deg = mxGridDeg(z), w = mxLon(x, z), e = mxLon(x + 1, z), n = mxLat(y, z), s = mxLat(y + 1, z), pts = [];
+      for (var la = Math.floor(s / deg) * deg - deg; la <= n + deg; la += deg) { if (la < -88 || la > 88) continue; for (var lo = Math.floor(w / deg) * deg - deg; lo <= e + deg; lo += deg) pts.push([la, ((lo + 540) % 360) - 180, lo]); }
+      return { deg: deg, pts: pts, w: w, e: e, n: n, s: s };
+    }
+    function mxPx(z, x, y, lat, lon) { var t0 = mxMercY(mxLat(y, z)), t1 = mxMercY(mxLat(y + 1, z)); return [(lon - mxLon(x, z)) / (mxLon(x + 1, z) - mxLon(x, z)) * 256, (t0 - mxMercY(lat)) / (t0 - t1) * 256]; }
+    // a wind barb: its staff toward where the wind comes from, flags 50 kt, barbs 10, half barbs 5
+    function mxBarb(g, px, py, kt, from) {
+      g.save(); g.translate(px, py);
+      if (kt < 2.5) { g.beginPath(); g.arc(0, 0, 4, 0, 2 * Math.PI); g.stroke(); g.restore(); return; }
+      g.rotate(from * Math.PI / 180);
+      var L = 20, v = Math.round(kt / 5) * 5, yb = -L;
+      g.beginPath(); g.moveTo(0, 0); g.lineTo(0, -L);
+      while (v >= 50) { g.moveTo(0, yb); g.lineTo(9, yb + 2); g.lineTo(0, yb + 5); yb += 6; v -= 50; }
+      while (v >= 10) { g.moveTo(0, yb); g.lineTo(10, yb - 4); yb += 4; v -= 10; }
+      if (v >= 5) { if (yb === -L) yb += 4; g.moveTo(0, yb); g.lineTo(5, yb - 2); }
+      g.stroke(); g.restore();
+    }
+    // FR24's own scale for the gradient (kt -> colour), as its legend shows it
+    var MX_GRAD = [[0, [255, 255, 255]], [20, [240, 254, 254]], [40, [225, 255, 255]], [60, [227, 255, 240]], [80, [239, 255, 210]], [100, [255, 255, 225]], [120, [254, 240, 179]], [140, [255, 210, 179]], [160, [253, 194, 180]], [180, [238, 180, 179]], [200, [255, 179, 254]], [220, [178, 179, 227]], [240, [229, 202, 255]]];
+    function mxGradColor(kt) {
+      if (kt >= 240) return MX_GRAD[MX_GRAD.length - 1][1];
+      for (var i = 1; i < MX_GRAD.length; i++) if (kt < MX_GRAD[i][0]) { var a = MX_GRAD[i - 1], b = MX_GRAD[i], f = (kt - a[0]) / (b[0] - a[0]); return [0, 1, 2].map(function (c) { return Math.round(a[1][c] + (b[1][c] - a[1][c]) * f); }); }
+      return MX_GRAD[0][1];
+    }
+    function mxWinds(z, x, y, kft, vt, barbs) {
+      var lv = mxLevels(kft), G = mxWindGrid(z, x, y, lv);
+      return mxWindPoints(G.pts, lv).then(function () {
+        var cv = mxCanvas(256, 256), g = cv.getContext('2d');
+        if (barbs) {
+          g.lineWidth = 1.4; g.lineCap = 'round'; g.lineJoin = 'round';
+          G.pts.forEach(function (q) {
+            var wv = mxWindAt(q[0], q[1], lv, vt); if (!wv) return;
+            var p = mxPx(z, x, y, q[0], q[2]);
+            if (p[0] < -24 || p[0] > 280 || p[1] < -24 || p[1] > 280) return;
+            g.strokeStyle = 'rgba(255,255,255,0.85)'; g.lineWidth = 3.2; mxBarb(g, p[0], p[1], wv.s, wv.d);
+            g.strokeStyle = '#1f2a37'; g.lineWidth = 1.4; mxBarb(g, p[0], p[1], wv.s, wv.d);
+          });
+          return cv;
+        }
+        // (the gradient: bilinear between the grid's points, 64x64 then smoothed to the tile)
+        var N = 64, small = mxCanvas(N, N), sg = small.getContext('2d'), img = sg.createImageData(N, N), d = img.data, deg = G.deg;
+        for (var j = 0; j < N; j++) {
+          var lat = mxLat(y + (j + 0.5) / N, z), la0 = Math.floor(lat / deg) * deg, fy = (lat - la0) / deg;
+          for (var i = 0; i < N; i++) {
+            var lon = mxLon(x + (i + 0.5) / N, z), lo0 = Math.floor(lon / deg) * deg, fx = (lon - lo0) / deg, wrap = function (l) { return ((l + 540) % 360) - 180; };
+            var c00 = mxWindAt(la0, wrap(lo0), lv, vt), c10 = mxWindAt(la0, wrap(lo0 + deg), lv, vt), c01 = mxWindAt(la0 + deg, wrap(lo0), lv, vt), c11 = mxWindAt(la0 + deg, wrap(lo0 + deg), lv, vt), o = (j * N + i) * 4;
+            if (!c00 || !c10 || !c01 || !c11) { d[o + 3] = 0; continue; }
+            var u = (c00.u * (1 - fx) + c10.u * fx) * (1 - fy) + (c01.u * (1 - fx) + c11.u * fx) * fy, v = (c00.v * (1 - fx) + c10.v * fx) * (1 - fy) + (c01.v * (1 - fx) + c11.v * fx) * fy;
+            var col = mxGradColor(Math.sqrt(u * u + v * v)); d[o] = col[0]; d[o + 1] = col[1]; d[o + 2] = col[2]; d[o + 3] = 150;
+          }
+        }
+        sg.putImageData(img, 0, 0); g.imageSmoothingEnabled = true; g.drawImage(small, 0, 0, 256, 256);
+        return cv;
+      });
+    }
+    // which tile FR24 asked for: its address names the product (with the level), the tile (TMS: y counted from the south)
+    // and the forecast time
+    function mxTile(url) {
+      var m = url.match(/\/\/tl-wx\.invalid\/v1\/tl\/tms\/1\.0\.0\/([^/]+)\/(\d+)\/(\d+)\/(\d+)\.png(?:\?([^#]*))?/); if (!m) return null;
+      var type = decodeURIComponent(m[1]).split('+')[0], z = +m[2], x = +m[3], y = Math.pow(2, z) - 1 - (+m[4]), q = m[5] || '';
+      var vt = Date.parse(decodeURIComponent((q.match(/(?:^|&)valid_time=([^&]*)/) || [])[1] || '')) || Date.now(), p = null, k;
+      if (y < 0 || y >= Math.pow(2, z)) return mxEmpty();
+      if (type === 'C09-0x0316-0') p = mxCloud(z, x, y);
+      else if (type === 'gfs-preciprate-inph-surface') p = mxImerg(z, x, y);
+      else if (type === 'C09-0x0374-0') p = mxRadar(z, x, y);
+      else if (type === 'north-american-radar') p = mxNexrad(z, x, y);
+      else if (type === 'C50-0x030F-0') p = mxAuRadar(z, x, y);
+      else if (/^gfs-halfdeg-wind/.test(type)) p = null;
+      else if ((k = type.match(/^wafs-hires-icing-fl(\d+)/))) p = mxWafsTile(z, x, y, [mxNearest(MX_ICE, +k[1]) + '_icsev'], vt);
+      else if ((k = type.match(/^wafs-hires-turbulence-fl(\d+)/))) p = mxWafsTile(z, x, y, [mxNearest(MX_TURB, +k[1]) + '_edr'], vt);
+      else if (type === 'sigwx-high') p = mxWafsTile(z, x, y, ['whole_cbhe', '250_wind'], vt, [1, 0.8]);
+      mx.tiles++;
+      var opk = type === 'sigwx-high' ? 'sigwx' : '';
+      return Promise.resolve(p).then(function (cv) { return cv ? mxResp(opk ? mxFade(cv, mxOp(opk)) : cv) : mxEmpty(); }, function (e) { mxFail(e); return mxEmpty(); });
+    }
+
+    // ---- lightning: Blitzortung's live strikes (its servers stream every strike its network locates, worldwide) - kept
+    // here from when the layer is first shown, half an hour of them; let go ten minutes after FR24 last asked
+    var mxLx = { ws: null, strikes: [], asked: 0, n: 0, retry: 0, host: 0, timer: 0 };
+    function mxLzw(b) { var dict = {}, d = b.split(''), c = d[0], f = c, g = [c], o = 256; for (var i = 1; i < d.length; i++) { var a = d[i].charCodeAt(0); a = a < 256 ? d[i] : dict[a] ? dict[a] : f + c; g.push(a); c = a.charAt(0); dict[o] = f + c; o++; f = a; } return g.join(''); }
+    function mxLightningOn() {
+      mxLx.asked = Date.now();
+      if (!mxLx.timer) mxLx.timer = setInterval(function () { var cut = Date.now() - 1800000; while (mxLx.strikes.length && mxLx.strikes[0][0] < cut) mxLx.strikes.shift(); if (Date.now() - mxLx.asked > 600000 && mxLx.ws) { try { mxLx.ws.close(); } catch (e) { /* gone */ } mxLx.ws = null; } }, 30000);
+      if (mxLx.ws || typeof WebSocket !== 'function') return;
+      var hosts = ['wss://ws1.blitzortung.org/', 'wss://ws8.blitzortung.org/', 'wss://ws7.blitzortung.org/'], ws;
+      try { ws = mxLx.ws = new WebSocket(hosts[mxLx.host++ % hosts.length]); } catch (e) { mxFail(e); mxLx.ws = null; return; }
+      ws.onopen = function () { mxLx.retry = 0; try { ws.send('{"a":111}'); } catch (e) { /* closed */ } };
+      ws.onmessage = function (m) { try { var j = JSON.parse(mxLzw(String(m.data))); if (typeof j.lat === 'number' && typeof j.lon === 'number') { mxLx.n++; mxLx.strikes.push([Math.round(Number(j.time) / 1e6) || Date.now(), j.lat, j.lon]); if (mxLx.strikes.length > 80000) mxLx.strikes.splice(0, 20000); } } catch (e) { /* not a strike */ } };
+      ws.onclose = function () { if (mxLx.ws === ws) mxLx.ws = null; if (Date.now() - mxLx.asked < 600000) oSetTimeout(mxLightningOn, Math.min(30000, 2000 * (++mxLx.retry))); };
+      ws.onerror = function () { try { ws.close(); } catch (e) { /* gone */ } };
+    }
+    // (FR24's own request - DTN's region.json, the bounds and the start time in its query: the strikes there since then)
+    function mxLightning(url) {
+      mxLightningOn();
+      var q = function (k) { var m = url.match(new RegExp('[?&]' + k + '=([^&]*)')); return m ? decodeURIComponent(m[1]) : null; };
+      var n = +q('n_lat'), s = +q('s_lat'), w = +q('w_lon'), e = +q('e_lon'), t0 = Date.parse(q('time_start') || '') || (Date.now() - 1680000);
+      var wrap = w > e, data = [];
+      for (var i = mxLx.strikes.length - 1; i >= 0; i--) {
+        var k = mxLx.strikes[i]; if (k[0] < t0) break;
+        if (isFinite(n) && (k[1] > n || k[1] < s)) continue;
+        if (isFinite(w) && (wrap ? (k[2] < w && k[2] > e) : (k[2] < w || k[2] > e))) continue;
+        data.push({ coordinates: [k[2], k[1]], intensity: 1, time: new Date(k[0]).toISOString() });
+        if (data.length >= 20000) break;
+      }
+      mx.data++; mx.strikes = mxLx.strikes.length; mx.lxShown = data.length;
+      return Promise.resolve(jsonResponse(null, { lightning: { data: data } }));
+    }
+
+    // ---- current weather: FR24's own stations where it answers; else every METAR in the world (aviationweather.gov's
+    // ten-minute file), the stations in view - one per few kilometres of screen at each zoom - with a symbol drawn here
+    var mxMetars = null;
+    function mxCsv(line) { var out = [], cur = '', q = false; for (var i = 0; i < line.length; i++) { var ch = line[i]; if (q) { if (ch === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += ch; } else if (ch === '"') q = true; else if (ch === ',') { out.push(cur); cur = ''; } else cur += ch; } out.push(cur); return out; }
+    function mxGunzip(buf) { return new Response(new Blob([buf]).stream().pipeThrough(new DecompressionStream('gzip'))).text(); }
+    function mxMetarList() {
+      if (mxMetars && Date.now() - mxMetars.at < 600000) return mxMetars.p;
+      var p = mxGet('https://aviationweather.gov/data/cache/metars.cache.csv.gz', true).then(mxGunzip).then(function (t) {
+        var rows = t.split('\n'), out = [];
+        for (var i = 1; i < rows.length; i++) {
+          if (!rows[i]) continue; var c = mxCsv(rows[i]), lat = parseFloat(c[3]), lon = parseFloat(c[4]); if (!c[1] || !isFinite(lat) || !isFinite(lon)) continue;
+          var sky = []; for (var k = 22; k <= 28; k += 2) if (c[k]) sky.push([c[k], +c[k + 1] || 0]);
+          out.push({ id: c[1], raw: c[0], t: Date.parse(c[2]) || 0, lat: lat, lon: lon, temp: c[5] === '' ? null : +c[5], wdir: c[7], wspd: +c[8] || 0, gust: +c[9] || 0, vis: c[10], wx: c[21] || '', sky: sky, cat: c[30] || '' });
+        }
+        return out;
+      });
+      mxMetars = { at: Date.now(), p: p }; p.catch(function () { mxMetars = null; });
+      return p;
+    }
+    function mxDaylight(lat, lon, t) {
+      var d = new Date(t), r = Math.PI / 180, doy = (Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - Date.UTC(d.getUTCFullYear(), 0, 0)) / 864e5;
+      var decl = 23.44 * Math.sin(2 * Math.PI / 365 * (doy - 81)), ha = (d.getUTCHours() + d.getUTCMinutes() / 60) * 15 + lon - 180;
+      return Math.asin(Math.sin(lat * r) * Math.sin(decl * r) + Math.cos(lat * r) * Math.cos(decl * r) * Math.cos(ha * r)) > -0.0145;
+    }
+    var MX_WX_WORDS = { TS: 'thunderstorm', SH: 'showers', FZ: 'freezing', RA: 'rain', DZ: 'drizzle', SN: 'snow', SG: 'snow grains', PL: 'ice pellets', GR: 'hail', GS: 'small hail', FG: 'fog', BR: 'mist', HZ: 'haze', FU: 'smoke', DU: 'dust', SA: 'sand', VA: 'volcanic ash', SQ: 'squalls', BC: 'patches of', MI: 'shallow', BL: 'blowing', DR: 'drifting', VC: 'nearby' };
+    function mxWxText(m) {
+      var parts = [];
+      (m.wx || '').split(/\s+/).filter(Boolean).forEach(function (w) { var lead = w[0] === '-' ? 'light ' : w[0] === '+' ? 'heavy ' : ''; var body = w.replace(/^[-+]/, ''), words = []; for (var i = 0; i + 1 < body.length; i += 2) { var k = body.slice(i, i + 2); if (MX_WX_WORDS[k]) words.push(MX_WX_WORDS[k]); } if (words.length) parts.push(lead + words.join(' ')); });
+      var low = m.sky.filter(function (s) { return /BKN|OVC|VV/.test(s[0]); })[0];
+      if (low) parts.push((low[0] === 'OVC' ? 'overcast' : low[0] === 'VV' ? 'sky obscured' : 'broken clouds') + ' at ' + low[1].toLocaleString('en-GB') + ' ft');
+      else if (m.sky.some(function (s) { return /FEW|SCT/.test(s[0]); })) parts.push('some clouds');
+      else if (!parts.length) parts.push('clear');
+      if (m.vis) parts.push('visibility ' + m.vis.replace('+', '') + ' mi');
+      var t = parts.join(', '); return t.charAt(0).toUpperCase() + t.slice(1);
+    }
+    function mxWxKind(m) {
+      var w = m.wx || '';
+      if (/TS/.test(w)) return 'ts'; if (/SN|SG|PL|GS|GR/.test(w)) return 'snow'; if (/RA|DZ|SH|UP/.test(w)) return 'rain'; if (/FG|BR|HZ|FU|DU|SA/.test(w)) return 'fog';
+      var c = m.sky.map(function (s) { return s[0]; }).join(' ');
+      return /OVC|BKN|VV/.test(c) ? 'cloud' : /SCT|FEW/.test(c) ? 'part' : 'clear';
+    }
+    function mxStations(url) {
+      var bb = (url.match(/[?&]bbox=([^&]*)/) || [])[1]; bb = bb ? decodeURIComponent(bb).split(',').map(Number) : [];
+      var w = bb[0], n = bb[1], e = bb[2], s = bb[3], z = bb[4] || 5, cell = z <= 3 ? 8 : z === 4 ? 4 : z === 5 ? 2 : z === 6 ? 1 : z === 7 ? 0.5 : z === 8 ? 0.25 : z === 9 ? 0.1 : 0;
+      return mxMetarList().then(function (list) {
+        var seen = {}, out = [], now = Date.now();
+        list.forEach(function (m) {
+          if (now - m.t > 3 * 3600e3) return;
+          if (isFinite(n) && (m.lat > n || m.lat < s)) return;
+          if (isFinite(w) && (w <= e ? (m.lon < w || m.lon > e) : (m.lon < w && m.lon > e))) return;
+          if (cell) { var key = Math.floor(m.lat / cell) + ':' + Math.floor(m.lon / cell); if (seen[key]) return; seen[key] = 1; }
+          out.push({ id: m.id, name: m.id, lat: String(m.lat), lon: String(m.lon), temperature_value: m.temp == null ? '' : String(m.temp), weather_code: 'tl' + mxWxKind(m) + (mxOp('current') < 100 ? mxOp('current') : ''), daylight: mxDaylight(m.lat, m.lon, now), weather_text: mxWxText(m), raw_text: m.raw });
+        });
+        mx.data++;
+        return out.slice(0, 1500);
+      });
+    }
+    // (the symbols: FR24 asks for /assets/images/weather/velocity/<code><d|n>.png - for the codes given here, drawn here)
+    function mxWxIcon(url) {
+      var m = url.match(/\/assets\/images\/weather\/velocity\/tl([a-z]+?)(\d*)([dn])\.png/); if (!m) return null;
+      var kind = m[1], day = m[3] === 'd', cv = mxCanvas(50, 50), g = cv.getContext('2d');
+      g.globalAlpha = m[2] === '' ? 1 : Math.max(0.05, Math.min(1, +m[2] / 100));
+      var sun = function (x, y, r) { g.fillStyle = '#ffc61a'; g.strokeStyle = '#ffc61a'; g.lineWidth = 2.5; g.beginPath(); g.arc(x, y, r, 0, 2 * Math.PI); g.fill(); for (var i = 0; i < 8; i++) { var a = i * Math.PI / 4; g.beginPath(); g.moveTo(x + Math.cos(a) * (r + 3), y + Math.sin(a) * (r + 3)); g.lineTo(x + Math.cos(a) * (r + 7), y + Math.sin(a) * (r + 7)); g.stroke(); } };
+      var moon = function (x, y, r) { g.fillStyle = '#d9dde8'; g.beginPath(); g.arc(x, y, r, 0, 2 * Math.PI); g.fill(); g.globalCompositeOperation = 'destination-out'; g.beginPath(); g.arc(x + r * 0.55, y - r * 0.35, r * 0.9, 0, 2 * Math.PI); g.fill(); g.globalCompositeOperation = 'source-over'; };
+      var cloud = function (x, y, s, col) { g.fillStyle = col || '#eef1f6'; g.strokeStyle = '#8d97a8'; g.lineWidth = 1.5; g.beginPath(); g.arc(x - 9 * s, y + 2 * s, 7 * s, Math.PI * 0.5, Math.PI * 1.5); g.arc(x - 2 * s, y - 5 * s, 9 * s, Math.PI, Math.PI * 1.85); g.arc(x + 9 * s, y + 1 * s, 8 * s, Math.PI * 1.35, Math.PI * 0.5); g.closePath(); g.fill(); g.stroke(); };
+      var drops = function (col) { g.strokeStyle = col; g.lineWidth = 2.5; g.lineCap = 'round'; [[16, 36], [25, 39], [34, 36]].forEach(function (p) { g.beginPath(); g.moveTo(p[0], p[1]); g.lineTo(p[0] - 2, p[1] + 6); g.stroke(); }); };
+      if (kind === 'clear') { if (day) sun(25, 25, 9); else moon(25, 25, 12); }
+      else if (kind === 'part') { if (day) sun(18, 18, 7); else moon(18, 18, 9); cloud(28, 30, 0.85); }
+      else if (kind === 'cloud') cloud(25, 26, 1.05);
+      else if (kind === 'rain') { cloud(25, 22, 1); drops('#3b82f6'); }
+      else if (kind === 'snow') { cloud(25, 22, 1); g.fillStyle = '#9fb7d9'; [[16, 39], [25, 42], [34, 39]].forEach(function (p) { g.beginPath(); g.arc(p[0], p[1], 2.6, 0, 2 * Math.PI); g.fill(); }); }
+      else if (kind === 'ts') { cloud(25, 20, 1, '#c9ced9'); g.fillStyle = '#ffb000'; g.beginPath(); g.moveTo(26, 28); g.lineTo(19, 40); g.lineTo(25, 40); g.lineTo(21, 49); g.lineTo(33, 35); g.lineTo(27, 35); g.lineTo(31, 28); g.closePath(); g.fill(); }
+      else if (kind === 'fog') { g.strokeStyle = '#9aa3b2'; g.lineWidth = 3; g.lineCap = 'round'; [16, 24, 32].forEach(function (yy, i) { g.beginPath(); g.moveTo(10 + i * 2, yy); g.lineTo(40 - i * 2, yy); g.stroke(); }); }
+      else return null;
+      return mxResp(cv);
+    }
+
+    // ---- AIRMETs and SIGMETs: FR24's own where it answers; else aviationweather.gov's - the US's AIRMETs, SIGMETs and
+    // convective SIGMETs, and every country's international SIGMETs - in FR24's own form, its popup filled from them
+    var MX_SEV = { 1: 'LT-MOD', 2: 'MOD', 3: 'MOD-SEV', 4: 'SEV', 5: 'SEV' };
+    function mxUtc(t) { if (!t) return ''; var d = new Date(typeof t === 'number' && t < 1e12 ? t * 1000 : t); return isNaN(d) ? '' : d.toISOString().slice(0, 16).replace('T', ' ') + ' UTC'; }
+    function mxGeom(coords, kind) {
+      var c = (coords || []).filter(function (p) { return p && isFinite(p.lat) && isFinite(p.lon); }).map(function (p) { return [+p.lon, +p.lat]; });
+      if (!c.length) return null;
+      if (kind === 'POINT' || c.length === 1) return { type: 'Point', coordinates: c[0] };
+      if (kind === 'LINE' || c.length === 2) return { type: 'LineString', coordinates: c };
+      var f = c[0], l = c[c.length - 1]; if (f[0] !== l[0] || f[1] !== l[1]) c.push(f);
+      return { type: 'Polygon', coordinates: [c] };
+    }
+    function mxAirsigList() {
+      return Promise.all([mxJson('https://aviationweather.gov/api/data/airsigmet?format=json', 600000).catch(function () { return []; }), mxJson('https://aviationweather.gov/api/data/isigmet?format=json', 600000).catch(function () { return []; })]).then(function (r) {
+        var out = [];
+        (Array.isArray(r[0]) ? r[0] : []).forEach(function (a, i) {
+          var g = mxGeom(a.coords); if (!g) return;
+          var hz = String(a.hazard || 'UNKNOWN').toUpperCase(); hz = hz === 'ASH' ? 'VA' : hz === 'MTN OBSCN' || hz === 'IFR' || hz === 'CONVECTIVE' || hz === 'TURB' || hz === 'ICE' || hz === 'LLWS' ? hz : hz;
+          out.push({ id: 'us' + i + '_' + (a.seriesId || ''), airmet_type: String(a.airSigmetType || 'SIGMET').toUpperCase() === 'OUTLOOK' ? 'SIGMET' : String(a.airSigmetType || 'SIGMET').toUpperCase(), altitude_min_units: a.altitudeLow1 != null ? 'ft' : '', altitude_min_value: a.altitudeLow1 != null ? String(a.altitudeLow1) : '', altitude_max_units: a.altitudeHi1 != null ? 'ft' : '', altitude_max_value: a.altitudeHi1 != null ? String(a.altitudeHi1) : '', hazard_qualifier: '', hazard_severity: MX_SEV[a.severity] || 'NONE', hazard_type: hz, issuer_icao: a.icaoId || 'KKCI', meta_from: mxUtc(a.creationTime || a.receiptTime), movement_direction_units: a.movementDir != null ? 'deg' : '', movement_direction_value: a.movementDir != null ? String(a.movementDir) : '', movement_speed_units: a.movementSpd != null ? 'kt' : '', movement_speed_value: a.movementSpd != null ? String(a.movementSpd) : '', raw_text: a.rawAirSigmet || '', region_id: a.icaoId || '', region_name: 'United States', valid_begin: mxUtc(a.validTimeFrom), valid_end: mxUtc(a.validTimeTo), geometry: JSON.stringify(g) });
+        });
+        (Array.isArray(r[1]) ? r[1] : []).forEach(function (a, i) {
+          var g = mxGeom(a.coords, a.geom); if (!g) return;
+          var hz = String(a.hazard || 'UNKNOWN').toUpperCase(), ql = String(a.qualifier || '').toUpperCase().split(/[\s-]+/)[0];
+          var q = { OBSC: 1, EMBD: 1, FRQ: 1, SQL: 1, ISOL: 1, SEV: 1 }[ql] ? ql : '';
+          var type = /^TS|^TSGR/.test(hz) && /OBSC|EMBD|FRQ|SQL/.test(q) ? q + ' ' + hz : q === 'SEV' && /^(TURB|ICE|MTW)$/.test(hz) ? 'SEV ' + hz : hz;
+          out.push({ id: 'in' + i + '_' + (a.firId || '') + (a.seriesId || ''), airmet_type: 'SIGMET', altitude_min_units: a.base != null ? 'ft' : '', altitude_min_value: a.base != null ? String(a.base) : '', altitude_max_units: a.top != null ? 'ft' : '', altitude_max_value: a.top != null ? String(a.top) : '', hazard_qualifier: q, hazard_severity: q === 'SEV' ? 'SEV' : 'NONE', hazard_type: type, issuer_icao: a.icaoId || '', meta_from: mxUtc(a.receiptTime), movement_direction_units: a.dir ? 'deg' : '', movement_direction_value: a.dir ? String(a.dir) : '', movement_speed_units: a.spd ? 'kt' : '', movement_speed_value: a.spd ? String(a.spd) : '', raw_text: a.rawSigmet || '', region_id: a.firId || '', region_name: a.firName || a.firId || '', valid_begin: mxUtc(a.validTimeFrom), valid_end: mxUtc(a.validTimeTo), geometry: JSON.stringify(g) });
+        });
+        mx.data++;
+        return out;
+      });
+    }
+
+    // ---- oceanic tracks: FR24's own where it answers; else the North Atlantic tracks from the FAA's copy of the day's NAT
+    // message - each track's points in latitude/longitude (its named entry and exit points left out)
+    function mxNatParse(text) {
+      var t = String(text || '').replace(/<[^>]+>/g, '\n').replace(/&nbsp;/g, ' '), out = {}, valid = (t.match(/([A-Z]{3}\s+\d{2}\/\d{4}Z)\s+TO\s+([A-Z]{3}\s+\d{2}\/\d{4}Z)/) || []);
+      var lines = t.split('\n').map(function (l) { return l.trim(); }), cur = null;
+      lines.forEach(function (l) {
+        var m = l.match(/^([A-Z])\s+([A-Z0-9/]+(?:\s+[A-Z0-9/]+)*)$/);
+        if (m && /\d{2}(?:\d{2})?\/\d{2,3}/.test(m[2])) {
+          var pts = {}, n = 0;
+          m[2].split(/\s+/).forEach(function (w) { var c = w.match(/^(\d{2})(\d{2})?\/(\d{2,3})(\d{2})?$/); if (c) pts[n++] = { lat: +c[1] + (+c[2] || 0) / 60, lon: -(+c[3] + (+c[4] || 0) / 60), name: w }; });
+          if (n >= 2) { cur = out[m[1]] = { n: m[1], d: 'WEST', p: pts, from: valid[1] || '', until: valid[2] || '' }; return; }
+        }
+        if (cur && /^EAST LVLS/.test(l) && !/NIL/.test(l)) cur.d = 'EAST';
+      });
+      return out;
+    }
+    function mxTracks() { return mxGet('https://www.notams.faa.gov/common/nat.html', false).then(function (t) { var o = mxNatParse(t); if (!Object.keys(o).length) throw new Error('no tracks'); mx.data++; return o; }); }
+
+    // ---- (1.2.0) transparency for the layers FR24 gives no opacity slider of its own: winds, high-level significant weather,
+    // the current weather's symbols (drawn here: faded as they are drawn, the layer shown again at once), ATC boundaries
+    // and the aeronautical charts (FR24's own pictures: faded where they are shown). A slider like FR24's own under each,
+    // kept in this browser.
+    var MX_OP_KEY = 'tl.mx.opacity', mxOps = (function () { try { var o = JSON.parse(localStorage.getItem(MX_OP_KEY) || '{}'); return o && typeof o === 'object' ? o : {}; } catch (e) { return {}; } })();
+    function mxOp(k) { var v = Number(mxOps[k]); return isFinite(v) && v >= 5 && v <= 100 ? Math.round(v) : 100; }
+    function mxFade(cv, op) { if (op >= 100) return cv; var o = mxCanvas(cv.width, cv.height), g = o.getContext('2d'); g.globalAlpha = op / 100; g.drawImage(cv, 0, 0); return o; }
+    function mxOpCss() {
+      var st = document.getElementById('tl-mx-opacity'); if (!st) { st = document.createElement('style'); st.id = 'tl-mx-opacity'; (document.head || document.documentElement).appendChild(st); }
+      st.textContent = 'img[src*="tiles.flightradar24.com/atc_boundaries"]{opacity:' + mxOp('atc') / 100 + '!important}' +
+        'img[src*="tiles.flightradar24.com/navdata_"],img[src*="tiles.flightradar24.com/navaid/"]{opacity:' + mxOp('charts') / 100 + '!important}' +
+        '.tl-mx-op{margin-top:.75rem;font-size:.875rem;color:#2c2c2c}.tl-mx-op .tl-mx-oh{display:flex;justify-content:space-between;margin-bottom:.35rem}.tl-mx-op .tl-mx-oh b{font-weight:600}' +
+        '.tl-mx-op input{width:100%;accent-color:#fbbf24;cursor:pointer;margin:0}';
+    }
+    // (the drawn layers shown again with the new value: switched off and on in FR24's own settings - no tile is fetched again)
+    var MX_OP_LAYERS = { sigwx: ['sigwx'], current: ['current'] }, mxOpT = 0;
+    // Winds: FR24 shows its own wind layer at a fixed 7% (barbs) or 22% (gradient) opacity - right for DTN's pictures, too
+    // faint for anything else - so its tiles are left empty and the same winds drawn as a layer of this script's own on the
+    // Google map, following FR24's own switch and altitude slider, at the opacity chosen here.
+    var mxWindSlot = -1, mxWindSig = '';
+    function mxWindType(barbs, kft, op) {
+      return { tileSize: new window.google.maps.Size(256, 256), maxZoom: 22, minZoom: 0, name: 'tl-winds',
+        getTile: function (c0, zoom, doc) {
+          var c = doc.createElement('canvas'), n = Math.pow(2, zoom), x = ((c0.x % n) + n) % n; c.width = c.height = 256; c.style.width = c.style.height = '256px';
+          if (c0.y >= 0 && c0.y < n) mxWinds(zoom, x, c0.y, kft, Date.now(), barbs).then(function (cv) { var g = c.getContext('2d'); g.globalAlpha = op / 100; g.drawImage(cv, 0, 0); }, mxFail);
+          return c;
+        },
+        releaseTile: function () { /* nothing kept */ } };
+    }
+    function mxWindSync() {
+      try {
+        var p = mxPinia(), st = p && p._s.get('settings'), w = st && st.weather, cfg = st && st.weatherConfig, wr = mxWrapper(), map = wr && wr.getMap();
+        if (!w || !map || !window.google || !window.google.maps) return;
+        var mode = w.windBarbs ? 'b' : w.windGradient ? 'g' : '', kft = Math.max(1, Number(cfg && cfg.windAltitude) || 1), op = mxOp('wind');
+        var sig = mode ? [mode, kft, op, Math.floor(Date.now() / 3600e3)].join('|') : '';
+        if (sig === mxWindSig) return; mxWindSig = sig;
+        var ov = map.overlayMapTypes;
+        if (mxWindSlot < 0 || mxWindSlot >= ov.getLength()) { if (!mode) return; ov.push(null); mxWindSlot = ov.getLength() - 1; }
+        ov.setAt(mxWindSlot, mode ? mxWindType(mode === 'b', kft, op) : null);
+      } catch (e) { mxFail(e); }
+    }
+    if (mx.on) setInterval(mxWindSync, 1000);
+    function mxRedraw(k) {
+      var keys = MX_OP_LAYERS[k]; if (!keys) return;
+      oClearTimeout(mxOpT);
+      mxOpT = oSetTimeout(function () {
+        try {
+          var p = mxPinia(), st = p && p._s.get('settings'), w = st && st.weather; if (!w) return;
+          keys.forEach(function (n) { if (w[n]) { st.set('weather', n, false); oSetTimeout(function () { st.set('weather', n, true); }, 80); } });
+        } catch (e) { mxFail(e); }
+      }, 450);
+    }
+    var MX_OP_SPOTS = [['wind', '[data-testid="weather-windSpeed"]'], ['sigwx', '[data-testid="weather-sigwx"]'], ['current', '[data-testid="weather-current"]'],
+      ['atc', '[data-testid="settings__map__atc-boundaries__none"]'], ['charts', '[data-testid="settings__map__nav-data__none"]']];
+    function mxOpSliders() {
+      MX_OP_SPOTS.forEach(function (sp) {
+        var el = document.querySelector(sp[1]); if (!el) return;
+        var box = el.matches('[data-testid^="weather-"]') ? el : (el.closest('.border-b-2') || (el.parentElement && el.parentElement.parentElement) || el.parentElement);
+        if (!box || box.querySelector('.tl-mx-op')) return;
+        var d = document.createElement('div'); d.className = 'tl-mx-op'; d.setAttribute('data-testid', 'tl-mx-opacity__' + sp[0]);
+        d.innerHTML = '<div class="tl-mx-oh"><b>Opacity</b><span></span></div><input type="range" min="5" max="100" step="5">';
+        var inp = d.querySelector('input'), lab = d.querySelector('span');
+        inp.value = String(mxOp(sp[0])); lab.textContent = inp.value + '%';
+        inp.addEventListener('input', function () { mxOps[sp[0]] = +inp.value; lab.textContent = inp.value + '%'; try { localStorage.setItem(MX_OP_KEY, JSON.stringify(mxOps)); } catch (e) { /* full */ } mxOpCss(); });
+        inp.addEventListener('change', function () { mxRedraw(sp[0]); });
+        box.appendChild(d);
+      });
+    }
+    if (mx.on) {
+      mxOpCss();
+      // (looked at once in 300 ms at most, however busy the page - not at every change: the map changes all the time)
+      var mxOpDue = false, mxOpMo = new MutationObserver(function () { if (mxOpDue) return; mxOpDue = true; oSetTimeout(function () { mxOpDue = false; if (document.querySelector('[data-testid="weather-current"],[data-testid="settings__map__atc-boundaries__none"]')) mxOpSliders(); }, 300); });
+      (function watch() { if (document.body) mxOpMo.observe(document.body, { childList: true, subtree: true }); else oSetTimeout(watch, 50); })();
+    }
+
+    // ---- FR24's weather "authorization": its products all available, the tile server named as this script; a new
+    // "date" each hour (FR24 asks for its tiles again), the forecast times FR24's sliders offer
+    var MX_TYPES = ['volcanic-eruption', 'basic-weater', 'C09-0x0316-0', 'gfs-preciprate-inph-surface', 'C09-0x0374-0', 'north-american-radar', 'C50-0x030F-0', 'gfs-halfdeg-windvector-1kft-msl', 'gfs-halfdeg-windspeed-kts-1kft-msl', 'lightning', 'airmets-and-sigmets', 'sigwx-high', 'wafs-hires-icing-fl060', 'wafs-hires-turbulence-fl100'];
+    function mxIso(t) { return new Date(t).toISOString().slice(0, 19) + 'Z'; }
+    function mxAuth() {
+      var now = Date.now(), hour = Math.floor(now / 3600e3) * 3600e3, meta = mxIso(hour);
+      return mxWafsRun().catch(function () { return Math.floor((now - 6 * 3600e3) / 21600e3) * 21600e3; }).then(function (run) {
+        var md = {}, every = function (from, step, n) { var a = []; for (var i = 0; i < n; i++) a.push(mxIso(from + i * step)); return a; };
+        MX_TYPES.forEach(function (k) { md[k] = { metaDate: meta, validTimes: [meta], refreshRate: 600 }; });
+        md['gfs-halfdeg-windvector-1kft-msl'].validTimes = md['gfs-halfdeg-windspeed-kts-1kft-msl'].validTimes = every(hour, 3 * 3600e3, 9);
+        var w0 = Math.max(run + 6 * 3600e3, Math.floor(now / 10800e3) * 10800e3), wt = [];
+        for (var t = w0; t <= run + 36 * 3600e3; t += 10800e3) wt.push(mxIso(t));
+        md['wafs-hires-icing-fl060'].validTimes = md['wafs-hires-turbulence-fl100'].validTimes = wt.length ? wt : [meta];
+        md['sigwx-high'].validTimes = wt.filter(function (x, i) { return i % 2 === 0; }).slice(0, 5);
+        md.lightning.refreshRate = 60;
+        mx.data++;
+        return { data: { endpoints: ['tl-wx.invalid'], key: 'tl', signature: 'tl=1', metadates: md } };
+      });
+    }
+    // (FR24's own answer first, for what FR24 may serve any account; its refusal, an error or an empty answer: built here)
+    function mxOwnOr(input, init, ok, build) {
+      return oFetch.call(window, input, init).then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.clone().json().then(function (j) { if (ok(j)) return r; throw new Error('empty'); });
+      }).catch(function () { return build().then(function (o) { return jsonResponse(null, o); }); });
+    }
+    // every request of FR24's these options answer: their answer, or null (FR24's own request goes on)
+    function mxFetch(url, input, init) {
+      if (!mx.on) return null;
+      if (/\/\/tl-wx\.invalid\//.test(url)) return mxTile(url);
+      if (/\/api\/v1\/weather\/auth\b/.test(url)) return mxAuth().then(function (o) { return jsonResponse(null, o); }, function (e) { mxFail(e); return jsonResponse(null, { data: null }); });
+      if (/adn\.velocityweather\.com\/v1\/[^/]+\/reports\/lightning\/region\.json/.test(url)) return mxLightning(url);
+      if (/\/assets\/images\/weather\/velocity\/tl[a-z]+\d*[dn]\.png/.test(url)) return mxWxIcon(url);
+      if (/\/weather\/stations\?bbox=/.test(url)) return mxOwnOr(input, init, function (j) { return Array.isArray(j) && j.length > 0; }, function () { return mxStations(url); });
+      if (/\/weather\/airsigmetsbbox\?/.test(url)) return mxOwnOr(input, init, function (j) { return Array.isArray(j) && j.length > 0; }, mxAirsigList);
+      if (/\/json\/tracks(?:[?#]|$)/.test(url)) return mxOwnOr(input, init, function (j) { return j && typeof j === 'object' && Object.keys(j).length > 0; }, mxTracks);
+      return null;
+    }
+
     window.fetch = function (input, init) {
       var url = urlOf(input), m;
       noteReq('fetch', (init && init.method) || (input && input.method), url);
@@ -2328,6 +2939,8 @@
         }
       } catch (e) { /* fall through */ }
       try {
+        // (1.2.0) FR24's locked map options: their weather authorization, tiles, stations, AIRMETs/SIGMETs, lightning, tracks
+        var mxr = mxFetch(url, input, init); if (mxr) return mxr;
         // board detail card of a kept row (an earlier or later page): from what was kept
         if ((m = url.match(/\/api\/v1\/airports\/(\d+)\/(arrivals|departures)\/(\d+)(?:$|[?#])/)) && Number(m[3]) >= 20000000000 && archById.has(Number(m[3]))) { stats.details++; return archDetail(archById.get(Number(m[3])), Number(m[1]), m[2]); }
         // board detail card of a row this script added: answered locally, instantly (FR24 would say 404)
@@ -2916,6 +3529,7 @@
         var w = histWait.get(reg) || []; histWait.delete(reg); w.forEach(function (fn) { try { fn(hist.get(reg) || null); } catch (e) { /* ignore */ } });
       }
       else if (d.__tweeksLadd === 'boardArch') acceptBoardArch(d);
+      else if (d.__tweeksLadd === 'mxGot') mxGotMsg(d);
       else if (d.__tweeksLadd === 'needTrail') bgFollowTrail(Number(d.id) || 0);
       else if (d.__tweeksLadd === 'pubIds') { (d.rows || []).forEach(function (r) { if (r && r[0]) pubIds.set(String(r[0]).toUpperCase(), { o: r[1] || '', a: Number(r[2]) || 0, m: r[3] || '', c: Number(r[4]) || 0 }); }); if (pubIds.size > 30000) { var drop = pubIds.size - 25000; pubIds.forEach(function (v, k) { if (drop-- > 0) pubIds.delete(k); }); } }
       else if (d.__tweeksLadd === 'photoReq') { if (d.hex) fetchPhotos(d.hex, d.reg, !!d.pri); }
@@ -2931,7 +3545,7 @@
       else if (d.__tweeksLadd === 'hello') post('ready', { stats: stats, feedReady: !!feedHeaders, hdr: feedHdrPublic(), v: BRIDGE_V });
     });
     window[NS] = { resolved: resolved, routes: routes, naRecs: naRecs, naRoutes: naRoutes, telem: telem, hist: hist, lastPos: lastPos, photoCache: photoCache, psCache: psCache, stats: stats, fetchPhotos: fetchPhotos, hello: function () { post('ready', { stats: stats, feedReady: !!feedHeaders, v: BRIDGE_V }); }, v: BRIDGE_V };
-    if (window.__tlTestHook) try { window.__tlTestHook({ csOf: csOf, patchTopFlights: patchTopFlights, fillFlightList: fillFlightList, routeRows: routeRows, liveDestFix: liveDestFix, hist: hist, preloaded: function () { return preloaded; }, parse: parse, photoFits: photoFits, makerOf: makerOf, patchFollow: patchFollow, patchFlightMsg: patchFlightMsg, pushFollow: pushFollow, followSt: function () { return followSt; }, setFollowSt: function (s) { followSt = s; }, shownPhotos: shownPhotos, photoCache: photoCache, FOLLOW: FOLLOW, DETAILS: DETAILS, fLen: fLen, fStr: fStr, fVar: fVar, patchFlight: patchFlight, patchLiveFeed: patchLiveFeed, fr24Named: fr24Named, psState: function () { return { q: psQ.length, busy: psBusy, last: psLast, blockedFor: Math.max(0, psBlockedUntil - Date.now()), pri: Array.from(psPri), jobs: photoJobs.size, head: psQ.slice(0, 3).map(function (j) { return j.hex; }) }; }, acceptPubTel: acceptPubTel, pubTelFor: pubTelFor, fillNativeCard: fillNativeCard, regsOfCallsign: regsOfCallsign, categoryOf: categoryOf, placeShort: placeShort, nativeFill: nativeFill, natInfo: natInfo, addArch: addArch, acceptBoardArch: acceptBoardArch, telem: telem, b64Encode: b64Encode, b64DecodeInto: b64DecodeInto, frameHeader: frameHeader, concat: concat, varintInt32: varintInt32, PLAYBACK: PLAYBACK, patchPlayback: patchPlayback, patchPlaybackRequest: patchPlaybackRequest, pbRoutes: pbRoutes, pbTelAt: pbTelAt, setPbTrace: function (t) { pbTrace = t; }, patchList: patchList, acceptSites: acceptSites, listSig: listSig, mergeRoutes: mergeRoutes, applyRoutes: applyRoutes, routesAdd: routesAdd, applyAirport: applyAirport, applyBoardPage: applyBoardPage, applyStats: applyStats, mergeFlights: mergeFlights, apData: apData, telAt: telAt, noteTelem: noteTelem, pbTraceOf: function () { return pbTrace; }, logoOf: logoOf, archDetail: archDetail, tsOf: tsOf, noteAirportJson: noteAirportJson, rwyOf: rwyOf, rwyPanel: rwyPanel, panelTick: panelTick, panelData: panelData, promoSlots: promoSlots, acceptAirportPanel: acceptAirportPanel, unlockRunways: unlockRunways, mvRows: mvRows, mvKept: mvKept, dayOf: dayOf, pbPanelTick: pbPanelTick, logoFix: logoFix, liveEntries: liveEntries, pbPos: pbPos, unlockFeed: unlockFeed, derivedVs: derivedVs, altHist: altHist, acceptAir: acceptAir, airCache: airCache, flushAir: flushAir, airWant: function () { return airWant; }, lastPos: lastPos, resolved: resolved, stats: stats, pbFind: pbFind, pbTraceUrl: pbTraceUrl, pbMerge: pbMerge, inBar: inBar, pbBlk: pbBlk, cardInfo: cardInfo, boardRowsSeen: boardRowsSeen, archById: archById, placeBoard: placeBoard, stopBoardHold: stopBoardHold, needBoardArch: needBoardArch, routes: routes, setCurFollow: function (id) { curFollowId = id; } }); } catch (e) { /* ignore */ }
+    if (window.__tlTestHook) try { window.__tlTestHook({ csOf: csOf, patchTopFlights: patchTopFlights, fillFlightList: fillFlightList, routeRows: routeRows, liveDestFix: liveDestFix, hist: hist, preloaded: function () { return preloaded; }, parse: parse, photoFits: photoFits, makerOf: makerOf, patchFollow: patchFollow, patchFlightMsg: patchFlightMsg, pushFollow: pushFollow, followSt: function () { return followSt; }, setFollowSt: function (s) { followSt = s; }, shownPhotos: shownPhotos, photoCache: photoCache, FOLLOW: FOLLOW, DETAILS: DETAILS, fLen: fLen, fStr: fStr, fVar: fVar, patchFlight: patchFlight, patchLiveFeed: patchLiveFeed, fr24Named: fr24Named, psState: function () { return { q: psQ.length, busy: psBusy, last: psLast, blockedFor: Math.max(0, psBlockedUntil - Date.now()), pri: Array.from(psPri), jobs: photoJobs.size, head: psQ.slice(0, 3).map(function (j) { return j.hex; }) }; }, acceptPubTel: acceptPubTel, pubTelFor: pubTelFor, fillNativeCard: fillNativeCard, regsOfCallsign: regsOfCallsign, categoryOf: categoryOf, placeShort: placeShort, nativeFill: nativeFill, natInfo: natInfo, addArch: addArch, acceptBoardArch: acceptBoardArch, telem: telem, b64Encode: b64Encode, b64DecodeInto: b64DecodeInto, frameHeader: frameHeader, concat: concat, varintInt32: varintInt32, PLAYBACK: PLAYBACK, patchPlayback: patchPlayback, patchPlaybackRequest: patchPlaybackRequest, pbRoutes: pbRoutes, pbTelAt: pbTelAt, setPbTrace: function (t) { pbTrace = t; }, patchList: patchList, acceptSites: acceptSites, listSig: listSig, mergeRoutes: mergeRoutes, applyRoutes: applyRoutes, routesAdd: routesAdd, applyAirport: applyAirport, applyBoardPage: applyBoardPage, applyStats: applyStats, mergeFlights: mergeFlights, apData: apData, telAt: telAt, noteTelem: noteTelem, pbTraceOf: function () { return pbTrace; }, logoOf: logoOf, archDetail: archDetail, tsOf: tsOf, noteAirportJson: noteAirportJson, rwyOf: rwyOf, rwyPanel: rwyPanel, panelTick: panelTick, panelData: panelData, promoSlots: promoSlots, acceptAirportPanel: acceptAirportPanel, unlockRunways: unlockRunways, mvRows: mvRows, mvKept: mvKept, dayOf: dayOf, pbPanelTick: pbPanelTick, logoFix: logoFix, liveEntries: liveEntries, pbPos: pbPos, unlockFeed: unlockFeed, derivedVs: derivedVs, altHist: altHist, acceptAir: acceptAir, airCache: airCache, flushAir: flushAir, airWant: function () { return airWant; }, lastPos: lastPos, resolved: resolved, stats: stats, pbFind: pbFind, pbTraceUrl: pbTraceUrl, pbMerge: pbMerge, inBar: inBar, pbBlk: pbBlk, cardInfo: cardInfo, boardRowsSeen: boardRowsSeen, archById: archById, placeBoard: placeBoard, stopBoardHold: stopBoardHold, needBoardArch: needBoardArch, mx: mx, mxPatchCore: mxPatchCore, mxAuth: mxAuth, mxNatParse: mxNatParse, mxAirsigList: mxAirsigList, mxStations: mxStations, mxLightning: mxLightning, mxLx: mxLx, mxFetch: mxFetch, mxWxText: mxWxText, mxWxKind: mxWxKind, mxCsv: mxCsv, patchLiveFeedRequest: patchLiveFeedRequest, mxCats: mxCats, mxOp: mxOp, mxLevels: mxLevels, mxNearest: mxNearest, MX_ICE: MX_ICE, MX_TURB: MX_TURB, mxWafsUrl: mxWafsUrl, routes: routes, setCurFollow: function (id) { curFollowId = id; } }); } catch (e) { /* ignore */ }
     post('ready', { stats: stats, feedReady: false, v: BRIDGE_V });
   }
 

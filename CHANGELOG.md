@@ -4,6 +4,53 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 
 1.0.0 is the first release. The versions before it are the betas, labelled B: B22.31.12 is version 22.31.12.
 
+## [1.2.0] - 2026-10-31
+
+### In short
+- FR24's locked weather layers now work, in FR24's own Weather window: cloud, total and intense precipitation, North American and Australian radar, winds, lightning, AIRMETs/SIGMETs, high-level significant weather, icing, turbulence and current weather.
+- Aeronautical charts (navaids, low and high altitude), ATC boundaries in all three colours, oceanic tracks and the Last clicked flights widget are unlocked too.
+- You can untick aircraft categories in FR24's Filters window, and keep up to 60 custom filters.
+- Layers without an opacity slider of their own now have one: winds, high-level significant weather, current weather, ATC boundaries and the charts.
+- Aircraft ages show for far more Airbus aircraft, dated from their serial numbers.
+- The data comes from free public sources (EUMETSAT, NASA, RainViewer, Iowa State, the Aviation Weather Center, Open-Meteo, Blitzortung) and from FR24's own public chart tiles. All of it can be switched off with "Locked map options" in the LADD Unblock window.
+
+### Added
+- **FR24's locked map options, worked natively.** FR24 decides which plan may use each option from a table in its own core module, which it exports. The script imports that same module and adds Basic to the plans of the options it can supply data for, and nothing else. The account stays Basic everywhere else: 3D view, longer history, list and multi view stay locked, because FR24's servers would refuse them.
+  - The table is found by its shape, not its name, so a new FR24 build keeps working. FR24's page writes the plan as "Basic" and its table as "basic", so both are added.
+- **The weather layers FR24 buys from DTN.** FR24 asks its server for a weather "authorization" that names DTN's tile server. The script answers it instead, naming itself, so FR24's own layers, toggles, opacity sliders, altitude and time sliders, legends and popups draw every tile the script supplies:
+
+  | FR24 layer | Source |
+  | --- | --- |
+  | Cloud | EUMETSAT's geostationary ring at 10.8 µm (every geostationary satellite round the world), cold cloud tops drawn white |
+  | Total precipitation | NASA's IMERG precipitation rate (satellites, every half hour, worldwide including the oceans; a few hours behind) |
+  | Intense precipitation | RainViewer's mosaic of the world's weather radars |
+  | North American radar | Iowa State's NEXRAD mosaic (every five minutes) |
+  | Australian radar | RainViewer's mosaic, over Australia only |
+  | Winds (barbs, gradient) | Open-Meteo's GFS, on the pressure levels either side of the altitude chosen, every 3 hours for a day |
+  | Lightning | Blitzortung's live strikes, kept from when the layer is first shown, half an hour of them |
+  | Hi-res icing, Hi-res turbulence | The Aviation Weather Center's WAFS forecasts, worldwide, at the nearest level, 6 to 36 hours ahead |
+  | High-level significant weather | WAFS cumulonimbus areas and jet-stream cores |
+  | AIRMETs/SIGMETs | FR24's own where it gives them; else aviationweather.gov's US AIRMETs/SIGMETs and every country's international SIGMETs, clickable with their text |
+  | Current weather | FR24's own where it gives it; else every METAR in the world (aviationweather.gov), one station per few kilometres of screen, with a symbol, temperature and conditions |
+
+  FR24 shows its own wind layer at a fixed 7% (barbs) or 22% (gradient) opacity, which suits DTN's pictures and is too faint for anything else. So its wind tiles are left empty, and the same winds are drawn as a layer of the script's own on the map, following FR24's switch and altitude slider.
+- **Aeronautical charts and ATC boundaries:** FR24's own tiles, which its tile server gives any visitor.
+- **Oceanic tracks:** FR24's own where it gives them; else the North Atlantic tracks from the FAA's copy of the day's NAT message, as latitude/longitude points (the named entry and exit points are left out).
+- **Aircraft category filters.** FR24's live feed asks for the categories still ticked, and FR24's server honours that for any account (tested without an account: passenger only 154 aircraft, cargo 23, business jets 3, out of 228). FR24's filters window lets only a premium account untick one, and its filters store hands a Basic account none. Now the window's checkboxes work, show your choice, and the categories you untick are left out of the feed's request.
+- **Custom filters:** up to 60, as Business, in place of Basic's 1.
+- **Opacity sliders** like FR24's own, kept in this browser, under the layers FR24 gives none: winds, high-level significant weather, current weather (its symbols), ATC boundaries and the aeronautical charts.
+
+### Fixed
+- **Aircraft age missing for many Airbus aircraft.** The age table dated an aircraft only from serial numbers of its own type on the FAA register. Airbus numbers the whole A320 family, the neo too, in one sequence, and the A330 with the A340. Each family is now pooled. Checked against the FAA's record, leaving each aircraft out in turn: 99.5% of the A320 family dated, 99.4% within a year; 88.5% of the A330/A340, all within a year. D-AIBD (A319, serial 4455) now shows its age.
+  - A320-family aircraft with no close neighbours are dated from the middle year of the six nearest serials, where they agree within 3 years, shown with "~".
+  - Boeing gives serial numbers to customers in blocks when ordered, so neighbours can be years apart. A Boeing never on the FAA register (most of Ryanair's and Turkish's fleets) still gets no age rather than a wrong one. Of 100 aircraft over the Channel at night, 44 had a year from the monitor and 2 more from the table.
+
+### Not done
+- The **Flag** aircraft label stays locked: its data is not in what FR24 sends a Basic account.
+- The lightning, AIRMET/SIGMET and oceanic-track layers have no opacity slider. FR24 draws them itself with fixed colours.
+- More than one custom filter at once was not tested against FR24's server. Basic is allowed one, and the server may only apply one.
+- Checked on FR24's own front-end in Chromium: each layer's toggle, tiles and opacity; the charts; ATC boundaries; lightning; category filters. Not checked: the oceanic-track fallback, because neither FR24 nor the FAA answers from the test machine (its parser is tested on a sample message), and Open-Meteo's real answers (rate-limited there; the winds were drawn from a made-up wind field).
+
 ## [1.1.5] - 2026-10-30
 
 ### In short

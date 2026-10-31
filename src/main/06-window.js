@@ -85,6 +85,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     ['search', 'Search', "Identified blocked aircraft listed under Live flights in FR24's search box."],
     ['acPages', 'Aircraft & flight pages', 'Flight logs FR24 hides rebuilt from ADS-B on the /data pages, with the locked MSN and age. The next time one opens.'],
     ['alerts', 'Take-off & landing alerts', 'Notifications for the aircraft on your watchlist.'],
+    ['mapx', 'Locked map options', "FR24's weather layers, aeronautical charts, ATC boundaries, oceanic tracks, the Last clicked flights widget and aircraft category filters, worked natively from free sources.", 'reload'],
     ['noAds', 'Hide ads & upgrade prompts', "FR24's adverts, the ad sidebar, the free-trial pop-up and upgrade banners. The sidebar and pop-up come back after a reload.", 'reload'],
     // (the hello to the monitor, 06-hello.js: exactly what it sends is in PRIVACY.md)
     ['count', 'Count this install (anonymous)', 'A random number, your version and browser, once a day - no IP kept, nothing about flights. Helps show how many people use it.']
