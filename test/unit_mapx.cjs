@@ -128,6 +128,51 @@ function open(opts, answer) {
   const out2 = H().patchLiveFeedRequest(new P.w.Uint8Array(req).buffer);
   check('... none unticked: all twelve, as FR24 asks', JSON.stringify(sv(out2)) === JSON.stringify([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]), sv(out2));
   P.w.close();
+  // ---- (1.2.3) cloud from the monitor: one picture per valid time; a tile the monitor did not give is not drawn from
+  // EUMETSAT beside the monitor's (squares of two pictures); the source only with no monitor layer at all
+  { let ver = 'cA', tileOk = true; const got = [];
+    const R = open(null, url => {
+      got.push(url);
+      if (url === 'mon:/wx/meta') return JSON.stringify({ v: 1, cloud: { ver, maxZ: 5 }, precip: { ver: 'p1', maxZ: 4 } });
+      if (/^mon:\/wx\/t\/cloud\//.test(url)) return tileOk ? new Uint8Array([137, 80, 78, 71]).buffer : null;
+      return null;
+    }); await sleep(200);
+    const RH = R.H();
+    check('cloud: the version pinned to the valid time it was first drawn with; another time the newest; no time - the newest', RH.mxPinVer('cloud', 1000, 'cA') === 'cA' && RH.mxPinVer('cloud', 1000, 'cB') === 'cA' && RH.mxPinVer('cloud', 2000, 'cB') === 'cB' && RH.mxPinVer('cloud', 0, 'cB') === 'cB');
+    const t1 = await RH.mxMonTile('cloud', 5, 16, 10, false, 3000);
+    check('... a tile of its zoom: the monitor\'s own bytes, at the pinned picture', !!(t1 && t1.bytes) && got.includes('mon:/wx/t/cloud/cA/5/16/10.png'), got.slice(-3));
+    await sleep(500);
+    check('... the tiles round it and the world\'s at zooms 0-2 fetched ahead', got.includes('mon:/wx/t/cloud/cA/5/17/10.png') && got.includes('mon:/wx/t/cloud/cA/0/0/0.png'), got.length);
+    tileOk = false; let direct = 0;
+    const t2 = await RH.mxMonOr('cloud', 5, 3, 3, () => { direct++; return null; }, 3000);
+    check('... the monitor failing a tile (twice): nothing from EUMETSAT drawn in its place', t2 === null && direct === 0 && got.filter(u => u === 'mon:/wx/t/cloud/cA/5/3/3.png').length === 2, { direct, t2 });
+    R.w.close(); }
+  // ---- (1.2.3) Last clicked flights: kept here, given to FR24's widget in its server's form
+  { const R = open(null, () => null); await sleep(200); const RH = R.H();
+    const store = { selected: null, selectedFlightOriginAirport: { code: { iata: 'LIN', icao: 'LIML' }, city: 'Milan' }, selectedFlightDestinationAirport: null }, lcs = { list: [], setList(l) { this.list = l; } };
+    R.w.document.getElementById('app').__vue_app__ = { config: { globalProperties: { $pinia: { _s: new Map([['aircraft', store], ['lastClickedFlights', lcs], ['playback', { active: false }]]) } } } };
+    const open1 = (id, cs, reg) => { store.selected = { flightInfo: { flightId: id, callsign: cs }, aircraftInfo: { reg, type: 'GLF6' }, scheduleInfo: { flightNumber: '' } }; RH.mxLcTick(); };
+    open1(1009392385, 'TWY677', 'N999YX'); open1(1009392386, 'RYR6LY', 'EI-DLB'); open1(1009392385, 'TWY677', 'N999YX');
+    const j = await (await RH.mxLastClicked('https://www.flightradar24.com/restapi/v1/widgets/last-clicked-flights', {})).json();
+    const items = j.last_clicked_flights.items;
+    check('last clicked: each flight opened, newest first, once each - in the form FR24\'s widget reads', items.length === 2 && items[0].id === 1009392385 && items[0].callsign === 'TWY677' && items[0].airport.origin.code.iata === 'LIN' && items[0].airport.origin.city === 'Milan' && items[1].registration === 'EI-DLB' && lcs.list.length === 2, items);
+    await RH.mxLastClicked('https://www.flightradar24.com/restapi/v1/widgets/last-clicked-flights', { method: 'PUT', body: JSON.stringify({ last_clicked_flights: [] }) });
+    check('... FR24\'s "Clear list": none kept', RH.mxLcList().length === 0);
+    check('... FR24\'s request for it answered here', !!RH.mxFetch('https://www.flightradar24.com/restapi/v1/widgets/last-clicked-flights', 'https://www.flightradar24.com/restapi/v1/widgets/last-clicked-flights', {}));
+    // ---- (1.2.3) bookmarks: the limit raised in FR24's own stores, and its reading of it answered 1000
+    const feats = { 'map.widgets.bookmarks.max': 1 }, us = { features: feats, feature(k) { return this.features[k]; } }, ds = { dispatcher: { features: { 'map.widgets.bookmarks.max': 1 } } };
+    R.w.document.getElementById('app').__vue_app__ = { config: { globalProperties: { $pinia: { _s: new Map([['user', us], ['dispatcher', ds]]) } } } };
+    RH.mxBmMax();
+    check('bookmarks: FR24\'s user store reads a limit of 1000 - its copy, the dispatcher\'s, and a fresh copy set later', us.feature('map.widgets.bookmarks.max') === 1000 && ds.dispatcher.features['map.widgets.bookmarks.max'] === 1000 && (us.features = { 'map.widgets.bookmarks.max': 1 }, us.feature('map.widgets.bookmarks.max') === 1000));
+    // ---- (1.2.3) settings as left: what FR24's windows set kept; given back into FR24's own settings, only where it has them
+    const sst = { settings: { misc: { showTrailTooltip: true, hideAircraftAirportPhoto: false }, map: { labels: 'flag' } } };
+    RH.mxSetNote(sst, 'misc', ['showTrailTooltip']); RH.mxSetNote(sst, 'map', ['labels']);
+    const fresh = { misc: { showTrailTooltip: false, hideAircraftAirportPhoto: false }, map: { labels: 'default' }, units: { speed: 'kts' } }, kept = RH.mxSetKept();
+    const n = RH.mxSetApply(fresh, Object.assign({}, kept, { units: { nothere: 1 }, nosection: { x: 1 } }));
+    check('settings: a setting changed is kept, and given back to FR24\'s settings as left - only those changed, only where FR24 has them', n === 2 && fresh.misc.showTrailTooltip === true && fresh.map.labels === 'flag' && fresh.misc.hideAircraftAirportPhoto === false && !('nothere' in fresh.units) && !fresh.nosection && !('hideAircraftAirportPhoto' in kept.misc), { fresh, kept });
+    sst.settings.misc.showTrailTooltip = false; RH.mxSetNote(sst, 'misc', ['showTrailTooltip']);
+    check('... switched off again: kept off', RH.mxSetKept().misc.showTrailTooltip === false);
+    R.w.close(); }
   // ---- the switch off
   const Q = open({ mapx: false }, answer); await sleep(200);
   const t2 = { 'map.layer.weather.wind': ['business'], 'map.layer.atc': ['gold'] };

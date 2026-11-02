@@ -241,6 +241,13 @@ check('ordinary aircraft: FR24 data kept (registration, callsign, photos)', str(
   w.dispatchEvent(new w.MessageEvent('message', { data: { __tweeksLadd: 'resolve', entries: [{ id: idN, cs: 'GEZWZ', reg: 'G-EZWZ', hex: '406c72', type: 'A320' }, { id: idB, cs: 'N1AB', reg: 'N1AB', hex: 'a00001', type: 'C68A' }] }, source: w }));
   check('... and never taken over again (a record sent for it later is not used; the blocked one\'s is)', !B.resolved.has(idN) && B.resolved.has(idB));
   B.resolved.clear(); posted.length = 0;
+  // (1.2.3) FR24's Flag label: the country of registration FR24's feed leaves out for a Basic account, put in for every
+  // aircraft - from its registration (G-EZAA: the UK; M-ARNZ: the Isle of Man, its address the UK's), else its address
+  w.dispatchEvent(new w.MessageEvent('message', { data: { __tweeksLadd: 'ctyTable', terr: [['M-', 151]], nat: [['G-', 77], ['D-', 82]], hex: [[0x3c0000, 0x3fffff, 82], [0x400000, 0x43ffff, 77], [0xa00000, 0xafffff, 236]], us: 236 }, source: w }));
+  const fl2 = (id, cs, reg, hex) => cat([H.fVar(1, id), fF(2, 53.3), fF(3, -2.8), H.fVar(4, 84), H.fVar(5, 30000), H.fVar(6, 400), H.fVar(9, 1792015200), H.fVar(10, 0), H.fStr(11, cs), H.fLen(13, cat([].concat(reg ? [H.fStr(2, reg)] : [], [H.fStr(4, 'A320')], hex ? [H.fVar(14, hex)] : [])))]);
+  const body2 = cat([H.fLen(1, fl2(0x3c1b0001, 'EZY1', 'G-EZAA', 0)), H.fLen(1, fl2(0x3c1b0002, 'MARNZ', 'M-ARNZ', 0x424c60)), H.fLen(1, fl2(0x3c1b0003, 'DLH1', '', 0x3c6444)), H.fLen(1, fl2(0x3c1b0004, 'AAL1', 'N123AA', 0))]);
+  const cty = H.parse(H.patchLiveFeed(body2, false, 0)).filter(f => f.fn === 1).map(f => num(one(f.val, 13).val, 8));
+  check('flag label: every aircraft\'s country of registration put in - the UK, the Isle of Man (not its UK address), Germany by address, the US', JSON.stringify(cty) === JSON.stringify([77, 151, 82, 236]), cty);
 }
 // 5) pictures and a route arriving while the panel is open go into FR24's stream at once, as a frame of our own: FR24
 //    reads it when told the response has grown (tried on the live site: its store took it 7 ms later) - not at FR24's

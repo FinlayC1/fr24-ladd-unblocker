@@ -139,6 +139,7 @@
       case 'ready': {
         if (!bridgeReady) log('bridge ready', d.v || '(no version)');
         bridgeV = d.v || '?'; if (bridgeV !== VERSION) log('page bridge is another version:', bridgeV);
+        sendCountryTable().catch(() => {});
         bridgeReady = true; bridgeStats = d.stats || bridgeStats; noteFeedHdr(d.hdr); if (d.feedReady && !feedReady) { feedReady = true; worldScan('startup').catch(() => {}); }
         // everything known right now - the last session's snapshot included - at once, so the map, a flight opened
         // straight from the URL, boards and search are patched from FR24's very first answer; the rest of the store
@@ -184,7 +185,7 @@
   const SNAP_MAX = 600000;    // characters (~1.2 MB): localStorage is ~5 MB per site and FR24 keeps its own settings there too
   const FLIGHT_KEYS = ['hex', 'cs', 'reg', 'type', 'fr24Type', 'aggType', 'desc', 'cat', 'mil', 'ladd', 'pia', 'owner', 'ownerCity', 'msn', 'year', 'operatorId', 'operatorIcao', 'operatorName', 'fr24Equip', 'countryId', 'country', 'countryIso', 'squawk', 'src', 'matchedAt', 'verifiedAt', 'origin', 'faaAt', 'fr24At', 'pubAt', 'photoAt', 'photoLevel', 'photoV', 'regTried'];
   const AREA_KEYS = ['hex', 'cs', 'reg', 'type', 'desc', 'owner', 'year', 'lat', 'lon', 'alt', 'gnd', 'gs', 'trk', 'ageS', 'receivedAt', 'dbFlags', 'ladd', 'pia', 'mil', 'src', 'cat', 'sq', 'squawk', 'emergency', 'vs', 'agps', 'ias', 'tas', 'mach', 'oat', 'wd', 'ws', 'mcp', 'fms'];
-  const HEX_KEYS = ['reg', 'type', 'desc', 'owner', 'ownerCity', 'msn', 'year', 'operatorId', 'operatorIcao', 'operatorName', 'fr24Equip', 'countryId', 'country', 'cat', 'mil', 'ladd', 'pia', 'photoAt', 'photoLevel', 'photoV', 'faaAt', 'fr24At', 'idAt', 'ownerAskedAt', 'ownerFailAt', 'pubAt', 'pubFull', 'savedAt'];
+  const HEX_KEYS = ['reg', 'type', 'fr24Type', 'desc', 'owner', 'ownerCity', 'msn', 'year', 'operatorId', 'operatorIcao', 'operatorName', 'fr24Equip', 'countryId', 'country', 'cat', 'mil', 'ladd', 'pia', 'photoAt', 'photoLevel', 'photoV', 'faaAt', 'fr24At', 'idAt', 'ownerAskedAt', 'ownerFailAt', 'pubAt', 'pubFull', 'savedAt'];
   const pick = (src, keys, out) => { for (const k of keys) { const v = src[k]; if (v != null && v !== '' && v !== 0 && v !== false) out[k] = v; } return out; };
   function buildSnapshot() {
     const t = now(), vc = viewCenter, cands = [];

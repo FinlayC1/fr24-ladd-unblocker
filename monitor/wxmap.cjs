@@ -22,6 +22,11 @@ const GRIB = require('./grib2.cjs');
 const UA = { 'User-Agent': 'fr24-ladd-unblocker-monitor (personal use)' };
 const EUMETSAT = 'https://view.eumetsat.int/geoserver/wms?service=WMS&version=1.3.0&request=GetMap&layers=mumi:worldcloudmap_ir108&styles=&format=image/png';
 const EUMETSAT_CAPS = 'https://view.eumetsat.int/geoserver/mumi/worldcloudmap_ir108/ows?service=WMS&version=1.3.0&request=GetCapabilities';
+// (1.2.3) how bright a cloud is drawn from EUMETSAT's grey (cold = bright): the clear ground and sea of a mid-latitude
+// night sit at 80-110 and drew as a white haze from 92 up (Ireland under a veil, and the satellites' discs showing);
+// now nothing below 110, a smooth rise to full white cloud at 175. A picture drawn the old way is drawn again
+const CLOUD_STYLE = 2;
+const CLOUD_A = new Uint8Array(256).map((_, g) => { const t = Math.max(0, Math.min(1, (g - 110) / 65)); return Math.round(t * t * (3 - 2 * t) * 235); });
 const GIBS = 'https://gibs.earthdata.nasa.gov/wms/epsg3857/best/wms.cgi?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&LAYERS=IMERG_Precipitation_Rate_30min&STYLES=&FORMAT=image/png&TRANSPARENT=true&CRS=EPSG:3857&WIDTH=2048&HEIGHT=2048';
 const RAINVIEWER = 'https://api.rainviewer.com/public/weather-maps.json';
 const NEXRAD = 'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q-900913/';
@@ -144,15 +149,20 @@ function createWxMap(env) {
     } catch (e) { return null; }
   }
   (function restore() {
-    for (const k of ['cloud', 'precip']) { const s = load(k); if (s && s.head.ver) Object.assign(P[k], { ver: s.head.ver, at: s.head.at || 0, src: s.head.src || '', tiles: s.map }); }
+    for (const k of ['cloud', 'precip']) { const s = load(k); if (s && s.head.ver) Object.assign(P[k], { ver: s.head.ver, at: s.head.at || 0, src: s.head.src || '', style: s.head.style || 0, tiles: s.map }); }
     const w = load('wind'); if (w && w.head.run) Object.assign(wind, { run: w.head.run, fhrs: w.head.fhrs || [], at: w.head.at || 0, grids: w.map });
     const f = load('wafs'); if (f && f.head.run) Object.assign(wafs, { run: f.head.run, at: f.head.at || 0, files: f.map });
-    if (P.cloud.ver) due.cloud = (P.cloud.at || 0) + 20 * 60000;
+    if (P.cloud.ver) due.cloud = P.cloud.style === CLOUD_STYLE ? (P.cloud.at || 0) + 20 * 60000 : 0;
     if (P.precip.ver) due.precip = (P.precip.at || 0) + 30 * 60000;
     if (wind.run) due.wind = (wind.at || 0) + 30 * 60000;
     if (wafs.run) due.wafs = (wafs.at || 0) + 20 * 60000;
   })();
 
+  // (1.2.3) the picture before the newest kept for 90 minutes beside it, each served by its own version: a browser draws
+  // the whole map from one picture - the one it began with - until FR24 next asks for the layer anew, instead of new
+  // squares from a picture three hours on beside the old ones (patches of cloud that do not meet)
+  function keepPrev(p) { if (p.ver && p.tiles && p.tiles.size) p.prev = { ver: p.ver, tiles: p.tiles, until: now() + 90 * 60000 }; }
+  const tilesOf = (p, ver) => (p.prev && p.prev.ver === ver && p.prev.until > now() ? p.prev.tiles : p.tiles);
   // ---- cloud ------------------------------------------------------------------------------------------------------------
   // (which picture EUMETSAT has now: its time, from the layer's description - rebuilt only when that changes)
   async function cloudTime() {
@@ -162,7 +172,7 @@ function createWxMap(env) {
   }
   async function buildCloud() {
     const time = await cloudTime();
-    if (time === P.cloud.src && P.cloud.ver) { P.cloud.at = now(); return; }
+    if (time === P.cloud.src && P.cloud.ver && P.cloud.style === CLOUD_STYLE) { P.cloud.at = now(); return; }
     const W = 8192, Hh = 4096, A = new Uint8Array(W * Hh);
     for (let r = 0; r < 4; r++) for (let c = 0; c < 4; c++) {
       const la1 = 90 - r * 45, la0 = la1 - 45, lo0 = -180 + c * 90, lo1 = lo0 + 90;
@@ -174,7 +184,7 @@ function createWxMap(env) {
       const px = img.data;
       for (let y = 0; y < 1024; y++) {
         const row = (r * 1024 + y) * W + c * 2048;
-        for (let x = 0; x < 2048; x++) { const s = (y * 2048 + x) * 4, v = (px[s] - 92) / 80; A[row + x] = v <= 0 ? 0 : Math.round(Math.pow(v >= 1 ? 1 : v, 0.85) * 235 * px[s + 3] / 255); }
+        for (let x = 0; x < 2048; x++) { const s = (y * 2048 + x) * 4; A[row + x] = CLOUD_A[px[s]] * px[s + 3] / 255 | 0; }
         if (y % 256 === 255) await tick();
       }
       await tick(); await sleep(gapMs);
@@ -210,8 +220,9 @@ function createWxMap(env) {
         }
       }
     }
-    Object.assign(P.cloud, { ver: 'c' + Math.floor(now() / 1000).toString(36), tiles, at: now(), src: time });
-    save('cloud', { ver: P.cloud.ver, at: P.cloud.at, src: time }, tiles);
+    keepPrev(P.cloud);
+    Object.assign(P.cloud, { ver: 'c' + Math.floor(now() / 1000).toString(36), tiles, at: now(), src: time, style: CLOUD_STYLE });
+    save('cloud', { ver: P.cloud.ver, at: P.cloud.at, src: time, style: CLOUD_STYLE }, tiles);
     stats.built.cloud = { at: now(), tiles: tiles.size, src: time };
   }
 
@@ -237,6 +248,7 @@ function createWxMap(env) {
     const all = new Uint8Array(256 * 256 * 4);
     z1.forEach((q, k) => { const ox = (k & 1) * 128, oy = (k >> 1) * 128; for (let y = 0; y < 128; y++) all.set(q.data.subarray(y * 512, y * 512 + 512), ((oy + y) * 256 + ox) * 4); });
     if (all.some((v, i) => i % 4 === 3 && v)) tiles.set('0/0/0', PNG.encode(256, 256, all));
+    keepPrev(P.precip);
     Object.assign(P.precip, { ver: 'p' + Math.floor(now() / 1000).toString(36), tiles, at: now() });
     save('precip', { ver: P.precip.ver, at: P.precip.at }, tiles);
     stats.built.precip = { at: now(), tiles: tiles.size };
@@ -393,7 +405,7 @@ function createWxMap(env) {
       const x = Math.max(0, Math.min(N - 1, parseInt(m[4], 10))), y = Math.max(0, Math.min(N - 1, parseInt(m[5], 10)));
       if (String(x) !== m[4] || String(y) !== m[5]) return Promise.resolve({ status: 404, type: 'text/plain', body: Buffer.from('no such tile') });
       if (!p.ver || z > p.maxZ || x >= N || y >= N) return Promise.resolve({ status: 404, type: 'text/plain', body: Buffer.from('no such tile') });
-      if (name === 'cloud' || name === 'precip') return Promise.resolve(png(p.tiles.get(z + '/' + x + '/' + y)));
+      if (name === 'cloud' || name === 'precip') { if (p.prev && p.prev.until <= now()) p.prev = null; return Promise.resolve(png(tilesOf(p, m[2]).get(z + '/' + x + '/' + y))); }
       return onDemand(name, z, x, y).then(png, () => ({ status: 502, type: 'text/plain', body: Buffer.from('source did not answer') }));
     }
     if ((m = pathname.match(/^\/wx\/wafs\/(\d{8}_\d{2}_F\d{2}_wafs_[a-z0-9_]+_m\.png)$/))) {

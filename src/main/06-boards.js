@@ -273,6 +273,9 @@
         if (r.nat && r.nat.airlineId && !alOk(r.nat.airlineId, r.al)) r.nat = Object.assign({}, r.nat, { airlineId: airlineIdByName(r.al) || null, airline: r.al || null });
       }
       if (r.nat && !r.nat.airportId && r.ap) r.nat = Object.assign({}, r.nat, { airportId: r.ap });
+      // (1.2.3) a row of an aircraft whose type FR24's own record gives: that type, as FR24's panel shows it (N999YX: GLF6,
+      // not the public databases' GLEX). FR24's own rows are as FR24 gave them
+      if (r.hex && r.src !== 'fr24') { const ft = (store.getHex(r.hex) || {}).fr24Type; if (ft && (r.ty !== ft || (r.nat && r.nat.aircraftType && r.nat.aircraftType !== ft))) { r = Object.assign({}, r, { ty: ft }); if (r.nat) r.nat = Object.assign({}, r.nat, { aircraftType: ft }); } }
       if (!r.ty && !(r.nat && r.nat.aircraftType) && GLIDER.test(r.dsc || '')) r.ty = 'GLID';
       { const fc = fr24Cat({ type: r.ty || (r.nat && r.nat.aircraftType) || '', mil: !!(r.hex && (store.getHex(r.hex) || {}).mil) }); if (fc != null) r.fc = fc; }
       out.push(r);

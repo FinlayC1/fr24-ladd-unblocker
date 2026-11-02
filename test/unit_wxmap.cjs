@@ -105,6 +105,25 @@ const fakeFetch = async (url) => {
   const W2 = createWxMap({ dir, fetch: async () => { throw new Error('offline'); }, now: () => t0 + 60000 });
   const m2 = W2.meta();
   check('after a restart: the cloud, precipitation, WAFS and winds as built, before any source is asked again', m2.cloud.ver === meta.cloud.ver && m2.precip.ver === meta.precip.ver && m2.wafs.files === 176 && m2.wind.run === meta.wind.run);
+  // (1.2.3) a new cloud picture: the one before served by its own version for 90 minutes beside it - a browser keeps
+  // drawing the picture it began with until FR24 asks for the layer anew - then the newest for any version
+  { let clock = t0, capT = '2026-10-31T03:00:00Z', cold = 'top';
+    const f2 = async url => {
+      if (/GetCapabilities/.test(url)) return { ok: true, status: 200, arrayBuffer: async () => { const b = Buffer.from('<Dimension name="time" default="' + capT + '" units="ISO8601">'); return b.buffer.slice(b.byteOffset, b.byteOffset + b.length); } };
+      if (/eumetsat/.test(url)) { const b = solid(2048, 1024, (x, y) => [(cold === 'top' ? y < 512 : y >= 512) ? 200 : 60, 0, 0, 255]); return { ok: true, status: 200, arrayBuffer: async () => b.buffer.slice(b.byteOffset, b.byteOffset + b.length) }; }
+      return fakeFetch(url);
+    };
+    const W3 = createWxMap({ dir: fs.mkdtempSync(path.join(os.tmpdir(), 'wxmap3-')), fetch: f2, now: () => clock, gapMs: 0 });
+    for (let i = 0; i < 7; i++) await W3.pump();
+    const v1 = W3.meta().cloud.ver, b1 = (await W3.handle('/wx/t/cloud/' + v1 + '/3/4/2.png')).body;
+    capT = '2026-10-31T06:00:00Z'; cold = 'bottom'; clock += 21 * 60000;
+    for (let i = 0; i < 8 && W3.meta().cloud.ver === v1; i++) { clock += 1000; await W3.pump(); }
+    const v2 = W3.meta().cloud.ver, b2 = (await W3.handle('/wx/t/cloud/' + v2 + '/3/4/2.png')).body, b1again = (await W3.handle('/wx/t/cloud/' + v1 + '/3/4/2.png')).body;
+    check('cloud: a new picture - the one before still served by its own version, the new by its own', v2 !== v1 && Buffer.compare(b1, b1again) === 0 && Buffer.compare(b1, b2) !== 0, { v1, v2 });
+    clock += 91 * 60000;
+    const late = (await W3.handle('/wx/t/cloud/' + v1 + '/3/4/2.png')).body;
+    check('... and after 90 minutes the newest for it (the one before let go)', Buffer.compare(late, b2) === 0);
+  }
   check('natTracks: a message without tracks gives none', Object.keys(natTracks([{ condition_message: 'NIL' }])).length === 0);
   console.log(fails ? `\n${fails} failed` : '\nall passed');
   process.exitCode = fails ? 1 : 0;

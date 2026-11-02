@@ -159,14 +159,14 @@ const flewAdd = (hex, d) => { let s = flew.get(d); if (!s) flew.set(d, s = new S
 function saveState() {
   fs.mkdirSync(STORE, { recursive: true });
   const f = path.join(STORE, 'state.json'), tmp = f + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify({ v: 2, lastRun, blocked: Object.fromEntries([...blocked].map(([h, b]) => [h, [b.reg, b.type, b.at, b.heard, b.faa ? 1 : 0, b.lad || 0, b.fr || 0]])), areas: userAreas,
+  fs.writeFileSync(tmp, JSON.stringify({ v: 2, lastRun, blocked: Object.fromEntries([...blocked].map(([h, b]) => [h, [b.reg, b.type, b.at, b.heard, b.faa ? 1 : 0, b.lad || 0, b.fr || 0, b.ft || '']])), areas: userAreas,
     watch, lastW, closed, flew: Object.fromEntries([...flew].map(([d, s]) => [d, [...s]])), histQ: histQ.map(j => [j.hex, j.day, j.tries, j.at, j.fill ? 1 : 0]),
     fr24: { dev: fr24.st.deviceId, hdr: fr24.st.hdr, ua: fr24.st.ua, hdrAt: fr24.st.hdrAt } }));
   fs.renameSync(tmp, f); stateDirty = false;
 }
 function loadState() {
   let s = null; try { s = JSON.parse(fs.readFileSync(path.join(STORE, 'state.json'), 'utf8')); } catch (e) { return null; }
-  for (const [h, b] of Object.entries(s.blocked || {})) blocked.set(h, { reg: b[0] || '', type: b[1] || '', at: b[2] || 0, heard: b[3] || 0, faa: !!b[4], lad: b[5] || 0, fr: b[6] || 0 });
+  for (const [h, b] of Object.entries(s.blocked || {})) blocked.set(h, { reg: b[0] || '', type: b[1] || '', at: b[2] || 0, heard: b[3] || 0, faa: !!b[4], lad: b[5] || 0, fr: b[6] || 0, ft: b[7] || '' });
   for (const a of s.areas || []) if (Array.isArray(a) && a.length === 4) userAreas.push(a);
   Object.assign(watch, s.watch || {}); Object.assign(lastW, s.lastW || {}); closed = s.closed || '';
   for (const [d, l] of Object.entries(s.flew || {})) for (const h of l) flewAdd(h, d);
@@ -1323,7 +1323,9 @@ const fr24 = FR.createClient();
 const names = createNames({ store: STORE, log: (...a) => log('names', ...a) });
 const flagsOfInfo = info => (info.ladd ? 1 : 0) | (info.mil ? 2 : 0) | (info.pia ? 4 : 0);
 const ident = createIdent({ E, cfg: CFG.ident, live, ac, blocked, legs, ownerOf: hex => owners.short(hex),
-  onIdentified: (hex, info, F) => { if (!info.mil && !info.pia) { const b = markBlocked(hex, { reg: info.reg, type: info.type }, Date.now() / 1000), t = Math.round(Date.now() / 1000); if (t - (b.fr || 0) > 3600) { b.fr = t; stateDirty = true; } } owners.want(hex, info.reg, true); if (F) names.add(F.id, { hex, reg: info.reg, type: info.type, cs: info.cs, flags: flagsOfInfo(info) }, Date.now() / 1000); },
+  // (1.2.3) FR24's own type for the aircraft kept with it (ft) - boards and names say what FR24's panel says (N999YX: FR24's
+  // GLF6, the public databases' GLEX)
+  onIdentified: (hex, info, F) => { const ft = F && /^[A-Z][A-Z0-9]{1,3}$/.test(F.type || '') ? F.type : ''; if (!info.mil && !info.pia) { const b = markBlocked(hex, { reg: info.reg, type: info.type }, Date.now() / 1000), t = Math.round(Date.now() / 1000); if (t - (b.fr || 0) > 3600) { b.fr = t; stateDirty = true; } if (ft && b.ft !== ft) { b.ft = ft; stateDirty = true; } } owners.want(hex, info.reg, true); if (F) names.add(F.id, { hex, reg: info.reg, type: ft || info.type, cs: info.cs, flags: flagsOfInfo(info) }, Date.now() / 1000); },
   // (a name withdrawn - the aircraft turned out elsewhere, or another took its place: not served to a playback; a flight
   // that simply ended keeps its name)
   onUnassign: (id, R, why) => {
@@ -1993,18 +1995,53 @@ function boardLegs(apId, lo, hi) {
     for (const d of daysBetween(Math.max(lo - 86400, Date.parse('2020-01-01') / 1000), Math.min(hi, memFrom))) for (const l of diskLegs(d)) if (l && l.hex && l.ladd) (byHex.get(l.hex) || byHex.set(l.hex, []).get(l.hex)).push(l);
     for (const [hex, list] of byHex) {
       const hit = E.chainLegs(E.stitchLegs(list.map(l => Object.assign({}, l)))).filter(l => ((l.from && l.from.id === apId) || (l.to && l.to.id === apId)) && (l.tEnd || l.tStart) >= lo && (l.tOff || l.tStart) <= Math.min(hi, memFrom) && flewOk(Object.assign({ hex }, l)));
-      if (hit.length) out.push({ hex, reg: hit[0].reg, type: hit[0].type, ladd: true, legs: hit });
+      if (hit.length) out.push({ hex, reg: hit[0].reg, type: ((blocked.get(hex) || {}).ft) || hit[0].type, ladd: true, legs: hit });
     }
     if (hi < memFrom) return out;
   }
+  const touches = l => (l.from && l.from.id === apId) || (l.to && l.to.id === apId);
   for (const [hex, m] of legs) {
     // (a missing end is only ever taken from a neighbouring flight's: an aircraft none of whose flights touch the airport has
     // none there after the post-pass either)
-    if (![...m.values()].some(l => (l.from && l.from.id === apId) || (l.to && l.to.id === apId))) continue;
-    const hit = chained(m).filter(l => ((l.from && l.from.id === apId) || (l.to && l.to.id === apId)) && (l.tEnd || l.tStart) >= lo && (l.tOff || l.tStart) <= hi && flewOk(Object.assign({ hex }, l)));
-    if (hit.length) { const o = out.find(x => x.hex === hex); if (o) o.legs = o.legs.concat(hit.filter(l => !o.legs.some(k => Math.abs(k.tStart - l.tStart) < 60))); else out.push({ hex, reg: hit[0].reg, type: hit[0].type, ladd: isBlocked(hex) || !!hit[0].ladd, legs: hit }); }
+    // (its log read only for an aircraft at the airport, or with a flight of the time asked whose end is not known - one
+    // lost into or out of it, maybe)
+    const mine = [...m.values()].some(touches);
+    if (!mine && ![...m.values()].some(l => (!l.from || !l.to) && !l.open && (l.tEnd || l.tStart) >= lo - 86400 && (l.tOff || l.tStart) <= hi + 86400)) continue;
+    const hd = histBoardOf(hex);
+    if (!mine && !(hd && hd.legs.some(touches))) continue;
+    const hit = boardChain(hex, m, hd).filter(l => touches(l) && (l.tEnd || l.tStart) >= lo && (l.tOff || l.tStart) <= hi && flewOk(Object.assign({ hex }, l)));
+    if (hit.length) {
+      const o = out.find(x => x.hex === hex); if (o) { o.legs = o.legs.concat(hit.filter(l => !o.legs.some(k => Math.abs(k.tStart - l.tStart) < 60))); continue; }
+      const x = ac.get(hex), b = blocked.get(hex), r = hit.find(l => l.reg) || {}, t = hit.find(l => l.type) || {};
+      out.push({ hex, reg: r.reg || (x && x.meta && x.meta.reg) || (b && b.reg) || '', type: (b && b.ft) || t.type || (x && x.meta && x.meta.type) || (b && b.type) || '', ladd: isBlocked(hex) || !!hit[0].ladd, legs: hit });
+    }
   }
   return out;
+}
+// (1.2.3) A blocked aircraft's days rebuilt from the ADS-B archives - its log, as /hist serves it - beside its live record:
+// a flight the live record holds without an end, the monitor restarted while it flew (N609WB and N650TJ out of Teterboro
+// on 31 Oct, both cut at the 1.2.1 restart: "N/A" on the board while their logs had Burbank and Peachtree), is on the
+// boards as its log has it. The file read again only when it changes - looked at once a minute at most
+const histBoard = new Map();
+function histBoardOf(hex) {
+  if (!blocked.has(hex)) return null;
+  const now = Date.now(), c = histBoard.get(hex);
+  if (c && now - c.at < 60000) return c.v;
+  let mt = 0; try { mt = fs.statSync(histFile(hex)).mtimeMs; } catch (e) { mt = 0; }
+  let v = c && c.m === mt ? c.v : null;
+  if (!v && mt) {
+    const h = histRead(hex), cut = now / 1000 - KEEP_LADD - 86400;
+    v = { days: new Set(Object.keys(h.days).filter(d => h.days[d] >= 0 && !(h.part && h.part[d]))), legs: h.legs.filter(l => l && (l.tEnd || l.tStart) >= cut && (l.from || l.to)) };
+  }
+  histBoard.set(hex, { at: now, m: mt, v }); if (histBoard.size > 20000) histBoard.delete(histBoard.keys().next().value);
+  return v;
+}
+// (its flights for the boards: the rebuilt days' own, the live record's of the days not rebuilt yet, and a live one a rebuilt
+// day has nothing of at its time - as its log puts them together, logOf)
+function boardChain(hex, m, hd) {
+  if (!hd || !hd.legs.length) return chained(m);
+  const live = [...m.values()].filter(l => !hd.days.has(slashDay(dayOf(l.tStart))) || !hd.legs.some(k => k.tStart < (l.tEnd || l.tStart) + 600 && (k.tEnd || k.tStart) > l.tStart - 600));
+  return E.chainLegs(E.stitchLegs(hd.legs.concat(live).map(l => Object.assign({}, l))));
 }
 // (the aircraft of a type whose last flight - the latest of all kept - ended at an airport in the last 14 days: parked
 // there since, as far as anyone heard. For a blocked aircraft on an apron the public networks do not hear)

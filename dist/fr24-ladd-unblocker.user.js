@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Flightradar24 LADD / N-A Unblocker (feed-level)
 // @namespace    tweeks.io
-// @version      1.2.2
+// @version      1.2.3
 // @description  Identifies every LADD / N/A / blocked military aircraft on Flightradar24 from public ADS-B, and injects callsign, registration, operator, age, country, MSN, squawk, vertical speed, GPS altitude, airspeeds, wind, photos, a reasoned origin/destination with a wind-corrected ETA (also for ordinary flights FR24 shows as N/A - military, private, GA, helicopters, with private landing sites; learned from 63 days of every aircraft worldwide, with live weather and closures), airport-board entries and a rebuilt 7-month flight log straight into FR24's own data - so it all renders like normal FR24 traffic.
 // @author       Finlay Clarke
 // @updateURL    https://raw.githubusercontent.com/FinlayC1/fr24-ladd-unblocker/main/dist/fr24-ladd-unblocker.user.js
@@ -98,7 +98,7 @@
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "1.2.2";
+    var BRIDGE_V = "1.2.3";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed
@@ -370,6 +370,23 @@
     // cleared, whatever is known put in - the public report of it (the view polled by this browser and the monitor in
     // turn), else the vertical speed from FR24's own altitudes and the airspace from the boundaries. Only a vertical
     // speed nothing yet tells keeps FR24's own way, for a flight's first seconds on screen (never a "0 fpm" made up).
+    // (1.2.3) FR24's Flag label draws each aircraft's country of registration (extra info 8), which FR24's feed leaves out
+    // for a Basic account: only the blocked aircraft named here - mostly N-registered, given theirs - had a flag. Worked out
+    // here for every aircraft from its registration's prefix, else its transponder address's block (the userscript's
+    // tables, as FR24's country ids)
+    var ctyT = null;
+    function onCtyTable(d) { if (d && Array.isArray(d.terr) && Array.isArray(d.nat) && Array.isArray(d.hex)) ctyT = { terr: d.terr, nat: d.nat, hex: d.hex, us: d.us | 0 }; }
+    function ctyOf(reg, hx) {
+      if (!ctyT) return 0;
+      var r = String(reg || '').toUpperCase(), i, x;
+      if (r) {
+        for (i = 0; i < ctyT.terr.length; i++) { x = ctyT.terr[i]; if (r.indexOf(x[0]) === 0 && r.length > x[0].length + 1) return x[1]; }
+        if (/^N[1-9]/.test(r) && ctyT.us) return ctyT.us;
+        for (i = 0; i < ctyT.nat.length; i++) { x = ctyT.nat[i]; if (r.indexOf(x[0]) === 0 && r.length > x[0].length + 1 && (x[0].indexOf('-') >= 0 || r.indexOf('-') < 0)) return x[1]; }
+      }
+      if (hx > 0) { var lo = 0, hi = ctyT.hex.length - 1; while (lo <= hi) { var m = (lo + hi) >> 1, b = ctyT.hex[m]; if (hx < b[0]) hi = m - 1; else if (hx > b[1]) lo = m + 1; else return b[2]; } }
+      return 0;
+    }
     function unlockFeed(fb, fs, ex, extraF, id, cs, reg, pbTs) {
       if (!extraF || extraF.wt !== 2) return fb;
       var fts = numOf(fs, 9), lat = fltOf(fs, 2), lon = fltOf(fs, 3), gnd = !!numOf(fs, 10), alt = numOf(fs, 5);
@@ -388,6 +405,7 @@
       if (sq) exU.push(fVar(5, squawkWire(sq)));
       if (ems) exU.push(fLen(12, ems));
       if (air) { exU.push(fStr(11, air)); if (airId) exU.push(fStr(19, airId)); }   // FIR name + its ICAO code (the badge)
+      if (!has(ex, 8)) { var cty = ctyOf(reg, hx); if (cty) { exU.push(fVar(8, cty)); stats.flags = (stats.flags || 0) + 1; } }
       var keepU = []; for (k0 = 0; k0 < fs.length; k0++) if (fs[k0].fn !== 13) keepU.push(fs[k0].raw);
       keepU.push(fLen(13, concat(exU)));
       stats.unlocked++;
@@ -2542,6 +2560,83 @@
     function mxCategoriesOff() { try { var p = mxPinia(), st = p && p._s.get('settings'), f = st && st.filters; if (!f || f.disabled) return null; var d = f.deselectedCategories; return Array.isArray(d) && d.length ? d.map(Number) : null; } catch (e) { return null; } }
     if (mx.on) { mxFindCore(0); (function waitPinia(n) { if (!mxCats() && n < 240) oSetTimeout(function () { waitPinia(n + 1); }, 500); })(0); }
 
+    // ---- (1.2.3) Settings kept as they were left. A signed-in FR24 takes its settings from its server, which keeps none of
+    // the ones it locks for a Basic account (Misc's trail tooltip and photo switch, the Flag label, the weather layers...):
+    // each came back at its default when FR24 was opened again. Every setting changed in FR24's own windows is kept here
+    // (its section, name and value), and given back to FR24 - in the page's own data before FR24 reads it, and in its
+    // settings store whenever FR24 sets them all anew from its server. Nothing is kept until it is changed: FR24's
+    // defaults stand until then
+    var MX_SET_KEY = 'tl.mx.settings';
+    function mxSetKept() { try { var o = JSON.parse(localStorage.getItem(MX_SET_KEY) || '{}'); return o && typeof o === 'object' ? o : {}; } catch (e) { return {}; } }
+    function mxSetSave(o) { try { localStorage.setItem(MX_SET_KEY, JSON.stringify(o)); } catch (e) { /* full */ } }
+    var mxSetOk = function (sec, k) { return /^[A-Za-z0-9_]{1,40}$/.test(sec) && /^[A-Za-z0-9_]{1,60}$/.test(k); };
+    var mxSetVal = function (v) { return v === null || typeof v === 'boolean' || typeof v === 'number' || typeof v === 'string' || Array.isArray(v) || (v && typeof v === 'object'); };
+    // (into FR24's settings - the page's data or its store's: only a section and a setting it has)
+    function mxSetApply(settings, kept) {
+      var n = 0; if (!settings || typeof settings !== 'object') return 0;
+      Object.keys(kept).forEach(function (sec) {
+        var s = settings[sec], ks = kept[sec]; if (!s || typeof s !== 'object' || !ks || typeof ks !== 'object') return;
+        Object.keys(ks).forEach(function (k) { if (!(k in s)) return; if (JSON.stringify(s[k]) !== JSON.stringify(ks[k])) { s[k] = JSON.parse(JSON.stringify(ks[k])); n++; } });
+      });
+      return n;
+    }
+    // (the page's own data, before FR24's app reads it: its first draw as left)
+    function mxSetIntoPage() {
+      var el = document.getElementById('app'); if (!el || el.__tlSet) return !!el;
+      el.__tlSet = true;
+      try {
+        var kept = mxSetKept(); if (!Object.keys(kept).length) return true;
+        var raw = el.getAttribute('data-page'); if (!raw) return true;
+        var pg = JSON.parse(raw), d = pg && pg.props && pg.props.dispatcher; if (!d || !d.settings) return true;
+        if (mxSetApply(d.settings, kept)) { el.setAttribute('data-page', JSON.stringify(pg)); mx.setApplied = (mx.setApplied || 0) + 1; }
+      } catch (e) { mxFail(e); }
+      return true;
+    }
+    // (a value FR24's store has, set as its own window would: a switch flipped through its own toggle - what it does on
+    // being switched (a weather layer's loading) done too - anything else set)
+    function mxSetIntoStore(st) {
+      var kept = mxSetKept(), all = st && st.settings; if (!all) return 0;
+      var n = 0;
+      Object.keys(kept).forEach(function (sec) {
+        var s = all[sec], ks = kept[sec]; if (!s || !ks) return;
+        Object.keys(ks).forEach(function (k) {
+          if (!(k in s) || JSON.stringify(s[k]) === JSON.stringify(ks[k])) return;
+          try { if (typeof s[k] === 'boolean' && typeof ks[k] === 'boolean' && typeof st.toggle === 'function') st.toggle(sec, k); else st.set(sec, k, JSON.parse(JSON.stringify(ks[k]))); n++; } catch (e) { /* not FR24's to set */ }
+        });
+      });
+      if (n) mx.setApplied = (mx.setApplied || 0) + n;
+      return n;
+    }
+    // (what FR24's windows set - its store's own actions - kept, as it is once they have run)
+    var mxSetQuiet = false;
+    function mxSetNote(st, sec, keys) {
+      if (mxSetQuiet || !st || !st.settings || !st.settings[sec]) return;
+      var kept = mxSetKept(), s = st.settings[sec], ch = false;
+      keys.forEach(function (k) { if (!mxSetOk(sec, k) || !(k in s) || !mxSetVal(s[k])) return; var v = JSON.parse(JSON.stringify(s[k])); kept[sec] = kept[sec] || {}; if (JSON.stringify(kept[sec][k]) !== JSON.stringify(v)) { kept[sec][k] = v; ch = true; } });
+      if (ch) mxSetSave(kept);
+    }
+    function mxSetWatch() {
+      var p = mxPinia(), st = p && p._s.get('settings'); if (!st || typeof st.$onAction !== 'function') return false;
+      if (st.__tlSet) return true; st.__tlSet = true;
+      st.$onAction(function (a) {
+        var name = a.name, args = a.args || [];
+        a.after(function () {
+          if (name === 'set' || name === 'toggle') { if (typeof args[0] === 'string' && args[1] != null) mxSetNote(st, args[0], [String(args[1])]); }
+          else if (name === 'toggleWeatherLayer') mxSetNote(st, 'weather', [String(args[0])]);
+          else if (name === 'setWindWeatherLayer') mxSetNote(st, 'weather', ['windBarbs', 'windGradient']);
+          // (FR24 setting them all anew - from its server: the ones kept given back)
+          else if (name === 'setAllSettings' || name === 'resetWeatherLayers') oSetTimeout(function () { mxSetQuiet = true; try { mxSetIntoStore(st); } finally { mxSetQuiet = false; } }, 0);
+        });
+      });
+      // (and once now, should FR24 have set them from elsewhere before this was here)
+      mxSetQuiet = true; try { mxSetIntoStore(st); } finally { mxSetQuiet = false; }
+      mx.setWatch = true; return true;
+    }
+    if (mx.on) {
+      (function waitApp(n) { if (!mxSetIntoPage() && n < 400) oSetTimeout(function () { waitApp(n + 1); }, n < 200 ? 5 : 50); })(0);
+      (function waitSet(n) { if (!mxSetWatch() && n < 240) oSetTimeout(function () { waitSet(n + 1); }, 250); })(0);
+    }
+
     // ---- what the page part cannot reach itself: fetched by the userscript (any site; binary or text) --------------------
     var mxWait = new Map(), mxSeq = 0;
     function mxGet(url, bin, ms) {
@@ -2582,22 +2677,76 @@
     // (part of a tile `dz` zooms up from it, scaled to a whole tile)
     function mxCrop(img, z, x, y, dz) {
       var cv = mxCanvas(256, 256), g = cv.getContext('2d'), s = img.width / Math.pow(2, dz), ax = x >> dz, ay = y >> dz;
-      g.imageSmoothingEnabled = true;
+      g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
       g.drawImage(img, (x - (ax << dz)) * s, (y - (ay << dz)) * s, s, s, 0, 0, 256, 256);
       return cv;
     }
+    // (1.2.3) One picture for the whole map: the version of a layer a valid time FR24 asks for was first drawn with stays
+    // that one's - FR24 asks for every tile again when its time moves on (the monitor keeps the picture before its newest
+    // for that) - so a map moved after the monitor has a new picture is not new squares beside old ones
+    var mxVerOf = new Map();
+    function mxPinVer(prod, vt, cur) {
+      if (!vt) return cur;
+      var k = prod + '|' + vt, v = mxVerOf.get(k); if (v) return v;
+      mxVerOf.set(k, cur); if (mxVerOf.size > 200) mxVerOf.delete(mxVerOf.keys().next().value);
+      return cur;
+    }
+    var mxMonUrl = function (prod, ver, z, x, y) { return '/wx/t/' + prod + '/' + ver + '/' + z + '/' + x + '/' + y + '.png'; };
+    // (1.2.3) the tiles round one asked for, fetched ahead behind FR24's own - the map moved a little has them at once - and
+    // the whole world's at the zooms out, once a picture: a few at a time, never more than the monitor's lane can spare
+    var mxAhead = { q: [], busy: 0, done: new Set() };
+    function mxAheadRun() {
+      while (mxAhead.busy < 4 && mxAhead.q.length) {
+        var u = mxAhead.q.shift(); if (mxMonBufs.has(u)) continue;
+        mxAhead.busy++;
+        mxMonBuf(u).then(function () { mxAhead.busy--; mxAheadRun(); }, function () { mxAhead.busy--; mxAheadRun(); });
+      }
+    }
+    function mxAheadOf(prod, ver, mz, ax, ay, maxZ) {
+      var N = Math.pow(2, mz), add = function (u) { if (!mxMonBufs.has(u) && mxAhead.q.indexOf(u) < 0) mxAhead.q.push(u); };
+      for (var dy = -1; dy <= 1; dy++) for (var dx = -1; dx <= 1; dx++) { var yy = ay + dy; if (yy < 0 || yy >= N || (!dx && !dy)) continue; add(mxMonUrl(prod, ver, mz, ((ax + dx) % N + N) % N, yy)); }
+      var wk = prod + '|' + ver;
+      if (!mxAhead.done.has(wk)) { mxAhead.done.add(wk); for (var z = 0; z <= Math.min(2, maxZ); z++) { var n = Math.pow(2, z); for (var j = 0; j < n; j++) for (var i = 0; i < n; i++) add(mxMonUrl(prod, ver, z, i, j)); } }
+      if (mxAhead.q.length > 120) mxAhead.q.splice(0, mxAhead.q.length - 120);
+      oSetTimeout(mxAheadRun, 50);
+    }
+    // (the nearest coarser tile of the same picture already here - drawn in place of one the monitor did not give)
+    function mxCachedAncestor(prod, ver, mz, ax, ay) {
+      for (var d = 1; d <= mz; d++) { var u = mxMonUrl(prod, ver, mz - d, ax >> d, ay >> d); if (mxMonBufs.has(u)) return { p: mxMonBufs.get(u), dz: d }; }
+      return null;
+    }
     // a tile of a layer the monitor builds: its own bytes where it has that zoom (FR24 given them as they are), else its
     // nearest tile scaled up; { canvas } when one is wanted to draw on
-    function mxMonTile(prod, z, x, y, wantCanvas) {
+    function mxMonTile(prod, z, x, y, wantCanvas, vt) {
       return mxMeta().then(function (m) {
         var p = m && m[prod]; if (!p || !p.ver) throw new Error(prod + ' not built yet');
-        var dz = Math.max(0, z - p.maxZ), url = '/wx/t/' + prod + '/' + p.ver + '/' + (z - dz) + '/' + (x >> dz) + '/' + (y >> dz) + '.png';
-        if (!dz && !wantCanvas) return mxMonBuf(url).then(function (b) { return { bytes: b }; });
-        return mxMonBuf(url).then(function (b) { return createImageBitmap(new Blob([b])); }).then(function (img) { return { canvas: mxCrop(img, z, x, y, dz) }; });
+        var ver = mxPinVer(prod, vt, p.ver), dz = Math.max(0, z - p.maxZ), mz = z - dz, ax = x >> dz, ay = y >> dz, url = mxMonUrl(prod, ver, mz, ax, ay);
+        if (prod === 'cloud' || prod === 'precip') mxAheadOf(prod, ver, mz, ax, ay, p.maxZ);
+        var draw = function (b, up) { return createImageBitmap(new Blob([b])).then(function (img) { return { canvas: mxCrop(img, z, x, y, up) }; }); };
+        var got = mxMonBuf(url).catch(function () {
+          // (once more; then the same picture's coarser tile already here, scaled up - never another source's beside it)
+          return new Promise(function (res) { oSetTimeout(res, 400); }).then(function () { return mxMonBuf(url); }).catch(function (e) {
+            var a = mxCachedAncestor(prod, ver, mz, ax, ay); if (!a) throw e;
+            return a.p.then(function (b) { return { up: a.dz + dz, b: b }; });
+          });
+        });
+        return got.then(function (b) {
+          if (b && b.up != null) return draw(b.b, b.up);
+          if (!dz && !wantCanvas) return { bytes: b };
+          return draw(b, dz);
+        });
       });
     }
-    // (the monitor's tile, else the source's own drawn here)
-    function mxMonOr(prod, z, x, y, direct) { return mxMonTile(prod, z, x, y).catch(function () { var d = direct(); return d && d.then ? d.then(function (cv) { return cv ? { canvas: cv } : null; }) : null; }); }
+    // (the monitor's tile, else - only when the monitor has no such layer at all, or cannot be reached - the source's own
+    // drawn here)
+    function mxMonOr(prod, z, x, y, direct, vt) {
+      return mxMonTile(prod, z, x, y, false, vt).catch(function () {
+        return mxMeta().then(function (m) { return !!(m && m[prod] && m[prod].ver); }, function () { return false; }).then(function (monHas) {
+          if (monHas) return null;
+          var d = direct(); return d && d.then ? d.then(function (cv) { return cv ? { canvas: cv } : null; }) : null;
+        });
+      });
+    }
     function mxBytesOr(monPath, url, bin) { return mxMon(monPath, bin).catch(function () { return mxGet(url, bin); }); }
 
     // ---- tiles: drawing ---------------------------------------------------------------------------------------------
@@ -2862,10 +3011,10 @@
     function mxTile(url) {
       var m = url.match(/\/\/tl-wx\.invalid\/v1\/tl\/tms\/1\.0\.0\/([^/]+)\/(\d+)\/(\d+)\/(\d+)\.png(?:\?([^#]*))?/); if (!m) return null;
       var type = decodeURIComponent(m[1]).split('+')[0], z = +m[2], x = +m[3], y = Math.pow(2, z) - 1 - (+m[4]), q = m[5] || '';
-      var vt = Date.parse(decodeURIComponent((q.match(/(?:^|&)valid_time=([^&]*)/) || [])[1] || '')) || Date.now(), p = null, k;
+      var vt0 = Date.parse(decodeURIComponent((q.match(/(?:^|&)valid_time=([^&]*)/) || [])[1] || '')) || 0, vt = vt0 || Date.now(), p = null, k;
       if (y < 0 || y >= Math.pow(2, z)) return mxEmpty();
-      if (type === 'C09-0x0316-0') p = mxMonOr('cloud', z, x, y, function () { return mxCloud(z, x, y); });
-      else if (type === 'gfs-preciprate-inph-surface') p = mxMonOr('precip', z, x, y, function () { return mxImerg(z, x, y); });
+      if (type === 'C09-0x0316-0') p = mxMonOr('cloud', z, x, y, function () { return mxCloud(z, x, y); }, vt0);
+      else if (type === 'gfs-preciprate-inph-surface') p = mxMonOr('precip', z, x, y, function () { return mxImerg(z, x, y); }, vt0);
       else if (type === 'C09-0x0374-0') p = mxMonOr('radar', z, x, y, function () { return mxRadar(z, x, y); });
       else if (type === 'north-american-radar') p = mxTileIn(z, x, y, -170, 14, -50, 72) ? mxMonOr('naradar', z, x, y, function () { return mxNexrad(z, x, y); }) : null;
       else if (type === 'C50-0x030F-0') p = mxTileIn(z, x, y, 108, -46, 160, -9) ? mxMonTile('radar', z, x, y, true).then(function (r) { return mxClip(r.canvas, z, x, y, 108, -46, 160, -9); }, function () { return mxAuRadar(z, x, y); }) : null;
@@ -3160,13 +3309,78 @@
     // features) - raised there, so its widget takes as many as wanted; and where FR24's server keeps no more, the rest are
     // kept in this browser, in FR24's own form, and listed with FR24's own as one list
     var MX_BM_KEY = 'tl.mx.bookmarks', MX_BM_LISTS = { aircraft: 'aircraft', flight: 'flights', airport: 'airports', location: 'locations' };
+    // (1.2.3) FR24's widget asks its user store - feature("map.widgets.bookmarks.max") - and keeps the answer. The store
+    // holds its own copy of the features (and a signed-in account's are fetched again after sign-in, never in the page's
+    // props), so the limit is raised in the stores themselves, through their reactive state: FR24's widget then reads 1000
+    var MX_BM_MAX = 'map.widgets.bookmarks.max';
+    var mxBmLow = function (f) { return !!f && typeof f === 'object' && MX_BM_MAX in f && !(f[MX_BM_MAX] >= 1000); };
     function mxBmMax() {
       try {
         var el = document.getElementById('app'), app = el && el.__vue_app__, pg = app && app.config && app.config.globalProperties && app.config.globalProperties.$page, pr = pg && pg.props;
-        [pr && pr.features, pr && pr.dispatcher && pr.dispatcher.features].forEach(function (f) { if (f && typeof f === 'object' && 'map.widgets.bookmarks.max' in f && !(f['map.widgets.bookmarks.max'] >= 1000)) f['map.widgets.bookmarks.max'] = 1000; });
+        [pr && pr.features, pr && pr.dispatcher && pr.dispatcher.features].forEach(function (f) { if (mxBmLow(f)) f[MX_BM_MAX] = 1000; });
+        var p = mxPinia(); if (!p) return;
+        var ds = p._s.get('dispatcher'), d = ds && ds.dispatcher;
+        if (d && mxBmLow(d.features)) d.features[MX_BM_MAX] = 1000;
+        if (d && d.userData && mxBmLow(d.userData.features)) d.userData.features[MX_BM_MAX] = 1000;
+        var us = p._s.get('user');
+        // (its reading of the limit answered 1000 itself - so a fresh copy of the features, set by FR24 at any moment, is
+        // never read as one even for the moment before it is raised here)
+        if (us && typeof us.feature === 'function' && !us.feature.__tl) {
+          var own = us.feature, mine = function (k) { var v = own.apply(this, arguments); return k === MX_BM_MAX && typeof v === 'number' && v < 1000 ? 1000 : v; };
+          mine.__tl = true; us.feature = mine;
+        }
+        if (us && mxBmLow(us.features)) { var nf = Object.assign({}, us.features); nf[MX_BM_MAX] = 1000; us.features = nf; }
+        mx.bmMax = us && us.features ? us.features[MX_BM_MAX] : null;
       } catch (e) { /* not drawn yet */ }
     }
-    if (mx.on) setInterval(mxBmMax, 1500);
+    if (mx.on) { setInterval(mxBmMax, 1500); [300, 800, 1500].forEach(function (t) { oSetTimeout(mxBmMax, t); }); }
+    // ---- (1.2.3) "Last clicked flights": FR24 notes a flight opened only for a premium account, and keeps the list on its
+    // server (/restapi/v1/widgets/last-clicked-flights), which keeps none for a free one. Kept here instead: each flight
+    // opened on the live map, newest first, ten at most, in the form FR24's server gives them - and FR24's widget asks
+    // this list for them
+    var MX_LC_KEY = 'tl.mx.lastclicked', MX_LC_MAX = 10, mxLcSeen = null;
+    function mxLcList() { try { var a = JSON.parse(localStorage.getItem(MX_LC_KEY) || '[]'); return Array.isArray(a) ? a.filter(function (x) { return x && x.id != null; }) : []; } catch (e) { return []; } }
+    function mxLcSave(a) { try { localStorage.setItem(MX_LC_KEY, JSON.stringify(a.slice(0, MX_LC_MAX))); } catch (e) { /* full */ } }
+    function mxLcAirport(a) {
+      if (!a || typeof a !== 'object') return { code: { iata: null, icao: null }, city: null, name: null };
+      var c = a.code && typeof a.code === 'object' ? a.code : {}, pos = a.position || {}, reg = pos.region || {};
+      return { code: { iata: c.iata || a.iata || null, icao: c.icao || a.icao || null }, city: a.city || reg.city || null, name: a.name || null };
+    }
+    // (the flight open in FR24's panel, as an entry of the list)
+    function mxLcItem(ac) {
+      var s = ac && ac.selected, fi = s && s.flightInfo; if (!fi || fi.flightId == null) return null;
+      var ai = s.aircraftInfo || {}, sc = s.scheduleInfo || {}, id = Number(fi.flightId); if (!(id > 0)) return null;
+      return { id: id, callsign: fi.callsign || null, flight: sc.flightNumber || null, type: ai.type || null, registration: ai.reg || null, airport: { origin: mxLcAirport(ac.selectedFlightOriginAirport), destination: mxLcAirport(ac.selectedFlightDestinationAirport) } };
+    }
+    function mxLcShow(list) { try { var p = mxPinia(), lc = p && p._s.get('lastClickedFlights'); if (lc && typeof lc.setList === 'function') lc.setList(list.slice(0, MX_LC_MAX)); } catch (e) { /* not drawn */ } }
+    function mxLcTick() {
+      try {
+        var pb = pinStore('playback'); if (pb && pb.active) return;
+        var it = mxLcItem(pinStore('aircraft')); if (!it) { mxLcSeen = null; return; }
+        var list = mxLcList(), at = list.findIndex(function (x) { return Number(x.id) === it.id; }), key = JSON.stringify(it);
+        if (mxLcSeen === key) return;
+        var fresh = mxLcSeen == null || mxLcSeen.indexOf('{"id":' + it.id + ',') !== 0;
+        mxLcSeen = key;
+        if (at === 0 && JSON.stringify(list[0]) === key) return;
+        // (a flight opened anew goes to the top; the open one's details, as they come, replace its own entry where it is)
+        if (fresh || at < 0) { if (at >= 0) list.splice(at, 1); list.unshift(it); } else list[at] = it;
+        mxLcSave(list); mxLcShow(list);
+      } catch (e) { /* no panel */ }
+    }
+    if (mx.on) setInterval(mxLcTick, 1000);
+    // (FR24's widget asking its server for the list - or setting it: the order given, or none)
+    function mxLastClicked(input, init) {
+      var method = String((init && init.method) || (input && input.method) || 'GET').toUpperCase(), list = mxLcList();
+      if (method === 'PUT') {
+        var body = mxBmBody(input, init), ids = body && Array.isArray(body.last_clicked_flights) ? body.last_clicked_flights.map(Number) : null;
+        if (ids) {
+          var by = {}; list.forEach(function (x) { by[Number(x.id)] = x; });
+          list = ids.map(function (i) { return by[i] || null; }).filter(Boolean);
+          mxLcSave(list);
+        }
+      }
+      return Promise.resolve(jsonResponse(null, { last_clicked_flights: { items: list.slice(0, MX_LC_MAX) } }));
+    }
     function mxBmKept() { try { var o = JSON.parse(localStorage.getItem(MX_BM_KEY) || '{}'); return o && typeof o === 'object' ? o : {}; } catch (e) { return {}; } }
     function mxBmSave(o) { try { localStorage.setItem(MX_BM_KEY, JSON.stringify(o)); } catch (e) { /* full */ } }
     var mxBmId = function (list, it) { return String(list === 'aircraft' ? it.registration : list === 'flights' ? it.flight_number : list === 'airports' ? (it.code && (it.code.iata || it.code.icao)) : (it.name || it.identifier) || '').toUpperCase(); };
@@ -3214,6 +3428,7 @@
     function mxFetch(url, input, init) {
       if (!mx.on) return null;
       if (/\/webapi\/v1\/bookmarks(?:$|\?(?!.*sort))/.test(url) && !/\/bookmarks\/sort/.test(url)) return mxBookmarks(input, init);
+      if (/\/restapi\/v1\/widgets\/last-clicked-flights(?:$|[?#])/.test(url)) return mxLastClicked(input, init);
       if (/\/\/tl-wx\.invalid\//.test(url)) return mxTile(url);
       if (/\/api\/v1\/weather\/auth\b/.test(url)) return mxAuth().then(function (o) { return jsonResponse(null, o); }, function (e) { mxFail(e); return jsonResponse(null, { data: null }); });
       if (/adn\.velocityweather\.com\/v1\/[^/]+\/reports\/lightning\/region\.json/.test(url)) return mxLightning(url);
@@ -3801,6 +4016,7 @@
       else if (d.__tweeksLadd === 'revoke') { for (var i = 0; i < (d.ids || []).length; i++) { resolved.delete(Number(d.ids[i])); routes.delete(Number(d.ids[i])); telem.delete(Number(d.ids[i])); } }
       else if (d.__tweeksLadd === 'route') { if (d.id != null) { if (d.route) routes.set(Number(d.id), d.route); else routes.delete(Number(d.id)); if (followSt && Number(d.id) === followSt.id) pushFollowSoon(); if (boardAffected([d.id])) refreshBoardSoon(); } }
       else if (d.__tweeksLadd === 'routesGot') onRoutesGot(d);
+      else if (d.__tweeksLadd === 'ctyTable') onCtyTable(d);
       else if (d.__tweeksLadd === 'routes') { (d.list || []).forEach(function (x) { if (x && x.id != null) { if (x.route) routes.set(Number(x.id), x.route); else routes.delete(Number(x.id)); if (followSt && Number(x.id) === followSt.id) pushFollowSoon(); } }); if (boardAffected((d.list || []).map(function (x) { return x && x.id; }))) refreshBoardSoon(); }
       // (where flights FR24 is not drawing here were last: the monitor's - the boards of every airport list them)
       else if (d.__tweeksLadd === 'positions') {
@@ -3851,7 +4067,7 @@
       else if (d.__tweeksLadd === 'hello') post('ready', { stats: stats, feedReady: !!feedHeaders, hdr: feedHdrPublic(), v: BRIDGE_V });
     });
     window[NS] = { resolved: resolved, routes: routes, naRecs: naRecs, naRoutes: naRoutes, telem: telem, hist: hist, lastPos: lastPos, photoCache: photoCache, psCache: psCache, stats: stats, fetchPhotos: fetchPhotos, hello: function () { post('ready', { stats: stats, feedReady: !!feedHeaders, v: BRIDGE_V }); }, v: BRIDGE_V };
-    if (window.__tlTestHook) try { window.__tlTestHook({ csOf: csOf, patchTopFlights: patchTopFlights, fillFlightList: fillFlightList, routeRows: routeRows, liveDestFix: liveDestFix, hist: hist, preloaded: function () { return preloaded; }, parse: parse, photoFits: photoFits, makerOf: makerOf, patchFollow: patchFollow, patchFlightMsg: patchFlightMsg, pushFollow: pushFollow, followSt: function () { return followSt; }, setFollowSt: function (s) { followSt = s; }, shownPhotos: shownPhotos, photoCache: photoCache, FOLLOW: FOLLOW, DETAILS: DETAILS, fLen: fLen, fStr: fStr, fVar: fVar, patchFlight: patchFlight, patchLiveFeed: patchLiveFeed, fr24Named: fr24Named, psState: function () { return { q: psQ.length, busy: psBusy, last: psLast, blockedFor: Math.max(0, psBlockedUntil - Date.now()), pri: Array.from(psPri), jobs: photoJobs.size, head: psQ.slice(0, 3).map(function (j) { return j.hex; }) }; }, acceptPubTel: acceptPubTel, pubTelFor: pubTelFor, fillNativeCard: fillNativeCard, regsOfCallsign: regsOfCallsign, categoryOf: categoryOf, placeShort: placeShort, nativeFill: nativeFill, natInfo: natInfo, addArch: addArch, acceptBoardArch: acceptBoardArch, telem: telem, b64Encode: b64Encode, b64DecodeInto: b64DecodeInto, frameHeader: frameHeader, concat: concat, varintInt32: varintInt32, PLAYBACK: PLAYBACK, patchPlayback: patchPlayback, patchPlaybackRequest: patchPlaybackRequest, pbRoutes: pbRoutes, pbTelAt: pbTelAt, setPbTrace: function (t) { pbTrace = t; }, patchList: patchList, acceptSites: acceptSites, listSig: listSig, mergeRoutes: mergeRoutes, applyRoutes: applyRoutes, routesAdd: routesAdd, applyAirport: applyAirport, applyBoardPage: applyBoardPage, applyStats: applyStats, mergeFlights: mergeFlights, apData: apData, telAt: telAt, noteTelem: noteTelem, pbTraceOf: function () { return pbTrace; }, logoOf: logoOf, archDetail: archDetail, tsOf: tsOf, noteAirportJson: noteAirportJson, rwyOf: rwyOf, rwyPanel: rwyPanel, panelTick: panelTick, panelData: panelData, promoSlots: promoSlots, acceptAirportPanel: acceptAirportPanel, unlockRunways: unlockRunways, mvRows: mvRows, mvKept: mvKept, dayOf: dayOf, pbPanelTick: pbPanelTick, logoFix: logoFix, liveEntries: liveEntries, pbPos: pbPos, unlockFeed: unlockFeed, derivedVs: derivedVs, altHist: altHist, acceptAir: acceptAir, airCache: airCache, flushAir: flushAir, airWant: function () { return airWant; }, lastPos: lastPos, resolved: resolved, stats: stats, pbFind: pbFind, pbTraceUrl: pbTraceUrl, pbMerge: pbMerge, inBar: inBar, pbBlk: pbBlk, cardInfo: cardInfo, boardRowsSeen: boardRowsSeen, archById: archById, placeBoard: placeBoard, stopBoardHold: stopBoardHold, needBoardArch: needBoardArch, mx: mx, mxPatchCore: mxPatchCore, mxAuth: mxAuth, mxNatList: mxNatList, mxTrackOk: mxTrackOk, stripRestriction: stripRestriction, mxBmMerge: mxBmMerge, mxBmItem: mxBmItem, mxMonTile: mxMonTile, mxNatParse: mxNatParse, mxAirsigList: mxAirsigList, mxStations: mxStations, mxLightning: mxLightning, mxLx: mxLx, mxFetch: mxFetch, mxWxText: mxWxText, mxWxKind: mxWxKind, mxCsv: mxCsv, patchLiveFeedRequest: patchLiveFeedRequest, mxCats: mxCats, mxOp: mxOp, mxLevels: mxLevels, mxNearest: mxNearest, MX_ICE: MX_ICE, MX_TURB: MX_TURB, mxWafsUrl: mxWafsUrl, routes: routes, setCurFollow: function (id) { curFollowId = id; } }); } catch (e) { /* ignore */ }
+    if (window.__tlTestHook) try { window.__tlTestHook({ csOf: csOf, patchTopFlights: patchTopFlights, fillFlightList: fillFlightList, routeRows: routeRows, liveDestFix: liveDestFix, hist: hist, preloaded: function () { return preloaded; }, parse: parse, photoFits: photoFits, makerOf: makerOf, patchFollow: patchFollow, patchFlightMsg: patchFlightMsg, pushFollow: pushFollow, followSt: function () { return followSt; }, setFollowSt: function (s) { followSt = s; }, shownPhotos: shownPhotos, photoCache: photoCache, FOLLOW: FOLLOW, DETAILS: DETAILS, fLen: fLen, fStr: fStr, fVar: fVar, patchFlight: patchFlight, patchLiveFeed: patchLiveFeed, fr24Named: fr24Named, psState: function () { return { q: psQ.length, busy: psBusy, last: psLast, blockedFor: Math.max(0, psBlockedUntil - Date.now()), pri: Array.from(psPri), jobs: photoJobs.size, head: psQ.slice(0, 3).map(function (j) { return j.hex; }) }; }, acceptPubTel: acceptPubTel, pubTelFor: pubTelFor, fillNativeCard: fillNativeCard, regsOfCallsign: regsOfCallsign, categoryOf: categoryOf, placeShort: placeShort, nativeFill: nativeFill, natInfo: natInfo, addArch: addArch, acceptBoardArch: acceptBoardArch, telem: telem, b64Encode: b64Encode, b64DecodeInto: b64DecodeInto, frameHeader: frameHeader, concat: concat, varintInt32: varintInt32, PLAYBACK: PLAYBACK, patchPlayback: patchPlayback, patchPlaybackRequest: patchPlaybackRequest, pbRoutes: pbRoutes, pbTelAt: pbTelAt, setPbTrace: function (t) { pbTrace = t; }, patchList: patchList, acceptSites: acceptSites, listSig: listSig, mergeRoutes: mergeRoutes, applyRoutes: applyRoutes, routesAdd: routesAdd, applyAirport: applyAirport, applyBoardPage: applyBoardPage, applyStats: applyStats, mergeFlights: mergeFlights, apData: apData, telAt: telAt, noteTelem: noteTelem, pbTraceOf: function () { return pbTrace; }, logoOf: logoOf, archDetail: archDetail, tsOf: tsOf, noteAirportJson: noteAirportJson, rwyOf: rwyOf, rwyPanel: rwyPanel, panelTick: panelTick, panelData: panelData, promoSlots: promoSlots, acceptAirportPanel: acceptAirportPanel, unlockRunways: unlockRunways, mvRows: mvRows, mvKept: mvKept, dayOf: dayOf, pbPanelTick: pbPanelTick, logoFix: logoFix, liveEntries: liveEntries, pbPos: pbPos, unlockFeed: unlockFeed, derivedVs: derivedVs, altHist: altHist, acceptAir: acceptAir, airCache: airCache, flushAir: flushAir, airWant: function () { return airWant; }, lastPos: lastPos, resolved: resolved, stats: stats, pbFind: pbFind, pbTraceUrl: pbTraceUrl, pbMerge: pbMerge, inBar: inBar, pbBlk: pbBlk, cardInfo: cardInfo, boardRowsSeen: boardRowsSeen, archById: archById, placeBoard: placeBoard, stopBoardHold: stopBoardHold, needBoardArch: needBoardArch, mx: mx, mxPatchCore: mxPatchCore, mxAuth: mxAuth, mxNatList: mxNatList, mxTrackOk: mxTrackOk, stripRestriction: stripRestriction, mxBmMerge: mxBmMerge, mxBmItem: mxBmItem, mxMonTile: mxMonTile, mxMonOr: mxMonOr, mxPinVer: mxPinVer, mxSetApply: mxSetApply, mxSetNote: mxSetNote, mxSetKept: mxSetKept, mxLastClicked: mxLastClicked, mxLcList: mxLcList, mxLcTick: mxLcTick, mxBmMax: mxBmMax, mxNatParse: mxNatParse, mxAirsigList: mxAirsigList, mxStations: mxStations, mxLightning: mxLightning, mxLx: mxLx, mxFetch: mxFetch, mxWxText: mxWxText, mxWxKind: mxWxKind, mxCsv: mxCsv, patchLiveFeedRequest: patchLiveFeedRequest, mxCats: mxCats, mxOp: mxOp, mxLevels: mxLevels, mxNearest: mxNearest, MX_ICE: MX_ICE, MX_TURB: MX_TURB, mxWafsUrl: mxWafsUrl, routes: routes, setCurFollow: function (id) { curFollowId = id; } }); } catch (e) { /* ignore */ }
     post('ready', { stats: stats, feedReady: false, v: BRIDGE_V });
   }
 
@@ -3940,6 +4156,10 @@
       [/^(C25[A-CM]|C50[01]|C510|C52[56]|C55[01B]|C56X|C560|C650|C680|C68A|C700|C750)$/, 'CITATION'], [/^(E50P|E55P|E545|E550|E35L)$/, 'EMBRAERBIZ'], [/^LJ\d\d$/, 'LEARJET'], [/^(H25[A-C]|HA4T|BE40|PRM1)$/, 'HAWKER'],
       [/^(B73\d|B3[789]M|BBJ\d?)$/, 'B737'], [/^(A31[89]|A32[01]|A[12][019]N)$/, 'A320']];
     function typeFamily(t) { t = String(t || '').trim().toUpperCase(); if (!t) return ''; for (const [re, f] of TYPE_LINES) if (re.test(t)) return f; return t.slice(0, 3); }
+    // (1.2.3) both business jets: the public databases and FR24's own name a re-registered or misfiled jet differently (N999YX:
+    // ADS-B's GLEX, FR24's GLF6) - kin, not different, where the two fit as closely as one aircraft does
+    const isBizType = t => { t = String(t || '').trim().toUpperCase(); return HEAVY_BIZ.test(t) || BIZJET.test(t); };
+    function bizKin(a, b) { return isBizType(a) && isBizType(b); }
     function classify(ac) {
       const t = String(ac && ac.type || '').toUpperCase(), cat = String(ac && ac.cat || '').toUpperCase(), mil = !!(ac && ac.mil);
       const td0 = typeDesc(t);
@@ -6362,7 +6582,7 @@
       return res;
     }
 
-    return { typeFamily, surgeOf, setTables2, get T2() { return T2; }, trackState, offTrack, fieldShortName, placeShort, placeLabels, setApproach, approachCell, approachPath, apprGroup, apprKey, trackAgree, heatNear, heatMatch, reckon, trackErr, remotePath, flowKeysOf, pgrpOf, grp6, sunElev, airData, gsAlong, minutesTo, flowAt, pathOf, pathDev, ownerKey, parseRunwayLengths, setRunwayLengths, csvLine, SQ_NOINFO, tripBin, regionOf, learnLeg, learnRow, learnCollector, addLearnedOp, odAdd: (x, y, w) => { const k = odKey(String(x).toUpperCase(), String(y).toUpperCase()), v = (OD.get(k) || 0) + w; if (v > 1e-9) OD.set(k, v); else OD.delete(k); }, odWeight: (x, y) => OD.get(odKey(String(x).toUpperCase(), String(y).toUpperCase())) || 0, odCount: () => OD.size, setAirports, setUsage, addUsage, setRunways, parseRunwaysCsv, runwayFit, setWeights, setTables, setLogit, calibrated, mergePoints, finalTo, longFinal, typeRangeKm, FEAT, groupOf, W, classify, isStepClimb, rangeKm, parseTrace, legsFromPoints, summarizeLeg, stitchLegs, chainLegs, histStats, inferOrigin, predict, privateSite, rwyImpossible, typeDesc, heliSpots, heliAirportAt, landedSum, localFlew, climbedOut, approachTo, downAndUp, landingInGap, gapEnds, slowGap, idleHole, currentLeg, circuits, mergeCircuits, setFields, fieldAt, placeAt, isField, nearbyFields, fieldCount: () => FL.length, airportAt, departureFromClimb, arrivalFromDescent, nearby, dist, brg, xtat, destPoint, angDiff, get airports() { return AP; }, byId: id => byId.get(id), byIcao: c => byIcao.get(String(c || '').toUpperCase()) };
+    return { typeFamily, bizKin, isBizType, surgeOf, setTables2, get T2() { return T2; }, trackState, offTrack, fieldShortName, placeShort, placeLabels, setApproach, approachCell, approachPath, apprGroup, apprKey, trackAgree, heatNear, heatMatch, reckon, trackErr, remotePath, flowKeysOf, pgrpOf, grp6, sunElev, airData, gsAlong, minutesTo, flowAt, pathOf, pathDev, ownerKey, parseRunwayLengths, setRunwayLengths, csvLine, SQ_NOINFO, tripBin, regionOf, learnLeg, learnRow, learnCollector, addLearnedOp, odAdd: (x, y, w) => { const k = odKey(String(x).toUpperCase(), String(y).toUpperCase()), v = (OD.get(k) || 0) + w; if (v > 1e-9) OD.set(k, v); else OD.delete(k); }, odWeight: (x, y) => OD.get(odKey(String(x).toUpperCase(), String(y).toUpperCase())) || 0, odCount: () => OD.size, setAirports, setUsage, addUsage, setRunways, parseRunwaysCsv, runwayFit, setWeights, setTables, setLogit, calibrated, mergePoints, finalTo, longFinal, typeRangeKm, FEAT, groupOf, W, classify, isStepClimb, rangeKm, parseTrace, legsFromPoints, summarizeLeg, stitchLegs, chainLegs, histStats, inferOrigin, predict, privateSite, rwyImpossible, typeDesc, heliSpots, heliAirportAt, landedSum, localFlew, climbedOut, approachTo, downAndUp, landingInGap, gapEnds, slowGap, idleHole, currentLeg, circuits, mergeCircuits, setFields, fieldAt, placeAt, isField, nearbyFields, fieldCount: () => FL.length, airportAt, departureFromClimb, arrivalFromDescent, nearby, dist, brg, xtat, destPoint, angDiff, get airports() { return AP; }, byId: id => byId.get(id), byIcao: c => byIcao.get(String(c || '').toUpperCase()) };
   }
   /* ==/ENGINE== */
 
@@ -6528,7 +6748,7 @@
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '1.2.2';
+  const VERSION = '1.2.3';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
@@ -7272,7 +7492,7 @@
     if (!f || f.gnd || !(f.alt > 15000) || !fin(f.lat)) return null;
     const ft = clean(f.type).toUpperCase(), t = now(), taken = takenHexes(f.id, t), fits = [];
     for (const [ty, m] of lastSeenByType) {
-      const rel = typeRelation(ty, ft); if (rel === 'different' || (!ft && ty)) continue;
+      const rel = typeRelation(ty, ft); if (rel === 'different' || rel === 'kin' || (!ft && ty)) continue;
       for (const { c, t: seen } of m.values()) {
         const age = (t - seen) / 1000;
         if (age < 150 || age > 5 * 3600 || taken.has(c.hex)) continue;            // (heard lately: the ordinary match is for that)
@@ -7795,7 +8015,11 @@
   // ---- matching -------------------------------------------------------------------------------------------------
   function fr24Age(f, t) { const base = f.serverTime && f.ts ? Math.max(0, f.serverTime / 1000 - f.ts) : 0; return base + Math.max(0, (t - f.receivedAt) / 1000); }
   const typeFamily = t => ENGINE.typeFamily(clean(t));   // (a maker's line: GA7C and GLF6 alike - engine TYPE_LINES)
-  function typeRelation(a, b) { a = clean(a).toUpperCase(); b = clean(b).toUpperCase(); if (!a || !b) return 'unknown'; if (a === b) return 'same'; return typeFamily(a) === typeFamily(b) ? 'family' : 'different'; }
+  function typeRelation(a, b) { a = clean(a).toUpperCase(); b = clean(b).toUpperCase(); if (!a || !b) return 'unknown'; if (a === b) return 'same'; return typeFamily(a) === typeFamily(b) ? 'family' : ENGINE.bizKin(a, b) ? 'kin' : 'different'; }
+  // (1.2.3) two business jets the databases name differently (N999YX: ADS-B's GLEX, FR24's GLF6): the one aircraft only
+  // where it fits as one aircraft does - in the air, within 4 km, 800 ft, 20 degrees and 50 kt - and behind any candidate
+  // of FR24's own type (the monitor's rule, monitor/ident.cjs)
+  const kinFits = (f, c, d) => !f.gnd && !c.gnd && d <= 4 && (!fin(f.alt) || !fin(c.alt) || Math.abs(f.alt - c.alt) <= 800) && (!fin(f.trk) || !fin(c.trk) || angDiff(f.trk, c.trk) <= 20) && (!fin(f.spd) || !fin(c.gs) || Math.abs(f.spd - c.gs) <= 50);
   function scoreCandidate(f, c, flat, flon, t) {
     const cAge = c.ageS + Math.max(0, (t - c.receivedAt) / 1000);
     if (cAge > 120) return null;
@@ -7808,12 +8032,13 @@
     const [clat, clon] = project(c.lat, c.lon, c.gs, c.trk, cAge);
     const d = dist(flat, flon, clat, clon);
     if (d > 15) return null;
+    if (rel === 'kin' && !kinFits(f, c, d)) return null;
     let s = d;
     if (fin(f.alt) && fin(c.alt) && !f.gnd && !c.gnd) { const da = Math.abs(f.alt - c.alt); if (da > 3000) return null; s += da / 400; }
     if (!!f.gnd !== !!c.gnd && f.alt > 1500) return null;
     if (!f.gnd && fin(f.trk) && fin(c.trk) && f.spd > 60 && c.gs > 60) { const dt = angDiff(f.trk, c.trk); if (dt > 50) return null; s += dt / 8; }
     if (fin(f.spd) && fin(c.gs) && f.spd > 60) { const ds = Math.abs(f.spd - c.gs); if (ds > 140) return null; s += ds / 25; }
-    if (rel === 'same') s -= 2; else if (rel === 'family') s += 1; else if (f.type && !c.type) s += 0.5;
+    if (rel === 'same') s -= 2; else if (rel === 'family') s += 1; else if (rel === 'kin') s += 3; else if (f.type && !c.type) s += 0.5;
     if (f.reg && c.reg) s -= 3;
     if (c.ladd || c.pia) s -= 0.75;
     if (c.nonIcao) s += 2;
@@ -7909,7 +8134,9 @@
   }
   function recordFromMatch(f, m, used) {
     const c = m.c, sx = store.getHex(c.hex.toLowerCase()) || {};
-    const type = f.type && m.rel === 'family' ? f.type : (c.type || f.type || '');
+    // (1.2.3) FR24's own type code where FR24 gives one - what its panel shows - the databases' only where it has none
+    // (N999YX: FR24's GLF6, ADS-B's GLEX)
+    const type = clean(f.type) || sx.fr24Type || c.type || '';
     const rec = { id: f.id, hex: c.hex.toLowerCase(), cs: c.cs || '', reg: c.reg || f.reg || hexNNumber(c.hex), type, fr24Type: f.type || '', aggType: c.type || '', desc: c.desc || '', owner: c.owner || '', year: c.year || 0, src: c.src, sources: used, dist: Math.round(m.d * 100) / 100, matchedAt: now(), verifiedAt: now(), ladd: !!(c.ladd || sx.ladd), pia: !!(c.pia || sx.pia), mil: !!(c.mil || sx.mil), cat: c.cat || '', gnd: c.gnd, squawk: c.squawk || 0 };
     hydrate(rec);
     const rc = regCountry(rec.reg), ctry = rc || countryOfHex(rec.hex); if (ctry) { rec.country = rc ? rc.name : rec.country || ctry.name; rec.countryIso = ctry.iso; if (!rec.countryId || rc) rec.countryId = countryIdOf(ctry.iso, ctry.name) || rec.countryId; }
@@ -7965,6 +8192,8 @@
     { const a = rec.photos || [], b = hx.photos || [];
       if (b.length && (b.some(isJp) && !a.some(isJp) || (b.some(isJp) === a.some(isJp) && b.length > a.length))) { rec.photos = b; rec.photoAt = hx.photoAt || rec.photoAt; rec.photoV = hx.photoV || rec.photoV; rec.photoLevel = hx.photoLevel || rec.photoLevel; } }
     for (const k of HYDRATE) { const v = hx[k]; if ((rec[k] == null || rec[k] === '' || rec[k] === 0 || (Array.isArray(rec[k]) && !rec[k].length)) && v != null && v !== '' && !(Array.isArray(v) && !v.length)) rec[k] = v; }
+    // (1.2.3) the type FR24's own record of the aircraft gives, once known, over a database's
+    if (/^[A-Z][A-Z0-9]{1,3}$/.test(hx.fr24Type || '') && rec.type !== hx.fr24Type) { rec.type = hx.fr24Type; rec.fr24Type = hx.fr24Type; }
     return rec;
   }
   // Where and when a flight was last seen, kept with its identity: after a reload the page still knows which of an
@@ -8416,6 +8645,16 @@
     return a || (name && countryIdByName.get(String(name).toUpperCase())) || 0;
   }
 
+  // (1.2.3) for FR24's Flag label on every aircraft: the registration prefixes and transponder address blocks of each
+  // country, as FR24's country ids - the page works out each flight's country from them (page.js ctyOf)
+  async function sendCountryTable() {
+    await fr24.loadCountries();
+    const cid = (iso, name) => countryIdOf(iso, name);
+    const terr = REG_COUNTRY.map(x => [x[0], cid(x[2], x[1])]).filter(x => x[1]);
+    const nat = REG_NATIONAL.map(x => [x[0], cid(x[2], x[1])]).filter(x => x[1]);
+    const hex = HEX_BLOCKS.filter(b => b[3]).map(b => [b[0], b[1], cid(b[3], b[2])]).filter(b => b[2]);
+    postToPage('ctyTable', { terr, nat, hex, us: cid('US', 'United States') });
+  }
   // ---- airports (FR24's own list: ids are the ScheduleInfo id space) -> the route engine ----------------------------
   // Kept on disk: a refresh has every airport - and so every route - at once; the network copy is re-read in the
   // background every few days.
@@ -8948,9 +9187,22 @@
     const ladd = recs.filter(r => live.has(r.id)); if (ladd.length) pushToPage(ladd);
     syncPanelSoon();
   }
+  // (1.2.3) FR24's own type code for an aircraft (its panel's AircraftInfo, its registration lookup): kept, and every record
+  // of the aircraft given it - its board rows and search cards show the type its panel shows, not a database's (N999YX:
+  // GLF6 to FR24, GLEX in the public databases)
+  function noteFr24Type(hex, type) {
+    const t = clean(type).toUpperCase();
+    if (!/^[0-9a-f]{6}$/.test(hex) || !/^[A-Z][A-Z0-9]{1,3}$/.test(t)) return;
+    const kept = store.getHex(hex) || {}; if (kept.fr24Type === t) return;
+    store.mergeHex(hex, { fr24Type: t });
+    const recs = [...live.values(), ...pubRecs.values()].filter(r => r && r.hex === hex && r.type !== t);
+    recs.forEach(r => { r.type = t; r.fr24Type = t; });
+    const ladd = recs.filter(r => live.has(r.id)); if (ladd.length) pushToPage(ladd);
+  }
   function onAircraftInfo(d) {
     const p = notePublicAircraft(Number(d.id), String(d.hex || '').toLowerCase(), d.reg, d.type, d.cs);
     if (p && d.adPhotos) p.adPhotos = true;
+    noteFr24Type(String(d.hex || '').toLowerCase(), d.type);
     // (1.2.1: what FR24's own record of the aircraft holds behind its padlocks - its date of manufacture - kept for it)
     const hex = String(d.hex || '').toLowerCase(), y = fr24BuiltYear(d.birth, d.age);
     if (/^[0-9a-f]{6}$/.test(hex) && (y || d.msn)) { const kept = store.getHex(hex) || {}, upd = {}; if (y && !(kept.year > 1930)) upd.year = y; if (d.msn && !kept.msn) upd.msn = clean(d.msn); if (Object.keys(upd).length) store.mergeHex(hex, upd); if (p && y && !(p.year > 1930)) p.year = y; }
@@ -9093,6 +9345,8 @@
     const model = clean(info.model && info.model.text), op = clean(info.airline && info.airline.name), icao = clean(info.airline && info.airline.code && info.airline.code.icao).toUpperCase();
     const upd = { fr24InfoAt: now() };
     if (model) { upd.fr24Model = model; upd.desc = model; }
+    // (1.2.3) and its type code, as its panel shows it
+    const code = clean(info.model && info.model.code).toUpperCase(); if (/^[A-Z][A-Z0-9]{1,3}$/.test(code)) upd.fr24Type = code;
     if (op && !/^private( owner)?$/i.test(op)) { upd.operatorName = op; if (icao) upd.operatorIcao = icao; }
     store.mergeHex(hex, upd);
   }
@@ -13420,6 +13674,9 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
         if (r.nat && r.nat.airlineId && !alOk(r.nat.airlineId, r.al)) r.nat = Object.assign({}, r.nat, { airlineId: airlineIdByName(r.al) || null, airline: r.al || null });
       }
       if (r.nat && !r.nat.airportId && r.ap) r.nat = Object.assign({}, r.nat, { airportId: r.ap });
+      // (1.2.3) a row of an aircraft whose type FR24's own record gives: that type, as FR24's panel shows it (N999YX: GLF6,
+      // not the public databases' GLEX). FR24's own rows are as FR24 gave them
+      if (r.hex && r.src !== 'fr24') { const ft = (store.getHex(r.hex) || {}).fr24Type; if (ft && (r.ty !== ft || (r.nat && r.nat.aircraftType && r.nat.aircraftType !== ft))) { r = Object.assign({}, r, { ty: ft }); if (r.nat) r.nat = Object.assign({}, r.nat, { aircraftType: ft }); } }
       if (!r.ty && !(r.nat && r.nat.aircraftType) && GLIDER.test(r.dsc || '')) r.ty = 'GLID';
       { const fc = fr24Cat({ type: r.ty || (r.nat && r.nat.aircraftType) || '', mil: !!(r.hex && (store.getHex(r.hex) || {}).mil) }); if (fc != null) r.fc = fc; }
       out.push(r);
@@ -14972,7 +15229,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // (the version whose "what's new" was put away, and the one whose dot on the button the window was opened for)
   const UB_SEEN_KEY = 'tweeks.fr24.ladd.seenver', UB_DOT_KEY = 'tweeks.fr24.ladd.dotver';
   // (the newest CHANGELOG section's headlines, written in by build.mjs: { v, items })
-  const UB_WHATS_NEW = {"v":"1.2.2","items":["The Firefox add-on has a new id, so it can be sent to Firefox Add-ons as a new listing.","Nothing else changes: the userscript and the Chrome extension are the same as 1.2.1."]};
+  const UB_WHATS_NEW = {"v":"1.2.3","items":["Bookmarks are now really unlimited: the limit of one no longer comes back when FR24 refreshes your account's details.","The Last clicked flights widget now lists the flights you open, newest first, ten at most.","A blocked jet whose type the public databases record differently from FR24 is now identified over land, so it stays named over the ocean (N999YX).","Airport boards show the departure and arrival of blocked flights that the monitor lost track of, taken from their rebuilt logs (N609WB and N650TJ at Teterboro).","The cloud layer is one picture across the whole map: no squares from different times or sources, no white haze over clear ground, and the tiles around the view are fetched ahead.","Settings stay as you left them when FR24 is opened again (Misc's trail tooltip and photo switch, the Flag label, weather layers and the rest); FR24's defaults stand until you change one."]};
   // (an aircraft with an open padlock: FR24's outline style - 24 grid, 1.5 stroke in the text colour)
   const UB_ICON = '<svg data-tl-ub-icon="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
   const UB_X = '<svg viewBox="0 0 14 14" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5l11 11M12.5 1.5l-11 11"/></svg>';
@@ -16269,6 +16526,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
       case 'ready': {
         if (!bridgeReady) log('bridge ready', d.v || '(no version)');
         bridgeV = d.v || '?'; if (bridgeV !== VERSION) log('page bridge is another version:', bridgeV);
+        sendCountryTable().catch(() => {});
         bridgeReady = true; bridgeStats = d.stats || bridgeStats; noteFeedHdr(d.hdr); if (d.feedReady && !feedReady) { feedReady = true; worldScan('startup').catch(() => {}); }
         // everything known right now - the last session's snapshot included - at once, so the map, a flight opened
         // straight from the URL, boards and search are patched from FR24's very first answer; the rest of the store
@@ -16314,7 +16572,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   const SNAP_MAX = 600000;    // characters (~1.2 MB): localStorage is ~5 MB per site and FR24 keeps its own settings there too
   const FLIGHT_KEYS = ['hex', 'cs', 'reg', 'type', 'fr24Type', 'aggType', 'desc', 'cat', 'mil', 'ladd', 'pia', 'owner', 'ownerCity', 'msn', 'year', 'operatorId', 'operatorIcao', 'operatorName', 'fr24Equip', 'countryId', 'country', 'countryIso', 'squawk', 'src', 'matchedAt', 'verifiedAt', 'origin', 'faaAt', 'fr24At', 'pubAt', 'photoAt', 'photoLevel', 'photoV', 'regTried'];
   const AREA_KEYS = ['hex', 'cs', 'reg', 'type', 'desc', 'owner', 'year', 'lat', 'lon', 'alt', 'gnd', 'gs', 'trk', 'ageS', 'receivedAt', 'dbFlags', 'ladd', 'pia', 'mil', 'src', 'cat', 'sq', 'squawk', 'emergency', 'vs', 'agps', 'ias', 'tas', 'mach', 'oat', 'wd', 'ws', 'mcp', 'fms'];
-  const HEX_KEYS = ['reg', 'type', 'desc', 'owner', 'ownerCity', 'msn', 'year', 'operatorId', 'operatorIcao', 'operatorName', 'fr24Equip', 'countryId', 'country', 'cat', 'mil', 'ladd', 'pia', 'photoAt', 'photoLevel', 'photoV', 'faaAt', 'fr24At', 'idAt', 'ownerAskedAt', 'ownerFailAt', 'pubAt', 'pubFull', 'savedAt'];
+  const HEX_KEYS = ['reg', 'type', 'fr24Type', 'desc', 'owner', 'ownerCity', 'msn', 'year', 'operatorId', 'operatorIcao', 'operatorName', 'fr24Equip', 'countryId', 'country', 'cat', 'mil', 'ladd', 'pia', 'photoAt', 'photoLevel', 'photoV', 'faaAt', 'fr24At', 'idAt', 'ownerAskedAt', 'ownerFailAt', 'pubAt', 'pubFull', 'savedAt'];
   const pick = (src, keys, out) => { for (const k of keys) { const v = src[k]; if (v != null && v !== '' && v !== 0 && v !== false) out[k] = v; } return out; };
   function buildSnapshot() {
     const t = now(), vc = viewCenter, cands = [];
