@@ -123,7 +123,8 @@ function createIdent(env) {
     const old = ids.get(F.id); if (old && old.hex === hex) return old;
     if (old) unassign(F.id, nowMs, 'replaced');
     const prev = byHex.get(hex); if (prev != null && prev !== F.id) { const pf = flights.get(prev); if (!pf || nowMs - pf.seen >= 180000) unassign(prev, nowMs, 'renumbered'); }
-    const R = { hex, reg: info.reg || '', type: info.type || F.type || '', cs: info.cs || '', how, at: Math.round(nowMs / 1000), ver: Math.round(nowMs / 1000), flags: (info.ladd ? FLAG.ladd : 0) | (info.mil ? FLAG.mil : 0) | (info.pia ? FLAG.pia : 0), strikes: null, chg: nowMs, lat: F.lat, lon: F.lon, alt: F.alt, gnd: F.gnd, ts: F.ts, dest: null, origin: null };
+    // (1.2.3: FR24's own type for the flight - what its panel shows - over a database's: N999YX is FR24's GLF6, ADS-B's GLEX)
+    const R = { hex, reg: info.reg || '', type: F.type || info.type || '', cs: info.cs || '', how, at: Math.round(nowMs / 1000), ver: Math.round(nowMs / 1000), flags: (info.ladd ? FLAG.ladd : 0) | (info.mil ? FLAG.mil : 0) | (info.pia ? FLAG.pia : 0), strikes: null, chg: nowMs, lat: F.lat, lon: F.lon, alt: F.alt, gnd: F.gnd, ts: F.ts, dest: null, origin: null };
     ids.set(F.id, R); byHex.set(hex, F.id);
     stats.matched[how.replace(/^client.*/, 'client')] = (stats.matched[how.replace(/^client.*/, 'client')] || 0) + 1;
     // (FR24 hides it - no callsign, no registration - and public ADS-B names it: a blocked aircraft, followed from now on)

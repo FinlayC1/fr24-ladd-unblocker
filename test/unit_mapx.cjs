@@ -164,6 +164,14 @@ function open(opts, answer) {
     R.w.document.getElementById('app').__vue_app__ = { config: { globalProperties: { $pinia: { _s: new Map([['user', us], ['dispatcher', ds]]) } } } };
     RH.mxBmMax();
     check('bookmarks: FR24\'s user store reads a limit of 1000 - its copy, the dispatcher\'s, and a fresh copy set later', us.feature('map.widgets.bookmarks.max') === 1000 && ds.dispatcher.features['map.widgets.bookmarks.max'] === 1000 && (us.features = { 'map.widgets.bookmarks.max': 1 }, us.feature('map.widgets.bookmarks.max') === 1000));
+    // ---- (1.2.3) settings as left: what FR24's windows set kept; given back into FR24's own settings, only where it has them
+    const sst = { settings: { misc: { showTrailTooltip: true, hideAircraftAirportPhoto: false }, map: { labels: 'flag' } } };
+    RH.mxSetNote(sst, 'misc', ['showTrailTooltip']); RH.mxSetNote(sst, 'map', ['labels']);
+    const fresh = { misc: { showTrailTooltip: false, hideAircraftAirportPhoto: false }, map: { labels: 'default' }, units: { speed: 'kts' } }, kept = RH.mxSetKept();
+    const n = RH.mxSetApply(fresh, Object.assign({}, kept, { units: { nothere: 1 }, nosection: { x: 1 } }));
+    check('settings: a setting changed is kept, and given back to FR24\'s settings as left - only those changed, only where FR24 has them', n === 2 && fresh.misc.showTrailTooltip === true && fresh.map.labels === 'flag' && fresh.misc.hideAircraftAirportPhoto === false && !('nothere' in fresh.units) && !fresh.nosection && !('hideAircraftAirportPhoto' in kept.misc), { fresh, kept });
+    sst.settings.misc.showTrailTooltip = false; RH.mxSetNote(sst, 'misc', ['showTrailTooltip']);
+    check('... switched off again: kept off', RH.mxSetKept().misc.showTrailTooltip === false);
     R.w.close(); }
   // ---- the switch off
   const Q = open({ mapx: false }, answer); await sleep(200);

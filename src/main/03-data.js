@@ -137,6 +137,16 @@
     return a || (name && countryIdByName.get(String(name).toUpperCase())) || 0;
   }
 
+  // (1.2.3) for FR24's Flag label on every aircraft: the registration prefixes and transponder address blocks of each
+  // country, as FR24's country ids - the page works out each flight's country from them (page.js ctyOf)
+  async function sendCountryTable() {
+    await fr24.loadCountries();
+    const cid = (iso, name) => countryIdOf(iso, name);
+    const terr = REG_COUNTRY.map(x => [x[0], cid(x[2], x[1])]).filter(x => x[1]);
+    const nat = REG_NATIONAL.map(x => [x[0], cid(x[2], x[1])]).filter(x => x[1]);
+    const hex = HEX_BLOCKS.filter(b => b[3]).map(b => [b[0], b[1], cid(b[3], b[2])]).filter(b => b[2]);
+    postToPage('ctyTable', { terr, nat, hex, us: cid('US', 'United States') });
+  }
   // ---- airports (FR24's own list: ids are the ScheduleInfo id space) -> the route engine ----------------------------
   // Kept on disk: a refresh has every airport - and so every route - at once; the network copy is re-read in the
   // background every few days.
@@ -669,9 +679,22 @@
     const ladd = recs.filter(r => live.has(r.id)); if (ladd.length) pushToPage(ladd);
     syncPanelSoon();
   }
+  // (1.2.3) FR24's own type code for an aircraft (its panel's AircraftInfo, its registration lookup): kept, and every record
+  // of the aircraft given it - its board rows and search cards show the type its panel shows, not a database's (N999YX:
+  // GLF6 to FR24, GLEX in the public databases)
+  function noteFr24Type(hex, type) {
+    const t = clean(type).toUpperCase();
+    if (!/^[0-9a-f]{6}$/.test(hex) || !/^[A-Z][A-Z0-9]{1,3}$/.test(t)) return;
+    const kept = store.getHex(hex) || {}; if (kept.fr24Type === t) return;
+    store.mergeHex(hex, { fr24Type: t });
+    const recs = [...live.values(), ...pubRecs.values()].filter(r => r && r.hex === hex && r.type !== t);
+    recs.forEach(r => { r.type = t; r.fr24Type = t; });
+    const ladd = recs.filter(r => live.has(r.id)); if (ladd.length) pushToPage(ladd);
+  }
   function onAircraftInfo(d) {
     const p = notePublicAircraft(Number(d.id), String(d.hex || '').toLowerCase(), d.reg, d.type, d.cs);
     if (p && d.adPhotos) p.adPhotos = true;
+    noteFr24Type(String(d.hex || '').toLowerCase(), d.type);
     // (1.2.1: what FR24's own record of the aircraft holds behind its padlocks - its date of manufacture - kept for it)
     const hex = String(d.hex || '').toLowerCase(), y = fr24BuiltYear(d.birth, d.age);
     if (/^[0-9a-f]{6}$/.test(hex) && (y || d.msn)) { const kept = store.getHex(hex) || {}, upd = {}; if (y && !(kept.year > 1930)) upd.year = y; if (d.msn && !kept.msn) upd.msn = clean(d.msn); if (Object.keys(upd).length) store.mergeHex(hex, upd); if (p && y && !(p.year > 1930)) p.year = y; }
@@ -814,6 +837,8 @@
     const model = clean(info.model && info.model.text), op = clean(info.airline && info.airline.name), icao = clean(info.airline && info.airline.code && info.airline.code.icao).toUpperCase();
     const upd = { fr24InfoAt: now() };
     if (model) { upd.fr24Model = model; upd.desc = model; }
+    // (1.2.3) and its type code, as its panel shows it
+    const code = clean(info.model && info.model.code).toUpperCase(); if (/^[A-Z][A-Z0-9]{1,3}$/.test(code)) upd.fr24Type = code;
     if (op && !/^private( owner)?$/i.test(op)) { upd.operatorName = op; if (icao) upd.operatorIcao = icao; }
     store.mergeHex(hex, upd);
   }

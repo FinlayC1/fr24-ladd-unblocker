@@ -159,14 +159,14 @@ const flewAdd = (hex, d) => { let s = flew.get(d); if (!s) flew.set(d, s = new S
 function saveState() {
   fs.mkdirSync(STORE, { recursive: true });
   const f = path.join(STORE, 'state.json'), tmp = f + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify({ v: 2, lastRun, blocked: Object.fromEntries([...blocked].map(([h, b]) => [h, [b.reg, b.type, b.at, b.heard, b.faa ? 1 : 0, b.lad || 0, b.fr || 0]])), areas: userAreas,
+  fs.writeFileSync(tmp, JSON.stringify({ v: 2, lastRun, blocked: Object.fromEntries([...blocked].map(([h, b]) => [h, [b.reg, b.type, b.at, b.heard, b.faa ? 1 : 0, b.lad || 0, b.fr || 0, b.ft || '']])), areas: userAreas,
     watch, lastW, closed, flew: Object.fromEntries([...flew].map(([d, s]) => [d, [...s]])), histQ: histQ.map(j => [j.hex, j.day, j.tries, j.at, j.fill ? 1 : 0]),
     fr24: { dev: fr24.st.deviceId, hdr: fr24.st.hdr, ua: fr24.st.ua, hdrAt: fr24.st.hdrAt } }));
   fs.renameSync(tmp, f); stateDirty = false;
 }
 function loadState() {
   let s = null; try { s = JSON.parse(fs.readFileSync(path.join(STORE, 'state.json'), 'utf8')); } catch (e) { return null; }
-  for (const [h, b] of Object.entries(s.blocked || {})) blocked.set(h, { reg: b[0] || '', type: b[1] || '', at: b[2] || 0, heard: b[3] || 0, faa: !!b[4], lad: b[5] || 0, fr: b[6] || 0 });
+  for (const [h, b] of Object.entries(s.blocked || {})) blocked.set(h, { reg: b[0] || '', type: b[1] || '', at: b[2] || 0, heard: b[3] || 0, faa: !!b[4], lad: b[5] || 0, fr: b[6] || 0, ft: b[7] || '' });
   for (const a of s.areas || []) if (Array.isArray(a) && a.length === 4) userAreas.push(a);
   Object.assign(watch, s.watch || {}); Object.assign(lastW, s.lastW || {}); closed = s.closed || '';
   for (const [d, l] of Object.entries(s.flew || {})) for (const h of l) flewAdd(h, d);
@@ -1323,7 +1323,9 @@ const fr24 = FR.createClient();
 const names = createNames({ store: STORE, log: (...a) => log('names', ...a) });
 const flagsOfInfo = info => (info.ladd ? 1 : 0) | (info.mil ? 2 : 0) | (info.pia ? 4 : 0);
 const ident = createIdent({ E, cfg: CFG.ident, live, ac, blocked, legs, ownerOf: hex => owners.short(hex),
-  onIdentified: (hex, info, F) => { if (!info.mil && !info.pia) { const b = markBlocked(hex, { reg: info.reg, type: info.type }, Date.now() / 1000), t = Math.round(Date.now() / 1000); if (t - (b.fr || 0) > 3600) { b.fr = t; stateDirty = true; } } owners.want(hex, info.reg, true); if (F) names.add(F.id, { hex, reg: info.reg, type: info.type, cs: info.cs, flags: flagsOfInfo(info) }, Date.now() / 1000); },
+  // (1.2.3) FR24's own type for the aircraft kept with it (ft) - boards and names say what FR24's panel says (N999YX: FR24's
+  // GLF6, the public databases' GLEX)
+  onIdentified: (hex, info, F) => { const ft = F && /^[A-Z][A-Z0-9]{1,3}$/.test(F.type || '') ? F.type : ''; if (!info.mil && !info.pia) { const b = markBlocked(hex, { reg: info.reg, type: info.type }, Date.now() / 1000), t = Math.round(Date.now() / 1000); if (t - (b.fr || 0) > 3600) { b.fr = t; stateDirty = true; } if (ft && b.ft !== ft) { b.ft = ft; stateDirty = true; } } owners.want(hex, info.reg, true); if (F) names.add(F.id, { hex, reg: info.reg, type: ft || info.type, cs: info.cs, flags: flagsOfInfo(info) }, Date.now() / 1000); },
   // (a name withdrawn - the aircraft turned out elsewhere, or another took its place: not served to a playback; a flight
   // that simply ended keeps its name)
   onUnassign: (id, R, why) => {
@@ -1993,7 +1995,7 @@ function boardLegs(apId, lo, hi) {
     for (const d of daysBetween(Math.max(lo - 86400, Date.parse('2020-01-01') / 1000), Math.min(hi, memFrom))) for (const l of diskLegs(d)) if (l && l.hex && l.ladd) (byHex.get(l.hex) || byHex.set(l.hex, []).get(l.hex)).push(l);
     for (const [hex, list] of byHex) {
       const hit = E.chainLegs(E.stitchLegs(list.map(l => Object.assign({}, l)))).filter(l => ((l.from && l.from.id === apId) || (l.to && l.to.id === apId)) && (l.tEnd || l.tStart) >= lo && (l.tOff || l.tStart) <= Math.min(hi, memFrom) && flewOk(Object.assign({ hex }, l)));
-      if (hit.length) out.push({ hex, reg: hit[0].reg, type: hit[0].type, ladd: true, legs: hit });
+      if (hit.length) out.push({ hex, reg: hit[0].reg, type: ((blocked.get(hex) || {}).ft) || hit[0].type, ladd: true, legs: hit });
     }
     if (hi < memFrom) return out;
   }
@@ -2011,7 +2013,7 @@ function boardLegs(apId, lo, hi) {
     if (hit.length) {
       const o = out.find(x => x.hex === hex); if (o) { o.legs = o.legs.concat(hit.filter(l => !o.legs.some(k => Math.abs(k.tStart - l.tStart) < 60))); continue; }
       const x = ac.get(hex), b = blocked.get(hex), r = hit.find(l => l.reg) || {}, t = hit.find(l => l.type) || {};
-      out.push({ hex, reg: r.reg || (x && x.meta && x.meta.reg) || (b && b.reg) || '', type: t.type || (x && x.meta && x.meta.type) || (b && b.type) || '', ladd: isBlocked(hex) || !!hit[0].ladd, legs: hit });
+      out.push({ hex, reg: r.reg || (x && x.meta && x.meta.reg) || (b && b.reg) || '', type: (b && b.ft) || t.type || (x && x.meta && x.meta.type) || (b && b.type) || '', ladd: isBlocked(hex) || !!hit[0].ladd, legs: hit });
     }
   }
   return out;

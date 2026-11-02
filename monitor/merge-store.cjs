@@ -50,13 +50,14 @@ function mergeLegs(mine, other, nowS) {
   for (const list of byHex.values()) for (const l of list) { const d = dayOf(l.tOff || l.tStart); if (!byDay.has(d)) byDay.set(d, []); byDay.get(d).push(l); }
   return { byDay, stats };
 }
-// blocked aircraft: [reg, type, known since, last heard, on the FAA list, last seen with the LADD flag]
+// blocked aircraft: [reg, type, known since, last heard, on the FAA list, last seen with the LADD flag, last named hiding on
+// FR24, FR24's own type]
 function mergeBlocked(mine, other) {
   const out = Object.assign({}, mine || {}); let added = 0;
   for (const [h, o] of Object.entries(other || {})) {
     const m = out[h]; if (!m) { out[h] = o.slice(); added++; continue; }
     const newer = (o[3] || 0) > (m[3] || 0) ? o : m, older = newer === o ? m : o;
-    out[h] = [newer[0] || older[0] || '', newer[1] || older[1] || '', Math.min(...[m[2], o[2]].filter(x => x > 0).concat([m[2] || o[2] || 0])), Math.max(m[3] || 0, o[3] || 0), newer[4] ? 1 : 0, Math.max(m[5] || 0, o[5] || 0)];
+    out[h] = [newer[0] || older[0] || '', newer[1] || older[1] || '', Math.min(...[m[2], o[2]].filter(x => x > 0).concat([m[2] || o[2] || 0])), Math.max(m[3] || 0, o[3] || 0), newer[4] ? 1 : 0, Math.max(m[5] || 0, o[5] || 0), Math.max(m[6] || 0, o[6] || 0), newer[7] || older[7] || ''];
   }
   return { blocked: out, added };
 }

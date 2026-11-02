@@ -772,7 +772,9 @@
   }
   function recordFromMatch(f, m, used) {
     const c = m.c, sx = store.getHex(c.hex.toLowerCase()) || {};
-    const type = f.type && m.rel === 'family' ? f.type : (c.type || f.type || '');
+    // (1.2.3) FR24's own type code where FR24 gives one - what its panel shows - the databases' only where it has none
+    // (N999YX: FR24's GLF6, ADS-B's GLEX)
+    const type = clean(f.type) || sx.fr24Type || c.type || '';
     const rec = { id: f.id, hex: c.hex.toLowerCase(), cs: c.cs || '', reg: c.reg || f.reg || hexNNumber(c.hex), type, fr24Type: f.type || '', aggType: c.type || '', desc: c.desc || '', owner: c.owner || '', year: c.year || 0, src: c.src, sources: used, dist: Math.round(m.d * 100) / 100, matchedAt: now(), verifiedAt: now(), ladd: !!(c.ladd || sx.ladd), pia: !!(c.pia || sx.pia), mil: !!(c.mil || sx.mil), cat: c.cat || '', gnd: c.gnd, squawk: c.squawk || 0 };
     hydrate(rec);
     const rc = regCountry(rec.reg), ctry = rc || countryOfHex(rec.hex); if (ctry) { rec.country = rc ? rc.name : rec.country || ctry.name; rec.countryIso = ctry.iso; if (!rec.countryId || rc) rec.countryId = countryIdOf(ctry.iso, ctry.name) || rec.countryId; }
@@ -828,6 +830,8 @@
     { const a = rec.photos || [], b = hx.photos || [];
       if (b.length && (b.some(isJp) && !a.some(isJp) || (b.some(isJp) === a.some(isJp) && b.length > a.length))) { rec.photos = b; rec.photoAt = hx.photoAt || rec.photoAt; rec.photoV = hx.photoV || rec.photoV; rec.photoLevel = hx.photoLevel || rec.photoLevel; } }
     for (const k of HYDRATE) { const v = hx[k]; if ((rec[k] == null || rec[k] === '' || rec[k] === 0 || (Array.isArray(rec[k]) && !rec[k].length)) && v != null && v !== '' && !(Array.isArray(v) && !v.length)) rec[k] = v; }
+    // (1.2.3) the type FR24's own record of the aircraft gives, once known, over a database's
+    if (/^[A-Z][A-Z0-9]{1,3}$/.test(hx.fr24Type || '') && rec.type !== hx.fr24Type) { rec.type = hx.fr24Type; rec.fr24Type = hx.fr24Type; }
     return rec;
   }
   // Where and when a flight was last seen, kept with its identity: after a reload the page still knows which of an

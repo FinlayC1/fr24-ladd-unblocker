@@ -114,7 +114,7 @@ const liveRow = (hex, o) => ({ a: Object.assign({ hex, lat: 50, lon: 0, alt_baro
   { const live = (o) => liveRow('adf64e', Object.assign({ lat: 47.0, lon: 2.0, alt_baro: 41000, gs: 470, track: 290, dbFlags: 8, r: 'N999YX', t: 'GLEX' }, o));
     const e = env(); e.live.set('adf64e', live({}));
     const I = createIdent(e); I.observe([fl(21, { lat: 47.004, lon: 1.99, alt: 41000, trk: 289, spd: 474, type: 'GLF6' })], MS, 'scan'); I.match(MS);
-    check('ident: N999YX - FR24\'s GLF6, ADS-B\'s GLEX at the same place: named', I.ids.get(21) && I.ids.get(21).hex === 'adf64e' && I.ids.get(21).reg === 'N999YX', I.ids.get(21));
+    check('ident: N999YX - FR24\'s GLF6, ADS-B\'s GLEX at the same place: named - with FR24\'s own type, as its panel shows it', I.ids.get(21) && I.ids.get(21).hex === 'adf64e' && I.ids.get(21).reg === 'N999YX' && I.ids.get(21).type === 'GLF6' && I.table(0).rows[0][3] === 'GLF6', I.ids.get(21));
     I.observe([fl(21, { lat: 52, lon: -30, ts: T + 7200, src: 5, type: 'GLF6' })], MS + 7200e3, 'scan'); I.match(MS + 7200e3);
     check('... and still named two hours on over the Atlantic (satellite positions only)', I.ids.get(21) && I.ids.get(21).hex === 'adf64e');
     const e2 = env(); e2.live.set('adf64e', live({ lat: 47.05 }));
