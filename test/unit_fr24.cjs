@@ -101,10 +101,31 @@ const liveRow = (hex, o) => ({ a: Object.assign({ hex, lat: 50, lon: 0, alt_baro
     const I = createIdent(e); I.observe([fl(11, { lat: 42.14886, lon: 25.63947, alt: 37275, trk: 111, spd: 545, type: 'GA7C' })], MS, 'scan'); I.match(MS);
     const R = I.ids.get(11);
     check('ident: TC-MAA - FR24\'s G700 (GA7C) named as the G650 (GLF6) adsb.lol has at its position: one maker\'s line', !!R && R.hex === '4bb421' && R.reg === 'TC-MAA', R);
-    check('... a maker\'s line: Gulfstreams alike, a Gulfstream and a Falcon not', I.typeRelation('GA7C', 'GLF6') === 'family' && I.typeRelation('GL5T', 'GLEX') === 'family' && I.typeRelation('C68A', 'C700') === 'family' && I.typeRelation('GLF6', 'FA7X') === 'different' && I.typeRelation('PC12', 'PC24') === 'different');
+    check('... a maker\'s line: Gulfstreams alike, a Gulfstream and a Falcon not', I.typeRelation('GA7C', 'GLF6') === 'family' && I.typeRelation('GL5T', 'GLEX') === 'family' && I.typeRelation('C68A', 'C700') === 'family' && I.typeRelation('GLF6', 'FA7X') === 'kin' && I.typeRelation('GLF6', 'B738') === 'different' && I.typeRelation('PC12', 'PC24') === 'different');
     const e2 = env(); e2.live.set('4bb421', liveRow('4bb421', { lat: 42.148, lon: 25.641, alt_baro: 37250, gs: 545, track: 111.5, dbFlags: 0, r: 'TC-MAA', t: 'FA7X' }));
     const I2 = createIdent(e2); I2.observe([fl(12, { lat: 42.14886, lon: 25.63947, alt: 37275, trk: 111, spd: 545, type: 'GA7C' })], MS, 'scan'); I2.match(MS);
-    check('... another maker\'s jet at that spot: not named', !I2.ids.has(12)); }
+    check('... (1.2.3) another maker\'s business jet at that very spot - height, track and speed: named (the databases disagree; two jets cannot share it)', I2.ids.get(12) && I2.ids.get(12).hex === '4bb421');
+    const e3 = env(); e3.live.set('4bb421', liveRow('4bb421', { lat: 42.148, lon: 25.641, alt_baro: 37250, gs: 545, track: 111.5, dbFlags: 0, r: 'TC-MAA', t: 'B738' }));
+    const I3 = createIdent(e3); I3.observe([fl(13, { lat: 42.14886, lon: 25.63947, alt: 37275, trk: 111, spd: 545, type: 'GA7C' })], MS, 'scan'); I3.match(MS);
+    check('... an airliner at that spot: not named', !I3.ids.has(13)); }
+  // (1.2.3) N999YX, 1 Nov: FR24's GLF6 out of Milan, ADS-B's ADF64E a GLEX in the public databases - never named over Europe,
+  // so lost over the Atlantic. Kin: named where it fits as one aircraft does; not 6 km off; not on the ground; and behind a
+  // jet of FR24's own type nearby
+  { const live = (o) => liveRow('adf64e', Object.assign({ lat: 47.0, lon: 2.0, alt_baro: 41000, gs: 470, track: 290, dbFlags: 8, r: 'N999YX', t: 'GLEX' }, o));
+    const e = env(); e.live.set('adf64e', live({}));
+    const I = createIdent(e); I.observe([fl(21, { lat: 47.004, lon: 1.99, alt: 41000, trk: 289, spd: 474, type: 'GLF6' })], MS, 'scan'); I.match(MS);
+    check('ident: N999YX - FR24\'s GLF6, ADS-B\'s GLEX at the same place: named', I.ids.get(21) && I.ids.get(21).hex === 'adf64e' && I.ids.get(21).reg === 'N999YX', I.ids.get(21));
+    I.observe([fl(21, { lat: 52, lon: -30, ts: T + 7200, src: 5, type: 'GLF6' })], MS + 7200e3, 'scan'); I.match(MS + 7200e3);
+    check('... and still named two hours on over the Atlantic (satellite positions only)', I.ids.get(21) && I.ids.get(21).hex === 'adf64e');
+    const e2 = env(); e2.live.set('adf64e', live({ lat: 47.05 }));
+    const I2 = createIdent(e2); I2.observe([fl(22, { lat: 47.004, lon: 1.99, alt: 41000, trk: 289, spd: 474, type: 'GLF6' })], MS, 'scan'); I2.match(MS);
+    check('... 5 km off: not named (a jet of another type must fit closely)', !I2.ids.has(22));
+    const e3 = env(); e3.live.set('adf64e', live({ alt_baro: 'ground', gs: 0, lat: 45.45, lon: 9.28 }));
+    const I3 = createIdent(e3); I3.observe([fl(23, { lat: 45.4501, lon: 9.2801, alt: 0, gnd: true, spd: 0, trk: 0, type: 'GLF6' })], MS, 'scan'); I3.match(MS);
+    check('... on an apron: not named (parked jets stand side by side)', !I3.ids.has(23));
+    const e4 = env(); e4.live.set('adf64e', live({})); e4.live.set('a0f6f6', liveRow('a0f6f6', { lat: 47.02, lon: 1.99, alt_baro: 41000, gs: 470, track: 290, dbFlags: 8, r: 'N650GX', t: 'GLF6' }));
+    const I4 = createIdent(e4); I4.observe([fl(24, { lat: 47.004, lon: 1.99, alt: 41000, trk: 289, spd: 474, type: 'GLF6' })], MS, 'scan'); I4.match(MS);
+    check('... a GLF6 2 km away as well: that one, of FR24\'s own type', I4.ids.get(24) && I4.ids.get(24).hex === 'a0f6f6', I4.ids.get(24)); }
   // two that could be it: none; a flight with a callsign or registration: not FR24's N/A, left alone
   { const e = env();
     e.live.set('a00001', liveRow('a00001', { lat: 50.01, lon: 0.0 })); e.live.set('a00002', liveRow('a00002', { lat: 50.0, lon: 0.015, r: 'N2' }));

@@ -4,6 +4,26 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 
 1.0.0 is the first release. The versions before it are the betas, labelled B: B22.31.12 is version 22.31.12.
 
+## [1.2.3] - 2026-11-02
+
+### In short
+- Bookmarks are now really unlimited: the limit of one no longer comes back when FR24 refreshes your account's details.
+- The Last clicked flights widget now lists the flights you open, newest first, ten at most.
+- A blocked jet whose type the public databases record differently from FR24 is now identified over land, so it stays named over the ocean (N999YX).
+- Airport boards show the departure and arrival of blocked flights that the monitor lost track of, taken from their rebuilt logs (N609WB and N650TJ at Teterboro).
+- The cloud layer is one picture across the whole map: no squares from different times or sources, no white haze over clear ground, and the tiles around the view are fetched ahead.
+
+### Fixed
+- **Bookmarks.** FR24's bookmark widget reads the limit from its own user store, which keeps a separate copy of the account's features. FR24 replaces that copy with a fresh one (limit 1) when it refreshes the account, which happens after you sign in and on page changes. 1.2.1 raised the limit only in the page's first copy, so the widget soon read 1 again and showed "You've reached the maximum number of bookmarks for Basic (1)". The limit is now raised in FR24's user and dispatcher stores, and the user store's own reading of it always answers 1000. Tested in FR24's own front-end: the old build reads 1 after a refresh, this one 1000; four bookmarks were added on a Basic account with no upgrade box.
+- **Last clicked flights.** FR24 records a flight you open only for a premium account, and stores the list on its server (`/restapi/v1/widgets/last-clicked-flights`), which keeps nothing for a free one, so the unlocked widget stayed empty. Each flight opened on the live map is now kept in your browser, newest first and once each, in the same form as FR24's server. The widget's requests are answered from that list, and "Clear list" empties it.
+- **Identification when the databases name a jet's type differently.** The monitor and the browser both turned away any aircraft whose type differed from FR24's, however exactly it fitted. N999YX (ADF64E) is a GLF6 to FR24 but a GLEX in the public databases, so it was never named over Europe, and nothing could carry the name over the Atlantic, where only FR24's satellite positions reach it. It was named only at 21:28, by a browser comparing tracks. Two business-jet types are now "kin": accepted only in the air, within 4 km, 800 ft, 20° and 50 kt, and behind any nearby aircraft of FR24's own type. An airliner or a turboprop is still never taken for a business jet, and carrying a last-heard jet forward over the ocean still needs the same type or the same maker's line.
+- **Boards with N/A for blocked flights.** The boards read only the monitor's live record of each flight. A flight in the air when the monitor restarted (N609WB Teterboro to Burbank and N650TJ Teterboro to Peachtree, both cut at the 1.2.1 restart on 31 Oct) kept no destination there, so the board showed N/A while the aircraft's log, rebuilt from adsb.lol's archive after the day, had both ends. The boards now use the rebuilt days of a blocked aircraft's log, live flights those days lack, and the live record for days not rebuilt yet, as the log pages do.
+- **Cloud layer.**
+  - The monitor rebuilds the cloud when EUMETSAT has a new picture (every 3 hours). It served the newest picture whatever version the browser asked for, while the browser kept the tiles it already had, so moving the map showed new squares beside old ones. The monitor now keeps the previous picture for 90 minutes and serves each version as itself. The browser draws every tile of one FR24 refresh from the picture it started with, and changes picture when FR24 asks for the whole layer again. The same applies to total precipitation.
+  - A tile the monitor did not give was drawn by the browser straight from EUMETSAT, which looks different (blocky, hazy). Now it is asked for again, then drawn from a coarser tile of the same picture already in the browser. EUMETSAT is used directly only when the monitor has no cloud layer at all.
+  - Clear ground and sea at night (EUMETSAT grey 80-110) were drawn as a light white haze from 92 upward, which also showed the edges of each satellite's view as faint discs. Cloud now starts at 110 and rises smoothly to full white at 175. The monitor redraws its current picture once with this.
+  - The tiles around each one asked for, and the whole world at zooms 0 to 2, are fetched ahead (four at a time, behind FR24's own requests), so moving the map has them at once. Tiles scaled past zoom 5 are drawn with high-quality smoothing.
+
 ## [1.2.2] - 2026-10-31
 
 ### In short

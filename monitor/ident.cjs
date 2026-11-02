@@ -80,7 +80,11 @@ function createIdent(env) {
 
   // ---- scoring (the userscript's scoreCandidate / matchFlight) -----------------------------------------------------
   const typeFamily = t => E.typeFamily ? E.typeFamily(t) : String(t || '').toUpperCase().slice(0, 3);   // (a maker's line: GA7C and GLF6 alike)
-  function typeRelation(a, b) { a = String(a || '').toUpperCase(); b = String(b || '').toUpperCase(); if (!a || !b) return 'unknown'; if (a === b) return 'same'; return typeFamily(a) === typeFamily(b) ? 'family' : 'different'; }
+  function typeRelation(a, b) { a = String(a || '').toUpperCase(); b = String(b || '').toUpperCase(); if (!a || !b) return 'unknown'; if (a === b) return 'same'; return typeFamily(a) === typeFamily(b) ? 'family' : E.bizKin && E.bizKin(a, b) ? 'kin' : 'different'; }
+  // (1.2.3) two business jets the databases name differently: the one aircraft only where it fits as one aircraft does -
+  // in the air, within 4 km, 800 ft, 20 degrees and 50 kt - and behind any of FR24's own type nearby (N999YX: GLEX to
+  // ADS-B, GLF6 to FR24, never named over Europe)
+  const kinFits = (F, c, d) => !F.gnd && !c.gnd && d <= 4 && (!fin(F.alt) || !fin(c.alt) || Math.abs(F.alt - c.alt) <= 800) && (!fin(F.trk) || !fin(c.trk) || E.angDiff(F.trk, c.trk) <= 20) && (!fin(F.spd) || !fin(c.gs) || Math.abs(F.spd - c.gs) <= 50);
   function project(lat, lon, gsKt, trk, seconds) {
     if (!seconds || !(gsKt > 0) || !fin(trk)) return [lat, lon];
     const back = seconds < 0, d = gsKt * NM_KM * Math.abs(seconds) / 3600;
@@ -92,12 +96,13 @@ function createIdent(env) {
     if (F.gnd && F.type && rel === 'unknown' && !(c.ladd || c.pia)) return null;
     const [clat, clon] = project(c.lat, c.lon, c.gs, c.trk, dt), d = E.dist(F.lat, F.lon, clat, clon);
     if (d > 15) return null;
+    if (rel === 'kin' && !kinFits(F, c, d)) return null;
     let s = d;
     if (fin(F.alt) && fin(c.alt) && !F.gnd && !c.gnd) { const da = Math.abs(F.alt - c.alt); if (da > 3000) return null; s += da / 400; }
     if (!!F.gnd !== !!c.gnd && F.alt > 1500) return null;
     if (!F.gnd && fin(F.trk) && fin(c.trk) && F.spd > 60 && c.gs > 60) { const dtk = E.angDiff(F.trk, c.trk); if (dtk > 50) return null; s += dtk / 8; }
     if (fin(F.spd) && fin(c.gs) && F.spd > 60) { const ds = Math.abs(F.spd - c.gs); if (ds > 140) return null; s += ds / 25; }
-    if (rel === 'same') s -= 2; else if (rel === 'family') s += 1; else if (F.type && !c.type) s += 0.5;
+    if (rel === 'same') s -= 2; else if (rel === 'family') s += 1; else if (rel === 'kin') s += 3; else if (F.type && !c.type) s += 0.5;
     if (c.ladd || c.pia) s -= 0.75;
     if (c.nonIcao) s += 2;
     return { c, d, s, rel };
@@ -153,7 +158,7 @@ function createIdent(env) {
     for (const [hex, x] of env.ac) {
       const p = x.meta && x.meta.lastPos; if (!p || p.alt === 'ground' || !(p.alt > 15000) || !(p.gs > 200) || !fin(p.trk)) continue;
       const age = F.ts - p.t; if (age < 150 || age > 5 * 3600 || taken(hex, F.id, nowMs)) continue;
-      const rel = typeRelation(x.meta.type, F.type); if (rel === 'different' || (!F.type && x.meta.type)) continue;
+      const rel = typeRelation(x.meta.type, F.type); if (rel === 'different' || rel === 'kin' || (!F.type && x.meta.type)) continue;
       if (fin(F.alt) && Math.abs(p.alt - F.alt) > 3000) continue;
       if (E.angDiff(F.trk, p.trk) > 30) continue;
       const c = { lat: p.lat, lon: p.lon, gs: p.gs > 200 ? p.gs : F.spd, trk: p.trk, alt: p.alt };

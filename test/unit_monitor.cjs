@@ -46,6 +46,24 @@ for (const [hex, day, type] of [['3cdf15', '2026-10-02', 'E55P'], ['424c35', nul
   const got = [...(M.legs.get(hex) || new Map()).values()].sort((a, b) => a.tStart - b.tStart).map(l => `${l.from ? code(l.from.id) : '?'}-${l.to ? code(l.to.id) : '?'}`);
   check('N1868M: Teterboro -> Barcelona heard again after the Atlantic and a restart - one flight, its take-off kept', open1.length === 1 && got[0] === 'TEB-BCN' && !got.includes('?-BCN') && !got.includes('TEB-?'), { open1: open1.length, got });
   M.legs.delete(hex); }
+// (1.2.3) N609WB, 31 Oct: out of Teterboro at 10:56 for Burbank, the monitor restarted while it flew - its live record "TEB -> ?"
+// for good, so Teterboro's board said N/A; its log, rebuilt from adsb.lol's archive after the day, had Burbank and the flight
+// back. The board has them as the log does
+{ const hex = 'a7eaa4', teb = E.byIcao('KTEB'), bur = E.byIcao('KBUR'), t0 = Date.parse('2026-10-31T10:56:00Z') / 1000;
+  M.markBlocked(hex, { reg: 'N609WB', type: 'GLF6' }, t0 - 86400);
+  M.legs.set(hex, new Map([[String(t0), { hex, reg: 'N609WB', type: 'GLF6', tStart: t0, tOff: t0, tEnd: t0 + 23000, from: { id: teb.id, conf: 'ground' }, to: null, ended: false, open: false }]]));
+  const before = M.boardLegs(teb.id, t0 - 3600, t0 + 3600).find(x => x.hex === hex);
+  check('N609WB: the live record alone - Teterboro -> ? (cut by a restart)', !!before && before.legs.length === 1 && !before.legs[0].to, before && before.legs.map(l => l.to));
+  const dir = path.join(process.env.MON_STORE, 'hist'); fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, hex + '.json'), JSON.stringify({ hv: M.HIST_V, days: { '2026/10/31': 2 }, part: {}, lo: {}, fr: {}, legs: [
+    { day: '2026/10/31', tStart: t0, tOff: t0, tOn: t0 + 18540, tEnd: t0 + 18540, ended: true, from: { id: teb.id, conf: 'ground' }, to: { id: bur.id, conf: 'ground' } },
+    { day: '2026/10/31', tStart: t0 + 22500, tOff: t0 + 22500, tOn: t0 + 37140, tEnd: t0 + 37140, ended: true, from: { id: bur.id, conf: 'ground' }, to: { id: teb.id, conf: 'ground' } }] }));
+  // (a minute on - the file looked at again)
+  const realNow = Date.now; Date.now = () => realNow() + 61000;
+  const b = M.boardLegs(teb.id, t0 - 3600, t0 + 40000).find(x => x.hex === hex); Date.now = realNow;
+  const pairs = b ? b.legs.map(l => `${l.from ? code(l.from.id) : '?'}-${l.to ? code(l.to.id) : '?'}`) : [];
+  check('... with its rebuilt log: Teterboro -> Burbank and Burbank -> Teterboro on the board, no "?"', pairs.join(',') === 'TEB-BUR,BUR-TEB' && b.reg === 'N609WB' && b.ladd === true, { pairs, reg: b && b.reg });
+  M.legs.delete(hex); }
 // A blocked aircraft the monitor never heard - M-ARNZ, parked at Barrow when it started - learned of from the userscript:
 // its days read back from adsb.lol's traces (the fixtures here): its shuttles on Barrow's board, the evening one from
 // Farnborough (not "Woking"), flagged as blocked

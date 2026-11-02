@@ -130,7 +130,7 @@
     if (!f || f.gnd || !(f.alt > 15000) || !fin(f.lat)) return null;
     const ft = clean(f.type).toUpperCase(), t = now(), taken = takenHexes(f.id, t), fits = [];
     for (const [ty, m] of lastSeenByType) {
-      const rel = typeRelation(ty, ft); if (rel === 'different' || (!ft && ty)) continue;
+      const rel = typeRelation(ty, ft); if (rel === 'different' || rel === 'kin' || (!ft && ty)) continue;
       for (const { c, t: seen } of m.values()) {
         const age = (t - seen) / 1000;
         if (age < 150 || age > 5 * 3600 || taken.has(c.hex)) continue;            // (heard lately: the ordinary match is for that)
@@ -653,7 +653,11 @@
   // ---- matching -------------------------------------------------------------------------------------------------
   function fr24Age(f, t) { const base = f.serverTime && f.ts ? Math.max(0, f.serverTime / 1000 - f.ts) : 0; return base + Math.max(0, (t - f.receivedAt) / 1000); }
   const typeFamily = t => ENGINE.typeFamily(clean(t));   // (a maker's line: GA7C and GLF6 alike - engine TYPE_LINES)
-  function typeRelation(a, b) { a = clean(a).toUpperCase(); b = clean(b).toUpperCase(); if (!a || !b) return 'unknown'; if (a === b) return 'same'; return typeFamily(a) === typeFamily(b) ? 'family' : 'different'; }
+  function typeRelation(a, b) { a = clean(a).toUpperCase(); b = clean(b).toUpperCase(); if (!a || !b) return 'unknown'; if (a === b) return 'same'; return typeFamily(a) === typeFamily(b) ? 'family' : ENGINE.bizKin(a, b) ? 'kin' : 'different'; }
+  // (1.2.3) two business jets the databases name differently (N999YX: ADS-B's GLEX, FR24's GLF6): the one aircraft only
+  // where it fits as one aircraft does - in the air, within 4 km, 800 ft, 20 degrees and 50 kt - and behind any candidate
+  // of FR24's own type (the monitor's rule, monitor/ident.cjs)
+  const kinFits = (f, c, d) => !f.gnd && !c.gnd && d <= 4 && (!fin(f.alt) || !fin(c.alt) || Math.abs(f.alt - c.alt) <= 800) && (!fin(f.trk) || !fin(c.trk) || angDiff(f.trk, c.trk) <= 20) && (!fin(f.spd) || !fin(c.gs) || Math.abs(f.spd - c.gs) <= 50);
   function scoreCandidate(f, c, flat, flon, t) {
     const cAge = c.ageS + Math.max(0, (t - c.receivedAt) / 1000);
     if (cAge > 120) return null;
@@ -666,12 +670,13 @@
     const [clat, clon] = project(c.lat, c.lon, c.gs, c.trk, cAge);
     const d = dist(flat, flon, clat, clon);
     if (d > 15) return null;
+    if (rel === 'kin' && !kinFits(f, c, d)) return null;
     let s = d;
     if (fin(f.alt) && fin(c.alt) && !f.gnd && !c.gnd) { const da = Math.abs(f.alt - c.alt); if (da > 3000) return null; s += da / 400; }
     if (!!f.gnd !== !!c.gnd && f.alt > 1500) return null;
     if (!f.gnd && fin(f.trk) && fin(c.trk) && f.spd > 60 && c.gs > 60) { const dt = angDiff(f.trk, c.trk); if (dt > 50) return null; s += dt / 8; }
     if (fin(f.spd) && fin(c.gs) && f.spd > 60) { const ds = Math.abs(f.spd - c.gs); if (ds > 140) return null; s += ds / 25; }
-    if (rel === 'same') s -= 2; else if (rel === 'family') s += 1; else if (f.type && !c.type) s += 0.5;
+    if (rel === 'same') s -= 2; else if (rel === 'family') s += 1; else if (rel === 'kin') s += 3; else if (f.type && !c.type) s += 0.5;
     if (f.reg && c.reg) s -= 3;
     if (c.ladd || c.pia) s -= 0.75;
     if (c.nonIcao) s += 2;
