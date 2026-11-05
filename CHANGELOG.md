@@ -4,6 +4,50 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 
 1.0.0 is the first release. The versions before it are the betas, labelled B: B22.31.12 is version 22.31.12.
 
+## [1.2.4] - 2026-11-05
+
+### In short
+- Bookmarks of flights, airports and places work past FR24's limit, like aircraft bookmarks. They no longer give "Unable to add bookmark".
+- Vertical speed is never padlocked. Where no receiver reports it, it is worked out from the altitude changes (level flight reads 0 fpm).
+- Squawk is never padlocked. Where no receiver hears the aircraft now, the code it was last heard with since take-off is shown.
+- A blocked flight's destination comes from its filed plan wherever FR24's own boards list the flight (N300CR, White Plains to East Midlands).
+- A light aircraft or helicopter circling near where it took off is read as a local flight returning there. G-POLV, a police P68, gets East Midlands from its first answer.
+- The monitor keeps every position it gets from FR24 exactly as it came, for 730 days, and the tracks for 730 days instead of 90.
+- The runway of each landing and take-off is filled in FR24's airport flight history and in a flight page's "Live flight" card, where FR24 shows a padlock.
+- FR24's own KML and CSV buttons work: beside the play button in its playback, and in its flight and aircraft history.
+- Checked against FR24's new site build: everything unlocked before still works.
+
+### Added
+- **FR24 positions kept as they came (`monitor/fr24raw.cjs`).** The monitor's track store thins each track to a point a minute, keeps altitudes to the nearest 100 ft, and drops speed and heading. That is enough to name a playback, but it is not the track FR24 gave. Every FR24 position the monitor gets is now also kept unchanged, by FR24's id of the flight:
+  - every point of the FR24 trails it fetches;
+  - every point of its own FR24 scans (blocked flights, and the flights FR24 shows without a route);
+  - every point of the tracks browsers send of FR24 flights (FR24's trail together with public ADS-B, with airspeeds, wind and squawk).
+
+  Points are written every 15 minutes and on stop, and kept 730 days (`trackDays`). Nothing is written while the disk has less free space than the world log's margin (`worldFreeGb`). `GET /fr24raw?f=<flight id>` returns a flight's points. See [the monitor's docs](docs/monitor.md#what-it-keeps).
+- **Runways on FR24's airport flight history and flight pages.** FR24 shows each movement's runway to a Business account only. The runway is now worked out from the flight's own track near the airport, the same way the monitor counts runway use: from FR24's track of the flight (free for its week of playback), or from the FR24 positions the monitor kept, which covers older flights too. The monitor keeps each runway by the flight's id for every browser, across restarts. Each runway is put into FR24's own answer with the padlock off. On a flight page the take-off runway is shown, and the landing runway once the flight has landed.
+- **FR24's KML and CSV buttons.** FR24 lets only a paid plan download a flight's files. Its buttons are now unlocked, its quota check is answered in the browser, and the file is made from FR24's own track of the flight, or, past FR24's week or for a blocked flight, from the positions the monitor kept. The CSV has FR24's columns (Timestamp, UTC, Callsign, Position, Altitude, Speed, Direction). A flight with no track anywhere gets FR24's own "not available" message.
+
+### Fixed
+- **Bookmarks of flights, airports and places.** FR24 names its bookmark types "aircraft", "flights", "airports" and "locations". 1.2.1 knew only the first, so a flight, airport or place past the limit got FR24's own error, "Unable to add bookmark". Each type is now kept under FR24's own name, and a place by its own id.
+- **Vertical speed padlocked in low coverage.** It was worked out only from two positions close together. Now:
+  - points under 20 s apart are skipped;
+  - up to 3 minutes apart, the rate between them is used;
+  - an altitude unchanged within 100 ft over up to 30 minutes reads 0 fpm;
+  - otherwise the rate is used up to 10 minutes apart.
+
+  Altitudes from a flight's trail that arrive after newer ones are no longer thrown away.
+- **Squawk padlocked in low coverage.** A flight keeps its code from ATC the whole way unless there is an emergency, and FR24 shows emergency codes itself. With no receiver hearing the aircraft now, the code it was last heard with in the air since take-off is used: from this browser, or from the monitor, which keeps each aircraft's last airborne code for 16 hours.
+- **Filed plans of blocked flights.** FR24's boards list a blocked flight as N/A, but with its flight id and both airports (N300CR, White Plains to East Midlands, 3 November). For every blocked flight that no browser has sent a plan for, the monitor now reads the plan from its origin's departures or its destination's arrivals.
+- **Local VFR flights slow to get a destination.** A light aircraft, helicopter or turboprop circling low within 120 km of where it took off is now scored as returning there, once it has flown 15 minutes or more and either:
+  - its path is three or more times its furthest distance out; or
+  - it has turned through two or more full circles in the last 40 minutes.
+
+  G-POLV (a police P68 out of East Midlands, orbiting 25 to 65 km north with no history on record) was 22 to 39% East Midlands, behind a private strip it flew past. It is now East Midlands at 67 to 88% throughout.
+
+### Changed
+- **Tracks are kept 730 days** (`trackDays`, 90 before).
+- The monitor's `GET /rwy` takes the airport and each flight's time (`&ap=<id>&ts=<time>,...`), so it can work out runways from the FR24 positions it kept. `/status` shows the store as `fr24Raw`.
+
 ## [1.2.3] - 2026-11-02
 
 ### In short

@@ -2163,6 +2163,26 @@ function createRouteEngine() {
     const elapsedMin = origin && origin.departedAt && !onGround ? Math.max(0, (now - origin.departedAt) / 60) : null;
     // (jets and turboprops - not helicopters, light aircraft or military ones, which patrol, train and orbit)
     const trkSt = W.offTrk && !onGround && (grp === 'jet' || grp === 'tprop') && kindOf(cls, !!ac.mil) !== 2 ? trackState(pos, trail, { origin: O, elapsedMin }) : null;
+    // (1.2.4) Orbiting near where it took off: a light aircraft, helicopter or turboprop a quarter of an hour and more into
+    // its flight, low, never more than 120 km out, winding about rather than going anywhere - its path three times and
+    // more as long as its furthest reach, or turning through two whole circles and more in the last 40 minutes. A police,
+    // survey or training sortie: back where it began (G-POLV, a police P68 out of East Midlands, orbiting 25-65 km north
+    // with nothing on record of it: 22-39% for East Midlands, behind a private strip it flew past)
+    const loiter = (() => {
+      if (!O || onGround || !(grp === 'piston' || grp === 'heli' || grp === 'tprop') || trail.length < 15) return 0;
+      // (from its take-off, or - where that is not known, an origin from FR24's plan - its track's first point)
+      const t0 = origin.departedAt || trail[0].t; if (now - t0 < 900) return 0;
+      let path = 0, reach = 0, turn = 0, n = 0, low = 0, prev = null;
+      for (const p of trail) {
+        if (p.t < t0 || p.t > now) continue;
+        reach = Math.max(reach, dist(O.lat, O.lon, p.lat, p.lon)); n++;
+        if (p.alt == null || p.alt < 8000) low++;
+        if (prev) { path += dist(prev.lat, prev.lon, p.lat, p.lon); if (fin(p.trk) && fin(prev.trk) && now - p.t <= 2400 && p.t - prev.t <= 120) turn += angDiff(p.trk, prev.trk); }
+        prev = p;
+      }
+      if (n < 15 || reach > 120 || low < n * 0.8) return 0;
+      return Math.min(1, Math.max(0, (path / Math.max(5, reach) - 2.5) / 2) + Math.max(0, (turn - 540) / 720));
+    })();
     const regCountry = ac.country || '';
     const lastLn = hs.recentLn && hs.recentLn.length ? hs.recentLn.slice(-2).reduce((x, y) => x + y, 0) / Math.min(2, hs.recentLn.length) : null;
     // what the transponder says now: its code block, and the altitude set in the flight management system
@@ -2277,6 +2297,7 @@ function createRouteEngine() {
       if (W.earlyDep && O && grp === 'jet' && !ac.mil && elapsedMin != null && elapsedMin < 20 && !emergency && dist(O.lat, O.lon, a.lat, a.lon) < 80 && !(fin(vr) && vr < -800 && d < dOP - 3)) fixed -= W.earlyDep * (elapsedMin < 12 ? 1 : (20 - elapsedMin) / 8);
       // Straight away from where it took off, still heading away, 40+ km out: not a local flight coming back (G-SOON
       // leaving Perth for Turweston was "returning to Perth" 90 km south of it)
+      if (loiter > 0 && isO) { fixed += 2.5 * loiter; why.push('orbiting near where it took off - a local flight'); }
       if (W.awayRet && isO && !onGround && dOP > 40 && desc.path > 0 && dOP / desc.path > 0.75 && fin(pos.trk) && angDiff(pos.trk, brg(O.lat, O.lon, pos.lat, pos.lon)) < 45) fixed -= W.awayRet * (Math.min(1, (dOP - 40) / 60) + Math.min(2, Math.max(0, (dOP - 200) / 300)));
       // A long trip is flown more or less direct (164,000 moments of real flights on 600 km+ trips, 300 km+ out: half
       // within 0.3% of the direct distance, 99% within 14%, 0.7% beyond 20% - test/detour_stats.cjs). Going there from

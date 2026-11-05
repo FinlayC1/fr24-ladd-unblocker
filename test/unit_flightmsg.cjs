@@ -249,6 +249,34 @@ check('ordinary aircraft: FR24 data kept (registration, callsign, photos)', str(
   const cty = H.parse(H.patchLiveFeed(body2, false, 0)).filter(f => f.fn === 1).map(f => num(one(f.val, 13).val, 8));
   check('flag label: every aircraft\'s country of registration put in - the UK, the Isle of Man (not its UK address), Germany by address, the US', JSON.stringify(cty) === JSON.stringify([77, 151, 82, 236]), cty);
 }
+// 4c) (1.2.4) where no receiver hears an aircraft - an ocean, FR24's satellite positions minutes apart - its panel's vertical
+//     speed from FR24's own altitudes (level: 0 fpm), and its squawk the code it was last heard with since it took off
+{
+  const fF = (fn, v) => { const b = new Uint8Array(5); b[0] = (fn << 3) | 5; new DataView(b.buffer).setFloat32(1, v, true); return b; };
+  const m = new Map();
+  m.set(1, [[1000, 37000, 0], [1400, 37000, 0]]);           // (level, 400 s apart)
+  m.set(2, [[1000, 30000, 0], [1300, 34000, 0]]);           // (climbing, 5 min)
+  m.set(3, [[1000, 30000, 0], [2500, 37000, 0]]);           // (25 min apart, not level: not known)
+  m.set(4, [[1000, 36000, 0], [1030, 36500, 0]]);           // (30 s: as before)
+  const v = [1, 2, 3, 4].map(i => H.derivedVs(m, i));
+  check('vertical speed from FR24\'s altitudes minutes apart: level 0 fpm, a climb its average rate, 25 min apart and changing not known, 30 s as before', v[0] === 0 && v[1] === 800 && Number.isNaN(v[2]) && v[3] === 1000, v);
+  const now = Math.floor(Date.now() / 1000), fid = 0x3c2b0001, t0 = now - 3 * 3600;
+  const ai = cat([H.fVar(1, 0x3c6444), H.fStr(2, 'D-AIXA')]);
+  const efi = cat([H.fVar(1, fid), fF(2, 45.0), fF(3, -30.0), H.fVar(5, 37000), H.fVar(8, now * 1000), H.fStr(10, 'DLH400'), H.fVar(14, 1), H.fVar(16, 1)]);
+  const tp = (t, alt) => H.fLen(6, cat([H.fVar(1, t), fF(2, 45), fF(3, -31), H.fVar(4, alt)]));
+  const body = cat([H.fLen(1, ai), H.fLen(5, efi), tp(t0, 0), tp(now - 600, 37000), tp(now - 120, 37000)]);
+  posted.length = 0;
+  const st = { id: fid }, out1 = H.patchFlightMsg(body, st, H.FOLLOW), e1 = one(out1, 5).val;
+  check('... the squawk not here: the monitor asked for the one last heard', posted.some(d => d && d.__tweeksLadd === 'wantSq' && d.hex === '3c6444') && !one(e1, 15) && !one(e1, 14), posted.filter(d => d && d.__tweeksLadd === 'wantSq'));
+  check('... its vertical speed 0 fpm (level for minutes), FR24\'s padlock off', num(e1, 17) === 0 && !one(e1, 16), { vs: num(e1, 17) });
+  w.dispatchEvent(new w.MessageEvent('message', { data: { __tweeksLadd: 'lastSq', hex: '3c6444', sq: '2341', at: (t0 + 1800) * 1000 }, source: w }));
+  const e2 = one(H.patchFlightMsg(body, st, H.FOLLOW), 5).val;
+  check('... the monitor\'s answer - heard since take-off: in FR24\'s squawk field', num(e2, 15) === 0x2341 && !one(e2, 14), num(e2, 15));
+  const st3 = { id: fid + 1 }, efi3 = cat([H.fVar(1, fid + 1), H.fVar(5, 37000), H.fVar(8, now * 1000), H.fVar(14, 1)]), ai3 = cat([H.fVar(1, 0x3c7777)]);
+  w.dispatchEvent(new w.MessageEvent('message', { data: { __tweeksLadd: 'lastSq', hex: '3c7777', sq: '4521', at: (t0 - 3600) * 1000 }, source: w }));
+  const e3 = one(H.patchFlightMsg(cat([H.fLen(1, ai3), H.fLen(5, efi3), tp(t0, 0), tp(now - 60, 37000)]), st3, H.FOLLOW), 5).val;
+  check('... one heard before this flight took off (an earlier flight\'s code): not used', !one(e3, 15), num(e3, 15));
+}
 // 5) pictures and a route arriving while the panel is open go into FR24's stream at once, as a frame of our own: FR24
 //    reads it when told the response has grown (tried on the live site: its store took it 7 ms later) - not at FR24's
 //    next update, and never only after reopening the panel

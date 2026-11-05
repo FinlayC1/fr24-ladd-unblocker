@@ -87,6 +87,76 @@
       return { start: pt(tr[0]), end: pt(tr[tr.length - 1]) };
     }).catch(() => null);
   }
+  // (1.2.4) FR24's airport flight history: the runways its padlock hides - the monitor's, by the flight's id, where worked
+  // out already; else each flight's own FR24 track (free for a week) near the airport, named on the monitor and kept there
+  // for every browser. Eight flights an ask at most
+  async function onRwyWant(d) {
+    // (an airport by FR24's id - its flight history - or by its code: a flight's page gives the code alone)
+    const code = String((d && d.iata) || '').toUpperCase();
+    if (!(Number(d && d.ap) > 0) && /^[A-Z0-9]{3}$/.test(code)) { try { await loadAirports(); } catch (e) { /* none */ } }
+    const a = apById(Number(d && d.ap) || 0) || (/^[A-Z0-9]{3}$/.test(code) ? airports.byIata.get(code) : null), ap = a ? a.id : 0;
+    if (!a || !monUp()) { postToPage('rwyGot', { rid: d && d.rid, list: [], done: true }); return; }
+    const keyOf = x => x.fid + ':' + (x.landing ? 1 : 0), items = (Array.isArray(d.items) ? d.items : []).filter(x => x && /^[0-9a-f]{1,12}$/.test(x.fid)).slice(0, 30), out = [];
+    // (1.2.4: with the airport and each one's time - the monitor works out those it keeps FR24's positions of, older than
+    // FR24's week too)
+    try { const j = await monGet('/rwy?f=' + items.map(keyOf).join(',') + '&ap=' + ap + '&ts=' + items.map(x => fin(x.t) ? Math.round(x.t) : 0).join(','), { timeout: 6000 }); for (const [k, v] of Object.entries((j && j.list) || {})) if (typeof v === 'string' && v) out.push({ k, rwy: v }); } catch (e) { /* the monitor's answer later */ }
+    postToPage('rwyGot', { rid: d.rid, list: out, done: false });
+    const miss = items.filter(x => !out.some(o => o.k === keyOf(x))).slice(0, 8);
+    await Promise.all(miss.map(async x => {
+      try {
+        const ts = fin(x.t) && x.t > 1e9 ? Math.round(x.t) : Math.round(now() / 1000);
+        const j = await gmRequest(`https://api.flightradar24.com/common/v1/flight-playback.json?flightId=${encodeURIComponent(x.fid)}&timestamp=${ts}`, { timeout: 15000 });
+        const tr = j && j.result && j.result.response && j.result.response.data && j.result.response.data.flight && j.result.response.data.flight.track;
+        if (!Array.isArray(tr) || !tr.length) return;
+        const pts = [];
+        for (const p of tr) {
+          const lat = p && p.latitude, lon = p && p.longitude; if (!fin(lat) || !fin(lon) || ENGINE.dist(lat, lon, a.lat, a.lon) > 30) continue;
+          const ft = p.altitude && fin(p.altitude.feet) ? p.altitude.feet : null, gs = p.speed && fin(p.speed.kts) ? p.speed.kts : null;
+          pts.push({ t: p.timestamp, lat, lon, alt: ft > 0 ? ft : null, gnd: ft === 0, gs, trk: fin(p.heading) ? p.heading : null });
+        }
+        // (a track without headings: each point's from the one before)
+        for (let i = 1; i < pts.length; i++) if (!fin(pts[i].trk)) pts[i].trk = ENGINE.brg(pts[i - 1].lat, pts[i - 1].lon, pts[i].lat, pts[i].lon);
+        if (pts.length < 3) return;
+        const r = await monPost('/rwyfit', { ap, fid: x.fid, landing: !!x.landing, pts });
+        if (r && typeof r.rwy === 'string' && r.rwy) out.push({ k: keyOf(x), rwy: r.rwy });
+      } catch (e) { /* not this one */ }
+    }));
+    postToPage('rwyGot', { rid: d.rid, list: out, done: true });
+  }
+  // (1.2.4) A flight's KML or CSV for FR24's own download buttons - its playback's, beside the play button, and its flight
+  // history's - which FR24 gives a paid plan only: FR24's own track of the flight (free for its week of playback), else
+  // every FR24 position of it the monitor has kept (730 days - a blocked flight's too). FR24's CSV columns
+  async function onTrackFile(d) {
+    const rid = d && d.rid, fid = String((d && d.fid) || '').toLowerCase(), kind = d && d.file === 'kml' ? 'KML' : 'CSV';
+    const ts = d && fin(+d.ts) && +d.ts > 1e9 ? Math.round(+d.ts) : 0;
+    if (!/^[0-9a-f]{1,12}$/.test(fid)) { postToPage('trackFileGot', { rid, ok: false }); return; }
+    let pts = [], cs = '', desc = '';
+    try {
+      const j = await gmRequest(`https://api.flightradar24.com/common/v1/flight-playback.json?flightId=${encodeURIComponent(fid)}&timestamp=${ts || Math.round(now() / 1000)}`, { timeout: 20000 });
+      const fl = j && j.result && j.result.response && j.result.response.data && j.result.response.data.flight, tr = fl && fl.track;
+      for (const p of Array.isArray(tr) ? tr : []) {
+        if (!p || !fin(p.latitude) || !fin(p.longitude) || !fin(p.timestamp)) continue;
+        pts.push({ t: p.timestamp, lat: p.latitude, lon: p.longitude, alt: p.altitude && fin(p.altitude.feet) ? p.altitude.feet : null, gs: p.speed && fin(p.speed.kts) ? p.speed.kts : null, trk: fin(p.heading) ? p.heading : null });
+      }
+      const idn = fl && fl.identification; cs = clean((idn && (idn.callsign || (idn.number && idn.number.default))) || '');
+      if (pts.length) desc = 'Track from Flightradar24.';
+    } catch (e) { /* FR24's track not there: the monitor's */ }
+    if (!pts.length && monUp()) {
+      try {
+        const j = await monGet('/fr24raw?f=' + fid + (ts ? '&t=' + ts : ''), { timeout: 20000 }), C = (j && j.cols) || [], at = k => C.indexOf(k);
+        for (const r of Array.isArray(j && j.p) ? j.p : []) {
+          if (!Array.isArray(r) || !fin(r[0]) || !fin(r[1]) || !fin(r[2])) continue;
+          const alt = r[at('alt')];
+          pts.push({ t: r[0], lat: r[1], lon: r[2], alt: fin(alt) ? alt : null, gnd: r[at('gnd')] === 1, gs: fin(r[at('gs')]) ? r[at('gs')] : null, trk: fin(r[at('trk')]) ? r[at('trk')] : null });
+        }
+        if (!cs && j && j.m) cs = clean(j.m.cs || j.m.reg || '');
+        if (pts.length) desc = 'Track from Flightradar24 as kept by the LADD unblocker\'s monitor (with public ADS-B where a browser added it).';
+      } catch (e) { /* none kept */ }
+    }
+    if (!pts.length) { postToPage('trackFileGot', { rid, ok: false }); return; }
+    const f = exportFile(kind, pts, cs || clean(d.cs || ''), fid, desc);
+    postToPage('trackFileGot', { rid, ok: true, text: f.text, type: f.type });
+  }
   // a point of a track: the airport or field it is at, or - on the ground away from all of them - a private site
   function placeCells(p) {
     if (!p || !fin(p.lat) || !fin(p.lon)) return null;
@@ -314,7 +384,7 @@
     return { off, on: Math.min(on, Math.max(off, nowS())) };
   }
   // the files themselves: FR24's CSV columns, a KML trail (altitudes in metres above sea level)
-  function exportFile(kind, pts, cs, fid) {
+  function exportFile(kind, pts, cs, fid, desc) {
     const rows = (pts || []).filter(p => p && fin(p.t) && fin(p.lat) && fin(p.lon)).sort((a, b) => a.t - b.t);
     const altFt = p => p.gnd || p.alt === 'ground' ? 0 : fin(p.alt) ? Math.round(p.alt) : '';
     if (kind === 'CSV') {
@@ -324,7 +394,7 @@
     }
     const coords = rows.map(p => `${p.lon.toFixed(6)},${p.lat.toFixed(6)},${Math.round((Number(altFt(p)) || 0) * 0.3048)}`).join(' ');
     const x = v => String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;');
-    const text = `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>${x(cs || 'Flight')} ${x(fid)}</name><description>Track from public ADS-B data: adsb.lol / airplanes.live (Open Database License). Made by the LADD unblocker.</description><Style id="trail"><LineStyle><color>ff00b4ff</color><width>3</width></LineStyle></Style><Placemark><name>Trail</name><styleUrl>#trail</styleUrl><LineString><tessellate>1</tessellate><altitudeMode>absolute</altitudeMode><coordinates>${coords}</coordinates></LineString></Placemark></Document></kml>\n`;
+    const text = `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>${x(cs || 'Flight')} ${x(fid)}</name><description>${x(desc || 'Track from public ADS-B data: adsb.lol / airplanes.live (Open Database License).')} Made by the LADD unblocker.</description><Style id="trail"><LineStyle><color>ff00b4ff</color><width>3</width></LineStyle></Style><Placemark><name>Trail</name><styleUrl>#trail</styleUrl><LineString><tessellate>1</tessellate><altitudeMode>absolute</altitudeMode><coordinates>${coords}</coordinates></LineString></Placemark></Document></kml>\n`;
     return { name: `${cs || 'flight'}_${fid}.kml`, type: 'application/vnd.google-earth.kml+xml', text };
   }
   function saveFile(f) { const url = URL.createObjectURL(new Blob([f.text], { type: f.type })), a = document.createElement('a'); a.href = url; a.download = f.name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 60000); }

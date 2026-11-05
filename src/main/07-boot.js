@@ -130,6 +130,9 @@
       case 'aircraftInfo': onAircraftInfo(d); break;
       case 'fr24Model': onFr24Model(d); break;
       case 'routesAsk': onRoutesAsk(d).catch(e => log('search routes', e)); break;
+      case 'wantSq': onWantSq(d).catch(() => {}); break;
+      case 'rwyWant': onRwyWant(d).catch(e => log('runways', String(e && e.message || e))); break;
+      case 'trackFile': onTrackFile(d).catch(e => { log('track file', String(e && e.message || e)); postToPage('trackFileGot', { rid: d && d.rid, ok: false }); }); break;
       case 'sched': onSched(d); break;
       case 'airAsk': onAirAsk(d).catch(e => log('airspace', e)); break;
       case 'feedReady': noteFeedHdr(d.hdr); if (!feedReady) { feedReady = true; log('feed headers captured'); worldScan('startup').catch(() => {}); } break;
