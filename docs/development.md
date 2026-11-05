@@ -49,7 +49,7 @@ npm run test:all       # also the live end-to-end runs (normal and Tampermonkey-
 | `unit_names` | Owner and airfield naming | – |
 | `unit_origin` | Origin inference | – |
 | `unit_flightmsg` | FR24 protobuf messages (built script in jsdom) | – |
-| `unit_pbbuttons` | Playback of a blocked flight (board cards, kept rows, the panel, search results, rebuilt log rows) to its track on airplanes.live (a new tab); the bar's and ordinary flights' left to FR24; the track's address; the userscript's `pbWhere` (built script in jsdom) | – |
+| `unit_pbbuttons` | Playback of a blocked flight (board cards, kept rows, the panel, search results, rebuilt log rows) in FR24's own player: the page handed to FR24's router in FR24's shapes, its id (FR24's, or `ff` + address + take-off), new tabs, FR24's own playback pages of flights it locks or cannot show taken over with their words kept; the bar's and ordinary flights' left to FR24; the userscript's `pbWhere` and `pbFlight` (the flight from a day's record) (built script in jsdom) | – |
 | `unit_fr24` | FR24 feed protobuf, the world scan's regions, naming (lists, look-ups, dead reckoning, trails, parked), withdrawing, rough destinations, `/fr24ids`, `/report` | – |
 | `unit_store` | The permanent log (old days only added to, boards from disk), `/learn`, flights only FR24 sees, runways used, `/airport`, owners on the monitor, the names table's LADD flag | – |
 | `unit_registry` | Every register's answer read (FAA, G-INFO, Isle of Man, FOCA, hexdb, adsbdb), the monitor's owner store (pace, refusals, browsers' findings, kept across restarts) | – |
@@ -62,11 +62,14 @@ npm run test:all       # also the live end-to-end runs (normal and Tampermonkey-
 | `unit_centralpool` | Central calculation on worker threads: the same answers as on the main thread, a flight always on one worker, a worker that dies replaced | – |
 | `unit_noroute` | The world scan asking FR24 for routes and addresses (and stepping down when refused); FR24's flights with no destination followed and given to central calculation | – |
 | `unit_monboards` / `unit_boardsync` | Airport boards on the monitor (rows kept, merged, served with `since`, FR24's schedule read by the monitor, paced and paused) and a built userscript's board filled from it at once, its own FR24 rows sent back | – |
+| `unit_fr24raw` | (1.2.4) The monitor's store of every FR24 position as it came (`monitor/fr24raw.cjs`): each second of a flight once with every figure, written in members of 64 flights, read back by FR24's id across days and a restart, a broken member skipped, old days removed, the points let go when the disk is short | – |
+| `unit_tel` | (1.2.4) The monitor's last airborne squawk of each aircraft (`monitor/tel.cjs`), kept 16 hours | – |
+| `unit_local` | (1.2.4) A light aircraft circling near where it took off read as a local flight returning there (G-POLV, a police P68 out of East Midlands, from adsb.lol's record of 4 Nov) | data dir |
 | `unit_scores` | Live accuracy: answers noted and scored at landing or from the log, written as training data, read back after a restart, old days gzipped | – |
 | `unit_fleet` | Fleets: an owner's other aircraft and their airports of 60 days, trustees and lessors left out | – |
 | `unit_extension` | The built extension in a real Chromium: service worker, both worlds, requests through the worker | – (needs Playwright and Chromium; skipped without them) |
 | `unit_native` | The built userscript's LADD Unblock window in a real Chromium, frame by frame, on a Vue 3 page made like FR24's map (`fixtures/fr24mock.html`) in seven layouts: opens in FR24's Widgets window, one bar item open, closes with flights and other options, Bookmarks switched off, the airport panel's empty bar never drawn | – (needs Playwright, Chromium and Vue 3's `vue.global.js` as `VUE_PATH`; skipped without them) |
-| `unit_pbnative` | Playback buttons in a real Chromium on the Vue 3 mock (`?pb=1`): the bottom bar's left to FR24, a blocked flight's (panel, board card, search result, middle click) opening its track on airplanes.live in a new tab | – (needs Playwright, Chromium and `VUE_PATH`; skipped without them) |
+| `unit_pbnative` | Playback buttons in a real Chromium on the Vue 3 mock (`?pb=1`): the bottom bar's left to FR24, a blocked flight's (panel, board card, search result) handed to FR24's router as its own playback page with the flight's track from adsb.lol's record, a middle click its page in a new tab, a flight with no track FR24's own | – (needs Playwright, Chromium and `VUE_PATH`; skipped without them) |
 | `unit_new` | Built userscript: playback, airline/airport lists, boards, sites, routes page | FR24 |
 | `panels1`, `panels2` | Reported panels replayed through the built script | FR24, adsb.lol |
 | `replay` | Live aircraft replayed through the built script | FR24, adsb.lol, others |

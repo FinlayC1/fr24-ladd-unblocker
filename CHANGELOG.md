@@ -14,10 +14,20 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 - A light aircraft or helicopter circling near where it took off is read as a local flight returning there. G-POLV, a police P68, gets East Midlands from its first answer.
 - The monitor keeps every position it gets from FR24 exactly as it came, for 730 days, and the tracks for 730 days instead of 90.
 - The runway of each landing and take-off is filled in FR24's airport flight history and in a flight page's "Live flight" card, where FR24 shows a padlock.
-- FR24's own KML and CSV buttons work: beside the play button in its playback, and in its flight and aircraft history.
+- Blocked (LADD) flights, flights of logs rebuilt here, and flights older than FR24's 7 days of playback now play in FR24's own player. Its map, slider, figures, speed and altitude graph, tracklog, and KML and CSV buttons all work, using the track the monitor and the public ADS-B record keep. Playback no longer sends you to airplanes.live.
+- FR24's own KML and CSV buttons work, beside the play button and in its flight and aircraft history.
 - Checked against FR24's new site build: everything unlocked before still works.
 
 ### Added
+- **FR24's own player for flights FR24 plays back to nobody.**
+  - **Which flights:** blocked (LADD) flights, flights of a log rebuilt here, and flights older than FR24's 7 days of playback.
+  - **How it works:** FR24's playback page (`/data/playback/<id>`) builds everything (route on the map, slider, time, altitude, speed, vertical speed, track, squawk, the speed and altitude graph, the tracklog) from three lists it gets with the page. Those lists are now built from the flight's track and the page is handed to FR24's own router, so FR24's player plays the flight as it does its own. Back and forward work as usual.
+  - **Where the track comes from:** every FR24 position the monitor kept of the flight, or the public ADS-B record of its day (adsb.lol, with airplanes.live's history file filling adsb.lol's holes). The fuller record is used and the other fills its gaps, thinned to about one point every 8 seconds in the air, like FR24's own.
+  - **The flight's details:** aircraft, callsign, airports and times come from its rebuilt leg, else from where the track starts and ends on the ground.
+  - **Every Playback of a blocked flight now opens it this way:** FR24's own Playback button on the panel, board cards, search results and recent flights, the Play button of a rebuilt log, and the panel's "playback" link (formerly "trace").
+  - **Page addresses:** a flight of FR24's own keeps FR24's id. A flight known only here gets `ff` + its aircraft's address + its take-off time, hex (`ff` + address + `00000000` is its latest flight). Opened in a new tab or reloaded, it is shown through FR24's flights page, because FR24's server has no page of it.
+  - **FR24's own pages:** a playback page FR24 locks (older than 7 days), shows empty, or shows without the flight's identity (a blocked flight) is given the track, and FR24's own words on it (flight number, airline, airports, times) are kept.
+  - **What it shows:** vertical speed and squawk are shown on these pages, which FR24 padlocks for a free account. GPS altitude and airspeeds stay as FR24 shows them to a free account, because FR24 fetches those from its own playback server moment by moment. The KML and CSV beside the play button are made from the same track.
 - **FR24 positions kept as they came (`monitor/fr24raw.cjs`).** The monitor's track store thins each track to a point a minute, keeps altitudes to the nearest 100 ft, and drops speed and heading. That is enough to name a playback, but it is not the track FR24 gave. Every FR24 position the monitor gets is now also kept unchanged, by FR24's id of the flight:
   - every point of the FR24 trails it fetches;
   - every point of its own FR24 scans (blocked flights, and the flights FR24 shows without a route);
