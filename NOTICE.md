@@ -1,6 +1,6 @@
 # Notices and attributions
 
-FR24 LADD Unblocker - Copyright © 2026 Finlay Clarke. See [LICENSE](LICENSE).
+FR24 LADD Unblocker - Copyright © 2026 Finlay Clarke. See [LICENCE](LICENCE).
 
 ## Trademarks
 

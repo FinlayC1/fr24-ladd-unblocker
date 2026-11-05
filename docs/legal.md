@@ -136,7 +136,7 @@ None of these reaches the user's own browser, the public broadcasts, or the open
 
 The project's design keeps its use personal, gentle and transparent. Users should keep it that way:
 
-- **Don't republish.** What the shared monitor gives your browser is for the tool's own use. Running another public monitor, or publishing what one serves, brings in the ODbL's share-alike terms and the data-protection duties of a service. Whoever does it takes those duties on, and the licence requires the author's permission first ([LICENSE](../LICENSE), §2(b)).
+- **Don't republish.** What the shared monitor gives your browser is for the tool's own use. Running another public monitor, or publishing what one serves, brings in the ODbL's share-alike terms and the data-protection duties of a service. Whoever does it takes those duties on, and the licence requires the author's permission first ([LICENCE](../LICENCE), §2(b)).
 - **Keep keys your own.** Use only API keys issued to you, within their terms.
 
 ## 9. Disclaimer
