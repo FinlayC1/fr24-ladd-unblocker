@@ -1,15 +1,14 @@
 // "Playback" in a real browser: the BUILT userscript in Chromium (Playwright's) on the Vue 3 page made like FR24's map
 // (test/fixtures/fr24mock.html ?pb=1), whose own Playback actions - the panel's, a board card's, a search result's -
 // go to the flight's log page, as FR24's do for a flight it has no record of, and whose bottom bar's Playback opens its
-// playback window. FR24's router (its Inertia app's $inertia) stood in for, recording the pages it is given; adsb.lol's
-// records of the two blocked aircraft served. Clicked with the mouse:
+// playback window. FR24's router (its Inertia app's $inertia) stood in for, recording any page it is given. Clicked
+// with the mouse:
 //   - the bar's Playback with a LADD flight open in the panel: FR24's playback window, nothing else
 //   - the panel's Playback, a board card's (a flight followed here, N600EB's kept row from two days back), a search
-//     result's of a blocked flight: FR24's own playback page (1.2.4: its player, given the flight's track) - this tab,
-//     as FR24's own Playback does; nothing on airplanes.live
+//     result's of a blocked flight: the aircraft's own page at that flight (/data/aircraft/<reg>#<flight>) - where FR24
+//     plays a flight, in place, in its own player (1.2.4) - in this tab; nothing on airplanes.live, no playback page
 //   - a board card's and a search result's of an ordinary flight: FR24's own (the log page)
-//   - a blocked aircraft whose track is not to be had: FR24's own after all
-//   - a middle click: the flight's page in a new tab
+//   - a middle click: the aircraft's page at that flight in a new tab
 // Needs Playwright and Vue 3's browser build (skipped without): PLAYWRIGHT_PATH=<its module dir> CHROMIUM=<binary>
 // VUE_PATH=<vue.global.js>.
 // usage: node test/unit_pbnative.cjs
@@ -64,7 +63,7 @@ function trace(hex, dayStart, t, from, to) {
       const body = hex === '424c60' && !tm[1] ? trace(hex, day, NOW - 1800, [26.0726, -80.1527], [33.1, -78.2]) : hex === 'a80b2e' && tm[1] && ymd(day) === ymd(NOW - 2 * 86400) ? trace(hex, day, NOW - 2 * 86400, [40.7772, -73.8726], [26.0726, -80.1527]) : null;
       return route.fulfill(body ? { status: 200, contentType: 'application/json', body, headers: { 'access-control-allow-origin': '*' } } : { status: 404, body: '', headers: { 'access-control-allow-origin': '*' } });
     }
-    if (/^https:\/\/www\.flightradar24\.com\/data\/(flights|playback)/.test(u)) { tabs.push(u); return route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>FR24</title>' }); }
+    if (/^https:\/\/www\.flightradar24\.com\/data\/(flights|playback|aircraft)/.test(u)) { tabs.push(u); return route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>FR24</title>' }); }
     return route.fulfill({ status: 404, body: '' });
   });
   await ctx.addInitScript(src => { window.__SRC = src; }, SRC);
@@ -104,11 +103,12 @@ function trace(hex, dayStart, t, from, to) {
     tabs.length = 0;
     const popP = ctx.waitForEvent('page', { timeout: 4000 }).catch(() => null);
     await page.click(sel, opts);
-    let v = []; for (let i = 0; i < 40; i++) { await sleep(250); v = await visits(); if (v.length || (await went()).length) break; }
+    let v = []; for (let i = 0; i < 40; i++) { await sleep(250); if (page.url() !== MAP) break; v = await visits().catch(() => []); if (v.length || (await went().catch(() => [])).length) break; }
     const pop = await popP.then(x => x).catch(() => null); let popUrl = ''; if (pop) { await pop.waitForLoadState().catch(() => {}); popUrl = pop.url(); await pop.close(); }
-    return { v, here: page.url(), w: await went(), pop: popUrl, apl: tabs.filter(u => /airplanes\.live/.test(u)).length };
+    const here = page.url();
+    return { v, here, w: here === MAP ? await went() : [], pop: popUrl, apl: tabs.filter(u => /airplanes\.live/.test(u)).length };
   }
-  const isFlight = (x, url, cs) => !!x && x.how === 'push' && x.url === url && x.comp === 'Data/NewFlightPlayback' && x.n > 20 && x.lock === null && x.src === 'tl' && (!cs || x.cs === cs);
+  const logAt = (reg, id) => 'https://www.flightradar24.com/data/aircraft/' + reg + '#' + id;
 
   let ids = await fresh();
   // ---- the bar's Playback: FR24's playback window
@@ -118,14 +118,14 @@ function trace(hex, dayStart, t, from, to) {
   // ---- the panel's Playback
   ids = await fresh();
   { const r = await clickPb('#pPanel span');
-    check('the panel\'s Playback of the blocked flight: FR24\'s own playback page, given its track - in this tab, by FR24\'s router; nothing opened elsewhere', r.v.length === 1 && isFlight(r.v[0], '/data/playback/' + pid.toString(16), 'VSB82') && r.here === MAP && !r.w.length && !r.pop && !r.apl, r); }
+    check('the panel\'s Playback of the blocked flight: its aircraft\'s page at that flight, in this tab - where FR24 plays it in place; no playback page, nothing opened elsewhere', r.here === logAt('m-arnz', syn('424c60', T)) && !r.v.length && !r.pop && !r.apl, r); }
   // ---- board cards
   ids = await fresh();
   { const r = await clickPb(`#pRow${9000000000 + pid}`);
-    check('a board card\'s Playback of the flight followed here: the same flight', r.v.length === 1 && isFlight(r.v[0], '/data/playback/' + pid.toString(16)), r); }
+    check('a board card\'s Playback of the flight followed here: the same flight', r.here === logAt('m-arnz', syn('424c60', T)), r); }
   ids = await fresh();
   { const r = await clickPb(`#pRow${ids[0]} svg`);
-    check('N600EB\'s kept row from two days back (Aircraft info / Bookmark aircraft / Playback): that flight, from its record of the day', r.v.length === 1 && isFlight(r.v[0], '/data/playback/' + syn('a80b2e', t0), 'N600EB') && !r.apl, r); }
+    check('N600EB\'s kept row from two days back (Aircraft info / Bookmark aircraft / Playback): that flight on its aircraft\'s page', r.here === logAt('n600eb', syn('a80b2e', t0)) && !r.apl, r); }
   ids = await fresh();
   { const r = await clickPb(`#pRow${ids[1]}`);
     check('an ordinary flight\'s kept row: FR24\'s own Playback (its log page), not ours', !r.v.length && r.w.join() === 'log:' + ids[1], r); }
@@ -134,17 +134,11 @@ function trace(hex, dayStart, t, from, to) {
     check('a search result of an ordinary aircraft: FR24\'s own', !r.v.length && r.w[r.w.length - 1] === 'log:aircraft:g-ezbx', r); }
   ids = await fresh();
   { const r = await clickPb('#pSr0 span');
-    check('a search result of the blocked flight: that flight', r.v.length === 1 && isFlight(r.v[0], '/data/playback/' + pid.toString(16)), r); }
-  // ---- a blocked aircraft whose track is not to be had (adsb.lol has nothing of that day): FR24's own after all
-  ids = await fresh();
-  await page.evaluate(({ t0 }) => { const H = window.__H; H.acceptBoardArch({ apId: 3901, arr: [], dep: [{ k: 'n600eb-12', t: t0 - 86400, t2: t0 - 86400 + 3600, hex: 'a80b2e', reg: 'N600EB', cs: 'N600EB', src: 'log', blk: 1, ap: 3500 }] }); const j = { data: [] }; H.addArch(j, 3901, 'departures'); window.__S.rows = [{ id: j.data[0].id, cs: 'N600EB', reg: 'N600EB' }]; window.__noTrack = j.data[0].id; }, { t0 });
-  await sleep(300);
-  { const nid = await page.evaluate(() => window.__noTrack), r = await clickPb(`#pRow${nid}`);
-    check('a blocked flight with no track to be had: FR24\'s own Playback after all, nothing opened elsewhere', !r.v.length && r.w.join() === 'log:' + nid && !r.apl, r); }
+    check('a search result of the blocked flight: that flight', r.here === logAt('m-arnz', syn('424c60', T)), r); }
   // ---- a middle click: a new tab
   ids = await fresh();
   { const r = await clickPb(`#pRow${ids[0]}`, { button: 'middle' });
-    check('a middle click: the flight\'s page in a new tab (by FR24\'s flights page - FR24 has no page of a flight known only here), this one left as it was', r.pop === 'https://www.flightradar24.com/data/flights?tl-pb=' + syn('a80b2e', t0) && r.here === MAP && !r.v.length, r); }
+    check('a middle click: the aircraft\'s page at that flight in a new tab, this one left as it was', r.pop === logAt('n600eb', syn('a80b2e', t0)) && r.here === MAP && !r.v.length, r); }
   check('no page errors', !errors.length, errors);
   await browser.close();
   console.log(fails ? `\n${fails} FAILED` : '\nall passed');

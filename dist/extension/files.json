@@ -1,9 +1,9 @@
 {
-  "version": "1.2.4",
+  "version": "1.2.5",
   "files": {
-    "manifest.json": "ed238ca6999442dfc18d0d5f130e4572d770eab6b05921f7c62ab2a434f12009",
-    "page.js": "24b4c7f3f0a87ee39718d64d59dbde913ee44c287a18f1642b58b9a1a8c9cbf0",
-    "content.js": "69fc029f38f03515856b26b9b4e45cdf2145fd2a7a03f1e0dec352695b4976b2",
+    "manifest.json": "4b04c6f5583d2dbc2bdc48c88e315204b718baa5cc270e6828162b633371b6c1",
+    "page.js": "53d47f08c3f8f5f8bba30f20b2ba1d27cecfddc29d8e68aa553fe938aec36fc0",
+    "content.js": "710248a8e5caf964a499485e6235a4f601400c490051b3fb2123ee3fe686dd36",
     "background.js": "5bdd140c91b8d41e28af7600062423c8a7fb0db1ead286cef55c32e60cea87c8",
     "grant.html": "d3b38c4e3f4c14b39695b6e27c080628166a70bd0a42a9d9073f9d39155e674e",
     "grant.js": "7d89bc80209c01630890f4b004c33be7f33380d3ec756f957fb1684116e687bd",
