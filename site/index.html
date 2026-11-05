@@ -4,13 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>FR24 LADD Unblocker</title>
-<meta name="description" content="Blocked and N/A flights on Flightradar24 get their name, owner, live data, destination and history back, built from public ADS-B. A browser extension and userscript.">
+<meta name="description" content="Flightradar24 hides some aircraft and keeps figures behind padlocks. This browser extension names them, routes them, logs their flights and plays them back in FR24's own player, all from public ADS-B data.">
 <meta name="color-scheme" content="dark light">
 <meta name="theme-color" content="#0c1015" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
 <meta property="og:type" content="website">
 <meta property="og:title" content="FR24 LADD Unblocker">
-<meta property="og:description" content="Flightradar24 hides some aircraft. Their transponders don't. Blocked and N/A flights, named, routed and logged from public ADS-B.">
+<meta property="og:description" content="Flightradar24 hides some aircraft. Their transponders don't. Blocked and N/A flights, named, routed, logged and played back from public ADS-B.">
 <meta property="og:url" content="https://finlayc1.github.io/fr24-ladd-unblocker/">
 <meta property="og:image" content="https://finlayc1.github.io/fr24-ladd-unblocker/assets/social-preview.png">
 <meta property="og:image:width" content="1280">
@@ -31,7 +31,6 @@
   <symbol id="i-check" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
   <symbol id="i-pin" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7-6.1-7-11.2a7 7 0 0 1 14 0C19 14.9 12 21 12 21z"/><circle cx="12" cy="9.8" r="2.6"/></g></symbol>
   <symbol id="i-log" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 12a8.5 8.5 0 1 0 2.5-6"/><path d="M3 3.5V8h4.5"/><path d="M12 7.5V12l3 2"/></g></symbol>
-  <symbol id="i-tag" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M3 4.5V11l9.5 9.5 8-8L11 3H4.5A1.5 1.5 0 0 0 3 4.5z"/><circle cx="7.5" cy="7.5" r="1.4" fill="currentColor"/></g></symbol>
   <symbol id="i-person" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="8" r="3.6"/><path d="M4.5 20.5c1-4 4-5.8 7.5-5.8s6.5 1.8 7.5 5.8"/></g></symbol>
   <symbol id="i-board" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M3 9h18M7.5 13h3M13.5 13h3.5M7.5 16.5h3M13.5 16.5h3.5"/></g></symbol>
   <symbol id="i-gauge" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" d="M2.5 12.5h4l2.5-6 4 12 3-8 1.5 2h4"/></symbol>
@@ -40,7 +39,16 @@
   <symbol id="i-server" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3.5" y="3.5" width="17" height="7" rx="2"/><rect x="3.5" y="13.5" width="17" height="7" rx="2"/><circle cx="7.5" cy="7" r="1" fill="currentColor"/><circle cx="7.5" cy="17" r="1" fill="currentColor"/></g></symbol>
   <symbol id="i-lock" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M8 10.5V7.5a4 4 0 0 1 7.6-1.8"/><rect x="5" y="10.5" width="14" height="10" rx="2"/></g></symbol>
   <symbol id="i-play" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M10 8.5v7l5.5-3.5z" fill="currentColor"/></g></symbol>
-  <symbol id="i-runway" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M8 21l2-18M16 21l-2-18M12 5v2M12 10v2M12 15v2.5"/></g></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7.5 2.8v5.6c0 4.7-3.2 8.3-7.5 9.6-4.3-1.3-7.5-4.9-7.5-9.6V5.8z"/><path d="M8.7 12l2.4 2.4 4.3-4.6"/></g></symbol>
+  <symbol id="i-scale" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5v17M7 20.5h10M5 7h14"/><path d="M5 7l-2.6 6a3.1 3.1 0 0 0 5.2 0z"/><path d="M19 7l-2.6 6a3.1 3.1 0 0 0 5.2 0z"/></g></symbol>
+  <symbol id="i-eye-off" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12s3.5-6.5 9-6.5S21 12 21 12s-3.5 6.5-9 6.5S3 12 3 12z"/><circle cx="12" cy="12" r="2.8"/><path d="M4.5 4.5l15 15"/></g></symbol>
+  <symbol id="i-cloud" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" d="M7 18.5a4.5 4.5 0 0 1-.6-8.96A6 6 0 0 1 18 10.5a4 4 0 0 1-.5 8z"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M9 12h6M9 15.5h6"/></g></symbol>
+  <symbol id="i-globe" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z"/></g></symbol>
+  <symbol id="i-radio" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="1.8" fill="currentColor"/><path d="M8.3 8.3a5.2 5.2 0 0 0 0 7.4M15.7 8.3a5.2 5.2 0 0 1 0 7.4M5.4 5.4a9.3 9.3 0 0 0 0 13.2M18.6 5.4a9.3 9.3 0 0 1 0 13.2"/></g></symbol>
+  <symbol id="i-link" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></g></symbol>
+  <symbol id="i-mark" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M14.8 9.6a3.6 3.6 0 1 0 0 4.8"/></g></symbol>
+  <symbol id="i-db" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><ellipse cx="12" cy="6" rx="7.5" ry="3"/><path d="M4.5 6v6c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3V6M4.5 12v6c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-6"/></g></symbol>
 </svg>
 
 <header class="nav">
@@ -52,6 +60,8 @@
     <nav class="nav-links" aria-label="Sections">
       <a href="#features">Features</a>
       <a href="#how">How it works</a>
+      <a href="#legal">Legal</a>
+      <a href="#privacy">Privacy</a>
       <a href="#install">Install</a>
       <a href="#faq">FAQ</a>
     </nav>
@@ -66,8 +76,9 @@
   <section class="hero" id="top">
     <div class="wrap hero-in">
       <div class="hero-copy">
+        <a class="pill-link" href="#new"><span class="pill-new">New in 1.2.5</span><span>Blocked flights now play in FR24's own player →</span></a>
         <h1>FR24 LADD Unblocker</h1>
-        <p class="lead">A browser extension for Flightradar24. It names the flights FR24 hides or shows as "N/A", adds their route, owner and history, and fills in the figures FR24 keeps behind a padlock, all from public ADS-B data.</p>
+        <p class="lead">A browser extension for Flightradar24. It names the flights FR24 hides or shows as "N/A", adds their route, owner and history, plays their flights back in FR24's own player, and fills in the figures FR24 keeps behind a padlock, all from public ADS-B data.</p>
         <div class="cta-row">
           <a class="btn btn-primary btn-lg" href="https://github.com/FinlayC1/fr24-ladd-unblocker/releases/latest/download/fr24-ladd-unblocker-extension.zip">
             <svg class="ico ico-lg" aria-hidden="true"><use href="#i-download"/></svg>
@@ -78,23 +89,39 @@
             <span class="btn-text"><strong>Install the userscript</strong><small>Tampermonkey · Violentmonkey</small></span>
           </a>
         </div>
+        <ul class="ticks">
+          <li><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg>Free FR24 account, or none</li>
+          <li><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg>No tracking, no accounts, no ads of its own</li>
+          <li><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg>Firefox build too</li>
+        </ul>
         <p class="byline">Version 1.2.5 · <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/releases">all releases</a></p>
       </div>
       <figure class="hero-art">
         <picture>
           <source media="(prefers-color-scheme: light)" srcset="assets/scene-light.svg">
-          <img src="assets/scene-dark.svg" width="580" height="440" alt="Illustration: a dark flight map with yellow aircraft. One blocked aircraft is selected, and its panel is filled in: callsign DEMO01 with a LADD tag, a Gulfstream G650, route TEB to PBI predicted at 64 percent, registration, squawk, altitude, GPS altitude, vertical speed, ground speed, wind and temperature.">
+          <img src="assets/scene-dark.svg" width="580" height="440" alt="Illustration: a dark flight map with yellow aircraft. One hidden aircraft is selected, and its panel is filled in: callsign DEMO01 with a yellow tag, a Gulfstream G650, route TEB to PBI predicted at 64 percent, registration, squawk, altitude, GPS altitude, vertical speed, ground speed, wind and temperature.">
         </picture>
         <figcaption>Illustration with a made-up aircraft (DEMO01, N0DEMO).</figcaption>
       </figure>
     </div>
   </section>
 
+  <!-- Numbers -->
+  <section class="stats" aria-label="Key figures">
+    <div class="wrap stats-in">
+      <div class="stat"><b>99.8%</b><span>of "Confirmed" destinations right on held-out data: aircraft the model never saw in training</span></div>
+      <div class="stat"><b>~760,000</b><span>aircraft in the monitor's database, each with registration, type, age and owner</span></div>
+      <div class="stat"><b>730 days</b><span>of FR24's own positions kept exactly as they came, so old flights can be played back</span></div>
+      <div class="stat"><b>0</b><span>accounts, cookies, analytics or adverts of its own, here or in the extension</span></div>
+    </div>
+  </section>
+
   <!-- Features -->
   <section class="section" id="features">
     <div class="wrap">
-      <h2>Features</h2>
-      <p class="sub">Written into FR24's own data before FR24 draws it, so blocked aircraft look like ordinary traffic.</p>
+      <p class="eyebrow">Features</p>
+      <h2>FR24, with the blanks filled in</h2>
+      <p class="sub">Everything is written into FR24's own data before FR24 draws it, so hidden aircraft look like ordinary traffic, and FR24's own buttons, tables and player do the rest.</p>
       <div class="grid cards">
         <article class="card">
           <span class="card-ico"><svg aria-hidden="true"><use href="#i-plane"/></svg></span>
@@ -104,29 +131,43 @@
         <article class="card">
           <span class="card-ico"><svg aria-hidden="true"><use href="#i-pin"/></svg></span>
           <h3>Where it's going</h3>
-          <p>The take-off airport comes from the track. The destination is predicted by an explainable engine, with a probability and the reasons. It is only "Confirmed" when the aircraft is lined up on a runway.</p>
+          <p>The take-off airport comes from the track. The destination is predicted by an explainable engine, with a probability and the reasons. It is only "Confirmed" when the aircraft is lined up on a runway. Flights FR24 shows without a destination get one too, on boards and in Most tracked.</p>
           <p class="tags"><span class="tag tag-pred">Predicted 64%</span><span class="tag tag-conf">Confirmed</span></p>
         </article>
         <article class="card">
           <span class="card-ico"><svg aria-hidden="true"><use href="#i-log"/></svg></span>
           <h3>Their flights, logged</h3>
-          <p>Each blocked aircraft's departures and arrivals are kept for good. They appear in FR24's own "Recent flights", its aircraft pages and its playback, where blocked flights are named from the monitor's archive.</p>
+          <p>Each blocked aircraft's departures and arrivals are kept for good, with the runway used. They appear in FR24's own "Recent flights", its aircraft pages, search and boards. Older flights are rebuilt under FR24's week too, for any aircraft, as far back as the public record goes.</p>
         </article>
         <article class="card">
-          <span class="card-ico"><svg aria-hidden="true"><use href="#i-tag"/></svg></span>
-          <h3>The LADD tag</h3>
-          <p>A yellow LADD, PIA or MIL tag on every aircraft it applies to: in the panel, in search and on airport boards.</p>
-          <p class="tags"><span class="tag tag-ladd">LADD</span><span class="tag tag-ladd">PIA</span><span class="tag tag-ladd">MIL</span></p>
+          <span class="card-ico"><svg aria-hidden="true"><use href="#i-play"/></svg></span>
+          <h3>Played back in FR24's own player</h3>
+          <p>Press Play on any flight of a log, blocked or older than FR24's 7 days, and it plays at the top of the page in FR24's own player: map, slider, figures and graph. KML and CSV sit beside Play, as on FR24's own rows. <a href="#playback">How playback works</a>.</p>
         </article>
         <article class="card">
           <span class="card-ico"><svg aria-hidden="true"><use href="#i-board"/></svg></span>
           <h3>Airports, filled in</h3>
-          <p>Blocked flights on arrival and departure boards worldwide, without false "same-airport" flights from taxiing aircraft. Movements per day, runway usage, every runway in full and the radio frequencies, where FR24 shows a padlock.</p>
+          <p>Blocked flights on arrival and departure boards worldwide, without false "same-airport" flights from taxiing aircraft, and the runway of every flown row. Movements per day, runway usage, every runway in full and the radio frequencies, where FR24 shows a padlock.</p>
         </article>
         <article class="card">
           <span class="card-ico"><svg aria-hidden="true"><use href="#i-gauge"/></svg></span>
           <h3>Live telemetry, no padlocks</h3>
-          <p>The fields FR24 shows behind padlocks, filled from public ADS-B for any aircraft: vertical speed, squawk, GPS altitude, airspeeds, Mach, wind, temperature and airspace. The server and the browser share the polling.</p>
+          <p>The fields FR24 shows behind padlocks, filled from public ADS-B for any aircraft: vertical speed, squawk, GPS altitude, airspeeds, Mach, wind, temperature and airspace. Where no receiver reports a figure it is worked out from the ones that are. The server and the browser share the polling.</p>
+        </article>
+        <article class="card">
+          <span class="card-ico"><svg aria-hidden="true"><use href="#i-cloud"/></svg></span>
+          <h3>FR24's locked map options</h3>
+          <p>The weather layers (cloud, precipitation, radar, winds, lightning, icing, turbulence, significant weather, AIRMETs and SIGMETs), aeronautical charts, ATC boundaries, oceanic tracks, category filters, up to 60 custom filters, unlimited bookmarks of every kind and the Last clicked flights widget. Built from free public sources, ready on the monitor.</p>
+        </article>
+        <article class="card">
+          <span class="card-ico"><svg aria-hidden="true"><use href="#i-camera"/></svg></span>
+          <h3>Ages, owners and pictures</h3>
+          <p>Every aircraft gets an age, and a serial number where the public records have one, from registers and databases. Owners come from public registers, names only. Photos come from JetPhotos and Planespotters, with the photographer credited.</p>
+        </article>
+        <article class="card">
+          <span class="card-ico"><svg aria-hidden="true"><use href="#i-spark"/></svg></span>
+          <h3>One window for every setting</h3>
+          <p>A button on FR24's bottom bar opens a window styled like FR24's own. It holds a switch for every feature, the update button and the data sources, so you keep what you want and leave the rest as FR24 has it.</p>
         </article>
       </div>
 
@@ -134,15 +175,119 @@
         <li>Owners and operators from public registers (FAA, UK G-INFO, Isle of Man, Switzerland): names only, never addresses.</li>
         <li>Photos from JetPhotos and Planespotters, credited.</li>
         <li>FR24's adverts removed; background work waits for idle moments, so the map never stutters.</li>
+        <li>FR24's own routes and airports always win: the extension only fills what FR24 leaves empty.</li>
       </ul>
+    </div>
+  </section>
+
+  <!-- What's new -->
+  <section class="section section-alt" id="new">
+    <div class="wrap">
+      <p class="eyebrow">What's new</p>
+      <h2>The latest releases</h2>
+      <p class="sub">The project ships often, and every change is in the <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/blob/main/CHANGELOG.md">changelog</a>. These are the ones you will notice.</p>
+      <div class="new">
+        <div class="new-head">
+          <span class="pill-new">1.2.5</span>
+          <h3>Playback is where FR24 puts it</h3>
+          <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/blob/main/CHANGELOG.md">Full changelog →</a>
+        </div>
+        <ul class="new-list">
+          <li><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg><span><b>Playback on the log page (1.2.5).</b> A blocked flight, or one older than FR24's 7 days, plays on its aircraft's own page, in FR24's own player. Every Playback button, on the map panel, boards, search and recent flights, opens that page at the flight.</span></li>
+          <li><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg><span><b>Every figure, no padlocks (1.2.4).</b> GPS altitude, true and indicated airspeed, vertical speed and squawk fill in. Where no receiver reports vertical speed it is worked out from the altitude changes, and the squawk last heard since take-off is shown.</span></li>
+          <li><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg><span><b>KML and CSV (1.2.4).</b> FR24's download buttons work beside Play and in its flight and aircraft history, with files made from the same track.</span></li>
+          <li><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg><span><b>Runways where FR24 shows a padlock (1.2.4).</b> The runway of every landing and take-off, from the flight's own track: in airport history, on flight pages, on the arrivals, departures and on-ground boards, and in the map's airport panel.</span></li>
+          <li><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg><span><b>FR24's positions, kept as they came (1.2.4).</b> The monitor keeps every position it gets from FR24 exactly as sent for 730 days, and its own tracks for 730 days instead of 90.</span></li>
+          <li><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg><span><b>Smarter destinations (1.2.4).</b> A flight's filed plan is read from wherever FR24's boards list it, and a light aircraft or helicopter circling near where it took off is read as a local flight returning home.</span></li>
+          <li><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg><span><b>Bookmarks of every kind (1.2.3, 1.2.4).</b> Aircraft, flights, airports and places are all unlimited, with no "Unable to add bookmark".</span></li>
+          <li><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg><span><b>Weather, charts and ages (1.2.0, 1.2.1).</b> FR24's locked weather layers, charts, ATC boundaries and oceanic tracks work, built on the monitor so they load at once. Every aircraft gets an age.</span></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- Playback -->
+  <section class="section" id="playback">
+    <div class="wrap">
+      <p class="eyebrow">Playback</p>
+      <h2>Playback, the way FR24 does it</h2>
+      <p class="sub">FR24 gives a free account seven days of playback, and plays a hidden flight without a name. The project rebuilds those flights from the positions that were really broadcast, then plays them in the place and the player FR24 uses for its own.</p>
+      <ol class="steps flow">
+        <li>
+          <h3>Press Play</h3>
+          <p>On any row of an aircraft's log, in FR24's own table. Each rebuilt flight has FR24's own Play button, with KML and CSV beside it, exactly as on any other row.</p>
+        </li>
+        <li>
+          <h3>FR24's page asks for the flight</h3>
+          <p>Its own page script requests the flight's track. For a flight only the project knows about, that request is answered inside your browser from the track as kept: the monitor's copy of FR24's own positions, or the public ADS-B record of the day.</p>
+        </li>
+        <li>
+          <h3>FR24's player draws it</h3>
+          <p>The map, the track coloured by altitude, the slider, the figures and the speed and altitude graph appear at the top of the same page. The address gets <code>#</code> and the flight's id, so the link can be shared.</p>
+        </li>
+      </ol>
+      <div class="grid cards wide">
+        <article class="card">
+          <span class="card-ico"><svg aria-hidden="true"><use href="#i-gauge"/></svg></span>
+          <h3>Every figure, no padlocks</h3>
+          <p>GPS altitude, true and indicated airspeed, vertical speed and squawk are filled for the moment being played. Between two reports up to two minutes apart a figure is taken in proportion; otherwise it comes from the nearer report within a minute. On the ground, or where an aircraft sends none, it reads N/A, as on FR24.</p>
+        </article>
+        <article class="card">
+          <span class="card-ico"><svg aria-hidden="true"><use href="#i-link"/></svg></span>
+          <h3>Every way in leads there</h3>
+          <p>The Playback buttons on the map panel, airport boards, search results and recent flights, and the panel's "playback" link, all open the aircraft's log page at that flight. A board's take-off time plays the flight that took off within three hours of it. A middle or Ctrl click opens it in a new tab.</p>
+        </article>
+        <article class="card">
+          <span class="card-ico"><svg aria-hidden="true"><use href="#i-file"/></svg></span>
+          <h3>KML and CSV, in FR24's own formats</h3>
+          <p>The files are made from the same track, with FR24's own CSV columns (timestamp, UTC, callsign, position, altitude, speed, direction). A flight with no track anywhere gets FR24's own "not available" message instead of an empty file.</p>
+        </article>
+        <article class="card">
+          <span class="card-ico"><svg aria-hidden="true"><use href="#i-db"/></svg></span>
+          <h3>Where the track comes from</h3>
+          <p>Every position the monitor got from FR24, kept exactly as sent, and the public record of the day (adsb.lol, with airplanes.live filling its holes). The fuller record is used and the other fills its gaps, thinned to about one point every eight seconds in the air, like FR24's own.</p>
+        </article>
+      </div>
+      <div class="note">
+        <p><b>The honest limit.</b> A flight needs a track. If no receiver heard it and FR24 has no positions of it, there is nothing to play, and FR24's own message says so. Where coverage had a hole, the track has a gap, as it does on FR24.</p>
+      </div>
     </div>
   </section>
 
   <!-- How it works -->
   <section class="section section-alt" id="how">
     <div class="wrap">
-      <h2>How it works</h2>
-      <p class="sub">The shared monitor listens all the time and worldwide, which a browser tab cannot do. Your browser reacts instantly to what is on screen, which the server cannot.</p>
+      <p class="eyebrow">How it works</p>
+      <h2>From a radio broadcast to FR24's screen</h2>
+      <p class="sub">The shared monitor listens all the time and worldwide, which a browser tab cannot do. Your browser reacts instantly to what is on screen, which the server cannot. Together they turn public broadcasts into the blanks FR24 leaves.</p>
+
+      <ol class="steps flow">
+        <li>
+          <h3>The aircraft broadcasts</h3>
+          <p>ADS-B Out sends identity, position, altitude and speed about twice a second, unencrypted, on 1090 MHz. It is required by law in most controlled airspace.</p>
+        </li>
+        <li>
+          <h3>Volunteers receive and publish</h3>
+          <p>Thousands of hobbyists' receivers hear it. Community networks (adsb.lol, adsb.fi, airplanes.live, OpenSky) publish it openly, with the day's full traces.</p>
+        </li>
+        <li>
+          <h3>FR24 draws some flights blank</h3>
+          <p>For a hidden or "N/A" flight FR24 sends a position, altitude, speed, track and usually a type, but no callsign or registration.</p>
+        </li>
+        <li>
+          <h3>The monitor matches it</h3>
+          <p>It scores every aircraft heard nearby against that blank flight and names it only when one is clearly the best match. It then works out the route, the same answer for everyone.</p>
+        </li>
+        <li>
+          <h3>Your browser writes it in</h3>
+          <p>The extension adds the name, route, figures and history to FR24's own data in your tab, before FR24 draws it. Nothing is overlaid.</p>
+        </li>
+        <li>
+          <h3>FR24 draws ordinary traffic</h3>
+          <p>FR24's own panel, boards, search and player show it as if it had been there all along.</p>
+        </li>
+      </ol>
+
       <figure class="diagram">
         <picture>
           <source media="(max-width: 640px) and (prefers-color-scheme: light)" srcset="assets/how-it-works-tall-light.svg" width="360" height="720">
@@ -151,17 +296,20 @@
           <img src="assets/how-it-works-dark.svg" width="880" height="440" alt="Diagram: flightradar24.com in your browser tab exchanges data with the extension or userscript, made of a page interceptor and an engine. The extension sends reports to the shared monitor and receives names and logs. Public ADS-B networks (adsb.lol, adsb.fi, airplanes.live, OpenSky) feed both the extension and the monitor. The monitor also reads FR24's whole map every 2 minutes.">
         </picture>
       </figure>
+
       <div class="grid two">
         <div class="card">
           <span class="card-ico"><svg aria-hidden="true"><use href="#i-server"/></svg></span>
           <h3>The monitor</h3>
           <p class="muted">A small always-on server. Every copy of the script uses the shared public one by default.</p>
           <ul class="dots">
-            <li>It follows adsb.lol's worldwide <b>LADD</b>, <b>military</b> and <b>PIA</b> lists (every 10 seconds to 2 minutes), and every known blocked aircraft by address.</li>
+            <li>It follows adsb.lol's worldwide lists of blocked, military and privacy-address aircraft (every 10 seconds to 2 minutes), and every known blocked aircraft by address.</li>
             <li>It reads FR24's whole map every two minutes and names every flight FR24 shows without a callsign, from public ADS-B.</li>
             <li>It works out every flight's route, all the time, so everyone sees the same answer, and checks each one against where the flight really landed.</li>
-            <li>It logs every blocked aircraft's take-offs and landings for good, including flights only FR24 can see, with the runway used.</li>
-            <li>It looks up each aircraft's owner once, and serves runway and frequency data for every airport.</li>
+            <li>It logs every blocked aircraft's take-offs and landings for good, including flights only FR24 can see, with the runway used. A world log keeps every aircraft's flights for each day of the past year.</li>
+            <li>It keeps FR24's own positions as they came for 730 days, so old flights can be played back.</li>
+            <li>It builds the weather layers, and keeps every aircraft's registration, type, serial number, age and owner, about 760,000 of them.</li>
+            <li>It serves runway and frequency data for every airport.</li>
           </ul>
         </div>
         <div class="card">
@@ -171,11 +319,55 @@
           <ul class="dots">
             <li>It takes the monitor's whole names table the moment FR24 opens, so FR24's very first frame of any blocked flight is drawn named.</li>
             <li>It sends what it sees of the flights on screen to the monitor, which works out every route, the same for everyone, and shows its answer.</li>
-            <li>It writes everything into FR24's own data before FR24 draws it.</li>
+            <li>It writes everything into FR24's own data before FR24 draws it, and answers FR24's own playback requests for flights only the project knows about.</li>
+            <li>It runs only in idle moments, and stands aside while you drag or zoom the map.</li>
             <li>If the monitor is unreachable, it identifies flights from public ADS-B on its own.</li>
           </ul>
         </div>
       </div>
+
+      <details class="more">
+        <summary>How a blocked flight gets its name</summary>
+        <div class="more-body">
+          <p>FR24 reports a hidden flight with its position, altitude, speed, track and usually its type. The monitor and the browser match it against every aircraft the public networks heard around then:</p>
+          <ul class="dots">
+            <li><b>Projection.</b> Each candidate is carried forward to the moment of FR24's report by dead reckoning on its own speed and track.</li>
+            <li><b>Scoring.</b> Candidates are scored on distance, altitude, track and speed differences, how the aircraft types relate (same, same family, unknown; a different type rejects it), registration agreement and list flags.</li>
+            <li><b>A clear winner only.</b> A match is accepted only when the second-best candidate scores at least 2.5 worse or is more than 8 km away. The distance allowed grows with speed, since two sources' clocks disagree by a few seconds and a jet covers kilometres in that time.</li>
+            <li><b>Out of coverage.</b> Over oceans and deserts, FR24's own trail of the flight is compared with candidates carried forward from where they were last heard, the day's traces of blocked aircraft of that type and adsb.lol's heatmap. One unambiguous agreement is required.</li>
+            <li><b>Parked aircraft.</b> On an apron no network hears, the only blocked aircraft of that type whose last flight ended at that airport and has not flown since.</li>
+            <li><b>Kept honest.</b> Every name keeps being checked against new reports, and is withdrawn on overwhelming disagreement: far apart, repeatedly, for more than three minutes.</li>
+          </ul>
+        </div>
+      </details>
+
+      <details class="more">
+        <summary>How a flight log is built</summary>
+        <div class="more-body">
+          <p>An aircraft's public track is split into flights at its landings. The engine counts ground reports, slow gaps, final approaches and "lost low beside a field". A hole in coverage counts as a landing only when the aircraft cannot have flown straight through it, and legs split by holes are joined again.</p>
+          <ul class="dots">
+            <li><b>Airports.</b> Take-offs and landings are placed at airports, at fields FR24 does not list (from OurAirports) and at learned private landing sites for helicopters. Each end carries a confidence: on the ground, low, or near.</li>
+            <li><b>Runways.</b> The runway is the end whose extended centreline the aircraft was on, going that way: down the final approach or climbing out from the threshold. The answer is one clear runway or none.</li>
+            <li><b>The monitor first.</b> For a blocked aircraft the days the monitor has rebuilt are taken as they are, and the rest come from adsb.lol's day traces, with airplanes.live filling in older days.</li>
+            <li><b>FR24's own track first.</b> Where FR24 had a flight and no public receiver did, its positions go in, so take-offs and landings only FR24 saw are in the log.</li>
+            <li><b>One engine, two places.</b> The browser and the monitor run the same engine file, so the map, boards and logs agree. A test checks that a log from the monitor is identical to the one the browser builds itself.</li>
+            <li><b>Empty days are claimed carefully.</b> The monitor says "no flights that day" only when a list watched the aircraft without a gap all day and never heard it airborne. If in doubt, the browser reads the day itself.</li>
+          </ul>
+        </div>
+      </details>
+
+      <details class="more">
+        <summary>How the padlocked figures are filled</summary>
+        <div class="more-body">
+          <p>FR24 does not send the figures it padlocks for an aircraft it hides, so they cannot be "unlocked" from FR24. They are filled from other public sources instead:</p>
+          <ul class="dots">
+            <li><b>From the aircraft itself.</b> Vertical speed, squawk, GPS altitude, indicated and true airspeed, Mach, wind and temperature come from the newest public ADS-B report of that aircraft. The monitor keeps the latest report of every aircraft it hears and shares it.</li>
+            <li><b>Where no receiver reports it.</b> Many aircraft do not send airspeeds or wind. Over most of the United States and the oceans the monitor works them out from NOAA's GFS weather model: true and indicated airspeed, Mach, wind and temperature. Vertical speed is worked out from the altitude changes. The squawk is the code last heard in the air since take-off. Airspace comes from the FIR and UIR boundaries.</li>
+            <li><b>Weather layers.</b> Cloud, precipitation, radar, winds, lightning, icing, turbulence and significant-weather layers come from free public sources (EUMETSAT, NASA, RainViewer, Iowa State, the Aviation Weather Center, Open-Meteo, Blitzortung), built into tiles on the monitor.</li>
+          </ul>
+        </div>
+      </details>
+
       <details class="more">
         <summary>How the destination is worked out</summary>
         <div class="more-body">
@@ -186,26 +378,248 @@
             <li><b>Feasibility:</b> range, and runway length, width, surface and lighting for this aircraft type.</li>
             <li><b>Everyone else's habits:</b> learned from 63 days of every aircraft adsb.lol saw, plus every blocked aircraft's flights as the monitor logs them, scored on aircraft held out of training.</li>
             <li><b>Live conditions:</b> weather (METAR/TAF) and airport closures (NOTAMs, with an optional FAA key).</li>
+            <li><b>The aircraft's own datalink:</b> many business jets send their route over ACARS. adsb.lol publishes what its receivers hear as open data, about an hour behind. Where a message names this flight's origin, its destination is taken as filed: on 21 October that was the airport landed at 362 times in 367.</li>
+            <li><b>Filed plans:</b> a flight FR24's own boards list gives its plan, and an owner's other aircraft help predict where each other are going.</li>
           </ul>
-          <p>The result is a probability per airport, with the reasons in the tooltip. "Confirmed" is reserved for an aircraft established on a runway's final approach, which is right 99.8% of the time on held-out data. Full details: <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/blob/main/docs/architecture.md">architecture</a>.</p>
+          <p>The result is a probability per airport, with the reasons in the tooltip. "Confirmed" is reserved for an aircraft established on a runway's final approach, which is right 99.8% of the time on held-out data, and otherwise the figure never goes above 99%. Predictions are predictions, and are sometimes wrong. Full details: <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/blob/main/docs/architecture.md">architecture</a>.</p>
         </div>
       </details>
+
+      <details class="more">
+        <summary>How it stays out of the way, and out of trouble</summary>
+        <div class="more-body">
+          <ul class="dots">
+            <li><b>Idle slices.</b> Background work runs 8 ms at a time, only when the browser is idle, and not at all while you drag or zoom. Heavy jobs run on the monitor. Main-thread stalls are measured on every change to the map path.</li>
+            <li><b>Gentle with free networks.</b> One monitor asks once instead of every viewer asking. It sends at most 20 requests a minute to adsb.lol, one at a time and at least two seconds apart, and pauses on any refusal. Browsers stop polling lists once the monitor answers.</li>
+            <li><b>A gentle map scan.</b> One request every 0.4 seconds, one round every two minutes. A refusal pauses it for ten minutes, doubling up to two hours, and the browsers go back to their own scan.</li>
+            <li><b>Fail soft.</b> The page interceptor rewrites only what it recognises and passes everything else through untouched, so an FR24 change makes a feature stop, not the page break. A failing source never blocks the others, and every dependency has a defined fallback.</li>
+            <li><b>Free to run.</b> The monitor uses only Node.js's standard library, with nothing to audit or update, and fits a free 1 GB cloud VM.</li>
+          </ul>
+        </div>
+      </details>
+
+      <ul class="principles">
+        <li><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg><span><b>Native, not overlaid.</b> Names and figures are written into FR24's own data, so FR24's own interface shows them.</span></li>
+        <li><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg><span><b>FR24 wins.</b> Its filed routes and airports always stand; the extension only fills what FR24 leaves empty.</span></li>
+        <li><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg><span><b>Honest predictions.</b> Weighted evidence with reasons you can read, never a black box, and "Confirmed" only on a runway's final approach.</span></li>
+        <li><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg><span><b>Tested on real data.</b> Fixtures are recorded traces and FR24 answers from real flights, and FR24's own front-end is run in Chromium to test changes.</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- Legal -->
+  <section class="section" id="legal">
+    <div class="wrap">
+      <p class="eyebrow">Legal</p>
+      <h2>Built on public data, inside the law</h2>
+      <p class="sub">The project's legal position follows from a few facts about how it works: it receives no radio, it uses only data others have already published, it changes only what your own browser shows, and it picks no lock. Here is the reasoning, one point at a time.</p>
+      <div class="note">
+        <p><b>Not legal advice.</b> This is the author's analysis of a personal project, written to explain its design. Laws differ between countries and change. If your situation matters (commercial use, publishing the data, a letter from someone's lawyer), ask a lawyer qualified where you live. The full reasoning is in the <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/blob/main/docs/legal.md">legal notes</a>.</p>
+      </div>
+      <div class="grid cards wide">
+        <article class="card">
+          <span class="card-ico"><svg aria-hidden="true"><use href="#i-radio"/></svg></span>
+          <h3>ADS-B is a public broadcast</h3>
+          <p>Aircraft with ADS-B Out broadcast their identity, position, altitude and speed about twice a second, unencrypted, on 1090 MHz, to anyone in range. That is the point of it: air traffic control, other aircraft and ground stations all rely on it being receivable. In most controlled airspace the broadcast is required by law. Tens of thousands of hobbyists receive it, many feeding Flightradar24 itself.</p>
+          <p class="cite">US: 14 CFR §91.225 and §91.227 · EU: Commission Implementing Regulation (EU) No 1207/2011 · UK: its retained version.</p>
+        </article>
+        <article class="card">
+          <span class="card-ico"><svg aria-hidden="true"><use href="#i-shield"/></svg></span>
+          <h3>Blocking is an agreement, not a law of the sky</h3>
+          <p>Some owners ask the FAA to limit what it passes to industry about their aircraft. A company that takes the FAA's data agrees to honour that for that data. It is a condition of a data feed. It does not make an aircraft's own broadcast secret, and cannot: the broadcast is required and unencrypted. It binds neither community receivers nor anyone who takes no FAA data.</p>
+          <p>The FAA recognises the gap. It created temporary privacy addresses, not linked to the owner in the public register, for owners who want to limit identification from the broadcast itself. Flightradar24 hides these aircraft because of its own arrangements: a business decision that binds Flightradar24, not a legal status that binds everyone else. The community networks mark these aircraft with a flag and still publish their positions, under their own terms.</p>
+        </article>
+        <article class="card">
+          <span class="card-ico"><svg aria-hidden="true"><use href="#i-globe"/></svg></span>
+          <h3>The project receives no radio</h3>
+          <p>It operates no receiver. It reads positions that community networks have already received and published openly, under their own terms. Rules on who may receive radio messages are aimed at whoever operates a receiver, and this project operates none.</p>
+          <p class="cite">For example, the UK's Wireless Telegraphy Act 2006, s.48.</p>
+        </article>
+        <article class="card">
+          <span class="card-ico"><svg aria-hidden="true"><use href="#i-scale"/></svg></span>
+          <h3>Facts are not owned</h3>
+          <p>Aircraft positions, times, routes and runway lengths are facts, and copyright protects expression, not facts. The project copies none of Flightradar24's code, design, text or images: its tables, texts and layouts are its own.</p>
+          <p class="cite"><em>Feist Publications v. Rural Telephone Service</em>, 499 U.S. 340 (1991). The UK and EU reach the same result by requiring originality.</p>
+        </article>
+        <article class="card">
+          <span class="card-ico"><svg aria-hidden="true"><use href="#i-lock"/></svg></span>
+          <h3>No lock is picked</h3>
+          <p>No login, no paywall, no credentials and no paid account: the project uses Flightradar24's public pages and the same unauthenticated requests any visitor's browser makes. Nothing is decrypted. The padlocked figures of a hidden aircraft are not unlocked from Flightradar24 at all, because Flightradar24 never sends them. They are filled from other public sources.</p>
+          <p class="cite"><em>Van Buren v. United States</em>, 593 U.S. 374 (2021); <em>hiQ Labs v. LinkedIn</em>, 31 F.4th 1180 (9th Cir. 2022). Anti-circumvention law protects effective technological measures (17 U.S.C. §1201; Directive 2001/29/EC, Art. 6); the UK's Computer Misuse Act 1990, s.1, turns on unauthorised access.</p>
+        </article>
+        <article class="card">
+          <span class="card-ico"><svg aria-hidden="true"><use href="#i-code"/></svg></span>
+          <h3>Your browser, your screen</h3>
+          <p>How a page appears on your own screen is your choice. That is the principle behind ad blockers, reader modes, translation and accessibility tools. Germany's Federal Court of Justice upheld it against a publisher: a tool that helps the user decide what their browser shows is not an unlawful obstruction. This project removes adverts and adds information in the same way, in the browser of the person who installed it, and nowhere else.</p>
+          <p class="cite">BGH, 19 April 2018, I ZR 154/16 (<em>Werbeblocker II</em>).</p>
+        </article>
+        <article class="card">
+          <span class="card-ico"><svg aria-hidden="true"><use href="#i-db"/></svg></span>
+          <h3>Open licences, kept</h3>
+          <p>adsb.lol publishes under the Open Database License, and is credited wherever its data appears. Because the shared monitor is publicly used, it offers the flights it logs under the same licence, a day at a time. Other networks' rate limits are respected, approval-gated APIs are not used, a refusal pauses a source instead of being worked around, and API keys are always the user's own. OurAirports is public domain, OpenStreetMap is credited, and photographs are shown with credit to their photographers.</p>
+          <p class="cite">ODbL 1.0, §4.4 (share-alike). Every source and its terms: <a href="#sources">data sources</a>.</p>
+        </article>
+        <article class="card">
+          <span class="card-ico"><svg aria-hidden="true"><use href="#i-person"/></svg></span>
+          <h3>Personal data, handled narrowly</h3>
+          <p>Owners are looked up in public registers, which publish them so that anyone can see who owns an aircraft. The project reads names only: street addresses are never fetched, stored or shown. In your own browser, personal use falls within the household exemption. The shared monitor is a service, so it names an owner only when the register shows an organisation (a company, trust, bank or club), and withholds the name and the town of a private individual. Positions are not kept against people.</p>
+          <p class="cite">UK and EU GDPR: Article 2(2)(c), the household exemption; Article 6(1)(f), legitimate interests.</p>
+        </article>
+        <article class="card">
+          <span class="card-ico"><svg aria-hidden="true"><use href="#i-mark"/></svg></span>
+          <h3>Its name, used fairly</h3>
+          <p>"Flightradar24" is used only to say which website the tool works with, which trademark law allows. No logos or get-up are used, nothing implies affiliation, and the footer says plainly that the project is independent of Flightradar24 AB, the FAA and every data provider named here.</p>
+        </article>
+      </div>
+      <div class="note">
+        <p><b>Where the limits are.</b> The household exemption ends where personal use ends: using this data to follow, locate or contact a person is never acceptable with this project. What the shared monitor gives your browser is for the tool's own use. Running another public monitor, or publishing what one serves, brings in the ODbL's share-alike terms and the data-protection duties of a service, and the licence requires the author's permission first. Predicted destinations are predictions, identifications can be wrong, and none of it is for navigation, safety, security or any decision with consequences.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Flightradar24 -->
+  <section class="section section-alt" id="fr24">
+    <div class="wrap">
+      <p class="eyebrow">Flightradar24</p>
+      <h2>What Flightradar24 can and can't do about it</h2>
+      <p class="sub">Flightradar24 AB is a Swedish company with real rights over its own website, code and database. None of them reaches a public radio broadcast, or what your own browser does with a page. This is where the line falls.</p>
+      <div class="can-grid">
+        <div class="can no">
+          <h3><span class="badge" aria-hidden="true">×</span>What it can't do</h3>
+          <ul class="dots">
+            <li><b>Make ADS-B private,</b> or claim ownership of what aircraft transmit.</li>
+            <li><b>Control the community networks,</b> which receive and publish independently, under their own licences.</li>
+            <li><b>Extend an owner's request to the FAA</b> to anyone who takes no FAA data.</li>
+            <li><b>Control what your browser displays,</b> or stop you installing an extension.</li>
+            <li><b>Claim copyright</b> in aircraft positions, routes, runway lengths or registry facts.</li>
+          </ul>
+        </div>
+        <div class="can yes">
+          <h3><span class="badge" aria-hidden="true">✓</span>What it can do, and what happens</h3>
+          <ul class="dots">
+            <li><b>Change its website.</b> A feature may stop until the project is adapted. The extension is built to fail soft, rewriting only what it recognises, and updates follow. The in-page banner tells you when one is out.</li>
+            <li><b>Refuse requests</b> from an address, such as the monitor's server. The monitor backs off on any refusal, and your browser carries on reading its own map, as it did before the monitor existed.</li>
+            <li><b>End its service to an account</b> under its own terms. Terms of use are a contract with the user, and the usual remedy for breaching them is ending that service, not control over what a browser displays.</li>
+          </ul>
+        </div>
+      </div>
+
+      <h3 class="subhead">Why it is structurally hard to stop</h3>
+      <div class="grid cards wide">
+        <article class="card">
+          <span class="card-ico"><svg aria-hidden="true"><use href="#i-radio"/></svg></span>
+          <h3>The data isn't Flightradar24's to recall</h3>
+          <p>Names, routes and figures come from broadcasts and from networks that publish them under their own licences. Flightradar24 cannot withdraw them, because it never held them exclusively.</p>
+        </article>
+        <article class="card">
+          <span class="card-ico"><svg aria-hidden="true"><use href="#i-person"/></svg></span>
+          <h3>The change happens on your device</h3>
+          <p>The page is rewritten in your own browser, after Flightradar24 has sent it, for the person who chose to install the extension. That is the same place an ad blocker or translator works.</p>
+        </article>
+        <article class="card">
+          <span class="card-ico"><svg aria-hidden="true"><use href="#i-lock"/></svg></span>
+          <h3>Nothing is taken that isn't already sent</h3>
+          <p>The extension reads what Flightradar24 sends every visitor's browser for display. The padlocked figures of a hidden aircraft are never sent, so there is nothing to extract: they come from elsewhere.</p>
+        </article>
+        <article class="card">
+          <span class="card-ico"><svg aria-hidden="true"><use href="#i-check"/></svg></span>
+          <h3>It makes you use Flightradar24 more</h3>
+          <p>Every name it finds is shown on Flightradar24's own map, in its own pages, with its own player. It is not a substitute for the service, and it only fills what Flightradar24 leaves empty.</p>
+        </article>
+      </div>
+
+      <div class="note">
+        <p><b>Where the project is least protected, said plainly.</b> The monitor reads Flightradar24's map every two minutes, the same answer every visitor's browser is sent, so that it can name flights from public ADS-B. Flightradar24's terms are unlikely to welcome automated reading of its feed. In the EU and UK the question to weigh is the database right, which protects a maker's <em>investment</em> against a substitute service and not against a tool that sends its users back to the original (<em>CV-Online Latvia v Melons</em>, C-762/19, 2021). Courts are cautious about website terms nobody saw or accepted (<em>Specht v. Netscape</em>, 306 F.3d 17; <em>Nguyen v. Barnes &amp; Noble</em>, 763 F.3d 1171), although EU law lets a site restrict use of a database by contract (<em>Ryanair v PR Aviation</em>, C-30/14).</p>
+        <p>So the scan is gentle by design, stops at any refusal, never borrows your Flightradar24 identity, and can be switched off. The project is built to work without it, and the browsers do their own scanning if it stops.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Privacy -->
+  <section class="section" id="privacy">
+    <div class="wrap">
+      <p class="eyebrow">Privacy</p>
+      <h2>Nothing about you is the product</h2>
+      <p class="sub">There are no accounts, cookies, analytics or advertising: not in the extension and not on this site. What the shared monitor needs to answer your map is listed below, and you can turn it off or use your own.</p>
+      <div class="grid cards wide">
+        <article class="card">
+          <span class="card-ico"><svg aria-hidden="true"><use href="#i-db"/></svg></span>
+          <h3>Stays in your browser</h3>
+          <p>A cache in the browser's own storage so it does not ask twice: aircraft identities and owners, flight logs, learned routes, airport boards and your settings. Any API key you enter yourself is stored there too and sent only to the service it belongs to. Removing the extension, or clearing the site's data, deletes it.</p>
+        </article>
+        <article class="card">
+          <span class="card-ico"><svg aria-hidden="true"><use href="#i-server"/></svg></span>
+          <h3>What the shared monitor receives</h3>
+          <p>The area your map shows, the aircraft and boards you open, the nameless flights your page shows and the names your browser found for them, owners it looked up in public registers, and the public ADS-B reports it fetched. Most of it is kept without your address, for minutes or days. Your IP address appears in the web server's access log for up to 14 days, and in a one-minute rate limit.</p>
+        </article>
+        <article class="card">
+          <span class="card-ico"><svg aria-hidden="true"><use href="#i-eye-off"/></svg></span>
+          <h3>What it never receives</h3>
+          <p>Your Flightradar24 account, cookies, password or e-mail address, anything typed into a page, or Flightradar24's device id for your browser. That id goes only to a monitor of your own, and never an authorisation or a cookie.</p>
+        </article>
+        <article class="card">
+          <span class="card-ico"><svg aria-hidden="true"><use href="#i-gauge"/></svg></span>
+          <h3>Counting installs, and the off switch</h3>
+          <p>So the project knows roughly how many people use it, each install says hello at most once every 12 hours: a random number made by your browser, the version, whether it is the extension or a userscript, the userscript manager, and the browser and system by name only. Nothing about flights, the map or your account. Switch it off with "Count this install (anonymous)" in the LADD Unblock window.</p>
+        </article>
+      </div>
+      <p class="after"><a href="https://github.com/FinlayC1/fr24-ladd-unblocker/blob/main/PRIVACY.md">Read the full privacy notice →</a><a href="#install">Turn the monitor off, or use your own →</a></p>
+    </div>
+  </section>
+
+  <!-- Data sources -->
+  <section class="section section-alt" id="sources">
+    <div class="wrap">
+      <p class="eyebrow">Data sources</p>
+      <h2>Public data only, and the least load possible</h2>
+      <p class="sub">Every source is used within its published terms and limits. Nothing needs approval, a login or a key that you have not entered yourself.</p>
+      <div class="tbl-wrap">
+        <table class="tbl">
+          <caption class="vh">Data sources, what each is used for and under what terms</caption>
+          <thead><tr><th scope="col">Source</th><th scope="col">Used for</th><th scope="col">Terms and etiquette</th></tr></thead>
+          <tbody>
+            <tr><td><a href="https://adsb.lol">adsb.lol</a></td><td>Live positions, lists of blocked, military and privacy-address aircraft, day traces and the daily archive</td><td>Open Database License. At most 20 requests a minute from the monitor, and a pause on any refusal</td></tr>
+            <tr><td><a href="https://adsb.fi">adsb.fi</a></td><td>Backup positions and area lookups</td><td>Open data; one request a second</td></tr>
+            <tr><td><a href="https://opensky-network.org">OpenSky Network</a></td><td>Backup worldwide positions</td><td>Anonymous, non-commercial credits, used sparingly</td></tr>
+            <tr><td><a href="https://airplanes.live">airplanes.live</a></td><td>Public history files for days another network missed</td><td>Public files only. Its REST API needs approval, so it is not used</td></tr>
+            <tr><td><a href="https://theairtraffic.com">TheAirTraffic</a></td><td>Backup positions from its map's public files</td><td>Public map files; its query API is not used</td></tr>
+            <tr><td>ADS-B Exchange</td><td>Optional backup</td><td>Only with your own API key. Its website is never scraped</td></tr>
+            <tr><td>Flightradar24</td><td>The page you are looking at, and the monitor's optional map scan</td><td>Public pages and feed, no account, paced, and stopped on any refusal</td></tr>
+            <tr><td><a href="https://ourairports.com">OurAirports</a></td><td>Airfields, runways, radio frequencies</td><td>Public domain</td></tr>
+            <tr><td>FAA, UK CAA G-INFO, Isle of Man and Swiss registers; hexdb.io; adsbdb.com</td><td>Owner names, registrations, types, ages</td><td>Public registers and free public lookups. Names only, never addresses</td></tr>
+            <tr><td>NOAA, EUMETSAT, NASA, RainViewer, Iowa State, Aviation Weather Center, Open-Meteo, Blitzortung</td><td>FR24's locked weather layers and the wind figures</td><td>Free public sources, credited</td></tr>
+            <tr><td><a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a></td><td>Names of hospital pads, platforms and estates where helicopters land</td><td>ODbL, credited</td></tr>
+            <tr><td>JetPhotos, Planespotters</td><td>Aircraft photos</td><td>Each photographer's copyright, shown with credit</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <ul class="also">
+        <li><b>Limits are respected.</b> Each register and database is asked at its own gentle pace, and a source that refuses is left alone for a while.</li>
+        <li><b>Load is centralised.</b> One monitor asks once instead of every viewer asking, and what one browser has fetched serves the others for the minute or two it is current.</li>
+        <li><b>No approval-gated APIs,</b> no scraping of sites that ask scripts to stay away, and keys are always your own.</li>
+      </ul>
+      <p class="after"><a href="https://github.com/FinlayC1/fr24-ladd-unblocker/blob/main/docs/data-sources.md">Every source, endpoint and limit →</a></p>
     </div>
   </section>
 
   <!-- Install -->
   <section class="section" id="install">
     <div class="wrap">
+      <p class="eyebrow">Get it</p>
       <h2>Install</h2>
       <p class="sub">Use one or the other, not both at once. If you switch to the extension, turn the userscript off in your userscript manager.</p>
 
       <div class="tabs">
         <input type="radio" name="tab" id="tab-ext" checked>
         <label for="tab-ext">Extension</label>
+        <input type="radio" name="tab" id="tab-ff">
+        <label for="tab-ff">Firefox</label>
         <input type="radio" name="tab" id="tab-us">
         <label for="tab-us">Userscript</label>
         <input type="radio" name="tab" id="tab-mon">
         <label for="tab-mon">Monitor</label>
+        <input type="radio" name="tab" id="tab-set">
+        <label for="tab-set">Settings</label>
         <input type="radio" name="tab" id="tab-upd">
         <label for="tab-upd">Updating</label>
 
@@ -225,6 +639,24 @@
             <li>
               <h3>Open Flightradar24</h3>
               <p>Open <a href="https://www.flightradar24.com">flightradar24.com</a>. That's it: blocked flights appear named, with nothing else to set up.</p>
+            </li>
+          </ol>
+        </div>
+
+        <div class="tab-panel" id="panel-ff">
+          <p class="muted">Firefox on the desktop, version 140 or later, has its own build.</p>
+          <ol class="steps">
+            <li>
+              <h3>Get the Firefox build</h3>
+              <p>Download <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/releases/latest/download/fr24-ladd-unblocker-firefox.zip">the Firefox zip</a> from the latest release. It is the file sent to Firefox Add-ons.</p>
+            </li>
+            <li>
+              <h3>Try it before it is listed</h3>
+              <p>Open <code>about:debugging#/runtime/this-firefox</code>, click <b>Load Temporary Add-on…</b> and choose the zip. Firefox removes a temporary add-on when it restarts.</p>
+            </li>
+            <li>
+              <h3>Or use the userscript</h3>
+              <p>The userscript works in Firefox too, and stays installed. Installed from Firefox Add-ons, the add-on updates itself.</p>
             </li>
           </ol>
         </div>
@@ -249,27 +681,41 @@
 
         <div class="tab-panel" id="panel-mon">
           <p>Every copy of the script connects to the shared public monitor by default, so it knows every blocked flight worldwide from the moment FR24 opens, along with each aircraft's history. There is nothing to set up.</p>
-          <p>To turn it off, or point it at your own monitor, open any aircraft's panel, click <b>sources</b> on the strip under the photo, and use the <b>Monitor</b> row. An address and secret you enter there stay in your browser. Turned off, your browser identifies what it sees on its own.</p>
+          <p>To turn it off, or point it at your own monitor, open any aircraft's panel, click <b>sources</b> on the strip under the photo, and use the <b>Monitor</b> row, or use the <b>Data sources</b> section of the LADD Unblock window. An address and secret you enter there stay in your browser. Turned off, your browser identifies what it sees on its own.</p>
           <p>Your own monitor is a single Node.js program (version 18 or later) with <b>no dependencies</b>. A free Oracle Cloud VM with 1 GB of RAM is enough.</p>
           <pre><code>node monitor/monitor.cjs        # try it locally: listens on 127.0.0.1:47524
 bash monitor/vm-setup.sh        # on a server: systemd service, compressed HTTPS via Caddy
 bash monitor/deploy.sh          # later: update, verify, roll back automatically on failure</code></pre>
-          <p class="fine">Configuration, every endpoint and day-to-day operation: <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/blob/main/docs/monitor.md">docs/monitor.md</a>.</p>
+          <p class="fine">Configuration, every endpoint and day-to-day operation: <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/blob/main/docs/monitor.md">docs/monitor.md</a>. A monitor you make public must offer its derived flights under the ODbL; the <a href="#legal">legal notes</a> explain why.</p>
+        </div>
+
+        <div class="tab-panel" id="panel-set">
+          <p>Every setting is in one place: click <b>LADD Unblock</b> on FR24's bottom bar, next to Playback (or the version number on the strip under an aircraft's photo). It opens a window like FR24's own Widgets and Weather windows, with:</p>
+          <ul class="dots">
+            <li><b>Enable LADD Unblock,</b> to switch the whole thing off and leave FR24 as it is (applies after a reload).</li>
+            <li><b>A switch for each feature:</b> the aircraft panel details, airport boards, search, aircraft and flight pages, take-off and landing alerts, hiding ads and upgrade prompts, and FR24's locked map options (weather layers, charts, ATC boundaries, oceanic tracks, aircraft category filters).</li>
+            <li><b>Updates:</b> the version you have, the latest one, and an <b>Update</b> button.</li>
+            <li><b>Data sources:</b> which feeds are answering, the monitor, and your optional ADS-B Exchange and FAA NOTAM keys.</li>
+            <li><b>Count this install (anonymous):</b> on by default, and off with one click.</li>
+          </ul>
+          <p class="fine">The switches are kept in your browser only.</p>
         </div>
 
         <div class="tab-panel" id="panel-upd">
+          <p>When a new version is out, a banner at the top of Flightradar24's map says so. Click <b>Update</b> on it, or in the LADD Unblock window.</p>
           <ol class="steps">
             <li>
               <h3>Extension</h3>
-              <p>Download the new zip, replace the folder's contents, and click <b>↻ Reload</b> on the extension's card.</p>
+              <p>A tab opens that puts the new version into the extension's folder for you. It downloads the files from the release, checks each one against the checksum the release lists, replaces the old ones and deletes those the new version no longer has. Then click <b>Refresh page</b>.</p>
+              <p class="fine">The first time, Chrome asks you to choose the folder you unzipped the extension into and to allow it to be edited. Where a browser does not allow that (Brave, for one), the page links the new zip instead: unzip it over the old folder and click <b>Reload extension</b>.</p>
             </li>
             <li>
               <h3>Userscript</h3>
-              <p>Open the new <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/raw/main/dist/fr24-ladd-unblocker.user.js">userscript file</a> again.</p>
+              <p>Open the new <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/raw/main/dist/fr24-ladd-unblocker.user.js">userscript file</a> again. Tampermonkey and Violentmonkey also check for updates on their own.</p>
             </li>
             <li>
               <h3>What's new</h3>
-              <p>Every change is in the <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/blob/main/CHANGELOG.md">changelog</a>, and every tagged version on the <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/releases">Releases</a> page.</p>
+              <p>Every change is in the <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/blob/main/CHANGELOG.md">changelog</a>, and every tagged version on the <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/releases">Releases</a> page. Firefox Add-ons updates the Firefox add-on by itself.</p>
             </li>
           </ol>
         </div>
@@ -280,36 +726,88 @@ bash monitor/deploy.sh          # later: update, verify, roll back automatically
   <!-- FAQ -->
   <section class="section section-alt" id="faq">
     <div class="wrap narrow">
-      <h2>FAQ</h2>
+      <p class="eyebrow">FAQ</p>
+      <h2>Questions, answered straight</h2>
       <div class="faq">
         <details>
           <summary>Does it need a Flightradar24 account or subscription?</summary>
-          <p>No. It works with a free account or none at all. It uses no paid feature and no one's login.</p>
+          <p>No. It works with a free account or none at all. It uses no paid feature and no one's login: the figures, layers and files come from free public sources.</p>
+        </details>
+        <details>
+          <summary>Is this legal?</summary>
+          <p>It is built to be. Aircraft broadcast ADS-B openly, by law. The project uses only data that community networks and public registers already publish. It changes only what your own browser shows you, and it breaks no lock. The reasoning, with its authorities and its limits, is in <a href="#legal">the legal section</a> and in <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/blob/main/docs/legal.md">the legal notes</a>. It is not legal advice.</p>
+        </details>
+        <details>
+          <summary>Can Flightradar24 stop it?</summary>
+          <p>It cannot make a public broadcast private, control the community networks the names come from, or control what your own browser displays. It can change its website, refuse requests from an address, or end service to an account under its own terms. If it changes its site, a feature may stop until the project is adapted; the extension fails soft and updates follow. <a href="#fr24">The details are here</a>.</p>
+        </details>
+        <details>
+          <summary>Is it against Flightradar24's terms?</summary>
+          <p>Terms of use are a contract between Flightradar24 and its users. Courts are cautious about terms a visitor never saw or accepted, and a breach is usually answered by ending the service to that account, not by control over your browser. The part of the project Flightradar24's terms are least likely to welcome is the monitor's automated reading of its map. That is optional, gentle, stops at any refusal, and the project works without it. If it matters to you, read the <a href="#fr24">section above</a> and decide for yourself.</p>
+        </details>
+        <details>
+          <summary>Does it unlock Flightradar24's paid features?</summary>
+          <p>No. It does not take anything from Flightradar24's servers that is not already sent to every visitor. The padlocked figures of a hidden aircraft are never sent, so they are filled from other public sources, and the weather layers, charts and downloads are made from free public data. Nothing is decrypted and no one's login is used.</p>
         </details>
         <details>
           <summary>Why does a destination say "Predicted 64%"?</summary>
-          <p>Blocked flights have no public flight plan. The destination is worked out from the evidence and shown with its probability. It turns "Confirmed" only on final approach to a runway. The tooltip lists the reasons.</p>
+          <p>Blocked flights have no public flight plan. The destination is worked out from the evidence and shown with its probability. It turns "Confirmed" only on final approach to a runway, which is right 99.8% of the time on held-out data. The tooltip lists the reasons.</p>
+        </details>
+        <details>
+          <summary>How accurate is it?</summary>
+          <p>Names are accepted only when one aircraft is clearly the best match, and are withdrawn on overwhelming disagreement. Predicted destinations are predictions and are sometimes wrong, which is why they carry a probability. Don't use any of it for navigation, safety, security or any decision with consequences.</p>
+        </details>
+        <details>
+          <summary>What does the shared monitor learn about me?</summary>
+          <p>Only what it needs to answer your map: the area you view, the aircraft and boards you open, and the names and public ADS-B reports your browser found. It never receives your Flightradar24 account, cookies, password or anything you type. The full list, and how long each part is kept, is in the <a href="#privacy">privacy section</a> and the <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/blob/main/PRIVACY.md">privacy notice</a>.</p>
+        </details>
+        <details>
+          <summary>Can I use it to find out who owns an aircraft, or to follow someone?</summary>
+          <p>It is for personal interest, and must not be used to track, follow, locate or contact anyone. Owners come from public registers, names only and never addresses, and the shared monitor names an owner only when the register shows an organisation.</p>
         </details>
         <details>
           <summary>Will it slow Flightradar24 down?</summary>
-          <p>No. Background work runs in short slices while the browser is idle, and pauses while you drag or zoom the map. Main-thread stalls are measured on every change to the map path.</p>
+          <p>No. Background work runs in short slices while the browser is idle, and pauses while you drag or zoom the map. Heavy work runs on the monitor, and main-thread stalls are measured on every change to the map path.</p>
         </details>
         <details>
           <summary>Do I need to run a monitor?</summary>
-          <p>No. Every copy connects to the shared public monitor by default. You can turn it off, or use your own instead, in the <b>sources</b> menu.</p>
+          <p>No. Every copy connects to the shared public monitor by default. You can turn it off, or use your own instead, in the <b>sources</b> menu or the LADD Unblock window.</p>
         </details>
         <details>
           <summary>What if the monitor is down?</summary>
           <p>The extension carries on by itself, asking adsb.lol and adsb.fi directly. It keeps the last names it was given for six hours.</p>
         </details>
         <details>
-          <summary>Does it work on a phone?</summary>
-          <p>It is made for desktop browsers (Chrome, Edge, Brave, or any browser with a userscript manager). It has not been tested on phones.</p>
+          <summary>What happens when Flightradar24 changes its site?</summary>
+          <p>The extension only rewrites data it recognises and passes everything else through untouched, so a change makes a feature stop rather than the page break. Changes are tested against Flightradar24's own front-end running in Chromium, and when something needs adapting an update follows, announced by the banner on the map.</p>
         </details>
         <details>
-          <summary>Is this legal?</summary>
-          <p>It is built to be. Aircraft broadcast ADS-B openly, by law. The project uses only data that community networks and public registers already publish. It changes only what your own browser shows you. The reasoning, and its limits, are in <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/blob/main/docs/legal.md">the legal notes</a>.</p>
+          <summary>Which browsers does it work in? Does it work on a phone?</summary>
+          <p>Chrome, Edge and Brave (and other Chromium browsers, version 111 or later), Firefox 140 or later, and any browser with a userscript manager. It is made for desktop browsers and has not been tested on phones.</p>
         </details>
+        <details>
+          <summary>How do I report a problem, or a security issue?</summary>
+          <p>Open an issue on <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/issues">GitHub</a>. How to report a security problem, and how secrets and keys are handled, is in <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/blob/main/SECURITY.md">SECURITY.md</a>.</p>
+        </details>
+      </div>
+    </div>
+  </section>
+
+  <!-- Closing -->
+  <section class="section closing" id="try">
+    <div class="wrap closing-in">
+      <p class="eyebrow">Try it</p>
+      <h2>See what Flightradar24 leaves out</h2>
+      <p class="sub">Free, open source and a minute to install. Switch off any feature in one window, or the whole thing, and FR24 is exactly as it was.</p>
+      <div class="cta-row center">
+        <a class="btn btn-primary btn-lg" href="https://github.com/FinlayC1/fr24-ladd-unblocker/releases/latest/download/fr24-ladd-unblocker-extension.zip">
+          <svg class="ico ico-lg" aria-hidden="true"><use href="#i-download"/></svg>
+          <span class="btn-text"><strong>Download the extension</strong><small>Chrome · Edge · Brave · .zip</small></span>
+        </a>
+        <a class="btn btn-secondary btn-lg" href="https://github.com/FinlayC1/fr24-ladd-unblocker/raw/main/dist/fr24-ladd-unblocker.user.js">
+          <svg class="ico ico-lg ico-accent" aria-hidden="true"><use href="#i-code"/></svg>
+          <span class="btn-text"><strong>Install the userscript</strong><small>Tampermonkey · Violentmonkey</small></span>
+        </a>
       </div>
     </div>
   </section>
@@ -330,10 +828,11 @@ bash monitor/deploy.sh          # later: update, verify, roll back automatically
         <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/blob/main/CHANGELOG.md">Changelog</a>
         <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/blob/main/docs/architecture.md">Architecture</a>
         <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/blob/main/docs/monitor.md">Run a monitor</a>
+        <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/blob/main/docs/development.md">Development</a>
       </nav>
       <nav aria-label="Legal">
         <h3>Legal</h3>
-        <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/blob/main/LICENSE">Licence</a>
+        <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/blob/main/LICENCE">Licence</a>
         <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/blob/main/PRIVACY.md">Privacy</a>
         <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/blob/main/NOTICE.md">Notices and attributions</a>
         <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/blob/main/docs/legal.md">Legal notes</a>
@@ -342,10 +841,10 @@ bash monitor/deploy.sh          # later: update, verify, roll back automatically
       </nav>
     </div>
     <div class="legal">
-      <p>Copyright © 2026 Finlay Clarke. Free to download and use for personal, non-commercial purposes under the <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/blob/main/LICENSE">licence</a>. Third-party data and trademarks are credited in <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/blob/main/NOTICE.md">NOTICE.md</a>. What the software does and doesn't do with data is in <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/blob/main/PRIVACY.md">PRIVACY.md</a>. In short: no tracking, no accounts and no advertising. The shared monitor receives only what it needs to answer your map, and you can turn it off.</p>
+      <p>Copyright © 2026 Finlay Clarke. Free to download and use for personal, non-commercial purposes under the <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/blob/main/LICENCE">licence</a>. Third-party data and trademarks are credited in <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/blob/main/NOTICE.md">NOTICE.md</a>. What the software does and doesn't do with data is in <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/blob/main/PRIVACY.md">PRIVACY.md</a>. In short: no tracking, no accounts and no advertising. The shared monitor receives only what it needs to answer your map, and you can turn it off.</p>
       <p><b>Independent project.</b> Not affiliated with, endorsed by or connected to Flightradar24 AB, the FAA or any data provider named here. "Flightradar24" is a trademark of Flightradar24 AB, used only to say which website this works with.</p>
-      <p><b>Why it is built to be lawful.</b> ADS-B is an unencrypted broadcast that aircraft are required by law to transmit. LADD is a programme governing the data the FAA itself hands to industry, not the broadcast. This project receives no radio, uses data that open networks and public registers already publish under their own terms, and changes only what its user's own browser shows. It decrypts and bypasses nothing. Its shared monitor passes on only names, public-register owners (organisations only) and open ADS-B data, and the flights it logs are offered under the ODbL. It backs off whenever a source refuses. <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/blob/main/docs/legal.md">docs/legal.md</a> sets out the reasoning in detail: broadcast law, LADD, data licences, privacy, Flightradar24's rights, and what it can and cannot do.</p>
-      <p class="credits">ADS-B data © <a href="https://adsb.lol">adsb.lol</a> contributors (ODbL), <a href="https://adsb.fi">adsb.fi</a>, <a href="https://opensky-network.org">OpenSky Network</a>, <a href="https://airplanes.live">airplanes.live</a>, <a href="https://theairtraffic.com">TheAirTraffic</a>. Airport, runway and frequency data: <a href="https://ourairports.com">OurAirports</a> (public domain). Map features © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors. Aircraft types: <a href="https://github.com/wiedehopf/tar1090-db">tar1090-db</a>. Not legal advice; the software comes with no warranty. The aircraft in this page's illustrations are made up. This site uses no cookies, analytics or third-party scripts.</p>
+      <p><b>Why it is built to be lawful.</b> ADS-B is an unencrypted broadcast that aircraft are required by law to transmit. An owner's request to the FAA limits the data the FAA itself hands to industry, not the broadcast. This project receives no radio, uses data that open networks and public registers already publish under their own terms, and changes only what its user's own browser shows. It decrypts and bypasses nothing. Its shared monitor passes on only names, public-register owners (organisations only) and open ADS-B data, and the flights it logs are offered under the ODbL. It backs off whenever a source refuses. <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/blob/main/docs/legal.md">docs/legal.md</a> sets out the reasoning in detail: broadcast law, data licences, privacy, Flightradar24's rights, and what it can and cannot do. Not legal advice.</p>
+      <p class="credits">ADS-B data © <a href="https://adsb.lol">adsb.lol</a> contributors (ODbL), <a href="https://adsb.fi">adsb.fi</a>, <a href="https://opensky-network.org">OpenSky Network</a>, <a href="https://airplanes.live">airplanes.live</a>, <a href="https://theairtraffic.com">TheAirTraffic</a>. Airport, runway and frequency data: <a href="https://ourairports.com">OurAirports</a> (public domain). Map features © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors. Aircraft types: <a href="https://github.com/wiedehopf/tar1090-db">tar1090-db</a>. The software comes with no warranty. The aircraft in this page's illustrations are made up. This site uses no cookies, analytics or third-party scripts.</p>
     </div>
   </div>
 </footer>
