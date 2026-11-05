@@ -96,6 +96,45 @@ const ltn = E.byIcao('EGGW'), lpl = E.byIcao('EGGP');
     check('/airport: yesterday the more of public ADS-B\'s count and FR24\'s - its 300 take-offs, and the blocked jet\'s landing it does not show (marked as FR24\'s); today there too', a1.status === 200 && yd && yd[1] === 300 && yd[2] === 1 && yd[4] === 1 && a1.body.daily.some(x => x[0] === dayOf(nowS)), { yd, daily: (a1.body.daily || []).slice(0, 3) });
     srv.close(); }
 
+  // ---- (1.2.4) a blocked flight's filed plan from FR24's own boards kept here: FR24 lists it on its origin's departures - N/A,
+  // its flight id and both airports (N300CR White Plains -> East Midlands); found by the flight's id, the airport wanted
+  { const hpn = E.byIcao('KHPN'), ema = E.byIcao('EGNX'), t = nowS - 3600, fid = 0x3c4b5a6d;
+    M.BD.put(hpn.id, 'departures', [{ k: 'f' + fid.toString(16), src: 'sched', fid: fid.toString(16), t, sch: t - 600, est: t, st: 'departed', ap: ema.id }], 'own', nowS);
+    const p = M.boardPlan(fid, hpn.id, 0), none = M.boardPlan(fid + 1, hpn.id, 0);
+    check('boards: a blocked flight\'s filed plan by its FR24 id on its origin\'s departures - White Plains -> East Midlands; another flight none', p && p.originId === hpn.id && p.destId === ema.id && p.std === t - 600 && none === null && M.BD.wanted.has(hpn.id), p);
+    M.BD.put(ema.id, 'arrivals', [{ k: 'f' + (fid + 2).toString(16), src: 'sched', fid: (fid + 2).toString(16), t: nowS + 3600, sch: nowS + 3600, st: 'estimated', ap: hpn.id }], 'own', nowS);
+    const q = M.boardPlan(fid + 2, 0, ema.id);
+    check('... or on its likely destination\'s arrivals, with no origin known', q && q.originId === hpn.id && q.destId === ema.id, q); }
+  // ---- (1.2.4) the runway of an FR24 flight's landing from its own track (FR24's airport history padlocks it): named and
+  // kept by the flight's id for every browser
+  { const a = E.byIcao('EGNX'), pts = [];
+    for (let i = 0; i < 40; i++) { const d = 10 - i * 0.3, [la, lo] = E.destPoint(a.lat, a.lon, 93, Math.max(-1.5, d)); pts.push({ t: 1e9 + i * 8, lat: la, lon: lo, alt: d > 0.3 ? a.alt + d * 320 : null, gnd: d <= 0.3, trk: 273, gs: d > 0.3 ? 130 : 60 }); }
+    const r = M.rwyFit({ ap: a.id, fid: '3c1a2b4f', landing: true, pts }), bad = M.rwyFit({ ap: 999999999, fid: '1', landing: true, pts }), g = M.answer(new URL('http://x/rwy?f=3c1a2b4f:1,3c1a2b4f:0,zz'), Date.now() / 1000);
+    check('runways: a landing at East Midlands from the east named 27, kept for others by its FR24 id; an unknown airport none', r.rwy === '27' && bad.rwy === '' && g.list['3c1a2b4f:1'] === '27' && !('3c1a2b4f:0' in g.list), { r, g });
+    // (1.2.4) a flight no browser has worked out - older than FR24's week of tracks: from the FR24 positions the monitor kept
+    // of it (fr24raw), when the airport is given; kept across a restart (STORE/runways-known.json)
+    const t0 = nowS - 20 * 86400, kept = pts.map((p, i) => Object.assign({}, p, { t: t0 + i * 8, alt: p.gnd ? 0 : p.alt }));
+    M.fr24raw.put(0x3c1a2b50, { cs: 'N300CR' }, kept); M.fr24raw.flush(t0 + 400);
+    const old = M.answer(new URL(`http://x/rwy?f=3c1a2b50:1,3c1a2b51:1&ap=${a.id}&ts=${t0 + 300},${t0}`), Date.now() / 1000), noAp = M.answer(new URL('http://x/rwy?f=3c1a2b52:1'), Date.now() / 1000);
+    check('... a flight of 20 days ago from the FR24 positions kept: 27; one not kept none; without the airport only those known', old.list['3c1a2b50:1'] === '27' && !('3c1a2b51:1' in old.list) && Object.keys(noAp.list).length === 0, { old, noAp });
+    M.rwySave(); const saved = JSON.parse(fs.readFileSync(path.join(process.env.MON_STORE, 'runways-known.json'), 'utf8'));
+    check('... the runways known written for a restart', saved['3c1a2b4f:1'] === '27' && saved['3c1a2b50:1'] === '27', saved); }
+  // ---- (1.2.4) every FR24 position the monitor gets kept as it came: an unnamed flight's scan positions and its trail (with
+  // its name once known), and the positions of FR24's flights shown without a route
+  { const id = 0x3c1a2c00, F = { id, pts: [{ t: nowS - 240, lat: 53, lon: -1, alt: 9000, gs: 250, trk: 90, gnd: false }, { t: nowS - 120, lat: 53, lon: -0.9, alt: 9500, gs: 252, trk: 91, gnd: false }], tries: 0, triedAt: 0, first: Date.now(), type: 'FA7X',
+      trail: [{ t: nowS - 900, lat: 52.8, lon: -1.3, alt: 0, gs: 10, trk: 270 }, { t: nowS - 600, lat: 52.9, lon: -1.2, alt: 5000, gs: 200, trk: 60 }], trailAt: Date.now() };
+    M.ident.flights.set(id, F); M.fr24RawRound(); M.fr24RawRound();
+    const before = M.fr24raw.of(id, nowS);
+    check('FR24 positions: an unnamed flight\'s trail and scans kept, each once', before && before.p.length === 4 && before.p[0][4] === 10 && before.m.type === 'FA7X', before);
+    F.pts.push({ t: nowS - 60, lat: 53, lon: -0.8, alt: 9800, gs: 255, trk: 92, gnd: false }); M.fr24RawRound();
+    check('... a new scan position only added', M.fr24raw.of(id, nowS).p.length === 5 && M.fr24raw.pending >= 1);
+    M.ident.flights.delete(id);
+    // (a browser's track of an FR24 flight - FR24's trail and public ADS-B's, every figure; not one of public ADS-B's own)
+    const lid = 0x3c1a2d00, lp = [{ t: nowS - 300, lat: 52, lon: -1, alt: 30000, gs: 420, trk: 80, tas: 455, ias: 280, ws: 40, wd: 270, sq: '6171' }, { t: nowS - 290, lat: 52.01, lon: -0.98, alt: 30000, gs: 421, trk: 80 }];
+    M.central.take({ id: lid, hex: 'a31f94', kind: 'live', ac: { reg: 'N300CR', type: 'FA7X' }, trail: { full: true, pts: lp } });
+    M.central.take({ id: 2000000123, hex: 'a31f95', kind: 'pub', ac: {}, trail: { full: true, pts: lp } });
+    const lv = M.fr24raw.of(lid, nowS), C = lv && lv.cols;
+    check('... a browser\'s track of an FR24 flight kept with every figure (airspeeds, wind, squawk); a public ADS-B flight\'s not', lv && lv.p.length === 2 && lv.p[0][C.indexOf('tas')] === 455 && lv.p[0][C.indexOf('wd')] === 270 && lv.p[0][C.indexOf('sq')] === '6171' && lv.m.reg === 'N300CR' && M.fr24raw.of(2000000123, nowS) === null, lv); }
   console.log(fails ? `\n${fails} FAILED` : '\nall passed');
   process.exit(fails ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(1); });

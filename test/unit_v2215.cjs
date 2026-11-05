@@ -223,7 +223,7 @@ const until = async (f, ms) => { for (let i = 0; i < ms / 100; i++) { const v = 
     w2.eval(SRC);
     const rows = await until(() => { const r = w2.document.querySelectorAll('#tbl-datatable tbody tr.data-row'); return r.length >= 2 ? r : null; }, 25000);
     const txt = rows ? [...rows].map(r => r.textContent.replace(/\s+/g, ' ')).join(' | ') : '';
-    check('flight-number page VSB96: FR24\'s flight table with the PC-24\'s flights (from, to, aircraft, times, playback)', !!rows && /Barrow/.test(txt) && /Farnborough/.test(txt) && /M-ARNZ/.test(txt) && !!w2.document.querySelector('#tbl-datatable a.tl-play[href*="airplanes.live"]') && /BAE Systems Marine/.test(w2.document.querySelector('h1').textContent) && !/no data available/.test(w2.document.body.textContent) && w2.getComputedStyle(w2.document.querySelector('#tbl-datatable tbody')).visibility !== 'hidden', txt.slice(0, 300)); }
+    check('flight-number page VSB96: FR24\'s flight table with the PC-24\'s flights (from, to, aircraft, times, playback)', !!rows && /Barrow/.test(txt) && /Farnborough/.test(txt) && /M-ARNZ/.test(txt) && !!w2.document.querySelector('#tbl-datatable a.tl-play[href^="/data/playback/ff"]') && /BAE Systems Marine/.test(w2.document.querySelector('h1').textContent) && !/no data available/.test(w2.document.body.textContent) && w2.getComputedStyle(w2.document.querySelector('#tbl-datatable tbody')).visibility !== 'hidden', txt.slice(0, 300)); }
   // ---- 22.17 ---------------------------------------------------------------------------------------------------------------
   // landing places named as OpenStreetMap has them
   { const j = k => JSON.parse(fs.readFileSync(path.join(FX, 'osm', 'osm_' + k + '.json'), 'utf8')).elements;

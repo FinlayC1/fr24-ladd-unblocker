@@ -675,10 +675,10 @@ async function mapMode() {
   check('LADD tag in the expanded board card', !!w.document.querySelector('ul.board [data-testid="airport-flight-details__registration"] + .tl-ladd-chip'));
   check('LADD tag on "Recent flights" rows', panel.querySelectorAll('ul.recent .tl-ladd-chip').length === 2, panel.querySelectorAll('ul.recent .tl-ladd-chip').length);
   let opened = ''; w.open = u => { opened = u; return null; };
-  // (a new tab: airplanes.live's track)
+  // (a new tab: FR24's own playback page of the leg - 1.2.4, no longer airplanes.live's track)
   panel.querySelector('ul.recent [data-testid="flight-actions__action-playback"]').dispatchEvent(new w.MouseEvent('auxclick', { bubbles: true, cancelable: true, button: 1 }));
   for (let i = 0; i < 15 && !opened; i++) await sleep(100);
-  check('Playback on a rebuilt row opens that leg\'s track on airplanes.live', /^https:\/\/globe\.airplanes\.live\/\?icao=[0-9a-f]{6}&showTrace=\d{4}-\d\d-\d\d$/.test(opened), opened);
+  check('Playback on a rebuilt row opens that leg in FR24\'s own player (its page in a new tab)', /^\/data\/(flights\?tl-pb=ff[0-9a-f]{14}|playback\/[0-9a-f]{5,16})$/.test(opened), opened);
   // an ordinary (not blocked) aircraft: FR24 shows it, but padlocks country / MSN / age / vertical speed / GPS altitude /
   // squawk for free accounts - the page reports its identity and the userscript fills those from public data
   {

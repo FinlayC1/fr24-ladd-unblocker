@@ -1102,6 +1102,14 @@
     const lat = (viewBox.n + viewBox.s) / 2; let w = viewBox.w, e = viewBox.e; if (e < w) e += 360; let lon = (w + e) / 2; if (lon > 180) lon -= 360;
     return { lat, lon, r: Math.max(25, Math.min(250, dist(lat, lon, viewBox.n, viewBox.e > viewBox.w ? viewBox.e : viewBox.e + 360) / NM_KM + 10)) };
   }
+  // (1.2.4) the squawk an aircraft was last heard with in the air - the monitor keeps each one 16 hours - for FR24's panel of
+  // a flight no receiver hears now (over an ocean); the page takes it only if heard since this flight took off
+  async function onWantSq(d) {
+    const hex = String(d && d.hex || '').toLowerCase(); if (!/^[0-9a-f]{6}$/.test(hex) || !monUp()) return;
+    const j = await monGet(`/tel?hex=${hex}`, { timeout: 8000 });
+    const l = j && j.last && j.last[hex];
+    if (Array.isArray(l) && /^[0-7]{4}$/.test(String(l[0])) && fin(l[1])) postToPage('lastSq', { hex, sq: String(l[0]), at: l[1] * 1000 });
+  }
   const nz = v => (fin(v) ? v : null);
   function pushPubTel(list) {
     const rows = [];

@@ -19,13 +19,13 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 let fails = 0;
 const check = (name, ok, info) => { if (!ok) fails++; console.log((ok ? 'PASS  ' : 'FAIL  ') + name + (info !== undefined ? '  ' + JSON.stringify(info).slice(0, 400) : '')); };
 
-function open(opts, answer) {
+function open(opts, answer, fetchImpl) {
   const dom = new JSDOM('<!doctype html><html><body><div id="app"></div></body></html>', { url: 'https://www.flightradar24.com/51.47,-0.45/8', runScripts: 'dangerously', pretendToBeVisual: true });
   const w = dom.window; let H = null;
   w.__tlTestHook = h => { H = h; };
   if (opts) w.localStorage.setItem('tweeks.fr24.ladd.opts1', JSON.stringify(opts));
   w.Response = Response; w.Headers = Headers; w.Blob = Blob; w.DecompressionStream = DecompressionStream;
-  w.unsafeWindow = w; w.GM_xmlhttpRequest = () => {}; w.indexedDB = undefined; w.fetch = () => Promise.reject(new Error('offline'));
+  w.unsafeWindow = w; w.GM_xmlhttpRequest = () => {}; w.indexedDB = undefined; w.fetch = fetchImpl || (() => Promise.reject(new Error('offline')));
   const asked = [];
   // (the userscript's side: what the page part asks it to fetch, answered from here)
   w.postMessage = d => {
@@ -64,7 +64,7 @@ function open(opts, answer) {
   const ns = { ch: table, k2: limits, ii: new Proxy({}, { get() { throw new Error('Cannot use the map wrapper before initialization!'); } }), x: 5, y: [1, 2] };
   H().mxPatchCore(ns);
   check('the options supplied here: "basic" (as FR24\'s page writes it too, "Basic") added to their plans', table['map.layer.weather.wind'].includes('basic') && table['map.layer.weather.wind'].includes('Basic') && table['map.layer.atc'].includes('basic') && table['map.layer.weather.lightning'].includes('basic'), table['map.layer.atc']);
-  check('... nothing else: 3D view and KML stay premium', !table['map.view.3d'].includes('basic') && !('basic' in table['history.flight.kml']), table['map.view.3d']);
+  check('... nothing else: 3D view stays premium; a flight\'s KML and CSV (1.2.4: made here) a Basic account\'s too', !table['map.view.3d'].includes('basic') && table['history.flight.kml'].basic === 60 && table['history.flight.kml'].silver === 10, table['history.flight.kml']);
   check('custom filters a Basic account may keep: 60, as Business', limits.basic === 60 && limits.Basic === 60 && limits.silver === 10, limits);
   check('an export that throws when looked into (FR24\'s map wrapper before the map is made): left alone, no error', H().mx.fails === 0, H().mx);
   // ---- weather authorization
@@ -115,6 +115,12 @@ function open(opts, answer) {
   check('bookmarks: FR24\'s one and the one kept here, together', bm.data.aircraft.length === 2 && bm.data.aircraft[1].registration === 'SP-CEO', bm.data.aircraft);
   const bm2 = H().mxBmMerge({ data: { aircraft: [{ registration: 'SP-CEO' }], flights: [], airports: [], locations: [] } });
   check('... not twice when FR24 has it too', bm2.data.aircraft.length === 1);
+  // (1.2.4) FR24's types are plural for flights, airports and places: each kept past the limit, in the form FR24's widget reads
+  { const f = H().mxBmItem({ type: 'flights', identifier: 'u23210' }), a = H().mxBmItem({ type: 'airports', identifier: 'ema' }), l = H().mxBmItem({ type: 'locations', location: { name: 'Peak District', lat: 53.35, lon: -1.8, zoom: 9 } });
+    check('bookmarks: a flight, an airport and a place kept as FR24 lists them (its plural types), a place with an id FR24 removes it by', f && f.flight_number === 'U23210' && a && a.code.iata === 'EMA' && l && l.id === 'tl-53350_-1800' && l.name === 'Peak District' && l.lat === 53.35 && H().mxBmItem({ type: 'locations', location: {} }) === null, { f, a, l });
+    P.w.localStorage.setItem('tl.mx.bookmarks', JSON.stringify({ flights: [f], airports: [a], locations: [l] }));
+    const m = H().mxBmMerge({ data: { aircraft: [], flights: [{ flight_number: 'BA1' }], airports: [], locations: [{ id: 99, name: 'Home' }] } }).data;
+    check('... and listed with FR24\'s own', m.flights.length === 2 && m.airports.length === 1 && m.locations.length === 2, m); }
   // ---- (1.2.1) the category: SP-CEO's H25B (a Hawker 750) is no helicopter, whatever its transponder says
   check('category: H25B a business jet, its transponder\'s "rotorcraft" not believed; an H60 still a helicopter', H().categoryOf({ type: 'H25B', cat: 'A7' }) === 3 && H().categoryOf({ type: 'H60' }) === 5 && H().categoryOf({ type: 'EC35' }) === 5);
   // ---- categories in the live feed's request
@@ -172,6 +178,78 @@ function open(opts, answer) {
     check('settings: a setting changed is kept, and given back to FR24\'s settings as left - only those changed, only where FR24 has them', n === 2 && fresh.misc.showTrailTooltip === true && fresh.map.labels === 'flag' && fresh.misc.hideAircraftAirportPhoto === false && !('nothere' in fresh.units) && !fresh.nosection && !('hideAircraftAirportPhoto' in kept.misc), { fresh, kept });
     sst.settings.misc.showTrailTooltip = false; RH.mxSetNote(sst, 'misc', ['showTrailTooltip']);
     check('... switched off again: kept off', RH.mxSetKept().misc.showTrailTooltip === false);
+    R.w.close(); }
+  // ---- (1.2.4) FR24's airport flight history: each landing's and take-off's runway (Business only on FR24) - asked of the
+  // userscript, put in FR24's own answer with the padlock off; one not found left as FR24 sent it
+  { const hist = { data: [{ type: 'landed', flightId: 0x3c1a2b4f, time: 1793830000, callsign: 'EZY12', runway: null, available: [] }, { type: 'takeoff', flightId: 0x3c1a2b50, time: 1793830100, callsign: 'RYR1', runway: null, available: ['callsign'] }, { type: 'landed', flightId: 0x3c1a2b51, time: 1793830200, runway: '09', available: ['runway'] }] };
+    const R = open(null, () => null, url => Promise.resolve(new Response(JSON.stringify(hist), { status: 200, headers: { 'content-type': 'application/json' } }))); await sleep(200);
+    const asks = []; R.w.postMessage = d => { if (d && d.__tweeksLadd === 'rwyWant') { asks.push(d); setTimeout(() => R.w.dispatchEvent(new R.w.MessageEvent('message', { data: { __tweeksLadd: 'rwyGot', rid: d.rid, list: [{ k: '3c1a2b4f:1', rwy: '27' }], done: true }, source: R.w, origin: 'https://www.flightradar24.com' })), 20); } };
+    const res = await R.H().mxFetch('https://www.flightradar24.com/api/airport-history/975/recent?limit=4', 'https://www.flightradar24.com/api/airport-history/975/recent?limit=4', {});
+    const j = await res.json(), it = j.data;
+    check('airport flight history: the runway of a landing worked out put in FR24\'s answer, its padlock off; one not found as FR24 sent it; one FR24 gave left alone', asks.length === 1 && asks[0].ap === 975 && asks[0].items.length === 2 && it[0].runway === '27' && it[0].available.includes('runway') && it[1].runway === null && !it[1].available.includes('runway') && it[2].runway === '09', { asks: asks.map(a => a.items), it });
+    R.w.close(); }
+  // ---- (1.2.4) a flight's KML and CSV - FR24's own buttons beside its playback's play button and in its flight history: its
+  // quota answered here, the file made by the userscript (FR24's track, else the monitor's), FR24's "not available" else
+  { const R = open(null, () => null, () => Promise.reject(new Error('FR24 not asked'))); await sleep(200);
+    const asks = []; R.w.postMessage = d => { if (d && d.__tweeksLadd === 'trackFile') { asks.push(d); setTimeout(() => R.w.dispatchEvent(new R.w.MessageEvent('message', { data: d.fid === '3d1f6a2b' ? { __tweeksLadd: 'trackFileGot', rid: d.rid, ok: true, text: 'Timestamp,UTC,Callsign,Position,Altitude,Speed,Direction\n', type: 'text/csv' } : { __tweeksLadd: 'trackFileGot', rid: d.rid, ok: false }, source: R.w, origin: 'https://www.flightradar24.com' })), 20); } };
+    const q = await (await R.w.fetch('https://www.flightradar24.com/download/check-quota?flight=3d1f6a2b', { credentials: 'include', headers: { 'X-Fetch': 'true' } })).json();
+    check('KML/CSV: FR24\'s quota check answered here - files left, FR24\'s server not asked', typeof q.quotaLeft === 'number' && q.quotaLeft > 0, q);
+    const f = await R.w.fetch('https://www.flightradar24.com/download/?flight=3d1f6a2b&file=csv&trailLimit=0&history=1793830000', { credentials: 'include' }), txt = await f.text();
+    check('... the file: asked of the userscript by the flight\'s id and departure, given to FR24\'s download as a CSV', f.ok && /text\/csv/.test(f.headers.get('content-type')) && /^Timestamp,UTC,Callsign/.test(txt) && asks[0].fid === '3d1f6a2b' && asks[0].file === 'csv' && asks[0].ts === 1793830000, asks);
+    const g = await R.w.fetch('https://www.flightradar24.com/download/?flight=1025468972&file=kml&trailLimit=0&history=1793830000');
+    check('... an id written in decimal read as such; no track anywhere: FR24\'s own "not available" (an empty answer)', !g.ok && asks[1].fid === (1025468972).toString(16) && asks[1].file === 'kml', asks[1]);
+    // (FR24's flight page: its history's download menu unlocked; its live flight card's runways from the flight's track)
+    const app = R.w.document.getElementById('app'), page = { component: 'Data/FlightHistory', props: { canDownload: false, liveFlight: { flightId: '3d1f6a2b', origin: { iata: 'HPN', scheduled: 1793830000, actual: 1793830300, runway: null, locked: { runway: true } }, destination: { iata: 'EMA', scheduled: 1793855000, actual: null, runway: null, locked: { runway: true } } } } };
+    app.__vue_app__ = { config: { globalProperties: { $page: page } } };
+    const rw = []; R.w.postMessage = d => { if (d && d.__tweeksLadd === 'rwyWant') { rw.push(d); setTimeout(() => R.w.dispatchEvent(new R.w.MessageEvent('message', { data: { __tweeksLadd: 'rwyGot', rid: d.rid, list: [{ k: '3d1f6a2b:0', rwy: '34' }], done: true }, source: R.w, origin: 'https://www.flightradar24.com' })), 20); } };
+    R.H().mxDataTick(); await sleep(150); R.H().mxDataTick();
+    const lf = page.props.liveFlight;
+    check('flight page: its history\'s KML/CSV menu unlocked; the take-off runway asked by the airport\'s code, put in its card, the padlock off; the arrival (not landed) left empty', page.props.canDownload === true && rw.length === 1 && rw[0].iata === 'HPN' && rw[0].items[0].landing === false && lf.origin.runway === '34' && lf.origin.locked.runway === false && lf.destination.locked.runway === false && !lf.destination.runway, { rw: rw.map(x => [x.iata, x.items]), lf });
+    R.H().mxDataTick(); check('... nothing asked again, the card not set again', rw.length === 1 && page.props.liveFlight === lf);
+    page.component = 'Data/Airport'; page.props = { canDownload: false }; R.H().mxDataTick();
+    check('... another page left alone', page.props.canDownload === false);
+    R.w.close(); }
+  // ---- (1.2.4) FR24's player on a page of ours: its GPS altitude, true and indicated airspeed and squawk of each moment,
+  // asked of FR24's server by the page's live id - a stand-in id of ours, answered here from the track, nothing sent
+  { const sent = []; const R = open(null, () => null); await sleep(200); const H = R.H();
+    const pts = [{ t: 1000, lat: 52, lon: -1, alt: 0, gnd: true, sq: '7000' }, { t: 1100, lat: 52.1, lon: -1, alt: 2000, ag: 2400, ias: 100, tas: 104, sq: '4550' }, { t: 1160, lat: 52.2, lon: -1, alt: 2600, ag: 3000, ias: 120, tas: 126, sq: '4550' }, { t: 1500, lat: 52.3, lon: -1, alt: 3000, ag: 3500, ias: 130, tas: 136 }];
+    const sid = H.mxPbStandIn({ id: 'ff4078a36a8a1f56', pts });
+    check('stand-in id: 0xF0000000 and up (FR24\'s ids far below); the same page the same id; one with no figures none', sid >= 0xF0000000 && H.mxPbStandIn({ id: 'ff4078a36a8a1f56', pts }) === sid && H.mxPbStandIn({ id: 'x', pts: [{ t: 1, lat: 1, lon: 1 }] }) === null, sid);
+    const R0 = H.mxPbStand.get(sid).R, a = H.mxPbReadAt(R0, 1130), b = H.mxPbReadAt(R0, 1300), c = H.mxPbReadAt(R0, 1010);
+    check('a moment\'s figures: in proportion between reports two minutes apart at most; nearer within a minute else none; the squawk last set', a.ag === 2700 && a.ias === 110 && a.tas === 115 && a.sq === '4550' && b.ag === null && b.ias === null && b.sq === '4550' && c.ag === null && c.sq === '7000', { a, b, c });
+    // (FR24's own XHR: its request as its gRPC-web client sends it - base64 text, the flight id fixed32, the moment varint)
+    const ask = (svc, id, ts) => new Promise(res => {
+      const x = new R.w.XMLHttpRequest(), msg = [0x0d, id & 255, (id >>> 8) & 255, (id >>> 16) & 255, (id >>> 24) & 255, 0x10].concat((n => { const o = []; do { let v = n % 128; n = Math.floor(n / 128); if (n) v |= 128; o.push(v); } while (n); return o; })(ts));
+      const body = Buffer.from([0, 0, 0, 0, msg.length].concat(msg)).toString('base64'), seen = [];
+      x.open('POST', 'https://data-feed.flightradar24.com/fr24.feed.api.v1.Feed/' + svc); x.setRequestHeader('Content-Type', 'application/grpc-web-text');
+      x.onreadystatechange = () => { seen.push(x.readyState); if (x.readyState === 4) res({ x, seen, text: x.responseText, ct: x.getResponseHeader('content-type'), st: x.status, gs: x.getResponseHeader('grpc-status') }); };
+      x.send(body);
+      setTimeout(() => res({ x, seen, timeout: true }), 1500);
+    });
+    R.w.fetch = u => { sent.push(String(u)); return Promise.reject(new Error('offline')); };
+    const g = await ask('PlaybackFlight', sid, 1130);
+    const raw = Buffer.concat(((g.text || '').match(/.{4}/g) || []).map(q => Buffer.from(q, 'base64'))), len0 = raw.readUInt32BE(1), m0 = raw.subarray(5, 5 + len0), tr = raw.subarray(5 + len0);
+    const efi = H.parse(m0), f3 = efi.find(f => f.fn === 3), inner = f3 ? H.parse(f3.val) : [], ems = inner.find(f => f.fn === 13), emsF = ems ? H.parse(ems.val) : [], v = n => (emsF.find(f => f.fn === n) || {}).val, sq = (inner.find(f => f.fn === 15) || {}).val;
+    check('PlaybackFlight by the stand-in id: answered here as FR24\'s server would (200, its content type, readyState 2-3-4), its figures of that moment, then the trailer "grpc-status:0"', !g.timeout && g.st === 200 && g.ct === 'application/grpc-web-text' && g.seen.join() === '2,3,4' && v(8) === 2700 && v(5) === 110 && v(6) === 115 && sq === 0x4550 && tr[0] === 0x80 && /grpc-status:0/.test(tr.subarray(5).toString()), { seen: g.seen, ems: emsF.map(f => [f.fn, f.val]), sq, tr: tr.subarray(5).toString() });
+    const nf = await ask('FollowFlight', sid, 0), ht = await ask('HistoricTrail', sid, 0);
+    check('... its live stream and stored trail: "not found" (grpc-status 5), as FR24\'s of a flight it has no more; nothing sent anywhere', nf.gs === '5' && ht.gs === '5' && !sent.length && H.mx.pbReads >= 1, { nf: nf.gs, ht: ht.gs, sent });
+    R.w.close(); }
+  // ---- (1.2.4) FR24's airport boards: each flown row's runway (Business only on FR24) - the known put in at once, the
+  // padlock off; the rest asked of the userscript (the latest first) and put in as they come; rows not flown left alone
+  { const R = open(null, () => null); await sleep(200); const H = R.H(), now = Math.floor(Date.now() / 1000);
+    const asks = []; R.w.postMessage = d => { if (d && d.__tweeksLadd === 'rwyWant') { asks.push(d); setTimeout(() => R.w.dispatchEvent(new R.w.MessageEvent('message', { data: { __tweeksLadd: 'rwyGot', rid: d.rid, list: d.items.map(x => ({ k: x.fid + ':' + (x.landing ? 1 : 0), rwy: { '3d1f0001:0': '27R', '3d1f0003:1': '09L' }[x.fid + ':' + (x.landing ? 1 : 0)] })).filter(x => x.rwy), done: true }, source: R.w, origin: 'https://www.flightradar24.com' })), 20); } };
+    const app = R.w.document.getElementById('app'), row = (fid, st, t, x) => Object.assign({ id: fid, flightId: fid, scheduledTime: t, estimatedTime: t, status: { type: st, label: st }, runway: null, locked: { runway: true } }, x || {});
+    const page = { component: 'Data/AirportBoard', props: { board: 'departures', airport: { id: 975, iata: 'LHR' }, flights: [row('3d1f0001', 'departed', now - 1200), row('3d1f0002', 'scheduled', now + 3600), row('c1a2b3', 'departed', now - 600, { __tlArch: true })] } };
+    app.__vue_app__ = { config: { globalProperties: { $page: page } } };
+    H.mxDataTick(); await sleep(150); H.mxDataTick();
+    const fl = page.props.flights;
+    check('departures page: the take-off runway asked by the airport\'s id, put in its row, the padlock off; one not yet flown, and a row of ours with a made-up id, not asked', asks.length === 1 && asks[0].ap === 975 && asks[0].items.length === 1 && asks[0].items[0].fid === '3d1f0001' && asks[0].items[0].landing === false && fl[0].runway === '27R' && fl[0].locked.runway === false && fl[1].runway === null && fl[1].locked.runway === true, { asks: asks.map(a => a.items), fl: fl.map(f => [f.flightId, f.runway, f.locked.runway]) });
+    H.mxDataTick(); check('... not asked again', asks.length === 1);
+    // (the map's airport panel: FR24's /api/v1 answer - its rows by flight.id; the landing's runway, a known one at once)
+    const n = H.mxBoardRwy([{ flight: { id: '3d1f0003' }, status: { name: 'landed' }, runway: null }], 'arrivals', 975);
+    await sleep(150);
+    const rows2 = [{ flight: { id: '3d1f0003' }, status: { name: 'landed' }, runway: null }, { flight: { id: '3d1f0004' }, status: { name: 'estimated' }, runway: null }], n2 = H.mxBoardRwy(rows2, 'arrivals', 975);
+    check('map panel rows: the landing\'s runway asked, then put in from what came back; one still in the air left alone', n === 0 && asks.length === 2 && asks[1].items[0].landing === true && n2 === 1 && rows2[0].runway === '09L' && rows2[1].runway === null, { n, n2, rows2 });
     R.w.close(); }
   // ---- the switch off
   const Q = open({ mapx: false }, answer); await sleep(200);

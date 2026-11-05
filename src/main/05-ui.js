@@ -231,7 +231,8 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     const hexL = (hx.hex || '').toLowerCase(), reg = hx.reg || '';
     return [
       reg && `<a href="/data/aircraft/${encodeURIComponent(reg.toLowerCase())}" target="_blank" rel="noopener">flight log</a>`,
-      hexL && `<a href="https://globe.airplanes.live/?icao=${esc(hexL)}&showTrace=${new Date().toISOString().slice(0, 10)}" target="_blank" rel="noopener noreferrer">trace</a>`,
+      // (1.2.4: its flight now - or latest - in FR24's own player, its track as kept: 06-pbpage)
+      /^[0-9a-f]{6}$/.test(hexL) && `<a href="/data/playback/${esc(pbSynId(hexL, 0))}" target="_blank" rel="noopener" title="This aircraft's flight in FR24's player">playback</a>`,
       reg && `<a href="https://www.jetphotos.com/showphotos.php?regsearch=${encodeURIComponent(reg)}" target="_blank" rel="noopener noreferrer">photos</a>`,
       (u => u && `<a href="${esc(u[0])}" target="_blank" rel="noopener noreferrer" title="${esc(u[1])}: ${esc(reg)}">registry</a>`)(registryUrl(reg))
     ].filter(Boolean).join(' · ');

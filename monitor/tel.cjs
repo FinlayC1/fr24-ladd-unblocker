@@ -13,6 +13,15 @@ function createTel(env) {
   env = env || {};
   const max = env.max || 30000, maxAge = env.maxAge || 120, gndAge = env.gndAge || 900;
   const m = new Map();          // hex -> { a: the report (KEYS only), t: its position's time (s), gnd }
+  // (1.2.4) the squawk each aircraft was last heard with in the air, kept 16 hours (a flight keeps its code the whole way):
+  // hex -> [code, time s] - for FR24's panel of a flight no receiver hears now
+  const sqKeep = new Map(), SQ_AGE = 16 * 3600, sqMax = env.sqMax || 300000;
+  function keepSq(hex, a, t) {
+    const sq = String(a.squawk || ''); if (!/^[0-7]{4}$/.test(sq) || a.alt_baro === 'ground') return;
+    const p = sqKeep.get(hex); if (p && p[1] >= t) return;
+    sqKeep.delete(hex); sqKeep.set(hex, [sq, Math.round(t)]);
+    if (sqKeep.size > sqMax) sqKeep.delete(sqKeep.keys().next().value);
+  }
   const stats = { added: 0, served: 0, asked: 0, missed: 0 };
   // a list as the readsb APIs answer it (adsb.lol's "ac", adsb.fi's "aircraft"), at the list's own time
   function add(list, nowS) {
@@ -27,6 +36,7 @@ function createTel(env) {
       // networks send the slow-changing figures only now and then)
       if (p) for (const k of ['r', 't', 'desc', 'category', 'dbFlags', 'squawk', 'oat', 'wd', 'ws', 'nav_qnh']) if (o[k] == null && p.a[k] != null && t - p.t < 300) o[k] = p.a[k];
       m.delete(hex); m.set(hex, { a: o, t, gnd: a.alt_baro === 'ground', own: true });
+      keepSq(hex, a, t);
       stats.added++;
     }
     while (m.size > max) m.delete(m.keys().next().value);
@@ -50,6 +60,7 @@ function createTel(env) {
         r: typeof r[16] === 'string' && r[16].length <= 12 ? r[16] : undefined, t: typeof r[17] === 'string' && r[17].length <= 6 ? r[17] : undefined, flight: typeof r[18] === 'string' && r[18].length <= 8 ? r[18] : undefined, dbFlags: num(r[19], 0, 255) };
       const o = { hex }; for (const k of KEYS) if (a[k] != null && a[k] !== '') o[k] = a[k];
       m.delete(hex); m.set(hex, { a: o, t, gnd: a.alt_baro === 'ground', own: false }); n++;
+      keepSq(hex, a, t);
     }
     while (m.size > max) m.delete(m.keys().next().value);
     stats.crowd = (stats.crowd || 0) + n;
@@ -79,7 +90,13 @@ function createTel(env) {
     return res;
   }
   function has(hex, nowS) { return fresh(m.get(String(hex).toLowerCase().replace(/^~/, '')), nowS); }
-  function prune(nowS) { for (const [h, x] of m) if (nowS - x.t > gndAge) m.delete(h); }
-  return { add, addCrowd, get, near, has, prune, stats, get size() { return m.size; } };
+  function prune(nowS) { for (const [h, x] of m) if (nowS - x.t > gndAge) m.delete(h); for (const [h, s] of sqKeep) if (nowS - s[1] > SQ_AGE) sqKeep.delete(h); }
+  // (the last squawk of each of these addresses heard in the air in the last 16 hours: { hex: [code, time s] })
+  function lastSq(hexes, nowS) {
+    const o = {};
+    for (const h0 of hexes || []) { const h = String(h0).toLowerCase().replace(/^~/, ''), s = sqKeep.get(h); if (s && nowS - s[1] <= SQ_AGE) o[h] = s; }
+    return o;
+  }
+  return { add, addCrowd, get, near, has, prune, lastSq, stats, get size() { return m.size; }, get sqSize() { return sqKeep.size; } };
 }
 module.exports = { createTel, KEYS };

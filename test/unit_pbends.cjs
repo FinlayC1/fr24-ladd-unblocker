@@ -175,6 +175,21 @@ const ageCell = w => { const c = [...w.document.querySelectorAll('[data-testid="
     check('... FR24\'s own From left as it is', /Liverpool/.test(w.document.getElementById('txt-airport-origin').textContent));
     w.close();
   }
+  // ---- (1.2.4) a flight's KML and CSV for FR24's own download buttons: made from FR24's track of it, in FR24's CSV columns
+  {
+    const asked = [], w = makeWin(PB_URL, asked); await ready(w);
+    const got = rid => until(() => (w.__posted.find(p => p.d && p.d.__tweeksLadd === 'trackFileGot' && p.d.rid === rid) || {}).d, 8000);
+    send(w, { __tweeksLadd: 'trackFile', rid: 'f1', fid: FID.toString(16), file: 'csv', ts: TS });
+    const c = await got('f1'), lines = c && c.ok ? c.text.trim().split('\n') : [];
+    check('KML/CSV: the CSV - FR24\'s columns, a line a point of FR24\'s track, its callsign, position, altitude, speed, heading', c && c.ok && /text\/csv/.test(c.type) && lines[0] === 'Timestamp,UTC,Callsign,Position,Altitude,Speed,Direction' && lines.length === 6 && /^\d+,\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ,CAPTR33,"54\.292500,-1\.539000",0,120,270$/.test(lines[1]), lines.slice(0, 3));
+    send(w, { __tweeksLadd: 'trackFile', rid: 'f2', fid: FID.toString(16), file: 'kml', ts: TS });
+    const k = await got('f2');
+    check('... the KML: its trail, altitudes in metres, said to be FR24\'s', k && k.ok && /google-earth\.kml/.test(k.type) && /<kml xmlns="http:\/\/www\.opengis\.net\/kml\/2\.2">/.test(k.text) && /Track from Flightradar24\./.test(k.text) && /-1\.600000,54\.300000,457/.test(k.text), k && k.text.slice(0, 300));
+    send(w, { __tweeksLadd: 'trackFile', rid: 'f3', fid: 'abcdef12', file: 'csv', ts: TS });
+    const n = await got('f3');
+    check('... a flight with no track anywhere (FR24 none, the monitor none): not available', n && n.ok === false, n);
+    w.close();
+  }
   console.log(fails ? `\n${fails} failed` : '\nall passed');
   process.exit(fails ? 1 : 0);
 })().catch(e => { console.log('FAIL  crashed ' + (e && e.stack || e)); process.exit(1); });

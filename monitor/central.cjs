@@ -278,6 +278,9 @@ function createCentral(env) {
     const p = cleanPt(x.pos); if (p && (!F.pos || p.t >= F.pos.t)) { F.pos = p; F.dirty = true; }
     let need = '';
     const tr = x.trail && typeof x.trail === 'object' ? x.trail : null, pts = tr && Array.isArray(tr.pts) ? tr.pts.slice(0, 20000).map(cleanPt).filter(Boolean).sort((a, b) => a.t - b.t) : [];
+    // (1.2.4) an FR24 flight's track as the browser has it - FR24's trail and public ADS-B's of it, every figure: kept by
+    // FR24's id of it (monitor.cjs fr24raw)
+    if (x.kind === 'live' && id < 2e9 && pts.length && env.rawPut) try { env.rawPut(id, { hex: F.hex, reg: F.rec.reg, cs: F.rec.cs, type: F.rec.type }, pts); } catch (e) { S.lastErr = 'rawPut: ' + String(e && e.message || e).slice(0, 120); }
     if (tr && tr.full && pts.length) {
       // (a whole track: kept unless the one held starts earlier on the same flight - another browser saw more of it - or
       // this one is a new leg, begun after the one held ended)
@@ -331,7 +334,10 @@ function createCentral(env) {
   // (the main thread's allowance: CFG.centralMsPerMin of work a minute; workers have their own threads)
   const busy = () => { const t = now(); spent = spent.filter(x => t - x[0] < 60000); return spent.reduce((n, x) => n + x[1], 0) >= C.msPerMin; };
   function jobOf(F) {
-    return { id: F.id, hex: F.hex, kind: F.kind, rec: F.rec, pos: F.pos, trail: F.trail, meta: F.meta, st: F.st, plan: F.plan, lastLeg: F.lastLeg, hist: histOf(F),
+    // (1.2.4: a blocked flight no browser has sent a plan of: FR24's filed one from the boards kept on the monitor)
+    let plan = F.plan;
+    if (!plan && F.kind === 'live' && env.boardPlan) { try { plan = cleanPlan(env.boardPlan(F.id, F.route && F.route.originId, F.route && F.route.destId), E); } catch (e) { plan = null; } if (plan) S.boardPlans = (S.boardPlans || 0) + 1; }
+    return { id: F.id, hex: F.hex, kind: F.kind, rec: F.rec, pos: F.pos, trail: F.trail, meta: F.meta, st: F.st, plan, lastLeg: F.lastLeg, hist: histOf(F),
       // (1.1.0: the fleet's habits the monitor's own - its owners, its logs - so the answer does not hang on which browser sent
       // the flight; a browser's where the monitor knows no fleet of it)
       fleet: (() => { const m = env.fleetOf ? env.fleetOf(F.hex) : null; return m ? [...m] : F.fleet ? [...F.fleet] : null; })(), rested: F.rested, origin: F.origin, dl: env.datalink ? env.datalink(F.rec.reg) || null : null,
