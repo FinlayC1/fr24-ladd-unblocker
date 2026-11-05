@@ -30,8 +30,16 @@
     const td = (ts, off) => `data-timestamp="${ts || ''}" data-offset="${ts ? off : ''}"`;
     return `<tr class=" data-row tl-adsb-row${o.cls ? ' ' + o.cls : ''}" data-timestamp="${t0}"><td class="visible-xs visible-sm"><div class="row table-row-responsive"><div class="col-xs-3"><div class="row"><i class="fa fa-plane"></i> ${o.flightMob || flight} </div><div class="row" data-offset="${tz}" data-timestamp="${t0}" data-time-format="DD MMM YYYY" data-prefix="&lt;i class=&quot;fa fa-calendar&quot;&gt;&lt;/i&gt; "><i class="fa fa-calendar"></i> ${fmtLocal(t0, tz, true)}</div><div class="row"><i class="fa fa-clock-o"></i> ${dur} </div><div class="row" ${td(statusTs, tzTo)} data-prefix="${esc(statusPrefix)}">${esc(statusText)}</div></div><div class="col-xs-1 col-state"><div class="state-block ${color}"></div></div><div class="col-xs-8"><div class="row"><div class="col-xs-4"><p><label>STD</label> <span class="details" ${td(stdTs, tz)}>${stdTs ? fmtLocal(stdTs, tz) : ' — '}</span></p></div><div class="col-xs-4"><p><label>ATD</label> <span class="details" ${td(atdTs, tz)}>${atdTs ? fmtLocal(atdTs, tz) : ' — '}</span></p></div><div class="col-xs-4"><p><label>STA</label> <span class="details" ${td(staTs, tzTo)}>${staTs ? fmtLocal(staTs, tzTo) : ' — '}</span> </p></div></div><p><label>FROM</label> <span class="details">${from.mob}</span></p><p><label>TO</label> <span class="details">${to.mob}</span></p></div></div></td><td class="w40 hidden-xs hidden-sm">&nbsp;</td><td class="hidden-xs hidden-sm" data-offset="${tz}" data-timestamp="${t0}" data-time-format="DD MMM YYYY">${fmtLocal(t0, tz, true)}</td> <td title="${from.title}" class="text-center-sm hidden-xs hidden-sm">${from.desk}</td> <td title="${to.title}" class="text-center-sm hidden-xs hidden-sm">${to.desk}</td> <td class="hidden-xs hidden-sm"> ${flight} </td><td class="hidden-xs hidden-sm">${dur}</td><td class="hidden-xs hidden-sm" ${td(stdTs, tz)}>${stdTs ? fmtLocal(stdTs, tz) : ' — '}</td><td class="hidden-xs hidden-sm" ${td(atdTs, tz)}${o.atdEst ? estT : ''}>${atdTs ? (o.atdEst ? '~' : '') + fmtLocal(atdTs, tz) : ' — '}</td> <td class="hidden-xs hidden-sm" ${td(staTs, tzTo)}>${staTs ? fmtLocal(staTs, tzTo) : ' — '}</td> <td class="hidden-xs hidden-sm"><div class="state-block ${color}"></div></td><td class="hidden-xs hidden-sm" data-prefix="${esc(statusPrefix)}" ${td(statusTs, tzTo)}${o.onEst ? estT : ''}>${esc(statusText)}</td><td class="text-right hidden-xs hidden-sm"> ${btn} </td><td class="w40 hidden-xs hidden-sm">&nbsp;</td></tr>`;
   }
-  // replay of one leg: FR24's own playback page of it, its track as kept (1.2.4 - 06-pbpage; airplanes.live's before)
-  function replayUrl(hex, l) { return `/data/playback/${pbSynId(hex, l.tOff || l.tStart)}`; }
+  // (1.2.4) a leg's Play: FR24's own button, as its own rows have it - FR24's page script plays the flight in place, in the
+  // page's own player (map, slider, figures, graph), asking FR24 for it: page.js answers with its track as kept (06-pbpage).
+  // Its KML and CSV beside it, as FR24's rows have them. Off its aircraft's page (a flight number's), the button is a link
+  // to that page, where it plays
+  function playCellHtml(l, hex, reg, flown) {
+    const id = pbSynId(hex, l.tOff || l.tStart), r = String(reg || '').toLowerCase();
+    const href = r ? `/data/aircraft/${encodeURIComponent(r)}#${id}` : `#${id}`;
+    const exp = k => `<a class="btn btn-sm btn-white btn-table-action fs-10 ${k.toLowerCase()}Button notranslate tl-export" href="#" data-tl-export="${k}" title="This flight's track as a ${k} file (LADD unblocker)"> ${k} </a>`;
+    return `${exp('KML')} ${exp('CSV')}    <a class="btn btn-sm btn-playback btn-table-action text-white bkg-blue fs-10 tl-pbrow" data-flight-duration="${flown || ''}" data-flight-hex="${id}" data-live="false" data-timestamp="${l.tOff || l.tStart}" href="${esc(href)}" id="btn-playback-${id}" title="Show playback of flight"><i class="fa fa-play text-white fs-10"></i> &nbsp;Play </a>`;
+  }
   // (ac: the aircraft, for a flight number's page - its column there is the aircraft, not the flight)
   function legRowHtml(l, hex, reg, ac) {
     const from = l.from ? apById(l.from.id) : null, to = l.to ? apById(l.to.id) : null;
@@ -42,7 +50,6 @@
     const landed = (!!to && (l.ended || nowS() - l.tEnd > 3600)) || siteTo;
     const tOn = landed ? (l.tOn || (l.ended ? l.tEnd : 0)) : 0, onEst = !!tOn && (l.tOn ? !!l.tOnEst : !l.ended);
     const tOff = l.tOff || l.tStart, offEst = !!l.tOff && !!l.tOffEst, flown = tOn && tOff && tOn > tOff ? tOn - tOff : 0;
-    const trace = esc(replayUrl(hex, l));
     const cs = l.cs && l.cs !== reg ? l.cs : (l.cs || '');
     const acDesk = ac && ac.reg ? ` ${esc(ac.type || '')} <a class="fbold fs-10" href="/data/aircraft/${esc(ac.reg.toLowerCase())}" title="${esc(ac.desc || ac.type || '')}">(${esc(ac.reg)})</a> ` : '';
     const acMob = ac && ac.reg ? `<a class="fbold" href="/data/aircraft/${esc(ac.reg.toLowerCase())}" title="${esc(ac.desc || ac.type || '')}">${esc(ac.reg)}</a>` : '';
@@ -50,8 +57,7 @@
       stdTs: 0, atdTs: tOff, staTs: 0, color: landed ? 'green' : 'gray', atdEst: offEst, onEst, estTitle: 'reckoned from the nearest position heard (no receiver heard this part)',
       statusPrefix: landed && tOn ? (onEst ? 'Landed ~' : 'Landed ') : '', statusTs: tOn || 0, statusText: landed ? (tOn ? `Landed ${onEst ? '~' : ''}${fmtLocal(tOn, tzTo)}` : 'Landed · time unknown') : (l.ended ? 'Landed (airport unknown)' : 'Unknown'),
       from: siteFrom ? SITE_CELLS : apCells(from, l.from && l.from.conf), to: siteTo ? SITE_CELLS : apCells(to, l.to && l.to.conf),
-      // not FR24's "btn-playback" class: its page script hijacks those buttons to open its own (empty) playback
-      btn: `<a class="btn btn-sm tl-play btn-table-action text-white bkg-blue fs-10" href="${trace}" title="Replay this flight in FR24's player (its track as kept by the LADD unblocker)"><i class="fa fa-play text-white fs-10"></i> &nbsp;Play </a>` });
+      btn: playCellHtml(l, hex, ac && ac.reg ? ac.reg : reg, flown) });
   }
   function liveRowHtml(lv, hex, reg) {
     const from = apById(lv.originId), to = apById(lv.destId);
@@ -400,13 +406,18 @@
   }
   function saveFile(f) { const url = URL.createObjectURL(new Blob([f.text], { type: f.type })), a = document.createElement('a'); a.href = url; a.download = f.name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 60000); }
   // (one click handler for every such button of the page: the row's aircraft, its day's track, the file)
+  let exportBound = false;
   function exportClicks(hexOfRow, csOfRow) {
+    if (exportBound) return; exportBound = true;
     document.addEventListener('click', ev => {
       const a = ev.target && ev.target.closest && ev.target.closest('a.tl-export'); if (!a) return;
       ev.preventDefault(); ev.stopImmediatePropagation();
       const tr = a.closest('tr'), fid = (tr && tr.querySelector('[data-flight]') || { dataset: {} }).dataset.flight || ''; if (!tr) return;
       const kind = a.dataset.tlExport, w = rowWindow(tr), was = a.textContent; a.textContent = ' … ';
       (async () => {
+        // (a flight of a log rebuilt here: its track as its Play plays it)
+        const pb = tr.querySelector('a.btn-playback.tl-pbrow'), sid = pb ? pb.dataset.flightHex || '' : '';
+        if (PB_SYN.test(sid)) { const f = await pbFlight({ id: sid }); if (!f || !f.ok) throw new Error('no track of this flight'); saveFile(exportFile(kind, f.pts, f.cs || csOfRow(tr), sid)); return; }
         const hex = await hexOfRow(tr, fid, w.off); if (!/^[0-9a-f]{6}$/.test(hex || '')) throw new Error('aircraft not known');
         // (its day's track - and the next day's, for a flight over midnight UTC)
         const ts = dayStr(w.on * 1000) !== dayStr(w.off * 1000) ? [w.off, Math.min(w.on, nowS())] : [w.off];
@@ -554,6 +565,36 @@
     const r = localView(Object.assign({}, r0, { computedAt: now() }), id, hex, pos);
     return Object.assign(r, { cs: (cur && cur.cs) || (leg && leg.cs) || '', fr24Id: cached && now() - cached.savedAt < 6 * 3600e3 ? cached.id : 0 });
   }
+  // (1.2.4) the flight in the page's address (#<id>) - FR24's own link to a flight's playback, the panel's, a board's, a
+  // search result's - played as FR24 plays it once its row is in the table: its Play clicked, FR24's page script playing
+  // it in place. FR24's own rows FR24 plays itself; an id of a moment ("ff" + address + a time, + 0 for its latest flight)
+  // or of FR24's id of a flight its rows here do not carry: the row of that flight - the nearest take-off within 3 hours
+  const pbHashWhere = new Map(); let pbHashDone = '';
+  function pbHashPlay(tbody) {
+    const h = (location.hash || '').replace(/^#/, '').toLowerCase(); if (!/^[0-9a-f]{6,16}$/.test(h) || h === pbHashDone) return;
+    let b = document.getElementById('btn-playback-' + h);
+    if (b && !b.classList.contains('tl-pbrow')) { pbHashDone = h; return; }
+    if (!b) {
+      const m = PB_SYN.exec(h);
+      if (!m && !pbHashWhere.has(h)) { pbHashWhere.set(h, null); pbFlight({ id: h }).then(f => { if (f && f.ok) { pbHashWhere.set(h, { hex: f.hex, t: f.dep }); pbHashPlay(tbody); } }).catch(() => {}); }
+      const at = m ? { hex: m[1], t: parseInt(m[2], 16) } : pbHashWhere.get(h); if (!at) return;
+      const ours = [...tbody.querySelectorAll('a.btn-playback.tl-pbrow')].filter(a => (PB_SYN.exec(a.dataset.flightHex || '') || [])[1] === at.hex).map(a => ({ a, t: Number(a.dataset.timestamp) || 0 }));
+      if (!ours.length) return;
+      const best = at.t ? ours.map(x => Object.assign(x, { d: Math.abs(x.t - at.t) })).filter(x => x.d <= 3 * 3600).sort((x, y) => x.d - y.d)[0] : ours.sort((x, y) => y.t - x.t)[0];
+      if (!best) return;
+      b = best.a;
+    }
+    if (b.dataset.flightHex !== h) try { history.replaceState(history.state, '', location.pathname + location.search + '#' + b.dataset.flightHex); } catch (e) { /* the address as it was */ }
+    pbHashDone = (location.hash || '').replace(/^#/, '').toLowerCase() || h;
+    b.click();
+  }
+  // (rows drawn again while a flight plays: its row marked as playing again, as FR24 marks it)
+  function pbRowsDrawn(tbody) {
+    const h = (location.hash || '').replace(/^#/, '').toLowerCase(), b = /^[0-9a-f]{6,16}$/.test(h) && document.getElementById('btn-playback-' + h);
+    const cp = document.getElementById('cnt-playback');
+    if (b && b.classList.contains('tl-pbrow') && h === pbHashDone && cp && !cp.classList.contains('hidden')) { b.classList.add('active'); const tr = b.closest('tr'); if (tr) tr.classList.add('active'); }
+    pbHashPlay(tbody);
+  }
   async function bootAircraftPage() {
     const reg = decodeURIComponent((location.pathname.match(/^\/data\/aircraft\/([^/?#]+)/i) || [])[1] || '').toUpperCase();
     if (!reg) return;
@@ -561,9 +602,9 @@
     await store.kvReady;          // (the airport list and small records; the aircraft's own records are read by key)
     if (document.readyState === 'loading') await new Promise(r => document.addEventListener('DOMContentLoaded', r, { once: true }));
     const table = document.getElementById('tbl-datatable'); if (!table) return;
-    // our Play / Live buttons open their own link; FR24's table handlers never see the click
+    // our Live buttons open their own link; FR24's table handlers never see the click (our Play is FR24's own: FR24 plays it)
     document.addEventListener('click', ev => {
-      const a = ev.target && ev.target.closest && ev.target.closest('#tbl-datatable a.tl-play, #tbl-datatable a.tl-live'); if (!a) return;
+      const a = ev.target && ev.target.closest && ev.target.closest('#tbl-datatable a.tl-live'); if (!a) return;
       ev.stopImmediatePropagation();
       if (a.target === '_blank') { ev.preventDefault(); window.open(a.href, '_blank', 'noopener'); }
     }, true);
@@ -628,6 +669,7 @@
               if (!tail.parentNode) tbody.appendChild(tail);
               tail.insertAdjacentHTML('beforebegin', html); tail.dataset.html = html;
             }
+            pbRowsDrawn(tbody);
             const busy = total > 0 && done < total;
             tail.firstChild.innerHTML = `${busy ? '<span class="tl-spin"></span>&nbsp; ' : ''}${legs.length} earlier flight${legs.length === 1 ? '' : 's'} rebuilt from public ADS-B data (adsb.lol, <a href="https://globe.airplanes.live/?icao=${esc(hex0)}" target="_blank" rel="noopener noreferrer">airplanes.live</a>) · ${Math.round(OLDER_DAYS / 30)} months before FR24's week${busy ? ` · loading… (${done} of ${total} days)` : ''}${busy ? '' : logGaps(hex0)}`;
           };
@@ -664,10 +706,15 @@
     if (!cands.length) await moreCands();
     if (!cands.length) { loading.innerHTML = '<td colspan="20">The ICAO address of this registration is unknown, so its flight log cannot be rebuilt.</td>'; return; }
     await loadAirports();
-    let current = null, liveState = null;
+    let current = null, liveState = null, curHex = '';
+    // (1.2.4) its flights played in FR24's own player on this page: the padlocked figures of the moment played, from the
+    // public track, as for FR24's own rows; the days of the rows under the pointer read ahead; their KML and CSV
+    setInterval(() => { if (curHex) fillPlaybackData(curHex).catch(e => log('playback data', e)); }, 400);
+    tbody.addEventListener('pointerover', ev => { const tr = ev.target && ev.target.closest && ev.target.closest('tr[data-timestamp]'); if (tr && curHex) pbWarm(curHex, Number(tr.dataset.timestamp)); });
+    exportClicks(() => Promise.resolve(curHex), tr => clean(tr.children[5] && tr.children[5].textContent).replace(/[()]/g, '').toUpperCase() || reg.replace(/-/g, ''));
     // the log of one address: header, pictures, rows; returns the number of flights found (a later run replaces it)
     const showFor = async hex => {
-      const run = {}; current = run; liveState = null;
+      const run = {}; current = run; liveState = null; curHex = hex;
       tbody.querySelectorAll('tr.tl-adsb-row').forEach(r => r.remove());
       if (!loading.parentNode) tbody.insertBefore(loading, foot.parentNode ? foot : null);
       loading.innerHTML = '<td colspan="20"><span class="tl-spin"></span>&nbsp; Loading flight history from public ADS-B…</td>';
@@ -705,6 +752,7 @@
         const html = (liveState ? liveRowHtml(liveState, hex, reg) : '') + shown.map(l => legRowHtml(l, hex, reg)).join('');
         if (!foot.parentNode) tbody.appendChild(foot);
         (loading.parentNode ? loading : foot).insertAdjacentHTML('beforebegin', html);
+        pbRowsDrawn(tbody);
         const days = Object.keys((store.peekHist(hex) || {}).days || {}).length;
         const inferred = shown.filter(l => (l.from && l.from.conf === 'chain') || (l.to && l.to.conf === 'chain')).length;
         const other = pageHex && pageHex !== hex ? ` · FR24's register lists Mode S ${esc(pageHex.toUpperCase())} for ${esc(reg)}; the ${esc(reg)} seen flying uses ${esc(hex.toUpperCase())}` : '';
@@ -849,6 +897,8 @@
     // (FR24's own title names the airline: its heading as on the flight pages it has)
     const h1 = sec.querySelector('#cnt-subpage-info h1'); if (h1 && /^Flight history for /.test(document.title)) h1.textContent = document.title.replace(/\s*[|-]\s*Flightradar24.*$/i, '') + ' ';
     const tbody = wrap.querySelector('tbody');
+    // (each flight's KML and CSV: its track as its Play plays it)
+    exportClicks(() => Promise.resolve(''), () => cs);
     const render = list => {
       const rows = list.slice().sort((a, b) => b.leg.tStart - a.leg.tStart).map(({ hex, leg }) => { const hx = store.getHex(hex) || {}; return legRowHtml(leg, hex, hx.reg || leg.reg || '', { reg: hx.reg || leg.reg || hexNNumber(hex), type: hx.type || leg.type || '', desc: modelName(hx) }); });
       tbody.innerHTML = rows.join('') + `<tr class="tl-foot"><td colspan="20">Flights of ${esc(cs)} rebuilt from public ADS-B data (adsb.lol, airplanes.live) · ${list.length} flight${list.length === 1 ? '' : 's'} · times are local to each airport</td></tr>`;

@@ -4,6 +4,19 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 
 1.0.0 is the first release. The versions before it are the betas, labelled B: B22.31.12 is version 22.31.12.
 
+## [1.2.5] - 2026-11-05
+
+### In short
+- A blocked flight, or one older than FR24's 7 days, now plays on its aircraft's log page itself, in FR24's own player at the top of the page (its map, slider, figures and graph), exactly as FR24 plays the flights of any other aircraft. Its KML and CSV sit beside its Play, as on FR24's own rows.
+- Every Playback of a blocked flight (the map panel, airport boards, search results, recent flights, the panel's "playback" link) opens its aircraft's log page at that flight and plays it there, as FR24 does with its own flights.
+- An address of such a playback no longer ends on FR24's "Flights by airline" page.
+
+### Changed
+- **Playback on the log page, in FR24's own player.** On FR24's aircraft page, a row's Play has FR24 fetch the flight (`flight-playback.json`) and draw it in the player at the top of the page, with `#<flight>` in the address. Each flight rebuilt here is now a row with FR24's own Play button and data. FR24's page script plays it in place: map, track coloured by altitude, airports, slider, time, altitude, speed, heading, the speed and altitude graph, and the aircraft and its picture. Its fetch of the flight is answered in the browser from the flight's track as kept: the monitor's FR24 positions, else the public ADS-B record of its day. GPS altitude, true and indicated airspeed, vertical speed and squawk are filled, as on FR24's own rows. A flight of FR24's own that FR24 answers without a track (blocked, or older than its week) gets its track the same way. This works on the logs of blocked aircraft and on the older flights rebuilt under FR24's week for every other aircraft.
+- **KML and CSV beside each Play** of a rebuilt flight, as on FR24's own rows, made from the same track.
+- **Every Playback of a blocked flight** opens `/data/aircraft/<registration>#<flight>`. The page plays that flight once its row is in. The address of a moment (a board row's take-off time) plays the flight that took off within 3 hours of it. `ff` + address + `00000000` plays the aircraft's latest flight. A middle or Ctrl click opens it in a new tab.
+- **Old addresses:** `/data/playback/ff…` (a flight known only here) and the `/data/flights?tl-pb=…` addresses of 1.2.4 now go to the flight's aircraft page, where it plays. FR24's own playback page of a flight it locks or shows empty is still given the track, as in 1.2.4.
+
 ## [1.2.4] - 2026-11-05
 
 ### In short

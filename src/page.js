@@ -3586,7 +3586,9 @@
         if (c === 'Data/AirportBoard' && apI) mxBoardRwy(p.flights, p.board, apI);
         if (c === 'Data/Airport' && apI && p.boards) ['departures', 'arrivals', 'onGround'].forEach(function (k) { if (p.boards[k]) mxBoardRwy(p.boards[k].flights, k, apI); });
         var pm = location.pathname.match(/^\/data\/playback\/([0-9a-f]{1,16})\/?$/i);
-        if (pm) mxPbTake(pg, pm[1].toLowerCase());
+        // (a flight known only here: its aircraft's page, where it plays in place; FR24's own page of a flight it locks or
+        // shows empty: given the track)
+        if (pm) { if (MX_PB_SYN.test(pm[1].toLowerCase())) mxPbAway(pm[1].toLowerCase()); else mxPbTake(pg, pm[1].toLowerCase()); }
         else if (mxPbWanted) mxPbTake(pg, mxPbWanted, true);
         // (allowed while one of these pages is shown - or about to be: the page it was asked from still showing, 15 s at most)
         mxPbFlags((c === 'Data/NewFlightPlayback' && p.trailSource === 'tl') || (c === mxPbFrom && Date.now() - mxPbAt < 15000));
@@ -3686,15 +3688,84 @@
     }
     // A blocked flight's Playback clicked (FR24's own button - boards, search, the panel, its recent flights): FR24's player
     // with its track - in a new tab when asked for one. Nothing known of the flight: FR24's own Playback after all
+    // (as FR24 plays one of its own flights from anywhere: the aircraft's page, the flight's id in its address - FR24's page
+    // script plays it in place, in its own player)
+    var mxNav = function (u, replace) { if (replace) location.replace(u); else location.assign(u); };
+    var mxPbLogUrl = function (reg, id) { return '/data/aircraft/' + encodeURIComponent(String(reg).toLowerCase()) + '#' + id; };
     function mxPbOpen(w, t, newTab) {
-      var id = w.id > 0 ? Number(w.id).toString(16) : isHex(w.hex) && w.dep > 0 ? mxPbSynId(w.hex, w.dep) : '';
-      if (newTab && id) { window.open(MX_PB_SYN.test(id) ? '/data/flights?tl-pb=' + id : '/data/playback/' + id, '_blank', 'noopener'); return; }
+      var id = isHex(w.hex) && w.dep > 0 ? mxPbSynId(w.hex, w.dep) : w.id > 0 ? Number(w.id).toString(16) : isHex(w.hex) ? mxPbSynId(w.hex, 0) : '';
+      var go = function (u) { if (newTab) window.open(u, '_blank', 'noopener'); else mxNav(u); };
+      if (w.reg && id) { go(mxPbLogUrl(w.reg, id)); return; }
       var root = document.documentElement; root.style.cursor = 'progress';
       mxPbAsk({ id: id, hex: w.hex || '', reg: w.reg || '', cs: w.cs || '', dep: w.dep || 0, at: w.at || 0, apId: w.apId || 0, kind: w.kind || '' }).then(function (d) {
         root.style.cursor = '';
-        if (d && mxPbShow(d, false, null)) return;
+        if (d && d.reg) { go(mxPbLogUrl(d.reg, d.hex && d.dep ? mxPbSynId(d.hex, d.dep) : d.id)); return; }
+        if (!newTab && d && mxPbShow(d, false, null)) return;
         pbFallback(t, newTab);
       });
+    }
+    // ---- (1.2.4) FR24's aircraft page (/data/aircraft/<reg>) and flight-number page play a flight in place: the row's Play
+    // asks FR24 for the flight (/common/v1/flight-playback.json) and FR24's page script draws it in the page's own player -
+    // map, slider, figures, graph. A flight known only here ("ff" + address + take-off), or one FR24 answers with no track
+    // (a blocked flight, one older than its week): answered here from the flight's track as kept, in FR24's own form
+    var mxLpPhotos = new Map();
+    function mxLegacyPbJson(d) {
+      var tr = [];
+      (d.pts || []).forEach(function (p) {
+        if (!p || !fin(p.t) || !fin(p.lat) || !fin(p.lon)) return;
+        var ft = p.gnd ? 0 : fin(p.alt) ? Math.max(0, Math.round(p.alt)) : null; if (ft === null) return;
+        var kt = fin(p.gs) ? Math.max(0, Math.round(p.gs)) : 0, vr = fin(p.vr) ? Math.round(p.vr) : 0;
+        var ems = fin(p.ag) || fin(p.ias) || fin(p.tas) ? { altGPS: fin(p.ag) ? Math.round(p.ag) : null, ias: fin(p.ias) ? Math.round(p.ias) : null, tas: fin(p.tas) ? Math.round(p.tas) : null } : null;
+        var o = { latitude: p.lat, longitude: p.lon, altitude: { feet: ft, meters: Math.round(ft * 0.3048) }, speed: { kmh: Math.round(kt * 1.852), kts: kt, mph: Math.round(kt * 1.15078) },
+          verticalSpeed: { fpm: vr, ms: Math.round(vr * 0.0508) / 10 }, heading: fin(p.trk) ? Math.round(p.trk) : 0, squawk: /^[0-7]{4}$/.test(p.sq || '') ? p.sq : null, timestamp: Math.round(p.t), ems: ems };
+        if (tr.length && tr[tr.length - 1].timestamp >= o.timestamp) return;
+        tr.push(o);
+      });
+      var ap = function (a) { return a && a.code ? { name: a.name || a.city || a.code, code: { iata: a.code, icao: a.code }, position: { latitude: fin(a.lat) ? a.lat : null, longitude: fin(a.lon) ? a.lon : null, altitude: 0, country: { name: '', code: '' }, region: { city: a.city || a.name || a.code } }, timezone: { name: a.tz || 'UTC', offset: 0, abbr: '', abbrName: '', isDst: false }, visible: true, website: null } : null; };
+      var dep = Number(d.dep) || null, arr = Number(d.arr) || null;
+      var flight = {
+        identification: { id: String(d.id), row: null, number: { default: d.flightNumber || null, alternative: null }, callsign: d.cs || null, codeshare: null },
+        status: { live: false, text: arr ? 'Landed' : 'Unknown', icon: null, estimated: null, ambiguous: false },
+        aircraft: { model: { code: d.type || '', text: d.model || d.type || '' }, countryId: null, registration: d.reg || null, identification: { modes: String(d.hex || '').toUpperCase() || null, registration: d.reg || null, serialNo: d.msn || null }, availability: { serialNo: true, age: false } },
+        owner: null, airline: d.operator ? { name: d.operator, code: null, short: d.operator } : null,
+        airport: { origin: ap(d.origin), destination: ap(d.destination), real: null },
+        median: { time: null, delay: null, timestamp: null },
+        time: { scheduled: { departure: null, arrival: null }, real: { departure: dep, arrival: arr }, estimated: { departure: null, arrival: null }, other: { eta: null, duration: arr && dep && arr > dep ? arr - dep : null } },
+        track: tr, aircraftImages: [], availability: []
+      };
+      return { result: { request: { callback: null, device: null, flightId: String(d.id), format: 'json', pk: null, timestamp: dep, token: null }, response: { timestamp: Math.floor(Date.now() / 1000), altitudeFilter: false, data: { flight: flight } } },
+        _api: { copyright: 'Copyright (c) 2014-2026 Flightradar24 AB. All rights reserved.', legalNotice: '', version: '1.0' } };
+    }
+    function mxLegacyPb(url, input, init) {
+      var q = {}; try { new URL(url, location.href).searchParams.forEach(function (v, k) { q[k] = v; }); } catch (e) { /* none */ }
+      var id = String(q.flightId || '').toLowerCase(), ts = Number(q.timestamp) || 0; if (!/^[0-9a-f]{1,16}$/.test(id)) return null;
+      var ours = function () {
+        return mxPbAsk({ id: id, dep: MX_PB_SYN.test(id) ? 0 : ts }, 30000).then(function (d) {
+          if (!d) return null;
+          if (d.hex && d.photos && d.photos.length) mxLpPhotos.set(String(d.hex).toUpperCase(), d.photos);
+          mx.lpPlays = (mx.lpPlays || 0) + 1;
+          return jsonResponse(null, mxLegacyPbJson(d));
+        });
+      };
+      if (MX_PB_SYN.test(id)) return ours().then(function (r) { return r || jsonResponse(null, { result: { request: {}, response: { data: { flight: null } } } }); });
+      // (FR24's own flight: FR24's answer when it has the track; else the track as kept)
+      return oFetch.call(window, input, init).then(function (r) {
+        return r.clone().json().then(function (j) {
+          var f = j && j.result && j.result.response && j.result.response.data && j.result.response.data.flight;
+          if (f && Array.isArray(f.track) && f.track.length) return r;
+          return ours().then(function (o) { return o || r; });
+        }, function () { return ours().then(function (o) { return o || r; }); });
+      }, function (e) { return ours().then(function (o) { if (o) return o; throw e; }); });
+    }
+    // (its pictures beside the player: FR24's, else those of the aircraft the flight was answered with)
+    function mxLegacyImages(url, input, init) {
+      var hx = String((/[?&]aircraft=([0-9a-f]{6})/i.exec(url) || [])[1] || '').toUpperCase(), ph = mxLpPhotos.get(hx);
+      if (!ph || !ph.length) return null;
+      var e = function (s) { return String(s || '').replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
+      var mine = function () { var p = ph[0], src = /jetphotos/i.test(p.link || p.url) ? 'Jetphotos' : /planespotters/i.test(p.link || p.url) ? 'Planespotters' : ''; return jsonResponse(null, { medium: ph.map(function (x) { return { src: x.url, link: x.link || x.url, copyright: e(x.copyright || ''), source: src }; }) }); };
+      return oFetch.call(window, input, init).then(function (r) {
+        return r.clone().json().then(function (j) { return j && (j.sideview || (j.medium && j.medium.length)) ? r : mine(); }, mine);
+      }, mine);
     }
     // A playback page opened by its address (a new tab, a reload, FR24's own link): one of these flights, or FR24's own page
     // of a flight it locks (older than its week), shows nothing of (a blocked flight's) or has no page for - the flight
@@ -3704,9 +3775,14 @@
     // by its address: FR24's flights page opened in its place (FR24's app, and so its router), marked, and the playback
     // given to the router there; its address the playback's again
     var mxPbParam = function () { var m = /[?&]tl-pb=([0-9a-f]{1,16})(?:&|$)/i.exec(location.search); return m ? m[1].toLowerCase() : ''; };
-    var mxPbAway = function (id) { mx.pbAway = id; location.replace('/data/flights?tl-pb=' + id); };
-    // (the mark read as the page opens - FR24's app may write its own address over it as it starts)
-    var mxPbWanted = mxPbParam();
+    // (the flight's aircraft page, where FR24 plays it in place; asked of the userscript, which aircraft it was)
+    var mxPbAway = function (id) {
+      if (mx.pbAway === id) return; mx.pbAway = id;
+      mxPbAsk({ id: id }, 30000).then(function (d) { if (d && d.reg) mxNav(mxPbLogUrl(d.reg, d.hex && d.dep && MX_PB_SYN.test(id) ? mxPbSynId(d.hex, d.dep) : id), true); });
+    };
+    // (an address of the version before: its flight's aircraft page, where it plays)
+    var mxPbWanted = '';
+    if (mx.on && mxPbParam()) mxPbAway(mxPbParam());
     if (mx.on) (function () {
       var m = location.pathname.match(/^\/data\/playback\/([0-9a-f]{1,16})\/?$/i); if (!m) return;
       var id = m[1].toLowerCase();
@@ -3755,6 +3831,8 @@
       if (/\/webapi\/v1\/bookmarks(?:$|\?(?!.*sort))/.test(url) && !/\/bookmarks\/sort/.test(url)) return mxBookmarks(input, init);
       if (/\/restapi\/v1\/widgets\/last-clicked-flights(?:$|[?#])/.test(url)) return mxLastClicked(input, init);
       if (/\/airport-history\/\d+(?:\/recent)?(?:[?#]|$)/.test(url)) return mxAirportHistory(input, init, url);
+      if (/\/common\/v1\/flight-playback\.json\?/.test(url)) { var lp = mxLegacyPb(url, input, init); if (lp) return lp; }
+      if (/^(?:https?:\/\/[^/]*flightradar24\.com)?\/aircraft\/images\/?\?(?:.*&)?aircraft=[0-9a-f]{6}/i.test(url)) { var li = mxLegacyImages(url, input, init); if (li) return li; }
       if (/^(?:https?:\/\/[^/]*flightradar24\.com)?\/download\/check-quota\?/.test(url)) return Promise.resolve(jsonResponse(null, { quotaLeft: 60, quota: 60, expires: Date.now() + 86400e3 }));
       if (/^(?:https?:\/\/[^/]*flightradar24\.com)?\/download\/?\?(?:.*&)?file=(?:kml|csv)(?:&|$)/.test(url)) return mxTrackFile(url);
       if (/\/\/tl-wx\.invalid\//.test(url)) return mxTile(url);
@@ -4374,6 +4452,6 @@
       else if (d.__tweeksLadd === 'hello') post('ready', { stats: stats, feedReady: !!feedHeaders, hdr: feedHdrPublic(), v: BRIDGE_V });
     });
     window[NS] = { resolved: resolved, routes: routes, naRecs: naRecs, naRoutes: naRoutes, telem: telem, hist: hist, lastPos: lastPos, photoCache: photoCache, psCache: psCache, stats: stats, fetchPhotos: fetchPhotos, hello: function () { post('ready', { stats: stats, feedReady: !!feedHeaders, v: BRIDGE_V }); }, v: BRIDGE_V };
-    if (window.__tlTestHook) try { window.__tlTestHook({ csOf: csOf, patchTopFlights: patchTopFlights, fillFlightList: fillFlightList, routeRows: routeRows, liveDestFix: liveDestFix, hist: hist, preloaded: function () { return preloaded; }, parse: parse, photoFits: photoFits, makerOf: makerOf, patchFollow: patchFollow, patchFlightMsg: patchFlightMsg, pushFollow: pushFollow, followSt: function () { return followSt; }, setFollowSt: function (s) { followSt = s; }, shownPhotos: shownPhotos, photoCache: photoCache, FOLLOW: FOLLOW, DETAILS: DETAILS, fLen: fLen, fStr: fStr, fVar: fVar, patchFlight: patchFlight, patchLiveFeed: patchLiveFeed, fr24Named: fr24Named, psState: function () { return { q: psQ.length, busy: psBusy, last: psLast, blockedFor: Math.max(0, psBlockedUntil - Date.now()), pri: Array.from(psPri), jobs: photoJobs.size, head: psQ.slice(0, 3).map(function (j) { return j.hex; }) }; }, acceptPubTel: acceptPubTel, pubTelFor: pubTelFor, fillNativeCard: fillNativeCard, regsOfCallsign: regsOfCallsign, categoryOf: categoryOf, placeShort: placeShort, nativeFill: nativeFill, natInfo: natInfo, addArch: addArch, acceptBoardArch: acceptBoardArch, telem: telem, b64Encode: b64Encode, b64DecodeInto: b64DecodeInto, frameHeader: frameHeader, concat: concat, varintInt32: varintInt32, PLAYBACK: PLAYBACK, patchPlayback: patchPlayback, patchPlaybackRequest: patchPlaybackRequest, pbRoutes: pbRoutes, pbTelAt: pbTelAt, setPbTrace: function (t) { pbTrace = t; }, patchList: patchList, acceptSites: acceptSites, listSig: listSig, mergeRoutes: mergeRoutes, applyRoutes: applyRoutes, routesAdd: routesAdd, applyAirport: applyAirport, applyBoardPage: applyBoardPage, applyStats: applyStats, mergeFlights: mergeFlights, apData: apData, telAt: telAt, noteTelem: noteTelem, pbTraceOf: function () { return pbTrace; }, logoOf: logoOf, archDetail: archDetail, tsOf: tsOf, noteAirportJson: noteAirportJson, rwyOf: rwyOf, rwyPanel: rwyPanel, panelTick: panelTick, panelData: panelData, promoSlots: promoSlots, acceptAirportPanel: acceptAirportPanel, unlockRunways: unlockRunways, mvRows: mvRows, mvKept: mvKept, dayOf: dayOf, pbPanelTick: pbPanelTick, logoFix: logoFix, liveEntries: liveEntries, pbPos: pbPos, unlockFeed: unlockFeed, derivedVs: derivedVs, altHist: altHist, acceptAir: acceptAir, airCache: airCache, flushAir: flushAir, airWant: function () { return airWant; }, lastPos: lastPos, resolved: resolved, stats: stats, pbFind: pbFind, inBar: inBar, pbBlk: pbBlk, cardInfo: cardInfo, boardRowsSeen: boardRowsSeen, archById: archById, placeBoard: placeBoard, stopBoardHold: stopBoardHold, needBoardArch: needBoardArch, mx: mx, mxPatchCore: mxPatchCore, mxAuth: mxAuth, mxNatList: mxNatList, mxTrackOk: mxTrackOk, stripRestriction: stripRestriction, mxBmMerge: mxBmMerge, mxBmItem: mxBmItem, mxMonTile: mxMonTile, mxMonOr: mxMonOr, mxPinVer: mxPinVer, mxAirportHistory: mxAirportHistory, mxHistItems: mxHistItems, mxTrackFile: mxTrackFile, mxDataTick: mxDataTick, mxPbProps: mxPbProps, mxPbShow: mxPbShow, mxPbStandIn: mxPbStandIn, mxPbReadAt: mxPbReadAt, mxPbStand: mxPbStand, mxBoardRwy: mxBoardRwy, reqIdOf: reqIdOf, mxPbOpen: mxPbOpen, mxPbTake: mxPbTake, mxPbFlags: mxPbFlags, mxPbSynId: mxPbSynId, mxPbParam: mxPbParam, setPbWanted: function (v) { mxPbWanted = v; }, mxPlans: function () { return mxPlans; }, mxLiveRunways: mxLiveRunways, mxRwy: mxRwy, mxSetApply: mxSetApply, mxSetNote: mxSetNote, mxSetKept: mxSetKept, mxLastClicked: mxLastClicked, mxLcList: mxLcList, mxLcTick: mxLcTick, mxBmMax: mxBmMax, mxNatParse: mxNatParse, mxAirsigList: mxAirsigList, mxStations: mxStations, mxLightning: mxLightning, mxLx: mxLx, mxFetch: mxFetch, mxWxText: mxWxText, mxWxKind: mxWxKind, mxCsv: mxCsv, patchLiveFeedRequest: patchLiveFeedRequest, mxCats: mxCats, mxOp: mxOp, mxLevels: mxLevels, mxNearest: mxNearest, MX_ICE: MX_ICE, MX_TURB: MX_TURB, mxWafsUrl: mxWafsUrl, routes: routes, setCurFollow: function (id) { curFollowId = id; } }); } catch (e) { /* ignore */ }
+    if (window.__tlTestHook) try { window.__tlTestHook({ csOf: csOf, patchTopFlights: patchTopFlights, fillFlightList: fillFlightList, routeRows: routeRows, liveDestFix: liveDestFix, hist: hist, preloaded: function () { return preloaded; }, parse: parse, photoFits: photoFits, makerOf: makerOf, patchFollow: patchFollow, patchFlightMsg: patchFlightMsg, pushFollow: pushFollow, followSt: function () { return followSt; }, setFollowSt: function (s) { followSt = s; }, shownPhotos: shownPhotos, photoCache: photoCache, FOLLOW: FOLLOW, DETAILS: DETAILS, fLen: fLen, fStr: fStr, fVar: fVar, patchFlight: patchFlight, patchLiveFeed: patchLiveFeed, fr24Named: fr24Named, psState: function () { return { q: psQ.length, busy: psBusy, last: psLast, blockedFor: Math.max(0, psBlockedUntil - Date.now()), pri: Array.from(psPri), jobs: photoJobs.size, head: psQ.slice(0, 3).map(function (j) { return j.hex; }) }; }, acceptPubTel: acceptPubTel, pubTelFor: pubTelFor, fillNativeCard: fillNativeCard, regsOfCallsign: regsOfCallsign, categoryOf: categoryOf, placeShort: placeShort, nativeFill: nativeFill, natInfo: natInfo, addArch: addArch, acceptBoardArch: acceptBoardArch, telem: telem, b64Encode: b64Encode, b64DecodeInto: b64DecodeInto, frameHeader: frameHeader, concat: concat, varintInt32: varintInt32, PLAYBACK: PLAYBACK, patchPlayback: patchPlayback, patchPlaybackRequest: patchPlaybackRequest, pbRoutes: pbRoutes, pbTelAt: pbTelAt, setPbTrace: function (t) { pbTrace = t; }, patchList: patchList, acceptSites: acceptSites, listSig: listSig, mergeRoutes: mergeRoutes, applyRoutes: applyRoutes, routesAdd: routesAdd, applyAirport: applyAirport, applyBoardPage: applyBoardPage, applyStats: applyStats, mergeFlights: mergeFlights, apData: apData, telAt: telAt, noteTelem: noteTelem, pbTraceOf: function () { return pbTrace; }, logoOf: logoOf, archDetail: archDetail, tsOf: tsOf, noteAirportJson: noteAirportJson, rwyOf: rwyOf, rwyPanel: rwyPanel, panelTick: panelTick, panelData: panelData, promoSlots: promoSlots, acceptAirportPanel: acceptAirportPanel, unlockRunways: unlockRunways, mvRows: mvRows, mvKept: mvKept, dayOf: dayOf, pbPanelTick: pbPanelTick, logoFix: logoFix, liveEntries: liveEntries, pbPos: pbPos, unlockFeed: unlockFeed, derivedVs: derivedVs, altHist: altHist, acceptAir: acceptAir, airCache: airCache, flushAir: flushAir, airWant: function () { return airWant; }, lastPos: lastPos, resolved: resolved, stats: stats, pbFind: pbFind, inBar: inBar, pbBlk: pbBlk, cardInfo: cardInfo, boardRowsSeen: boardRowsSeen, archById: archById, placeBoard: placeBoard, stopBoardHold: stopBoardHold, needBoardArch: needBoardArch, mx: mx, mxPatchCore: mxPatchCore, mxAuth: mxAuth, mxNatList: mxNatList, mxTrackOk: mxTrackOk, stripRestriction: stripRestriction, mxBmMerge: mxBmMerge, mxBmItem: mxBmItem, mxMonTile: mxMonTile, mxMonOr: mxMonOr, mxPinVer: mxPinVer, mxAirportHistory: mxAirportHistory, mxHistItems: mxHistItems, mxTrackFile: mxTrackFile, mxDataTick: mxDataTick, mxPbProps: mxPbProps, mxPbShow: mxPbShow, mxPbStandIn: mxPbStandIn, mxPbReadAt: mxPbReadAt, mxPbStand: mxPbStand, mxBoardRwy: mxBoardRwy, reqIdOf: reqIdOf, mxPbOpen: mxPbOpen, mxPbTake: mxPbTake, setNav: function (f) { mxNav = f; }, mxPbAway: mxPbAway, mxLegacyPbJson: mxLegacyPbJson, mxLegacyPb: mxLegacyPb, mxPbFlags: mxPbFlags, mxPbSynId: mxPbSynId, mxPbParam: mxPbParam, setPbWanted: function (v) { mxPbWanted = v; }, mxPlans: function () { return mxPlans; }, mxLiveRunways: mxLiveRunways, mxRwy: mxRwy, mxSetApply: mxSetApply, mxSetNote: mxSetNote, mxSetKept: mxSetKept, mxLastClicked: mxLastClicked, mxLcList: mxLcList, mxLcTick: mxLcTick, mxBmMax: mxBmMax, mxNatParse: mxNatParse, mxAirsigList: mxAirsigList, mxStations: mxStations, mxLightning: mxLightning, mxLx: mxLx, mxFetch: mxFetch, mxWxText: mxWxText, mxWxKind: mxWxKind, mxCsv: mxCsv, patchLiveFeedRequest: patchLiveFeedRequest, mxCats: mxCats, mxOp: mxOp, mxLevels: mxLevels, mxNearest: mxNearest, MX_ICE: MX_ICE, MX_TURB: MX_TURB, mxWafsUrl: mxWafsUrl, routes: routes, setCurFollow: function (id) { curFollowId = id; } }); } catch (e) { /* ignore */ }
     post('ready', { stats: stats, feedReady: false, v: BRIDGE_V });
   }
