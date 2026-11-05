@@ -247,7 +247,7 @@ const syn = (hex, t) => 'ff' + hex + ('00000000' + Math.round(t).toString(16)).s
     for (let s = D1 - 900; s <= D1 + 9300; s += 30) {
       const k = (s - D1) / 9000, gnd = s < D1 || s > D1 + 9000, lat = 40.7772 + (26.0726 - 40.7772) * Math.min(1, Math.max(0, k)), lon = -73.8726 + (-80.1527 + 73.8726) * Math.min(1, Math.max(0, k));
       const alt = gnd ? 'ground' : Math.round(Math.min(41000, 41000 * Math.min(k, 1 - k) * 8)), gs = gnd ? 8 : 300 + Math.round(150 * Math.min(1, Math.min(k, 1 - k) * 8));
-      TRACE.trace.push([s - DAY0, lat, lon, alt, gs, 200, 0, gnd ? null : 1200, s === D1 ? { flight: 'N600EB  ', squawk: '2214' } : null, 'adsb_icao']);
+      TRACE.trace.push([s - DAY0, lat, lon, alt, gs, 200, 0, gnd ? null : 1200, s === D1 ? { flight: 'N600EB  ', squawk: '2214' } : null, 'adsb_icao', gnd ? null : alt + 250, null, gnd ? null : gs - 60]);
     }
     // (and today's record of an aircraft this browser knows nothing of: two flights out of Biggin Hill, three hours apart)
     const TD0 = Math.floor(nowS / 86400) * 86400, TWO = { icao: 'a00001', timestamp: TD0, trace: [] }, F1 = nowS - 5 * 3600, F2 = nowS - 2 * 3600;
@@ -287,6 +287,7 @@ const syn = (hex, t) => 'ff' + hex + ('00000000' + Math.round(t).toString(16)).s
     const pts = (fl && fl.pts) || [], air = pts.filter(p => !p.gnd);
     check('... its track from the day\'s record: from its stand to its landing, nothing of the day outside the flight\'s time', pts.length > 100 && pts[0].t >= d1 - 120 && pts[pts.length - 1].t <= d1 + 9000 + 120 && air.length > 80 && air.some(p => p.alt >= 40000) && pts.every((p, i) => !i || p.t > pts[i - 1].t), { n: pts.length, first: pts[0] && pts[0].t - d1, last: pts.length && pts[pts.length - 1].t - d1 });
     check('... each point as FR24\'s player takes it: position, altitude (0 on the ground), speed, track, climb, squawk', pts.every(p => Number.isFinite(p.lat) && Number.isFinite(p.lon) && Number.isFinite(p.gs) && (p.gnd ? p.alt === 0 : Number.isFinite(p.alt))) && air.some(p => p.vr === 1200) && pts.some(p => p.sq === '2214'), air[3]);
+    check('... and the figures FR24\'s player asks its server for (GPS altitude, indicated airspeed) where the record has them - none on the ground', air.length && air.every(p => p.ag === p.alt + 250 && p.ias === p.gs - 60) && pts.filter(p => p.gnd).every(p => p.ag == null && p.ias == null), air[3]);
     const latest = await L.pbFlight({ id: L.pbSynId(hex, 0) });
     check('... the id of the aircraft alone ("its latest flight"): its latest - here with no record of its day: none, nothing of another flight made up', !latest.ok || latest.dep === d2, { ok: latest.ok, dep: latest.dep && latest.dep - d2 });
     check('... an aircraft nobody knows: none', !(await L.pbFlight({ id: L.pbSynId('abcdef', d1) })).ok);

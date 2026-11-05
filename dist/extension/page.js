@@ -869,6 +869,91 @@
       return 0;
     }
 
+    // (a request's flight id - field 1, fixed32 or varint)
+    function reqIdOf(body) {
+      var b = bodyBytes(body); if (!b || b.length < 5) return 0;
+      try { var f = find(parse(b.subarray(5)), 1); if (f && f.wt === 5) return new DataView(f.val.buffer, f.val.byteOffset, 4).getUint32(0, true); if (f && f.wt === 0) return f.val; } catch (e) { /* ignore */ }
+      return 0;
+    }
+
+    // ---- (1.2.4) FR24's player on a page of ours (mxPbShow): the GPS altitude, true and indicated airspeed and squawk of
+    // each moment, which FR24's player asks its server for by the flight's live id (PlaybackFlight) - a page of ours has a
+    // stand-in id of its own, 0xF0000000 and up (FR24's ids are far below), and FR24's asks by it are answered here, from
+    // the flight's track as kept: nothing sent. Its live stream and stored trail of that id: "not found", as FR24's server
+    // says of a flight it has no more (its page plays the track it was given)
+    var MX_PB_STAND = 0xF0000000, mxPbStand = new Map(), mxPbStandN = 0;
+    function mxPbStandIn(d) {
+      var sq4 = /^[0-7]{4}$/, R = [];
+      (d.pts || []).forEach(function (p) {
+        if (!p || !fin(p.t)) return;
+        var r = { t: p.t, ag: fin(p.ag) ? p.ag : null, ias: fin(p.ias) && p.ias > 0 ? p.ias : null, tas: fin(p.tas) && p.tas > 0 ? p.tas : null, sq: sq4.test(p.sq || '') ? p.sq : '' };
+        if (r.ag != null || r.ias != null || r.tas != null || r.sq) R.push(r);
+      });
+      if (!R.length) return null;
+      R.sort(function (a, b) { return a.t - b.t; });
+      var key = String(d.id), sid = 0;
+      mxPbStand.forEach(function (v, k) { if (v.key === key) sid = k; });
+      if (!sid) { sid = MX_PB_STAND + (++mxPbStandN % 0x0ffffff); if (mxPbStand.size >= 20) mxPbStand.delete(mxPbStand.keys().next().value); }
+      mxPbStand.set(sid, { key: key, R: R });
+      return sid;
+    }
+    // (each figure at a moment: in proportion between the reports either side of it two minutes apart at most, else the
+    // nearer within a minute; the squawk the last set within ten minutes, else the next within a minute)
+    function mxPbReadAt(R, t) {
+      var lo = 0, hi = R.length; while (lo < hi) { var m = (lo + hi) >> 1; if (R[m].t <= t) lo = m + 1; else hi = m; }
+      var out = {};
+      ['ag', 'ias', 'tas', 'sq'].forEach(function (k) {
+        var a = null, b = null, i;
+        for (i = lo - 1; i >= 0 && i >= lo - 400; i--) if (k === 'sq' ? R[i].sq : R[i][k] != null) { a = R[i]; break; }
+        for (i = lo; i < R.length && i < lo + 400; i++) if (k === 'sq' ? R[i].sq : R[i][k] != null) { b = R[i]; break; }
+        if (k === 'sq') { out.sq = a && t - a.t <= 600 ? a.sq : b && b.t - t <= 60 ? b.sq : ''; return; }
+        if (a && b && b.t - a.t <= 120) out[k] = b.t === a.t ? a[k] : a[k] + (b[k] - a[k]) * (t - a.t) / (b.t - a.t);
+        else { var n = a && (!b || t - a.t <= b.t - t) ? a : b; out[k] = n && Math.abs(n.t - t) <= 60 ? n[k] : null; }
+      });
+      return out;
+    }
+    // (FR24's PlaybackFlightResponse of that moment: 3 ExtendedFlightInfo - 13 EmsInfo, 15 squawk)
+    function mxPbFlightMsg(sid, ts) {
+      var s = mxPbStand.get(sid), parts = [];
+      if (s && ts > 0) {
+        var r = mxPbReadAt(s.R, ts), ems = emsBytes({ agps: r.ag, ias: r.ias, tas: r.tas });
+        if (ems) parts.push(fLen(13, ems));
+        if (r.sq) parts.push(fVar(15, parseInt(r.sq, 16)));
+      }
+      return parts.length ? fLen(3, concat(parts)) : new Uint8Array(0);
+    }
+    // (a gRPC-web answer given to FR24's XHR as from its server: its state, status, headers and body, and its events)
+    function grpcAnswer(xhr, msg, code, text) {
+      var bin = xhr.responseType === 'arraybuffer', hd = xhr.__tlHeaders || {}, ct = '';
+      Object.keys(hd).forEach(function (k) { if (/^content-type$/i.test(k)) ct = String(hd[k]); });
+      if (!/grpc-web/.test(ct)) ct = bin ? 'application/grpc-web+proto' : 'application/grpc-web-text';
+      var tr = enc.encode('grpc-status:' + code + '\r\ngrpc-message:' + (text || '') + '\r\n'), frames = [];
+      if (msg) frames.push(concat([frameHeader(0, msg.length), msg]));
+      frames.push(concat([frameHeader(0x80, tr.length), tr]));
+      var b64 = /-text/.test(ct), body = b64 ? frames.map(b64Encode).join('') : concat(frames).buffer;
+      var hdrs = { 'content-type': ct }; if (code) { hdrs['grpc-status'] = String(code); hdrs['grpc-message'] = text || ''; }
+      var rs = 1, gone = false, def = function (k, g) { Object.defineProperty(xhr, k, { configurable: true, get: g }); };
+      def('readyState', function () { return rs; });
+      def('status', function () { return rs >= 2 ? 200 : 0; });
+      def('statusText', function () { return rs >= 2 ? 'OK' : ''; });
+      def('responseURL', function () { return rs >= 2 ? String(xhr.__tlUrl || '') : ''; });
+      def('responseText', function () { return rs >= 3 && typeof body === 'string' ? body : ''; });
+      def('response', function () { return typeof body === 'string' ? (rs >= 3 ? body : '') : (rs === 4 ? body : null); });
+      xhr.getResponseHeader = function (k) { var v = rs >= 2 ? hdrs[String(k).toLowerCase()] : null; return v == null ? null : v; };
+      xhr.getAllResponseHeaders = function () { return rs >= 2 ? Object.keys(hdrs).map(function (k) { return k + ': ' + hdrs[k]; }).join('\r\n') + '\r\n' : ''; };
+      xhr.abort = function () { gone = true; rs = 0; };
+      var fire = function (n) { try { xhr.dispatchEvent(n === 'progress' || n === 'load' || n === 'loadend' ? new ProgressEvent(n) : new Event(n)); } catch (e) { /* ignore */ } };
+      var step = function (s) { if (gone) return; rs = s; fire('readystatechange'); if (s === 3) fire('progress'); if (s === 4) { fire('load'); fire('loadend'); } if (s < 4) oSetTimeout(function () { step(s + 1); }, 0); };
+      oSetTimeout(function () { step(2); }, 0);
+    }
+    function mxPbStandReq(xhr, url, body) {
+      var m = url.match(/fr24\.feed\.api\.v1\.Feed\/(PlaybackFlight|FollowFlight|HistoricTrail|FlightDetails)(?:$|\?)/); if (!m) return false;
+      var sid = reqIdOf(body); if (!(sid >= MX_PB_STAND)) return false;
+      if (m[1] === 'PlaybackFlight') { grpcAnswer(xhr, mxPbFlightMsg(sid, tsOf(body)), 0, ''); mx.pbReads = (mx.pbReads || 0) + 1; }
+      else grpcAnswer(xhr, null, 5, 'flight not found');
+      return true;
+    }
+
     // ---- XHR shims -----------------------------------------------------------------------------------------
     var P = XMLHttpRequest.prototype, oOpen = P.open, oSend = P.send, oSetHeader = P.setRequestHeader;
     var respDesc = Object.getOwnPropertyDescriptor(P, 'response'), textDesc = Object.getOwnPropertyDescriptor(P, 'responseText');
@@ -935,6 +1020,7 @@
     P.send = function (body) {
       var url = this.__tlUrl || '', sendBody = body;
       try {
+        if (!this.__tlOwn && mxPbStandReq(this, url, body)) return;
         if (/fr24\.feed\.api\.v1\.Feed\/LiveFeed(?:$|\?)/.test(url)) {
           if (!this.__tlOwn) {
             if (this.__tlHeaders && this.__tlHeaders['fr24-device-id'] && !feedHeaders) { feedHeaders = Object.assign({}, this.__tlHeaders); post('feedReady', { hdr: feedHdrPublic() }); }
@@ -3458,6 +3544,38 @@
       p.liveFlight = Object.assign({}, lf, { origin: put(o, r0), destination: put(de, landed ? r1 : null), __tl: sig });
       mx.liveRwy = (mx.liveRwy || 0) + 1;
     }
+    // ---- (1.2.4) FR24's airport boards - its arrivals, departures and on-ground pages, the airport page's boards and the
+    // map's airport panel: each flown row's runway (FR24's padlock below Business), as the flight history's - from the
+    // flight's own track, worked out on the monitor. Those known put in the row at once, the padlock off; the rest asked
+    // for (30 at a time for a board, the latest first, each once in 10 minutes) and put in as they come
+    var mxBrAsked = new Map(), mxBrAt = {};
+    function mxBoardRwy(rows, kind, apId) {
+      if (!Array.isArray(rows) || !apId) return 0;
+      var now = Date.now() / 1000, land = kind !== 'departures', n = 0, ask = [];
+      rows.forEach(function (r) {
+        if (!r || typeof r !== 'object') return;
+        var lk = !!(r.locked && r.locked.runway === true); if (!lk && r.runway != null && r.runway !== '') return;
+        var raw = r.flightId != null ? r.flightId : r.flight && r.flight.id, fid = mxFidHex(raw);
+        // (a row of this script's own with an id made up here: no track of it anywhere by that id)
+        if (!fid || (r.__tlArch && /^c[0-9a-f]{0,7}$/.test(fid))) return;
+        var st = String((r.status && (r.status.name || r.status.type || r.status.label)) || '').toLowerCase(), t = Number(r.landedTime || r.estimatedTime || r.scheduledTime) || 0;
+        var flown = kind === 'on-ground' || kind === 'onGround' || kind === 'on-grounds' || /landed|departed|arrived/.test(st) || (!st && t > 0 && t < now - 300);
+        if (!flown || /cancel|divert/.test(st)) return;
+        var key = fid + ':' + (land ? 1 : 0), v = mxRwy.get(key);
+        if (v) { if (r.runway !== v) { r.runway = v; n++; } if (lk) r.locked = Object.assign({}, r.locked, { runway: false }); return; }
+        if (Date.now() - (mxBrAsked.get(key) || 0) > 600000) ask.push({ fid: fid, landing: land, t: t, key: key });
+      });
+      var bk = apId + ':' + kind;
+      if (ask.length && Date.now() - (mxBrAt[bk] || 0) > 3000) {
+        mxBrAt[bk] = Date.now();
+        ask.sort(function (a, b) { return Math.abs(now - a.t) - Math.abs(now - b.t); });
+        ask = ask.slice(0, 30); ask.forEach(function (x) { mxBrAsked.set(x.key, Date.now()); });
+        if (mxBrAsked.size > 5000) mxBrAsked.delete(mxBrAsked.keys().next().value);
+        mxRwyAsk(apId, ask.map(function (x) { return { fid: x.fid, landing: x.landing, t: x.t }; }), 20000);
+      }
+      if (n) mx.boardRwy = (mx.boardRwy || 0) + n;
+      return n;
+    }
     // (FR24's flight and aircraft history pages: a flight's KML and CSV in their download menu - FR24's own menu, unlocked;
     // the files made here, mxTrackFile)
     function mxDataTick() {
@@ -3467,6 +3585,9 @@
         var c = pg.component, p = pg.props;
         if ((c === 'Data/FlightHistory' || c === 'Data/AircraftRegistration') && p.canDownload === false) { p.canDownload = true; mx.dl = (mx.dl || 0) + 1; }
         if (c === 'Data/FlightHistory' && p.liveFlight) mxLiveRunways(p);
+        var apI = p.airport && Number(p.airport.id);
+        if (c === 'Data/AirportBoard' && apI) mxBoardRwy(p.flights, p.board, apI);
+        if (c === 'Data/Airport' && apI && p.boards) ['departures', 'arrivals', 'onGround'].forEach(function (k) { if (p.boards[k]) mxBoardRwy(p.boards[k].flights, k, apI); });
         var pm = location.pathname.match(/^\/data\/playback\/([0-9a-f]{1,16})\/?$/i);
         if (pm) mxPbTake(pg, pm[1].toLowerCase());
         else if (mxPbWanted) mxPbTake(pg, mxPbWanted, true);
@@ -3481,7 +3602,7 @@
     // positions of it, the public ADS-B record of its day - the userscript's pbFlight) and handed to FR24's own router, so
     // FR24's player plays it: its map, slider, figures, speed and altitude graph, tracklog, and its KML and CSV beside the
     // play button. A flight of FR24's own keeps its id; one known only here is "ff" + address + take-off (hex)
-    var MX_PB_SYN = /^ff[0-9a-f]{14}$/, MX_PB_FLAGS = ['map.info.flight.vertical-speed', 'map.info.flight.squawk'], mxPlans = null, mxPbAdded = {}, mxPbAt = 0, mxPbFrom = '';
+    var MX_PB_SYN = /^ff[0-9a-f]{14}$/, MX_PB_FLAGS = ['map.info.flight.vertical-speed', 'map.info.flight.squawk', 'map.info.flight.ems.alt.gps', 'map.info.flight.ems.tas', 'map.info.flight.ems.ias'], mxPlans = null, mxPbAdded = {}, mxPbAt = 0, mxPbFrom = '';
     var mxPbSynId = function (hex, t) { return 'ff' + String(hex).toLowerCase() + ('00000000' + Math.max(0, Math.round(t || 0)).toString(16)).slice(-8); };
     function mxGp() { try { var el = document.getElementById('app'), va = el && el.__vue_app__; return va && va.config && va.config.globalProperties && va.config.globalProperties.$inertia ? va.config.globalProperties : null; } catch (e) { return null; } }
     // FR24's page props of a flight from its track - the shapes FR24's page makes of its own records (its HistoricTrail
@@ -3518,8 +3639,9 @@
         facts: facts, relatedFlights: [], content: []
       };
     }
-    // (vertical speed and squawk, which FR24's page padlocks for a free account, given by the track here: allowed in FR24's
-    // plan table while one of these pages is shown - and only then: FR24's live panel shows its own, which it does not send)
+    // (vertical speed, squawk, GPS altitude, true and indicated airspeed, which FR24's page padlocks for a free account,
+    // given by the track here: allowed in FR24's plan table while one of these pages is shown - and only then: FR24's live
+    // panel shows its own, which it does not send)
     function mxPbFlags(on) {
       if (!mxPlans) return;
       MX_PB_FLAGS.forEach(function (k) {
@@ -3544,6 +3666,7 @@
     function mxPbShow(d, replace, base) {
       var gp = mxGp(), router = gp && gp.$inertia, cur = gp && gp.$page; if (!router || !cur || !cur.props) return false;
       var ours = mxPbProps(d), props = {};
+      ours.liveFlightId = mxPbStandIn(d);
       ['errors', 'name', 'host', 'locale', 'dispatcher', 'features', 'meta'].forEach(function (k) { if (k in cur.props) props[k] = cur.props[k]; });
       props.route = base && cur.props.route ? cur.props.route : { name: 'web.data.playback', params: { id: String(d.id) }, query: [] };
       if (base) {
@@ -3880,6 +4003,8 @@
                 }
               }
               if (kind !== 'on-grounds') noteBoardRows(fullList || j.data, apId, kind);
+              // (each flown row's runway, the map panel's badge beside its aircraft type - 1.2.4)
+              if (mx.on) { try { hits += mxBoardRwy(j.data, kind, apId); } catch (e) { mxFail(e); } }
               if (!hits && !merged && JSON.stringify(j.meta || null) === metaWas) return res;
               stats.boardHits += hits;
               return jsonResponse(res, j);
@@ -4252,7 +4377,7 @@
       else if (d.__tweeksLadd === 'hello') post('ready', { stats: stats, feedReady: !!feedHeaders, hdr: feedHdrPublic(), v: BRIDGE_V });
     });
     window[NS] = { resolved: resolved, routes: routes, naRecs: naRecs, naRoutes: naRoutes, telem: telem, hist: hist, lastPos: lastPos, photoCache: photoCache, psCache: psCache, stats: stats, fetchPhotos: fetchPhotos, hello: function () { post('ready', { stats: stats, feedReady: !!feedHeaders, v: BRIDGE_V }); }, v: BRIDGE_V };
-    if (window.__tlTestHook) try { window.__tlTestHook({ csOf: csOf, patchTopFlights: patchTopFlights, fillFlightList: fillFlightList, routeRows: routeRows, liveDestFix: liveDestFix, hist: hist, preloaded: function () { return preloaded; }, parse: parse, photoFits: photoFits, makerOf: makerOf, patchFollow: patchFollow, patchFlightMsg: patchFlightMsg, pushFollow: pushFollow, followSt: function () { return followSt; }, setFollowSt: function (s) { followSt = s; }, shownPhotos: shownPhotos, photoCache: photoCache, FOLLOW: FOLLOW, DETAILS: DETAILS, fLen: fLen, fStr: fStr, fVar: fVar, patchFlight: patchFlight, patchLiveFeed: patchLiveFeed, fr24Named: fr24Named, psState: function () { return { q: psQ.length, busy: psBusy, last: psLast, blockedFor: Math.max(0, psBlockedUntil - Date.now()), pri: Array.from(psPri), jobs: photoJobs.size, head: psQ.slice(0, 3).map(function (j) { return j.hex; }) }; }, acceptPubTel: acceptPubTel, pubTelFor: pubTelFor, fillNativeCard: fillNativeCard, regsOfCallsign: regsOfCallsign, categoryOf: categoryOf, placeShort: placeShort, nativeFill: nativeFill, natInfo: natInfo, addArch: addArch, acceptBoardArch: acceptBoardArch, telem: telem, b64Encode: b64Encode, b64DecodeInto: b64DecodeInto, frameHeader: frameHeader, concat: concat, varintInt32: varintInt32, PLAYBACK: PLAYBACK, patchPlayback: patchPlayback, patchPlaybackRequest: patchPlaybackRequest, pbRoutes: pbRoutes, pbTelAt: pbTelAt, setPbTrace: function (t) { pbTrace = t; }, patchList: patchList, acceptSites: acceptSites, listSig: listSig, mergeRoutes: mergeRoutes, applyRoutes: applyRoutes, routesAdd: routesAdd, applyAirport: applyAirport, applyBoardPage: applyBoardPage, applyStats: applyStats, mergeFlights: mergeFlights, apData: apData, telAt: telAt, noteTelem: noteTelem, pbTraceOf: function () { return pbTrace; }, logoOf: logoOf, archDetail: archDetail, tsOf: tsOf, noteAirportJson: noteAirportJson, rwyOf: rwyOf, rwyPanel: rwyPanel, panelTick: panelTick, panelData: panelData, promoSlots: promoSlots, acceptAirportPanel: acceptAirportPanel, unlockRunways: unlockRunways, mvRows: mvRows, mvKept: mvKept, dayOf: dayOf, pbPanelTick: pbPanelTick, logoFix: logoFix, liveEntries: liveEntries, pbPos: pbPos, unlockFeed: unlockFeed, derivedVs: derivedVs, altHist: altHist, acceptAir: acceptAir, airCache: airCache, flushAir: flushAir, airWant: function () { return airWant; }, lastPos: lastPos, resolved: resolved, stats: stats, pbFind: pbFind, inBar: inBar, pbBlk: pbBlk, cardInfo: cardInfo, boardRowsSeen: boardRowsSeen, archById: archById, placeBoard: placeBoard, stopBoardHold: stopBoardHold, needBoardArch: needBoardArch, mx: mx, mxPatchCore: mxPatchCore, mxAuth: mxAuth, mxNatList: mxNatList, mxTrackOk: mxTrackOk, stripRestriction: stripRestriction, mxBmMerge: mxBmMerge, mxBmItem: mxBmItem, mxMonTile: mxMonTile, mxMonOr: mxMonOr, mxPinVer: mxPinVer, mxAirportHistory: mxAirportHistory, mxHistItems: mxHistItems, mxTrackFile: mxTrackFile, mxDataTick: mxDataTick, mxPbProps: mxPbProps, mxPbShow: mxPbShow, mxPbOpen: mxPbOpen, mxPbTake: mxPbTake, mxPbFlags: mxPbFlags, mxPbSynId: mxPbSynId, mxPbParam: mxPbParam, setPbWanted: function (v) { mxPbWanted = v; }, mxPlans: function () { return mxPlans; }, mxLiveRunways: mxLiveRunways, mxRwy: mxRwy, mxSetApply: mxSetApply, mxSetNote: mxSetNote, mxSetKept: mxSetKept, mxLastClicked: mxLastClicked, mxLcList: mxLcList, mxLcTick: mxLcTick, mxBmMax: mxBmMax, mxNatParse: mxNatParse, mxAirsigList: mxAirsigList, mxStations: mxStations, mxLightning: mxLightning, mxLx: mxLx, mxFetch: mxFetch, mxWxText: mxWxText, mxWxKind: mxWxKind, mxCsv: mxCsv, patchLiveFeedRequest: patchLiveFeedRequest, mxCats: mxCats, mxOp: mxOp, mxLevels: mxLevels, mxNearest: mxNearest, MX_ICE: MX_ICE, MX_TURB: MX_TURB, mxWafsUrl: mxWafsUrl, routes: routes, setCurFollow: function (id) { curFollowId = id; } }); } catch (e) { /* ignore */ }
+    if (window.__tlTestHook) try { window.__tlTestHook({ csOf: csOf, patchTopFlights: patchTopFlights, fillFlightList: fillFlightList, routeRows: routeRows, liveDestFix: liveDestFix, hist: hist, preloaded: function () { return preloaded; }, parse: parse, photoFits: photoFits, makerOf: makerOf, patchFollow: patchFollow, patchFlightMsg: patchFlightMsg, pushFollow: pushFollow, followSt: function () { return followSt; }, setFollowSt: function (s) { followSt = s; }, shownPhotos: shownPhotos, photoCache: photoCache, FOLLOW: FOLLOW, DETAILS: DETAILS, fLen: fLen, fStr: fStr, fVar: fVar, patchFlight: patchFlight, patchLiveFeed: patchLiveFeed, fr24Named: fr24Named, psState: function () { return { q: psQ.length, busy: psBusy, last: psLast, blockedFor: Math.max(0, psBlockedUntil - Date.now()), pri: Array.from(psPri), jobs: photoJobs.size, head: psQ.slice(0, 3).map(function (j) { return j.hex; }) }; }, acceptPubTel: acceptPubTel, pubTelFor: pubTelFor, fillNativeCard: fillNativeCard, regsOfCallsign: regsOfCallsign, categoryOf: categoryOf, placeShort: placeShort, nativeFill: nativeFill, natInfo: natInfo, addArch: addArch, acceptBoardArch: acceptBoardArch, telem: telem, b64Encode: b64Encode, b64DecodeInto: b64DecodeInto, frameHeader: frameHeader, concat: concat, varintInt32: varintInt32, PLAYBACK: PLAYBACK, patchPlayback: patchPlayback, patchPlaybackRequest: patchPlaybackRequest, pbRoutes: pbRoutes, pbTelAt: pbTelAt, setPbTrace: function (t) { pbTrace = t; }, patchList: patchList, acceptSites: acceptSites, listSig: listSig, mergeRoutes: mergeRoutes, applyRoutes: applyRoutes, routesAdd: routesAdd, applyAirport: applyAirport, applyBoardPage: applyBoardPage, applyStats: applyStats, mergeFlights: mergeFlights, apData: apData, telAt: telAt, noteTelem: noteTelem, pbTraceOf: function () { return pbTrace; }, logoOf: logoOf, archDetail: archDetail, tsOf: tsOf, noteAirportJson: noteAirportJson, rwyOf: rwyOf, rwyPanel: rwyPanel, panelTick: panelTick, panelData: panelData, promoSlots: promoSlots, acceptAirportPanel: acceptAirportPanel, unlockRunways: unlockRunways, mvRows: mvRows, mvKept: mvKept, dayOf: dayOf, pbPanelTick: pbPanelTick, logoFix: logoFix, liveEntries: liveEntries, pbPos: pbPos, unlockFeed: unlockFeed, derivedVs: derivedVs, altHist: altHist, acceptAir: acceptAir, airCache: airCache, flushAir: flushAir, airWant: function () { return airWant; }, lastPos: lastPos, resolved: resolved, stats: stats, pbFind: pbFind, inBar: inBar, pbBlk: pbBlk, cardInfo: cardInfo, boardRowsSeen: boardRowsSeen, archById: archById, placeBoard: placeBoard, stopBoardHold: stopBoardHold, needBoardArch: needBoardArch, mx: mx, mxPatchCore: mxPatchCore, mxAuth: mxAuth, mxNatList: mxNatList, mxTrackOk: mxTrackOk, stripRestriction: stripRestriction, mxBmMerge: mxBmMerge, mxBmItem: mxBmItem, mxMonTile: mxMonTile, mxMonOr: mxMonOr, mxPinVer: mxPinVer, mxAirportHistory: mxAirportHistory, mxHistItems: mxHistItems, mxTrackFile: mxTrackFile, mxDataTick: mxDataTick, mxPbProps: mxPbProps, mxPbShow: mxPbShow, mxPbStandIn: mxPbStandIn, mxPbReadAt: mxPbReadAt, mxPbStand: mxPbStand, mxBoardRwy: mxBoardRwy, reqIdOf: reqIdOf, mxPbOpen: mxPbOpen, mxPbTake: mxPbTake, mxPbFlags: mxPbFlags, mxPbSynId: mxPbSynId, mxPbParam: mxPbParam, setPbWanted: function (v) { mxPbWanted = v; }, mxPlans: function () { return mxPlans; }, mxLiveRunways: mxLiveRunways, mxRwy: mxRwy, mxSetApply: mxSetApply, mxSetNote: mxSetNote, mxSetKept: mxSetKept, mxLastClicked: mxLastClicked, mxLcList: mxLcList, mxLcTick: mxLcTick, mxBmMax: mxBmMax, mxNatParse: mxNatParse, mxAirsigList: mxAirsigList, mxStations: mxStations, mxLightning: mxLightning, mxLx: mxLx, mxFetch: mxFetch, mxWxText: mxWxText, mxWxKind: mxWxKind, mxCsv: mxCsv, patchLiveFeedRequest: patchLiveFeedRequest, mxCats: mxCats, mxOp: mxOp, mxLevels: mxLevels, mxNearest: mxNearest, MX_ICE: MX_ICE, MX_TURB: MX_TURB, mxWafsUrl: mxWafsUrl, routes: routes, setCurFollow: function (id) { curFollowId = id; } }); } catch (e) { /* ignore */ }
     post('ready', { stats: stats, feedReady: false, v: BRIDGE_V });
   }
 

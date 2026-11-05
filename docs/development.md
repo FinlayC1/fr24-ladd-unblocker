@@ -49,6 +49,7 @@ npm run test:all       # also the live end-to-end runs (normal and Tampermonkey-
 | `unit_names` | Owner and airfield naming | – |
 | `unit_origin` | Origin inference | – |
 | `unit_flightmsg` | FR24 protobuf messages (built script in jsdom) | – |
+| `unit_mapx` | FR24's locked map options, worked natively (plans table, weather, WAFS, AIRMETs/SIGMETs, METARs, lightning, NAT tracks, category filters, settings), runways in the airport flight history, flight pages and airport boards, KML/CSV downloads, and FR24's player readings (GPS altitude, airspeeds, squawk) answered locally for a stand-in flight id (built script in jsdom) | – |
 | `unit_pbbuttons` | Playback of a blocked flight (board cards, kept rows, the panel, search results, rebuilt log rows) in FR24's own player: the page handed to FR24's router in FR24's shapes, its id (FR24's, or `ff` + address + take-off), new tabs, FR24's own playback pages of flights it locks or cannot show taken over with their words kept; the bar's and ordinary flights' left to FR24; the userscript's `pbWhere` and `pbFlight` (the flight from a day's record) (built script in jsdom) | – |
 | `unit_fr24` | FR24 feed protobuf, the world scan's regions, naming (lists, look-ups, dead reckoning, trails, parked), withdrawing, rough destinations, `/fr24ids`, `/report` | – |
 | `unit_store` | The permanent log (old days only added to, boards from disk), `/learn`, flights only FR24 sees, runways used, `/airport`, owners on the monitor, the names table's LADD flag | – |
