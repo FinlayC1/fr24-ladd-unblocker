@@ -125,6 +125,25 @@
     }));
     postToPage('rwyGot', { rid: d.rid, list: out, done: true });
   }
+  // (1.2.7) An airport's runways all at once - every take-off and landing of a window, logged on the monitor as it
+  // happened from FR24's tracks (monitor/rwylog.cjs), and the blocked flights' from their ADS-B tracks - for its board
+  async function onRwyAp(d) {
+    const ap = Number(d && d.ap) || 0, rid = d && d.rid; if (!(ap > 0) || !monUp()) { postToPage('rwyApGot', { rid, ap, f: {}, h: [] }); return; }
+    const to = nowS() + 3600, from = Math.max(to - 9 * 86400, Number(d.from) || to - 86400 * 2);
+    let j = null; try { j = await monGet(`/rwyap?ap=${ap}&from=${Math.round(from)}&to=${Math.round(to)}`, { timeout: 8000 }); } catch (e) { j = null; }
+    const f = {}; for (const [k, v] of Object.entries((j && j.f) || {})) if (/^[0-9a-f]{1,12}:[01]$/.test(k) && typeof v === 'string' && v) f[k] = v.slice(0, 8);
+    const h = ((j && Array.isArray(j.h)) ? j.h : []).filter(x => Array.isArray(x) && /^[0-9a-f]{6}$/.test(x[0]) && (x[1] === 0 || x[1] === 1) && typeof x[2] === 'string' && x[2] && fin(x[3])).map(x => [x[0], x[1], x[2].slice(0, 8), x[3]]);
+    postToPage('rwyApGot', { rid, ap, f, h, ok: !!j });
+  }
+  // (1.2.7) An airport's runways and its last day's take-offs and landings by runway: which are in use (the page works it
+  // out with the wind it shows)
+  async function onRwyUse(d) {
+    const ap = Number(d && d.ap) || 0, rid = d && d.rid; let j = null;
+    if (ap > 0 && monUp()) { try { j = await monGet(`/rwyuse?ap=${ap}`, { timeout: 8000 }); } catch (e) { j = null; } }
+    const ok = !!(j && Array.isArray(j.ends));
+    postToPage('rwyUseGot', { rid, ap, ok, ends: ok ? j.ends.filter(e => Array.isArray(e) && typeof e[0] === 'string' && fin(e[1])) : [], runways: ok && Array.isArray(j.runways) ? j.runways.filter(Array.isArray) : [],
+      mv: ok && Array.isArray(j.mv) ? j.mv.filter(m => Array.isArray(m) && typeof m[0] === 'string' && (m[1] === 0 || m[1] === 1) && fin(m[2])) : [], at: ok ? j.at || nowS() : 0 });
+  }
   // (1.2.4) A flight's KML or CSV for FR24's own download buttons - its playback's, beside the play button, and its flight
   // history's - which FR24 gives a paid plan only: FR24's own track of the flight (free for its week of playback), else
   // every FR24 position of it the monitor has kept (730 days - a blocked flight's too). FR24's CSV columns

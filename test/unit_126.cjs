@@ -42,13 +42,18 @@ const LOCKED = () => ({ arrival: { name: null, upsell: true }, departure: { name
   // ================= a board card's runways =================
   { const P = open(); await sleep(200); const H = P.H();
     H.mxRwy.set('3d1f0009:0', '27R'); H.mxRwy.set('3d1f0009:1', '09');
-    const j1 = await (await H.cardRwy(card('3d1f0009', LOCKED(), { atd: now - 5000, ata: now - 1000 }), 200, 'arrivals', false)).json();
-    check('card: both runways known - put in, FR24\'s padlock off; nothing asked', j1.data.runways.departure.name === '27R' && j1.data.runways.arrival.name === '09' && j1.data.runways.departure.upsell === false && j1.data.runways.arrival.upsell === false && !P.posts.some(p => p.__tweeksLadd === 'rwyWant'), j1.data.runways);
+    // (each end's airport's runways as logged asked for first - 1.2.7 - answered with none here)
+    const ansAp = () => P.posts.filter(p => p.__tweeksLadd === 'rwyAp' && !p.done).forEach(a => { a.done = 1; P.send({ __tweeksLadd: 'rwyApGot', rid: a.rid, ap: a.ap, ok: true, f: {}, h: [] }); });
+    const pr1 = H.cardRwy(card('3d1f0009', LOCKED(), { atd: now - 5000, ata: now - 1000 }), 200, 'arrivals', false); await sleep(20); ansAp();
+    const j1 = await (await pr1).json();
+    check('card: both runways known - put in, FR24\'s padlock off; no flight of it asked', j1.data.runways.departure.name === '27R' && j1.data.runways.arrival.name === '09' && j1.data.runways.departure.upsell === false && j1.data.runways.arrival.upsell === false && !P.posts.some(p => p.__tweeksLadd === 'rwyWant'), j1.data.runways);
     // (not known: asked for at each end's own airport - the take-off at the origin, the landing here - and done as soon as the
     // monitor's answer has them, not at the 2.5 s limit)
     P.posts.length = 0;
     const t0 = Date.now(), pr = H.cardRwy(card('3d1f000a', LOCKED(), { atd: now - 5000, ata: now - 1000 }), 200, 'arrivals', false);
-    await sleep(50);
+    await sleep(30);
+    // (1.2.7: the airports' runways as logged kept a minute - none of this flight's there - so it is asked for at once)
+    ansAp(); await sleep(50);
     const asks = P.posts.filter(p => p.__tweeksLadd === 'rwyWant');
     asks.forEach(a => P.send({ __tweeksLadd: 'rwyGot', rid: a.rid, list: a.items.map(x => ({ k: x.fid + ':' + (x.landing ? 1 : 0), rwy: x.landing ? '27' : '05' })), done: false }));
     const j2 = await (await pr).json(), ms = Date.now() - t0;

@@ -17,7 +17,7 @@ const COLS = ['t', 'lat', 'lon', 'alt', 'gs', 'trk', 'vr', 'sq', 'gnd', 'altGeom
 const GROUP = 64;
 
 function createFr24Raw(env) {
-  const dir = path.join(env.store, 'fr24raw'), keepDays = env.keepDays || 730, holdS = env.holdS || 36 * 3600;
+  const dir = path.join(env.store, env.dir || 'fr24raw'), keepDays = env.keepDays || 730, holdS = env.holdS || 36 * 3600;
   const stats = { put: 0, points: 0, written: 0, members: 0, flights: 0, read: 0, pruned: 0, err: '' };
   const pend = new Map();     // fid -> { m: meta, p: Map(t -> point) }
   const done = new Map();     // fid -> { ts: the times written, in order (numbers: a third of a Set's memory), at: when last written }

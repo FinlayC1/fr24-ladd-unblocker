@@ -4,6 +4,40 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 
 1.0.0 is the first release. The versions before it are the betas, labelled B: B22.31.12 is version 22.31.12.
 
+## [1.2.7] - 2026-11-06
+
+### In short
+- The runway of every take-off and landing in the world is now logged on the monitor as it happens, from FR24's own tracks: the departure runway the moment a flight climbs out, the arrival runway the moment it is on final approach. Boards and flight cards open with their runways already in, at large airports too.
+- Blocked flights' runways now show on boards and cards (M-PORT's), from their ADS-B tracks.
+- The map's airport panel shows the runway in use for departures and arrivals under its weather, tagged PREDICTED (from the wind) or CONFIRMED (the wind and the last hour and a half's traffic agree).
+- FR24's airport data pages (`/data/airports/<code>`) get the same: runways on their rows, "N/A" airports filled, the runway in use under their weather card.
+
+### Added
+- **Live runway log on the monitor** (`monitor/rwylog.cjs`).
+  - Each scan of FR24's whole map (every two minutes) now keeps FR24's own positions of every flight near an airport and low: within 15 km and below 4,000 ft, or rolling on a runway. Parked aircraft are not kept. These go in `STORE/fr24apt` for 14 days.
+  - A take-off's runway is logged the moment those positions show the flight climbing out along it.
+  - A landing's runway is logged the moment they show it on the final approach, and again lower down, where it is surer. Only the airport a flight says it is going to counts. A flight with no route that is climbing is not counted as landing.
+  - FR24's whole trail of a flight, where the monitor has it (a blocked flight's once it has landed, and the trails browsers send), gives both ends and is preferred over the scans' guess.
+  - Runways worked out for a browser's request are kept in the same log, by day and airport, in `STORE/rwylog`, for 30 days.
+- **`/rwyap`**: an airport's runways for a time window, all at once. Blocked flights' runways from their ADS-B tracks come with them, by aircraft address and time. A board waits up to 1.5 seconds for it and is drawn with the runways in. A card asks for its other end's airport the same way.
+- **Runway in use**, under the airport panel's Conditions / Temperature / Wind and under the data page's weather card, separately for departures and arrivals (`/rwyuse`: an airport's runways and its last 24 hours' movements by runway).
+  - CONFIRMED: traffic in the last 90 minutes on a runway the wind agrees with (no more than 5 kt of tailwind, or calm), with at least two movements that way or one in the last half hour.
+  - PREDICTED: from the wind alone.
+    - The runway end with the most headwind; between parallels or ends that are alike, the one the last day used most.
+    - In fog, mist or snow, the longest runway.
+    - Also used when the wind has turned against the runway the traffic was using.
+    - On a calm day, the runway the last day used most; with no traffic either, the longest runway.
+  - Parallel runways are told apart (arrivals 27L, departures 27R). The reasons are in the tooltip.
+
+### Fixed
+- **Blocked flights' runways on boards and cards stayed "N/A".** Their rows have no FR24 id with a track (FR24 keeps none of a blocked flight). They now take the runways the monitor worked out from their ADS-B track, matched by aircraft address and time. That covers both ends of a card: the landing here and the take-off at the other airport.
+- **The card of one of this script's rows said "Actual departure N/A"** for an arrival whose take-off time was known (M-PORT from Helsinki). It now shows the other end's actual time as kept.
+- **Large airports' boards were slow to get their runways.** Each flown row was worked out on request, 30 at a time. Most rows now arrive already worked out, in one answer per airport.
+- **FR24's airport data pages** now show:
+  - Runways on their rows, blocked flights' included.
+  - The other airport filled in on FR24's own rows that said "N/A".
+  - The runway in use.
+
 ## [1.2.6] - 2026-11-06
 
 ### In short

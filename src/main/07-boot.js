@@ -132,6 +132,8 @@
       case 'routesAsk': onRoutesAsk(d).catch(e => log('search routes', e)); break;
       case 'wantSq': onWantSq(d).catch(() => {}); break;
       case 'rwyWant': onRwyWant(d).catch(e => log('runways', String(e && e.message || e))); break;
+      case 'rwyAp': onRwyAp(d).catch(e => { log('runways', String(e && e.message || e)); postToPage('rwyApGot', { rid: d.rid, ap: d.ap, f: {}, h: [] }); }); break;
+      case 'rwyUse': onRwyUse(d).catch(e => { log('runway in use', String(e && e.message || e)); postToPage('rwyUseGot', { rid: d.rid, ap: d.ap, ok: false, ends: [], runways: [], mv: [] }); }); break;
       case 'needEnds': onNeedEnds(d).catch(e => { log('board ends', String(e && e.message || e)); postToPage('endsGot', { list: [] }); }); break;
       case 'trackFile': onTrackFile(d).catch(e => { log('track file', String(e && e.message || e)); postToPage('trackFileGot', { rid: d && d.rid, ok: false }); }); break;
       case 'pbPage': onPbPage(d).catch(e => { log('playback page', String(e && e.message || e)); postToPage('pbPageGot', { rid: d && d.rid, ok: false }); }); break;
