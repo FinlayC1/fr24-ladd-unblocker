@@ -121,6 +121,17 @@ const ap = icao => E.byIcao(icao);
     check('... written away from the event loop, read back as version 2: the new take-off and the old landing', R1.stats.written === 1 && R2.get('4275cccc:0') === '26R' && R2.get('4275bbbb:1') === '26L', { w: R1.stats.written, a: R2.get('4275cccc:0'), b: R2.get('4275bbbb:1') });
   }
 
+  // ================= a landing FR24 split in two: no "departure" =================
+  { const BD = require('../monitor/boards.cjs').createBoards({ store: fs.mkdtempSync(path.join(os.tmpdir(), 'bd1210-')), E }), oxf = ap('EGTK').id, t = Math.floor(Date.now() / 1000) - 1800;
+    BD.put(oxf, 'arrivals', [{ k: 'f4274e2ca', src: 'sched', t, sch: t - 14000, est: t, fid: '4274e2ca', cs: 'VLZ78K', st: 'landed', col: 'green', ap: 914, reg: '2-PUBS', hex: '43f86e' }], 'crowd', t + 1800);
+    BD.put(oxf, 'departures', [{ k: 'f42766247', src: 'sched', t: t + 24, sch: t + 24, est: t + 24, fid: '42766247', cs: 'VLZ78K', st: 'departed', col: 'green', reg: '2-PUBS', hex: '43f86e' },
+      { k: 'f42760001', src: 'sched', t: t + 900, sch: t + 900, est: t + 900, fid: '42760001', cs: 'GNLLY', st: 'departed', col: 'green', reg: 'G-NLLY', hex: '400aaa' }], 'crowd', t + 1800);
+    const r = BD.rows(oxf, t - 3600, t + 3600);
+    check('board: VLZ78K landed at Oxford and FR24\'s new flight of it begun on the runway 24 s later, "from Oxford" to nowhere - no departure on the board; another aircraft\'s departure kept', r.arrivals.length === 1 && r.departures.length === 1 && r.departures[0].cs === 'GNLLY', r.departures.map(x => x.cs));
+    const c = [...BD.counts(oxf).values()][0] || [0, 0];
+    check('... nor counted as a take-off in the day\'s movements', c[0] === 1 && c[1] === 1, c);
+  }
+
   console.log(fails ? `\n${fails} failed` : '\nall passed');
   process.exit(fails ? 1 : 0);
 })().catch(e => { console.log('FAIL  crashed ' + (e && e.stack || e)); process.exit(1); });
