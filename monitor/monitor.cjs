@@ -926,7 +926,19 @@ function archiveJob(nowS) {
 // machine is short of memory - a minute at most at a time.
 let loopLag = 0, loopAt = Date.now(), memAt = 0, memFree = Infinity;
 const lagRing = [];   // (1.1.3) the last minute's lags, one every half second - /status loop, the console's "lag"
-setInterval(() => { const t = Date.now(); loopLag = Math.max(0, t - loopAt - 500); loopAt = t; lagRing.push(loopLag); if (lagRing.length > 120) lagRing.shift(); }, 500).unref();
+let lagWorst = { ms: 0, at: 0 };   // (1.2.8: the longest the server stood still since it started, and when)
+setInterval(() => { const t = Date.now(); loopLag = Math.max(0, t - loopAt - 500); loopAt = t; lagRing.push(loopLag); if (lagRing.length > 120) lagRing.shift(); if (loopLag > lagWorst.ms) lagWorst = { ms: loopLag, at: t }; }, 500).unref();
+// (1.2.8) The heap and the garbage collector's last minute - a heap near its limit has the collector running for seconds at
+// a time, the server answering nothing meanwhile (the 1 GB VM's 700 MB limit on the 24 GB A1: stalls of minutes)
+const V8 = require('v8');
+let gcRing = [];
+try { const { PerformanceObserver } = require('perf_hooks'); new PerformanceObserver(l => { for (const e of l.getEntries()) gcRing.push([Date.now(), e.duration]); if (gcRing.length > 20000) gcRing = gcRing.slice(-10000); }).observe({ entryTypes: ['gc'] }); } catch (e) { /* no observer: no figures */ }
+function heapStats() {
+  const cut = Date.now() - 60000; gcRing = gcRing.filter(x => x[0] >= cut);
+  let ms = 0, max = 0; for (const x of gcRing) { ms += x[1]; if (x[1] > max) max = x[1]; }
+  let h = {}; try { h = V8.getHeapStatistics(); } catch (e) { h = {}; }
+  return { heapMb: Math.round((h.used_heap_size || 0) / 1048576), heapLimitMb: Math.round((h.heap_size_limit || 0) / 1048576), gcMsLastMin: Math.round(ms), gcMaxMs: Math.round(max), gcs: gcRing.length, worstMs: lagWorst.ms, worstAt: lagWorst.at };
+}
 function lagStats() { const a = lagRing.slice().sort((x, y) => x - y); return { nowMs: loopLag, maxMs: a.length ? a[a.length - 1] : 0, p95Ms: a.length ? a[Math.floor(a.length * 0.95)] : 0, avgMs: a.length ? Math.round(a.reduce((s, x) => s + x, 0) / a.length) : 0, over200: a.filter(x => x > 200).length, samples: a.length }; }
 // (memory the machine can still give: Linux's MemAvailable - os.freemem() leaves out the page cache under Node 18, and
 // on the 1 GB VM that is nearly always "short")
@@ -2299,7 +2311,7 @@ function monStatus() {
     wx: { cells: wx.stats.cells, requests: wx.stats.requests, today: wx.stats.used, fails: wx.stats.fails, lastErr: wx.stats.lastErr, estimated: wx.stats.estimated, waiting: wx.want.size },
     wxmap: WXMAP_ON ? wxmap.status() : { off: true },
     tel: { aircraft: tel.size, added: tel.stats.added, fromBrowsers: tel.stats.crowd || 0, refused: tel.stats.crowdBad || 0, served: tel.stats.served, asked: tel.stats.asked, missed: tel.stats.missed },
-    owners: owners.status(), acdb: Object.assign(AC.status(), { sweptDay: ACS.day, sweptQueued: ACS.queued }), ages: Object.assign(AGES.status(), { learnedFrom: AGS.n }), loop: lagStats(),
+    owners: owners.status(), acdb: Object.assign(AC.status(), { sweptDay: ACS.day, sweptQueued: ACS.queued }), ages: Object.assign(AGES.status(), { learnedFrom: AGS.n }), loop: Object.assign(lagStats(), heapStats()),
     areas: CFG.areas.concat(userAreas).map(a => a.slice(0, 2)), paused: Object.fromEntries(Object.entries(pause).filter(([, t]) => t > now).map(([h, t]) => [h, Math.round((t - now) / 1000)])) };
 }
 function dashStats() {

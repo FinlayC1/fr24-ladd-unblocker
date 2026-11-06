@@ -15,6 +15,7 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 - Playback on a board card of a flight known only to this script no longer opens FR24's list of aircraft types.
 - Flights still in the air in the Last-clicked widget open again when clicked.
 - An empty Bookmarks tab now has its picture and text centred.
+- The monitor stalling for minutes (browsers saying it wasn't running): a deploy now gives the monitor a heap sized for its machine.
 
 ### Changed
 - **Runways at once** (monitor `/rwyap`, page).
@@ -32,6 +33,8 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
   - Once learned, it is kept when the aircraft later flies under another callsign. It is given up when the database itself agrees.
   - Never for American aircraft, whose address comes from their N-number.
 - **A flight still in the air in the Last-clicked widget opened nothing when clicked**, blocked or not. FR24's own click on such a flight did nothing; only landed flights (opened by this script) worked. The script now opens the flight itself through FR24's own aircraft panel, by the flight's id. If the panel hasn't opened within 2 seconds, FR24's own address for the flight (`/<callsign>/<id>`) opens instead. Ctrl- or middle-click opens it in a new tab.
+- **The monitor stood still for minutes at a time** (up to 191 seconds seen), answering nothing, so browsers took it for gone. Its service was set up by `vm-setup.sh` with a 700 MB heap limit, made for the old 1 GB VM. On the 24 GB A1, with everything the monitor now keeps in memory, the garbage collector ran for long stretches. `deploy.sh` now sets the limit from the machine's memory (60% of it, 12 GB at most) and tells systemd before restarting. It only ever raises the limit, so the 1 GB VM keeps its 700 MB. `vm-setup.sh` sizes it the same way for a new setup.
+- **`/status` `loop`** now also gives the heap in use and its limit, the garbage collector's time over the last minute, its longest pause, and the longest stall since the monitor started, with its time. A stall like this one can now be traced from outside.
 - **An empty Bookmarks tab** (no aircraft, flights, airports or locations saved) was laid out from the top, around the upgrade box this script removes, and ran under the "Add bookmark" button. It is now centred in the tab, and still scrolls from the top where the tab is too small for it.
 - **Playback on a board card of a flight known only to this script opened FR24's list of aircraft types** (`/data/aircraft/#ff4017cd…`). Such a row's made-up flight id was set aside before it was checked, so for an aircraft that isn't blocked (G-RVNX) the click went back to FR24. FR24's card has no registration, so its Playback opened its type list. The id is now read first, and a row of this script's own is always played here.
 

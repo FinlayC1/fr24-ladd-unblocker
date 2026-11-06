@@ -24,7 +24,8 @@ git(work, 'add', '-A'); git(work, 'commit', '-q', '-m', 'v1');
 execFileSync('git', ['clone', '-q', '--bare', work, origin]);
 execFileSync('git', ['clone', '-q', origin, vm]);
 git(work, 'remote', 'add', 'origin', origin);
-const run = (...args) => { fs.writeFileSync(logf, ''); const r = spawnSync('bash', [path.join(vm, 'monitor/deploy.sh'), ...args], { encoding: 'utf8', env: Object.assign({}, process.env, { FR24_JOURNALD_DIR: path.join(T, 'journald.conf.d'), PATH: bin + ':' + process.env.PATH, DEPLOY_WAIT: '8' }), timeout: 300000 }); return { code: r.status, out: r.stdout + r.stderr, calls: fs.readFileSync(logf, 'utf8') }; };
+let extraEnv = {};
+const run = (...args) => { fs.writeFileSync(logf, ''); const r = spawnSync('bash', [path.join(vm, 'monitor/deploy.sh'), ...args], { encoding: 'utf8', env: Object.assign({}, process.env, { FR24_JOURNALD_DIR: path.join(T, 'journald.conf.d'), FR24_DROPIN: path.join(T, 'none.conf'), FR24_UNIT: path.join(T, 'none.service'), PATH: bin + ':' + process.env.PATH, DEPLOY_WAIT: '8' }, extraEnv), timeout: 300000 }); return { code: r.status, out: r.stdout + r.stderr, calls: fs.readFileSync(logf, 'utf8') }; };
 const commit = (msg, edit) => { edit(); git(work, 'commit', '-q', '-am', msg); git(work, 'push', '-q', 'origin', 'main'); return git(work, 'rev-parse', 'HEAD'); };
 const head = () => git(vm, 'rev-parse', 'HEAD');
 const v1 = head();
@@ -37,6 +38,22 @@ check('a new commit: fast-forwarded, restarted, checked with the service\'s secr
 check('... the secret never printed', !/s3cr3t/.test(r.out));
 check('... the system log limited to 14 days (once)', fs.readFileSync(path.join(T, 'journald.conf.d', 'fr24-retention.conf'), 'utf8').includes('MaxRetentionSec=14day') && /systemctl restart systemd-journald/.test(r.calls));
 check('... the service\'s settings unchanged on disk: not read again', !/daemon-reload/.test(r.calls), r.calls);
+// (1.2.8) the heap limit by the machine's memory: vm-setup's 700 MB on the 24 GB A1 raised to 12 GB, systemd told; the 1 GB
+// VM's left as it is; never lowered
+{ const drop = path.join(T, 'checkout.conf'), mem = path.join(T, 'meminfo'), unit = 'ExecStart=\nExecStart=/usr/bin/node --max-old-space-size=700 /home/ubuntu/fr24-ladd/monitor/monitor.cjs\n';
+  fs.writeFileSync(drop, '[Service]\n' + unit); fs.writeFileSync(mem, 'MemTotal:       24534668 kB\nMemFree:        1000 kB\n');
+  extraEnv = { FR24_DROPIN: drop, FR24_MEMINFO: mem };
+  r = run('--restart');
+  check('the 24 GB A1 with the 1 GB VM\'s 700 MB heap: raised to 12 GB before the restart, systemd told', r.code === 0 && fs.readFileSync(drop, 'utf8').includes('--max-old-space-size=12288 ') && /daemon-reload\n(.|\n)*systemctl restart fr24-monitor/.test(r.calls) && /heap limit raised from 700 MB to 12288 MB/.test(r.out), { out: r.out.slice(-300), calls: r.calls });
+  r = run('--restart');
+  check('... again: left as it is', r.code === 0 && !/heap limit/.test(r.out) && fs.readFileSync(drop, 'utf8').includes('=12288 '), r.out.slice(-200));
+  fs.writeFileSync(drop, '[Service]\n' + unit); fs.writeFileSync(mem, 'MemTotal:       1004568 kB\n');
+  r = run('--restart');
+  check('... the 1 GB VM: its 700 MB kept', r.code === 0 && !/heap limit/.test(r.out) && fs.readFileSync(drop, 'utf8').includes('=700 '), r.out.slice(-200));
+  fs.writeFileSync(drop, '[Service]\nExecStart=\nExecStart=/usr/bin/node --max-old-space-size=16000 /x/monitor.cjs\n'); fs.writeFileSync(mem, 'MemTotal:       24534668 kB\n');
+  r = run('--restart');
+  check('... a larger one set by hand: never lowered', !/heap limit/.test(r.out) && fs.readFileSync(drop, 'utf8').includes('=16000 '), r.out.slice(-200));
+  extraEnv = {}; }
 fs.writeFileSync(stalef, '1');
 r = run('--restart');
 check('the unit or a drop-in changed on disk: systemd reads it again before the restart', r.code === 0 && /systemctl daemon-reload\nsystemctl restart fr24-monitor/.test(r.calls) && /read again/.test(r.out) && !fs.existsSync(stalef), { calls: r.calls, out: r.out.slice(-300) });

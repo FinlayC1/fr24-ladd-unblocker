@@ -4,7 +4,8 @@
 #   bash ~/fr24-ladd/monitor/vm-setup.sh
 # What it changes:
 #   /etc/systemd/system/fr24-monitor.service.d/checkout.conf   (a drop-in: the main unit, with the secret, is not touched)
-#       WorkingDirectory and ExecStart -> this checkout, MON_DATA -> its data/, a 700 MB heap limit, 30 s to save on stop
+#       WorkingDirectory and ExecStart -> this checkout, MON_DATA -> its data/, a heap limit of 60% of the memory (700 MB
+#       to 12 GB), 30 s to save on stop
 #       (MON_STORE stays as the unit has it: /home/ubuntu/monitor/store)
 #   /etc/caddy/Caddyfile: "encode zstd gzip" in the site block (a copy is kept as Caddyfile.bak-before-encode)
 set -u
@@ -17,13 +18,15 @@ say() { echo "[setup] $*"; }
 NODE="$(command -v node)"; [ -n "$NODE" ] || { say "node not found"; exit 1; }
 for f in monitor/monitor.cjs monitor/fr24.cjs monitor/ident.cjs monitor/dest.cjs monitor/owners.cjs monitor/airport.cjs monitor/names.cjs monitor/tel.cjs monitor/wx.cjs monitor/tracks.cjs monitor/archive.cjs monitor/world.cjs monitor/apstats.cjs monitor/boards.cjs monitor/central.cjs monitor/central-worker.cjs monitor/scores.cjs monitor/acdb.cjs monitor/console.cjs monitor/datalink.cjs monitor/installs.cjs src/engine.js src/registry.js test/dataset.cjs; do node --check "$REPO/$f" || { say "$f does not parse"; exit 1; }; done
 [ -f "$REPO/monitor/data/airports.json" ] || { say "monitor/data/airports.json missing in the checkout"; exit 1; }
+# (1.2.8: the heap by the machine's memory - 60%, 700 MB at least, 12 GB at most: the 1 GB VM's 700, the 24 GB A1's 12 GB)
+HEAP=$(( $(awk '/^MemTotal:/{print int($2/1024)}' /proc/meminfo) * 6 / 10 )); [ "$HEAP" -gt 12288 ] && HEAP=12288; [ "$HEAP" -lt 700 ] && HEAP=700
 sudo mkdir -p "$DROPIN_DIR"
 had_dropin=0; [ -f "$DROPIN" ] && had_dropin=1 && sudo cp "$DROPIN" "$DROPIN.prev"
 sudo tee "$DROPIN" >/dev/null <<EOF
 [Service]
 WorkingDirectory=$REPO/monitor
 ExecStart=
-ExecStart=$NODE --max-old-space-size=700 $REPO/monitor/monitor.cjs
+ExecStart=$NODE --max-old-space-size=$HEAP $REPO/monitor/monitor.cjs
 Environment=MON_DATA=$REPO/monitor/data
 KillSignal=SIGTERM
 TimeoutStopSec=30
