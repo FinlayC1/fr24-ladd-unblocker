@@ -231,8 +231,11 @@ function ingest(a, nowS) {
   m.lastPos = { t, lat: a.lat, lon: a.lon, alt: a.alt_baro, gs: a.gs, trk: a.track };
 }
 // (the runways a flight used, where it took off and landed at an airport - airport.cjs)
+// (1.2.12: rwyV 2 - worked out by 1.2.10's rule; a leg kept from before it - JFK's take-offs from 22R that 1.2.9 gave to
+// 22L, its start 900 m aside - is not given out: laddRwys)
 function legRunways(leg, l) {
   const sure = e => !!e && /^(ground|low)$/.test(e.conf || '');
+  leg.rwyV = 2;
   if (sure(leg.from)) { const r = APT.runwayOf(E.byId(leg.from.id), l.pts, false); if (r) leg.rwyOff = r; }
   if (leg.to && !leg.open && sure(leg.to)) { const r = APT.runwayOf(E.byId(leg.to.id), l.pts, true); if (r) leg.rwyOn = r; }
 }
@@ -275,9 +278,9 @@ function buildLegs(hex, nowS) {
     legRunways(leg, l);
     let m = legs.get(hex); if (!m) legs.set(hex, m = new Map());
     // (a flight already under way when the monitor last stopped: its take-off as kept then)
-    if (!leg.from && !leg.startedOnGround) for (const [k, o] of m) if (o.open && o.tStart < leg.tStart && carriesOn(o, leg)) { Object.assign(leg, { from: o.from, tStart: o.tStart, tOff: o.tOff, startedOnGround: o.startedOnGround, startLat: o.startLat, startLon: o.startLon, startAlt: o.startAlt, startGs: o.startGs }); if (o.rwyOff) leg.rwyOff = o.rwyOff; m.delete(k); break; }
+    if (!leg.from && !leg.startedOnGround) for (const [k, o] of m) if (o.open && o.tStart < leg.tStart && carriesOn(o, leg)) { Object.assign(leg, { from: o.from, tStart: o.tStart, tOff: o.tOff, startedOnGround: o.startedOnGround, startLat: o.startLat, startLon: o.startLon, startAlt: o.startAlt, startGs: o.startGs }); if (o.rwyOff && o.rwyV === 2) leg.rwyOff = o.rwyOff; m.delete(k); break; }
     // (the same flight logged from FR24's positions before ADS-B had it: ADS-B's record replaces it - the ends it missed taken over)
-    for (const [k, o] of m) if (o.via === 'fr24' && o.tStart < leg.tEnd + 600 && o.tEnd > leg.tStart - 600) { if (!leg.from && o.from) { leg.from = o.from; leg.tOff = leg.tOff || o.tOff; if (o.rwyOff) leg.rwyOff = o.rwyOff; } if (done && !leg.to && o.to) { leg.to = o.to; leg.tOn = leg.tOn || o.tOn; if (o.rwyOn) leg.rwyOn = o.rwyOn; } m.delete(k); dirtyDays.add(dayOf(o.tOff || o.tStart)); }
+    for (const [k, o] of m) if (o.via === 'fr24' && o.tStart < leg.tEnd + 600 && o.tEnd > leg.tStart - 600) { if (!leg.from && o.from) { leg.from = o.from; leg.tOff = leg.tOff || o.tOff; if (o.rwyOff && o.rwyV === 2) leg.rwyOff = o.rwyOff; } if (done && !leg.to && o.to) { leg.to = o.to; leg.tOn = leg.tOn || o.tOn; if (o.rwyOn && o.rwyV === 2) leg.rwyOn = o.rwyOn; } m.delete(k); dirtyDays.add(dayOf(o.tOff || o.tStart)); }
     m.set(legKey(leg), leg); dirtyDays.add(dayOf(leg.tOff || leg.tStart));
     if (done) keepFrom = l.end.t;
   });
@@ -688,6 +691,7 @@ function laddRwys(apId, from, to) {
     const ix = new Map(), add = (ap, x) => { let a = ix.get(ap); if (!a) ix.set(ap, a = []); a.push(x); };
     for (const [hex, m] of legs) for (const l of m.values()) {
       const tO = l.tOff || l.tStart, tL = l.tOn || l.tEnd;
+      if (l.rwyV !== 2) continue;
       if (l.rwyOff && l.from && l.from.id > 0 && Number.isFinite(tO)) add(l.from.id, [hex, 0, l.rwyOff, Math.round(tO)]);
       if (l.rwyOn && l.to && l.to.id > 0 && !l.open && Number.isFinite(tL)) add(l.to.id, [hex, 1, l.rwyOn, Math.round(tL)]);
     }
@@ -715,7 +719,11 @@ function rwyApAnswer(ap, from, to, use, old, nowS) {
     const f2 = nowS - 86400;
     j.ends = APT.endsOf(a.icao).map(e => [e.id, Math.round(e.hdg)]);
     j.runways = APT.runwaysOf(a.icao).map(r => [r[0], r[1], r[2] || 0, r[7] ? 1 : 0]);
-    j.mv = RL.movements(ap, f2, nowS).concat(laddRwys(ap, f2, nowS).map(x => [x[2], x[1], x[3]])).sort((x, y) => x[2] - y[2]);
+    // (1.2.12: the runway log's - FR24's own tracks, every flight there since 1.2.10's low scan - and the ADS-B legs' only
+    // where it has nothing of the last three hours: the two together counted the same flights twice, the legs' by a rule of
+    // their own day)
+    const rlMv = RL.movements(ap, f2, nowS);
+    j.mv = (rlMv.some(m => nowS - m[2] <= 3 * 3600) ? rlMv : rlMv.concat(laddRwys(ap, f2, nowS).map(x => [x[2], x[1], x[3]]))).sort((x, y) => x[2] - y[2]);
   }
   rwyApCache.set(key, { at: Date.now(), to, j }); if (rwyApCache.size > 300) rwyApCache.delete(rwyApCache.keys().next().value);
   return j;

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Flightradar24 LADD / N-A Unblocker (feed-level)
 // @namespace    tweeks.io
-// @version      1.2.11
+// @version      1.2.12
 // @description  Identifies every LADD / N/A / blocked military aircraft on Flightradar24 from public ADS-B, and injects callsign, registration, operator, age, country, MSN, squawk, vertical speed, GPS altitude, airspeeds, wind, photos, a reasoned origin/destination with a wind-corrected ETA (also for ordinary flights FR24 shows as N/A - military, private, GA, helicopters, with private landing sites; learned from 63 days of every aircraft worldwide, with live weather and closures), airport-board entries and a rebuilt 7-month flight log straight into FR24's own data - so it all renders like normal FR24 traffic.
 // @author       Finlay Clarke
 // @updateURL    https://raw.githubusercontent.com/FinlayC1/fr24-ladd-unblocker/main/dist/fr24-ladd-unblocker.user.js
@@ -98,7 +98,7 @@
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "1.2.11";
+    var BRIDGE_V = "1.2.12";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed
@@ -3823,21 +3823,35 @@
       var lowVis = /fog|mist|haze|snow|freezing|thunder|heavy/i.test(String(cond || ''));
       var same = function (a, b) { return rwyAng(hdg[a], hdg[b]) <= 20; };
       var windWord = calm ? 'calm or light wind' : Math.round(wd) + '° ' + Math.round(ws) + ' kt';
+      // (1.2.12) A minor runway - shorter than 1,500 m and than 60% of the airport's longest, or of no known length beside
+      // one of 1,000 m or more: Beauvais's 04/22, 1.1 km beside 12/30's 2.4 km, was shown its "departures runway". Its
+      // movements count only when no main runway has any (either way, take-offs or landings) in the same window, and it is
+      // never a guess by the wind. (Both, not the share alone: JFK's 22L, 2.6 km, is 58% of its 13R/31L - and a main runway.)
+      var longestLen = 0; Object.keys(len).forEach(function (n) { longestLen = Math.max(longestLen, len[n] || 0); });
+      var minor = function (n) { var l = len[n] || 0; return longestLen > 0 && (l ? l < 0.6 * longestLen && l < 4921 : longestLen >= 3281); };
+      var allMv = ((u && u.mv) || []).filter(function (m) { return m && hdg[m[0]] != null && m[2] <= nowS + 300 && nowS - m[2] <= 86400; });
+      var mainIn = function (secs) { return allMv.some(function (m) { return nowS - m[2] <= secs && !minor(m[0]); }); };
+      var mainRecent = mainIn(5400), mainDay = mainIn(86400);
+      var mainEnds = ends.map(function (e) { return e[0]; }).filter(function (n) { return !minor(n); });
+      if (!mainEnds.length) mainEnds = ends.map(function (e) { return e[0]; });
       function one(kind) {
         var word = kind ? 'landings' : 'take-offs';
-        var mv = ((u && u.mv) || []).filter(function (m) { return m && m[1] === kind && hdg[m[0]] != null && m[2] <= nowS + 300 && nowS - m[2] <= 86400; });
-        var recent = mv.filter(function (m) { return nowS - m[2] <= 5400; }), day = {}; mv.forEach(function (m) { day[m[0]] = (day[m[0]] || 0) + 1; });
+        var mv = allMv.filter(function (m) { return m[1] === kind && !(mainDay && minor(m[0])); });
+        var recent = mv.filter(function (m) { return nowS - m[2] <= 5400 && !(mainRecent && minor(m[0])); }), day = {}; mv.forEach(function (m) { day[m[0]] = (day[m[0]] || 0) + 1; });
         var byCount = function (o) { return Object.keys(o).sort(function (a, b) { return o[b] - o[a] || (len[b] || 0) - (len[a] || 0); }); };
+        // (1.2.12: a second runway only with a share of its own - two movements at least and a quarter of the first's: JFK's
+        // one take-off logged on 22L beside 57 on 22R read "22R / 22L")
+        var two = function (o) { var b = byCount(o); return b.filter(function (n, i) { return i === 0 || (i === 1 && o[n] >= 2 && o[n] >= o[b[0]] * 0.25); }); };
         var turned = '';
         // (1.2.10) The other kind's latest movement, and this kind's runways the way it went: the ones this kind used that
         // way in the last day (the most used, and a second used nearly as much), else the far ends of its own runways now,
         // else the other kind's own runway
-        var oth = ((u && u.mv) || []).filter(function (m) { return m && m[1] === 1 - kind && hdg[m[0]] != null && m[2] <= nowS + 300 && nowS - m[2] <= 5400; }), oLast = oth[oth.length - 1];
+        var oth = allMv.filter(function (m) { return m[1] === 1 - kind && nowS - m[2] <= 5400 && !(mainRecent && minor(m[0])); }), oLast = oth[oth.length - 1];
         var oWord = kind ? 'take-offs' : 'landings', oAge = oLast ? Math.round((nowS - oLast[2]) / 60) : 0;
         var farEnd = function (n) { var r = ((u && u.runways) || []).filter(function (x) { return x && !x[3] && (x[0] === n || x[1] === n); })[0]; return r ? (r[0] === n ? r[1] : r[0]) : ''; };
         var thatWay = function (own) {
           var sub = {}; Object.keys(day).forEach(function (n) { if (rwyAng(hdg[n], hdg[oLast[0]]) <= 20) sub[n] = day[n]; });
-          var b = byCount(sub); if (b.length) return b.filter(function (n, i) { return i < 2 && sub[n] >= sub[b[0]] * 0.3; });
+          var b = byCount(sub); if (b.length) return b.filter(function (n, i) { return i === 0 || (i === 1 && sub[n] >= 2 && sub[n] >= sub[b[0]] * 0.3); });
           var f = (own || []).map(farEnd).filter(function (n) { return n && hdg[n] != null; }); return f.length ? f : [oLast[0]];
         };
         if (recent.length) {
@@ -3848,7 +3862,7 @@
           // runways: this kind follows, predicted until one of its own goes that way. Manchester went from 05 to 23 at
           // 19:37: take-offs on 23R, and its panel still had landings "05R, confirmed" from the last one, at 19:19)
           if (oLast && oLast[2] > recent[recent.length - 1][2] && rwyAng(hdg[oLast[0]], hdg[lastR]) >= 150) {
-            return { rwys: thatWay(byCount(cnt).slice(0, 2)), tag: 'pred', why: oWord + ' have turned round onto ' + oLast[0] + ' (' + oAge + ' min ago); ' + word + ' follow - the last ' + word.replace(/s$/, '') + ', ' + ageMin + ' min ago, was the other way, on ' + lastR + '; wind ' + windWord };
+            return { rwys: thatWay(two(cnt)), tag: 'pred', why: oWord + ' have turned round onto ' + oLast[0] + ' (' + oAge + ' min ago); ' + word + ' follow - the last ' + word.replace(/s$/, '') + ', ' + ageMin + ' min ago, was the other way, on ' + lastR + '; wind ' + windWord };
           }
           // (1.2.11: the traffic over the wind. JFK landing on 22L and taking off from 22R minutes before, with a 5 kt
           // tailwind (340 degrees 8 kt), was shown "31L, predicted" by the wind: 1.2.7 to 1.2.10 let the traffic count only
@@ -3856,20 +3870,20 @@
           // it, only traffic of the last 10 minutes - older than that, the airport has likely turned round)
           if (calm || hw >= -10 || ageMin <= 10) {
             var sure = ageMin <= 30 || (nDir >= 2 && (calm || hw >= -5));
-            return { rwys: byCount(cnt).slice(0, 2), tag: sure ? 'conf' : 'pred', why: nDir + ' ' + (nDir === 1 ? word.replace(/s$/, '') : word) + ' that way in the last 90 minutes (the last ' + ageMin + ' min ago); wind ' + windWord + (calm ? '' : ', ' + (hw >= 0 ? Math.round(hw) + ' kt headwind' : Math.round(-hw) + ' kt tailwind')) };
+            return { rwys: two(cnt), tag: sure ? 'conf' : 'pred', why: nDir + ' ' + (nDir === 1 ? word.replace(/s$/, '') : word) + ' that way in the last 90 minutes (the last ' + ageMin + ' min ago); wind ' + windWord + (calm ? '' : ', ' + (hw >= 0 ? Math.round(hw) + ' kt headwind' : Math.round(-hw) + ' kt tailwind')) };
           }
           turned = '; the wind has turned against the ' + lastR + ' the traffic used';
         }
         // (1.2.10: none of its own in the last 90 minutes, the other kind's there: its way - traffic before the wind)
         if (!recent.length && oLast) return { rwys: thatWay(null), tag: 'pred', why: 'no ' + word + ' in the last 90 minutes; ' + oWord + ' are on ' + oLast[0] + ' (' + oAge + ' min ago); wind ' + windWord };
         if (!calm) {
-          var cand = ends.map(function (e) { return e[0]; }).filter(function (n) { return head(n) >= -5; });
-          if (!cand.length) cand = ends.map(function (e) { return e[0]; });
+          var cand = mainEnds.filter(function (n) { return head(n) >= -5; });
+          if (!cand.length) cand = mainEnds.slice();
           cand.sort(function (a, b) { var ha = head(a), hb = head(b); if (Math.abs(ha - hb) > 2) return hb - ha; if (lowVis && (len[b] || 0) !== (len[a] || 0)) return (len[b] || 0) - (len[a] || 0); return (day[b] || 0) - (day[a] || 0) || (len[b] || 0) - (len[a] || 0); });
           return { rwys: [cand[0]], tag: 'pred', why: 'by the wind, ' + windWord + ' (' + Math.round(head(cand[0])) + ' kt headwind)' + (lowVis ? ' and the weather' : '') + (mv.length ? '' : '; no ' + word + ' in the last 24 hours') + turned };
         }
         if (mv.length) { var used = byCount(day); return { rwys: [used[0]], tag: 'pred', why: 'calm or light wind: the runway the last 24 hours\' ' + word + ' used most' + turned }; }
-        var longest = ends.map(function (e) { return e[0]; }).sort(function (a, b) { return (len[b] || 0) - (len[a] || 0); })[0], opp = ends.map(function (e) { return e[0]; }).filter(function (n) { return n !== longest && rwyAng(hdg[n], hdg[longest] + 180) <= 20 && len[n] === len[longest]; })[0];
+        var longest = mainEnds.slice().sort(function (a, b) { return (len[b] || 0) - (len[a] || 0); })[0], opp = mainEnds.filter(function (n) { return n !== longest && rwyAng(hdg[n], hdg[longest] + 180) <= 20 && len[n] === len[longest]; })[0];
         return { rwys: [opp ? longest + '/' + opp : longest], tag: 'pred', why: 'calm or light wind, and no ' + word + ' in the last 24 hours: the longest runway' };
       }
       return { dep: one(0), arr: one(1), calm: calm };
@@ -7771,7 +7785,7 @@
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '1.2.11';
+  const VERSION = '1.2.12';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
@@ -16780,7 +16794,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // (the version whose "what's new" was put away, and the one whose dot on the button the window was opened for)
   const UB_SEEN_KEY = 'tweeks.fr24.ladd.seenver', UB_DOT_KEY = 'tweeks.fr24.ladd.dotver';
   // (the newest CHANGELOG section's headlines, written in by build.mjs: { v, items })
-  const UB_WHATS_NEW = {"v":"1.2.11","items":["The runway in use follows what the traffic is doing, not the wind. JFK, landing on 22L and taking off from 22R minutes before, was shown \"31L, predicted\" because the wind put a 5 kt tailwind on 22. The wind now only takes over when it blows more than 10 kt behind the runway in use."]};
+  const UB_WHATS_NEW = {"v":"1.2.12","items":["The runway in use no longer lists a second runway on a stray movement. JFK showed \"22R / 22L\" for departures from one take-off logged on 22L beside 57 on 22R; Manchester \"23R / 23L\" from one on 23L.","Common sense about small runways: Beauvais's 1.1 km 04/22 is never shown as the runway in use while its 2.4 km 12/30 has traffic, nor guessed by the wind.","Fewer wrong runways in the log: a runway worked out from FR24's own tracks is no longer replaced by a weaker answer, and runways the monitor worked out before 1.2.10's fix are no longer used."]};
   // (an aircraft with an open padlock: FR24's outline style - 24 grid, 1.5 stroke in the text colour)
   const UB_ICON = '<svg data-tl-ub-icon="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
   const UB_X = '<svg viewBox="0 0 14 14" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5l11 11M12.5 1.5l-11 11"/></svg>';
