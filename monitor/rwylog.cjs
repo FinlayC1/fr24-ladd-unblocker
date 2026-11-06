@@ -21,6 +21,7 @@ const fin = v => typeof v === 'number' && isFinite(v);
 // (1.2.10: version 2. A version-1 file - 1.2.7 to 1.2.9 - is read for its landings only: its take-offs were worked out
 // with a rule that gave Paris CDG's 26R departures to 26L, and many a long runway's to none)
 const RL_V = 2;
+const RANK = { trail: 3, live: 2, fit: 1 };
 
 function createRwyLog(env) {
   const { E, APT } = env;
@@ -57,6 +58,9 @@ function createRwyLog(env) {
     let m = b.ap.get(apId); if (!m) b.ap.set(apId, m = new Map());
     const cur = m.get(k);
     if (cur && cur[0] === rwy && cur[2] === how) return false;
+    // (1.2.12: never over a surer one - FR24's whole trail of the flight, then its positions as the scans see them, then
+    // positions a browser sent: JFK's take-off from 22R, logged 22R from the scans, was later turned to 22L)
+    if (cur && RANK[cur[2]] > (RANK[how] || 0)) return false;
     m.set(k, [rwy, Math.round(t), how || '']); b.dirty = true;
     idx.set(k, [rwy, apId, Math.round(t)]);
     stats.logged++;

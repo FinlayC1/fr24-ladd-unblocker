@@ -71,10 +71,10 @@ function open(url, store) {
   // ================= the monitor: an airport's runways in one answer =================
   { const lpl = E.byIcao('EGGP'), t = now - 1200;
     M.RL.put('3e0a0001', 1, '27', lpl.id, t, 'live'); M.RL.put('3e0a0002', 0, '27', lpl.id, t + 300, 'live'); M.RL.put('3e0a0003', 0, '09', lpl.id, now - 3 * 86400, 'live');
-    M.legs.set('424b68', new Map([[1, { hex: '424b68', from: { id: 1190 }, to: { id: lpl.id }, tOn: t - 600, tEnd: t - 500, rwyOn: '27', ended: true, open: false }]]));
+    M.legs.set('424b68', new Map([[1, { hex: '424b68', from: { id: 1190 }, to: { id: lpl.id }, tOn: t - 600, tEnd: t - 500, rwyOn: '27', rwyV: 2, ended: true, open: false }]]));
     const j = M.answer(new URL(`http://x/rwyap?ap=${lpl.id}&use=1`), now);
     check('monitor /rwyap&use=1: the boards\' runways by flight, the blocked flights\' by address, and the runway in use\'s own - ends, runways, the last day\'s movements',
-      j && j.f['3e0a0001:1'] === '27' && j.f['3e0a0002:0'] === '27' && !('3e0a0003:0' in j.f) && j.h.some(x => x[0] === '424b68' && x[2] === '27') && j.ends.some(e => e[0] === '27') && j.runways.length > 0 && j.mv.filter(m => m[0] === '27').length >= 3,
+      j && j.f['3e0a0001:1'] === '27' && j.f['3e0a0002:0'] === '27' && !('3e0a0003:0' in j.f) && j.h.some(x => x[0] === '424b68' && x[2] === '27') && j.ends.some(e => e[0] === '27') && j.runways.length > 0 && j.mv.filter(m => m[0] === '27').length === 2,   // (1.2.12: the runway log's two - the blocked flight's leg not counted again beside them)
       j && { f: j.f, h: j.h, ends: j.ends, mv: j.mv });
     const j2 = M.answer(new URL(`http://x/rwyap?ap=${lpl.id}&use=1`), now);
     check('... made once for all asking within 20 s (the same answer)', j2 === j);
@@ -83,7 +83,7 @@ function open(url, store) {
 
   // ================= the page: the runway in use, at once =================
   { const ap = 1257, use = { ends: [['09L', 90], ['09R', 90], ['27L', 270], ['27R', 270]], runways: [['09L', '27R', 12800, 0], ['09R', '27L', 12000, 0]],
-      mv: [['27L', 0, now - 1500], ['27R', 0, now - 900], ['27L', 0, now - 400], ['27L', 1, now - 1800], ['27L', 1, now - 700]], at: now };
+      mv: [['27L', 0, now - 1500], ['27R', 0, now - 1100], ['27L', 0, now - 1000], ['27R', 0, now - 900], ['27L', 0, now - 400], ['27L', 1, now - 1800], ['27L', 1, now - 700]], at: now };   // (1.2.12: 27R twice - a share of its own)
     const kept = JSON.stringify({ [ap]: { e: use.ends, r: use.runways, m: use.mv, t: now - 120 } });
     const P = open(undefined, { 'tl.ladd.rwyuse.v1': kept }); await sleep(200); const H = P.H(), doc = P.w.document;
     const panel = doc.createElement('div'); panel.setAttribute('data-testid', 'airport-panel');

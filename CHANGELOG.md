@@ -4,6 +4,22 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 
 1.0.0 is the first release. The versions before it are the betas, labelled B: B22.31.12 is version 22.31.12.
 
+## [1.2.12] - 2026-11-06
+
+### In short
+- The runway in use no longer lists a second runway on a stray movement. JFK showed "22R / 22L" for departures from one take-off logged on 22L beside 57 on 22R; Manchester "23R / 23L" from one on 23L.
+- Common sense about small runways: Beauvais's 1.1 km 04/22 is never shown as the runway in use while its 2.4 km 12/30 has traffic, nor guessed by the wind.
+- Fewer wrong runways in the log: a runway worked out from FR24's own tracks is no longer replaced by a weaker answer, and runways the monitor worked out before 1.2.10's fix are no longer used.
+
+### Fixed
+- **A second runway shown on one movement.** Any runway used once in the last 90 minutes was listed beside the main one. A second runway is now shown only with a share of its own: two movements at least and a quarter of the first one's.
+- **A minor runway shown as the runway in use** (Beauvais's 04/22, 1.1 km, beside 12/30, 2.4 km). A runway shorter than 1,500 m and than 60% of the airport's longest, or of no known length beside one of 1,000 m or more, counts only when no main runway has any traffic, take-offs or landings, in the same window. It is never a guess by the wind, nor "the longest runway" on a calm day. A main runway that is merely shorter than the longest still counts in full: JFK's 22L, 2.6 km, is 58% of its 13R/31L.
+- **Wrong runways from older or weaker sources.**
+  - The runway log kept the last answer for each flight, whatever it came from. A take-off from JFK's 22R, logged 22R from FR24's scans (its roll 3 m off 22R's centreline, 914 m off 22L's), was later turned to 22L. Now an answer from FR24's whole trail of the flight is never replaced by one from the scans, nor either of those by one from positions a browser sent.
+  - The ADS-B flights the monitor keeps carried runways worked out by the rule before 1.2.10, which gave staggered parallels' take-offs to the wrong one: JFK's 22R departures to 22L all day. Only runways worked out by 1.2.10's rule are given out now.
+  - The runway in use was counted from the runway log and those ADS-B flights together, the same flights twice. It now comes from the runway log, which has every flight since 1.2.10's low scan. The ADS-B flights count only at an airport where the log has nothing of the last three hours.
+- **Checked on the live monitor's data** of 6 November, 22:17Z: Manchester 23R for both, JFK take-offs 22R and landings 22L, Beauvais 12 for both, all as the traffic was.
+
 ## [1.2.11] - 2026-11-06
 
 ### In short
