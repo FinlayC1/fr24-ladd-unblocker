@@ -3692,11 +3692,11 @@
     function mxRwyAirport(apId, ms) {
       apId = Number(apId) || 0; if (!(apId > 0) || !mx.on) return Promise.resolve(false);
       var c = mxRwyAp.get(apId);
-      if (!c || (c.done && Date.now() - c.at > 60000)) {
+      if (!c || (c.done && Date.now() - c.at > 30000)) {
         var rid = 'ra' + (++mxRwyApSeq);
         c = { at: Date.now(), done: false, rid: rid }; c.p = new Promise(function (res) { c.res = res; });
         mxRwyAp.set(apId, c); if (mxRwyAp.size > 200) mxRwyAp.delete(mxRwyAp.keys().next().value);
-        oSetTimeout(function () { if (!c.done) { c.done = true; c.at = Date.now() - 50000; c.res(false); } }, 10000);
+        oSetTimeout(function () { if (!c.done) { c.done = true; c.at = Date.now() - 20000; c.res(false); } }, 10000);   // (no answer: asked again 10 s on)
         post('rwyAp', { rid: rid, ap: apId });
       }
       return ms ? withTimeout(c.p, ms, false) : c.p;
@@ -3752,7 +3752,7 @@
       apId = Number(apId) || 0; if (!(apId > 0)) return null;
       var c = mxRwyUse.get(apId) || {};
       if (!c.d && !c.kept) { c.kept = true; var k = rwyUseKept()[apId]; if (k && Array.isArray(k.e) && k.e.length) c.d = { ends: k.e, runways: k.r || [], mv: (k.m || []).slice().sort(function (a, b) { return a[2] - b[2]; }), at: Number(k.t) || 0, kept: true }; mxRwyUse.set(apId, c); }
-      if (!c.asked || Date.now() - c.asked > 60000) { c.asked = Date.now(); mxRwyUse.set(apId, c); mxRwyAirport(apId); }
+      if (!c.asked || Date.now() - c.asked > 30000) { c.asked = Date.now(); mxRwyUse.set(apId, c); mxRwyAirport(apId); }   // (1.2.10: every 30 s, as the monitor's low scan)
       return c.d || null;
     }
     function onRwyUseGot(d) {
@@ -3793,16 +3793,35 @@
         var recent = mv.filter(function (m) { return nowS - m[2] <= 5400; }), day = {}; mv.forEach(function (m) { day[m[0]] = (day[m[0]] || 0) + 1; });
         var byCount = function (o) { return Object.keys(o).sort(function (a, b) { return o[b] - o[a] || (len[b] || 0) - (len[a] || 0); }); };
         var turned = '';
+        // (1.2.10) The other kind's latest movement, and this kind's runways the way it went: the ones this kind used that
+        // way in the last day (the most used, and a second used nearly as much), else the far ends of its own runways now,
+        // else the other kind's own runway
+        var oth = ((u && u.mv) || []).filter(function (m) { return m && m[1] === 1 - kind && hdg[m[0]] != null && m[2] <= nowS + 300 && nowS - m[2] <= 5400; }), oLast = oth[oth.length - 1];
+        var oWord = kind ? 'take-offs' : 'landings', oAge = oLast ? Math.round((nowS - oLast[2]) / 60) : 0;
+        var farEnd = function (n) { var r = ((u && u.runways) || []).filter(function (x) { return x && !x[3] && (x[0] === n || x[1] === n); })[0]; return r ? (r[0] === n ? r[1] : r[0]) : ''; };
+        var thatWay = function (own) {
+          var sub = {}; Object.keys(day).forEach(function (n) { if (rwyAng(hdg[n], hdg[oLast[0]]) <= 20) sub[n] = day[n]; });
+          var b = byCount(sub); if (b.length) return b.filter(function (n, i) { return i < 2 && sub[n] >= sub[b[0]] * 0.3; });
+          var f = (own || []).map(farEnd).filter(function (n) { return n && hdg[n] != null; }); return f.length ? f : [oLast[0]];
+        };
         if (recent.length) {
           var lastR = recent[recent.length - 1][0], cnt = {}, nDir = 0;
           recent.forEach(function (m) { if (same(m[0], lastR)) { cnt[m[0]] = (cnt[m[0]] || 0) + 1; nDir++; } });
           var ageMin = Math.round((nowS - recent[recent.length - 1][2]) / 60), hw = head(lastR);
+          // (1.2.10: the airport turned round - the other kind's latest, newer than this kind's, the other way along the
+          // runways: this kind follows, predicted until one of its own goes that way. Manchester went from 05 to 23 at
+          // 19:37: take-offs on 23R, and its panel still had landings "05R, confirmed" from the last one, at 19:19)
+          if (oLast && oLast[2] > recent[recent.length - 1][2] && rwyAng(hdg[oLast[0]], hdg[lastR]) >= 150) {
+            return { rwys: thatWay(byCount(cnt).slice(0, 2)), tag: 'pred', why: oWord + ' have turned round onto ' + oLast[0] + ' (' + oAge + ' min ago); ' + word + ' follow - the last ' + word.replace(/s$/, '') + ', ' + ageMin + ' min ago, was the other way, on ' + lastR + '; wind ' + windWord };
+          }
           if (calm || hw >= -5) {
             var sure = nDir >= 2 || ageMin <= 30;
             return { rwys: byCount(cnt).slice(0, 2), tag: sure ? 'conf' : 'pred', why: nDir + ' ' + (nDir === 1 ? word.replace(/s$/, '') : word) + ' that way in the last 90 minutes (the last ' + ageMin + ' min ago); wind ' + windWord + (calm ? '' : ', ' + (hw >= 0 ? Math.round(hw) + ' kt headwind' : Math.round(-hw) + ' kt tailwind')) };
           }
           turned = '; the wind has turned against the ' + lastR + ' the traffic used';
         }
+        // (1.2.10: none of its own in the last 90 minutes, the other kind's there: its way - traffic before the wind)
+        if (!recent.length && oLast) return { rwys: thatWay(null), tag: 'pred', why: 'no ' + word + ' in the last 90 minutes; ' + oWord + ' are on ' + oLast[0] + ' (' + oAge + ' min ago); wind ' + windWord };
         if (!calm) {
           var cand = ends.map(function (e) { return e[0]; }).filter(function (n) { return head(n) >= -5; });
           if (!cand.length) cand = ends.map(function (e) { return e[0]; });

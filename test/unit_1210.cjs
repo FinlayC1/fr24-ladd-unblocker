@@ -8,9 +8,11 @@
 //   - the low scan: every flight low over the world, all of FR24's services, FR24's own altitude filter, every 30 s, into
 //     the runway log; quarters keep their region's height; FR24 pushing back slows every scan
 //   - the world scan every minute; the runway log's old files read for their landings only; its writes off the loop
-// usage: node test/unit_1210.cjs <data dir>
+//   - the page: the runway in use follows an airport turning round (Manchester 05 -> 23, Liverpool 09 -> 27) - the kind
+//     not yet turned shown the new way, predicted; asked every 30 s
+// usage: node test/unit_1210.cjs <node_modules dir> <data dir>
 const fs = require('fs'), path = require('path'), os = require('os'), zlib = require('zlib');
-const D = process.argv[2] || path.join(__dirname, '../monitor/data');
+const NM = process.argv[2] || path.join(__dirname, '../node_modules'), D = process.argv[3] || path.join(__dirname, '../monitor/data');
 process.env.MON_DATA = D;
 process.env.MON_STORE = fs.mkdtempSync(path.join(os.tmpdir(), 'mon1210-'));
 process.env.MON_PORT = String(42000 + Math.floor(Math.random() * 6000));
@@ -131,6 +133,32 @@ const ap = icao => E.byIcao(icao);
     const c = [...BD.counts(oxf).values()][0] || [0, 0];
     check('... nor counted as a take-off in the day\'s movements', c[0] === 1 && c[1] === 1, c);
   }
+
+  // ================= the page: the runway in use as an airport turns round =================
+  { const { JSDOM } = require(path.join(NM, 'jsdom'));
+    const SRC = fs.readFileSync(path.join(__dirname, '..', 'dist', 'fr24-ladd-unblocker.user.js'), 'utf8');
+    const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'https://www.flightradar24.com/53.35,-2.27/10', runScripts: 'dangerously', pretendToBeVisual: true });
+    const w = dom.window; let H = null;
+    w.__tlTestHook = h => { H = h; }; w.Response = Response; w.Headers = Headers; w.Blob = Blob; w.DecompressionStream = DecompressionStream;
+    w.unsafeWindow = w; w.GM_xmlhttpRequest = () => {}; w.indexedDB = undefined; w.fetch = () => Promise.reject(new Error('offline')); w.postMessage = () => {};
+    const m = SRC.match(/function pageInterceptor\(\) \{[\s\S]*?\n {2}\}\n/); w.eval('(' + m[0] + ')()');
+    const now = 1794000000, man = { ends: [['05R', 50], ['23L', 230], ['05L', 50], ['23R', 230]], runways: [['05R', '23L', 10007, 0], ['05L', '23R', 10000, 0]] };
+    // (Manchester, 6 Nov: 05 until 19:29 - landings 05R, take-offs 05L - then take-offs on 23R from 19:37; earlier in the day landings on 23R)
+    const mvM = [['23R', 1, now - 30000], ['05R', 1, now - 2400], ['05L', 0, now - 2340], ['05R', 1, now - 1860], ['05L', 0, now - 1200], ['23R', 0, now - 720], ['23R', 0, now - 600]];
+    const r1 = H.rwyInUse(Object.assign({ mv: mvM }, man), { deg: 90, kts: 2 }, 'Clear', now);
+    check('runway in use: Manchester turned round to 23 (take-offs on 23R since 19:37) - landings shown 23R, as they were earlier, predicted - not "05R confirmed" from 19:19', r1.dep.rwys.join() === '23R' && r1.dep.tag === 'conf' && r1.arr.rwys.join() === '23R' && r1.arr.tag === 'pred', r1);
+    const r2 = H.rwyInUse(Object.assign({ mv: mvM.slice(1) }, man), { deg: 90, kts: 2 }, 'Clear', now);
+    check('... with no landing that way earlier: the far end of the runway it used, 23L', r2.arr.rwys.join() === '23L' && r2.arr.tag === 'pred', r2.arr);
+    const r3 = H.rwyInUse(Object.assign({ mv: mvM.concat([['23R', 1, now - 60]]) }, man), { deg: 90, kts: 2 }, 'Clear', now);
+    check('... the first landing on 23R in: confirmed', r3.arr.rwys.join() === '23R' && r3.arr.tag === 'conf', r3.arr);
+    // (Liverpool, one runway: landings on 09 to 19:19, then one on 27 at 19:48; take-offs last on 09 at 19:03)
+    const lpl = { ends: [['09', 87], ['27', 267]], runways: [['09', '27', 7500, 0]] }, mvL = [['09', 0, now - 2760], ['09', 1, now - 1800], ['27', 1, now - 20]];
+    const r4 = H.rwyInUse(Object.assign({ mv: mvL }, lpl), { deg: 140, kts: 2 }, 'Rain', now);
+    check('... Liverpool switched to 27 (a landing on 27 a moment ago): landings 27 confirmed, take-offs 27 predicted - not 09', r4.arr.rwys.join() === '27' && r4.arr.tag === 'conf' && r4.dep.rwys.join() === '27' && r4.dep.tag === 'pred', r4);
+    const r5 = H.rwyInUse(Object.assign({ mv: [['27', 1, now - 300]] }, lpl), { deg: 90, kts: 12 }, 'Rain', now);
+    check('... no take-off in the last 90 minutes, landings on 27: take-offs 27 - the traffic, not the wind (an easterly 12 kt says 09)', r5.dep.rwys.join() === '27' && r5.dep.tag === 'pred', r5.dep);
+    check('... the page asks every 30 s', /c\.asked > 30000/.test(SRC) && /c\.done && Date\.now\(\) - c\.at > 30000/.test(SRC));
+    w.close(); }
 
   console.log(fails ? `\n${fails} failed` : '\nall passed');
   process.exit(fails ? 1 : 0);
