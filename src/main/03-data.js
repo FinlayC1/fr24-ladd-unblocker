@@ -1252,10 +1252,12 @@
   const traceMeta = new Map();   // hex -> { r, t, desc, ownOp, year, at }
   function learnTraceMeta(hex, j) {
     if (!(j && (j.r || j.t || j.year || j.ownOp || j.dbFlags))) return;
-    const m = { r: clean(j.r).toUpperCase(), t: clean(j.t).toUpperCase(), desc: clean(j.desc), ownOp: clean(j.ownOp), year: Number(j.year) || 0, flags: Number(j.dbFlags) || 0, at: now() };
+    // (1.2.8: the registration it sends as its callsign over the database's stale one - G-RVNX, ex G-AWTL)
+    let csR = ''; if (Array.isArray(j.trace)) for (const p of j.trace) { const f = p && p[8] && p[8].flight ? clean(p[8].flight).toUpperCase() : ''; if (/^[A-Z]{4,6}$/.test(f)) { csR = f; break; } }
+    const m = { r: ENGINE.regOfCs ? ENGINE.regOfCs(clean(j.r).toUpperCase(), csR, hex) : clean(j.r).toUpperCase(), t: clean(j.t).toUpperCase(), desc: clean(j.desc), ownOp: clean(j.ownOp), year: Number(j.year) || 0, flags: Number(j.dbFlags) || 0, at: now() };
     traceMeta.set(hex, m);
     const hx = store.getHex(hex) || {};
-    const upd = {}; if (m.year && !hx.year) upd.year = m.year; if (m.r && !hx.reg) upd.reg = m.r; if (m.t && !hx.type) upd.type = m.t; if (m.desc && !hx.desc) upd.desc = m.desc; if (m.ownOp && !hx.owner) upd.owner = m.ownOp;
+    const upd = {}; if (m.year && !hx.year) upd.year = m.year; if (m.r && (!hx.reg || (m.r !== hx.reg && m.r !== clean(j.r).toUpperCase()))) upd.reg = m.r; if (m.t && !hx.type) upd.type = m.t; if (m.desc && !hx.desc) upd.desc = m.desc; if (m.ownOp && !hx.owner) upd.owner = m.ownOp;
     // readsb database flags: 1 military, 4 PIA, 8 LADD
     if (m.flags & 8 && !hx.ladd) upd.ladd = true; if (m.flags & 4 && !hx.pia) upd.pia = true; if (m.flags & 1 && !hx.mil) upd.mil = true;
     if (Object.keys(upd).length) { store.mergeHex(hex, upd); if (upd.ladd || upd.pia || upd.mil) flagsLearned(hex); }

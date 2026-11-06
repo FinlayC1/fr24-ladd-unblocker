@@ -15,7 +15,7 @@
     const dbFlags = Number(ac.dbFlags) || 0;
     if (dbFlags & 13) noteDbFlags(hex, dbFlags);
     const sq = /^[0-7]{4}$/.test(clean(ac.squawk)) ? clean(ac.squawk) : '';
-    return { hex, nonIcao, cs: clean(ac.flight).toUpperCase(), reg: clean(ac.r).toUpperCase(), type: clean(ac.t).toUpperCase(), desc: clean(ac.desc), owner: clean(ac.ownOp), year: Number(ac.year) || 0,
+    return { hex, nonIcao, cs: clean(ac.flight).toUpperCase(), reg: ENGINE.regOfCs ? ENGINE.regOfCs(clean(ac.r).toUpperCase(), clean(ac.flight).toUpperCase(), hex) : clean(ac.r).toUpperCase(), type: clean(ac.t).toUpperCase(), desc: clean(ac.desc), owner: clean(ac.ownOp), year: Number(ac.year) || 0,
       lat, lon, alt: fin(alt) ? alt : NaN, gnd, gs: Number(ac.gs), trk: Number(ac.track), ageS: (Number(ac.seen_pos) || 0), receivedAt, dbFlags, ladd: !!(dbFlags & 8), pia: !!(dbFlags & 4), mil: !!(dbFlags & 1), src,
       cat: clean(ac.category).toUpperCase(), sq, squawk: sq ? parseInt(sq, 8) : 0, emergency: clean(ac.emergency),
       // everything the panel's own fields can show, straight from the transponder

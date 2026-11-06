@@ -39,6 +39,24 @@ JDIR="${FR24_JOURNALD_DIR:-/etc/systemd/journald.conf.d}"
 if [ ! -f "$JDIR/fr24-retention.conf" ]; then
   sudo mkdir -p "$JDIR" && printf '[Journal]\nMaxRetentionSec=14day\n' | sudo tee "$JDIR/fr24-retention.conf" >/dev/null && sudo systemctl restart systemd-journald && say "system log now kept 14 days at most"
 fi
+# (1.2.8) The heap the monitor may use, by this machine's memory: vm-setup.sh's 700 MB was the 1 GB VM's, and on the 24 GB
+# A1 it left the monitor collecting garbage for minutes at a time - nothing answered, browsers took it for gone. 60% of
+# the memory, 12 GB at most, in the checkout's drop-in; only ever raised, never lowered
+heap() {
+  local mem want cur dropin f
+  # (the file that sets it: the checkout's drop-in, else the unit itself)
+  dropin=""; for f in "${FR24_DROPIN:-/etc/systemd/system/$SERVICE.service.d/checkout.conf}" "${FR24_UNIT:-/etc/systemd/system/$SERVICE.service}"; do
+    if [ -f "$f" ] && grep -q -- '--max-old-space-size=' "$f"; then dropin="$f"; break; fi
+  done
+  [ -n "$dropin" ] || return 0
+  mem="$(awk '/^MemTotal:/{print int($2/1024)}' "${FR24_MEMINFO:-/proc/meminfo}" 2>/dev/null)"; [ -n "$mem" ] || return 0
+  want=$(( mem * 6 / 10 )); [ "$want" -gt 12288 ] && want=12288; [ "$want" -lt 700 ] && want=700
+  cur="$(sed -n 's/.*--max-old-space-size=\([0-9][0-9]*\).*/\1/p' "$dropin" | head -n1)"
+  [ -n "$cur" ] || return 0
+  [ "$cur" -ge $(( want * 8 / 10 )) ] && return 0
+  sudo sed -i "s/--max-old-space-size=$cur\b/--max-old-space-size=$want/" "$dropin" && sudo systemctl daemon-reload && say "heap limit raised from $cur MB to $want MB (this machine has $mem MB)"
+}
+heap
 # (the unit or a drop-in edited by hand since systemd last read them - the secret, the checkout: read again, so the restart
 # runs with what is on disk and the check asks with the secret the monitor will have)
 if [ "$(systemctl show "$SERVICE" -p NeedDaemonReload --value 2>/dev/null)" = "yes" ]; then

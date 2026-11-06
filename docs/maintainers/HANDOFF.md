@@ -208,7 +208,7 @@ Its store and state should move to the VM.
   `applyLearned` applies the kept blob first, `replayLearned` skips rows it covers (`srvCovers`). The fetched snapshot
   is used from the next page load only, because tables are rebuilt on load.
 - **Backfill waits** on `liveBusy()`.
-- A 24 GB Ampere VM: run node with `--max-old-space-size=12288`. Not verified here: memory and build time of
+- A 24 GB Ampere VM: run node with `--max-old-space-size=12288`. Since 1.2.8 `deploy.sh` raises the limit in the service's drop-in to 60% of the machine's memory (12 GB at most) when it is lower, and `vm-setup.sh` writes it that way; `/status` `loop` shows `heapMb`, `heapLimitMb`, `gcMsLastMin`, `gcMaxMs`, `worstMs` / `worstAt`. Not verified here: memory and build time of
   `/learned` over 90 real days (estimated 10-25 MB raw).
 
 ## 4d. 22.22.0 (14 Oct, cloud session) - built and tested offline; deploy with deploy.sh

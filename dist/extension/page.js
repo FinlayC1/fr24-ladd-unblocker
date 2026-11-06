@@ -1,4 +1,4 @@
-// FR24 LADD Unblocker 1.2.7 - the page-world part (see src/page.js)
+// FR24 LADD Unblocker 1.2.8 - the page-world part (see src/page.js)
 (function () {
   'use strict';
   // ------------------------------------------------------------------------------------------------------------
@@ -7,7 +7,7 @@
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "1.2.7";
+    var BRIDGE_V = "1.2.8";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed
@@ -3469,14 +3469,31 @@
     // (1.2.6) An entry clicked: FR24 takes the map back to it while it is in the air (its own "live" mark on it); one that
     // has landed opens its aircraft's log page - as FR24 opens a page from the widget, in a new tab - a blocked flight's
     // too, by the registration kept with it (FR24 would open nothing: it has no flight number, no registration of it)
+    // (FR24's own address of a flight in the air: /<callsign>/<its id in hex>)
+    function mxLcLiveUrl(x, id) { var cs = String((x && x.callsign) || '').replace(/[^A-Za-z0-9]/g, ''); return '/' + (cs ? cs + '/' : '') + Number(id).toString(16); }
+    function mxLcOpenLive(x, id) {
+      var ac = pinStore('aircraft'), opened = function () { try { var s = ac && ac.selected, fi = s && s.flightInfo; return !!fi && Number(fi.flightId) === id; } catch (e) { return false; } };
+      try { if (ac && typeof ac.showInfoPanel === 'function') { var r = ac.showInfoPanel(id, { moveMap: true, deselectMarkers: true }); if (r && typeof r.catch === 'function') r.catch(function () { /* checked below */ }); } } catch (e) { stats.errors++; stats.lastError = String(e); }
+      mx.lcLive = (mx.lcLive || 0) + 1;
+      oSetTimeout(function () { if (!opened()) mxNav(mxLcLiveUrl(x, id)); }, 2000);
+    }
     function onLcClick(ev) {
       if (!mx.on || (ev.type === 'click' && ev.button) || (ev.type === 'auxclick' && ev.button !== 1)) return;
       var t = ev.target && ev.target.nodeType === 1 ? ev.target : ev.target && ev.target.parentElement; if (!t || !t.closest) return;
       var item = t.closest('.cursor-pointer'); if (!item || !item.querySelector('[data-testid="last-clicked__callsign"]')) return;
-      if (item.querySelector('[data-testid="last-clicked__live"]')) return;
       var box = item.parentElement, items = box ? [].filter.call(box.children, function (c) { return c.querySelector && c.querySelector('[data-testid="last-clicked__callsign"]'); }) : [], i = items.indexOf(item);
       var shown = null; try { var p = mxPinia(), lc = p && p._s.get('lastClickedFlights'); shown = lc && Array.isArray(lc.list) ? lc.list : null; } catch (e) { shown = null; }
       var x = (shown || mxLcList())[i]; if (!x) return;
+      // (1.2.8) still in the air: the flight opened on the map here - FR24's aircraft panel by the flight's id, its store's
+      // own showInfoPanel, as its widget means to - not left to FR24's own click, which opened nothing for any flight in
+      // the air, blocked or not; FR24's own address of the flight if the panel has not opened within 2 s
+      if (item.querySelector('[data-testid="last-clicked__live"]')) {
+        var lid = Number(x.id); if (!(lid > 0)) return;
+        ev.preventDefault(); ev.stopImmediatePropagation();
+        if (ev.type === 'auxclick' || ev.ctrlKey || ev.metaKey || ev.shiftKey) { window.open(mxLcLiveUrl(x, lid), '_blank', 'noopener'); return; }
+        mxLcOpenLive(x, lid);
+        return;
+      }
       var kept = mxLcList().filter(function (k) { return Number(k.id) === Number(x.id); })[0] || {};
       var reg = [x.registration, kept.registration].filter(function (v) { return !mxLcBlank(v); })[0];
       if (!reg) { var rec = resolved.get(Number(x.id)); reg = rec && rec.reg; }
@@ -3577,6 +3594,7 @@
       (d && Array.isArray(d.list) ? d.list : []).forEach(function (x) { if (x && /^[0-9a-f]{1,12}:[01]$/.test(x.k || '') && x.rwy) mxRwy.set(x.k, String(x.rwy).slice(0, 8)); });
       if (mxRwy.size > 5000) mxRwy.delete(mxRwy.keys().next().value);
       var f = d && mxRwyWait.get(d.rid); if (f && (d.done || (f.keys && f.keys.every(function (k) { return mxRwy.has(k); })))) f();
+      cardRwyFill();
     }
     // (1.2.7) An airport's runways all at once, as the monitor logged them from FR24's tracks the moment each flight took off
     // or came down the final approach (monitor/rwylog.cjs): by FR24's id of the flight, and a blocked flight's by its
@@ -3600,6 +3618,10 @@
       Object.keys((d && d.f) || {}).forEach(function (k) { if (/^[0-9a-f]{1,12}:[01]$/.test(k) && typeof d.f[k] === 'string' && d.f[k]) mxRwy.set(k, d.f[k].slice(0, 8)); });
       while (mxRwy.size > 20000) mxRwy.delete(mxRwy.keys().next().value);
       if (Array.isArray(d.h)) mxRwyHex.set(apId, d.h); if (mxRwyHex.size > 200) mxRwyHex.delete(mxRwyHex.keys().next().value);
+      // (1.2.8: the runway in use in the same answer - the panel's tiles, the boards' rows and the cards from one request)
+      if (d && d.use && Array.isArray(d.use.ends)) rwyUseTake(apId, d.use, true);
+      else if (d && d.ok) { var cu = mxRwyUse.get(apId) || {}; if ((!cu.d || cu.d.kept) && Date.now() - (cu.askedOld || 0) > 60000) rwyUseAsk(apId); }   // (a monitor before 1.2.8: asked on its own)
+      cardRwyFill();
       if (c && c.rid === d.rid && !c.done) {
         // (in after the board was drawn without them: FR24's own re-read of it draws them)
         if (Date.now() - c.at > 1500 && curBoard && curBoard.apId === apId) refreshBoardSoon();
@@ -3619,17 +3641,51 @@
     //              a calm), two movements or more that way, or one in the last half hour
     //   PREDICTED: anything less - the wind alone (the end with the most headwind; between parallels or ends alike, the one
     //              the last day used most; in fog, mist or snow the longest), or traffic the wind has since turned against
-    var mxRwyUse = new Map(), mxRwyUseSeq = 0;   // apId -> { at, d, asked }
+    // (1.2.8) Asked for with the airport's runways all at once (mxRwyAirport: one request, made the moment its panel or
+    // board opens, every minute while open) - and, until it is in, the last answer this browser had of the airport, kept
+    // (its runways and last three hours' movements, in this page's storage): the runway in use shown at once - PREDICTED by
+    // the wind FR24 shows, CONFIRMED by traffic only while that traffic is recent
+    var mxRwyUse = new Map(), mxRwyUseSeq = 0, RWYUSE_KEY = 'tl.ladd.rwyuse.v1';   // apId -> { at, d, asked }
+    function rwyUseKept() { try { var o = JSON.parse(localStorage.getItem(RWYUSE_KEY) || 'null'); return o && typeof o === 'object' && !Array.isArray(o) ? o : {}; } catch (e) { return {}; } }
+    function rwyUseTake(apId, u, keep) {
+      var c = mxRwyUse.get(apId) || {};
+      c.d = { ends: (u.ends || []).slice(), runways: (u.runways || []).slice(), mv: (u.mv || []).slice().sort(function (a, b) { return a[2] - b[2]; }), at: Number(u.at) || Math.floor(Date.now() / 1000) }; c.at = Date.now();
+      mxRwyUse.set(apId, c); if (mxRwyUse.size > 100) mxRwyUse.delete(mxRwyUse.keys().next().value);
+      if (!keep || !c.d.ends.length) return;
+      try {
+        var o = rwyUseKept(), cut = Math.floor(Date.now() / 1000) - 3 * 3600;
+        o[apId] = { e: c.d.ends, r: c.d.runways, m: c.d.mv.filter(function (m) { return m[2] >= cut; }).slice(-200), t: c.d.at };
+        var ks = Object.keys(o); if (ks.length > 80) ks.sort(function (a, b) { return (o[a].t || 0) - (o[b].t || 0); }).slice(0, ks.length - 80).forEach(function (k) { delete o[k]; });
+        localStorage.setItem(RWYUSE_KEY, JSON.stringify(o));
+      } catch (e) { /* storage full or refused: kept for this page only */ }
+    }
+    function rwyUseAsk(apId) { var c = mxRwyUse.get(apId) || {}; c.rid = 'ru' + (++mxRwyUseSeq); c.askedOld = Date.now(); mxRwyUse.set(apId, c); post('rwyUse', { rid: c.rid, ap: apId }); }
     function rwyUseWant(apId) {
       apId = Number(apId) || 0; if (!(apId > 0)) return null;
       var c = mxRwyUse.get(apId) || {};
-      if (!c.asked || Date.now() - c.asked > 120000) { c.asked = Date.now(); c.rid = 'ru' + (++mxRwyUseSeq); mxRwyUse.set(apId, c); post('rwyUse', { rid: c.rid, ap: apId }); }
+      if (!c.d && !c.kept) { c.kept = true; var k = rwyUseKept()[apId]; if (k && Array.isArray(k.e) && k.e.length) c.d = { ends: k.e, runways: k.r || [], mv: (k.m || []).slice().sort(function (a, b) { return a[2] - b[2]; }), at: Number(k.t) || 0, kept: true }; mxRwyUse.set(apId, c); }
+      if (!c.asked || Date.now() - c.asked > 60000) { c.asked = Date.now(); mxRwyUse.set(apId, c); mxRwyAirport(apId); }
       return c.d || null;
     }
     function onRwyUseGot(d) {
       var apId = Number(d && d.ap) || 0, c = mxRwyUse.get(apId); if (!c || c.rid !== d.rid || !d.ok) return;
-      c.d = { ends: d.ends || [], runways: d.runways || [], mv: (d.mv || []).slice().sort(function (a, b) { return a[2] - b[2]; }), at: Number(d.at) || Math.floor(Date.now() / 1000) }; c.at = Date.now();
-      if (mxRwyUse.size > 100) mxRwyUse.delete(mxRwyUse.keys().next().value);
+      rwyUseTake(apId, d, true);
+    }
+    // (1.2.8) A card drawn before its runways were in: each one written into it as it comes - FR24's own cell, "N/A" till then
+    function cardRwyFill() {
+      var cards = document.querySelectorAll('[id^="airport_schedule_"], [data-testid^="airport-panel__schedules__flight__"]'), n = 0;
+      for (var i = 0; i < cards.length; i++) {
+        var cd = cardInfo.get(rowIdOf(cards[i])), fid = cd && mxFidHex(cd.fid); if (!fid) continue;
+        var dls = cards[i].querySelectorAll('dl');
+        for (var j = 0; j < dls.length; j++) {
+          var dt = dls[j].querySelector('dt'), dd = dls[j].querySelector('dd'), lab = textOf(dt).toLowerCase(); if (!dd) continue;
+          var end = /^departure runway$/.test(lab) ? 0 : /^arrival runway$/.test(lab) ? 1 : -1; if (end < 0) continue;
+          var v = mxRwy.get(fid + ':' + end), cur = textOf(dd); if (!v || (cur && cur !== 'N/A' && cur !== '–')) continue;
+          dd.textContent = ''; var el = document.createElement('div'); el.className = 'text-md font-semibold text-gray-1300'; el.setAttribute('data-testid', 'airport-flight-details__' + (end ? 'arrival' : 'departure') + '-runway'); el.textContent = v; dd.appendChild(el); n++;
+        }
+      }
+      if (n) mx.cardRwyLate = (mx.cardRwyLate || 0) + n;
+      return n;
     }
     var rwyAng = function (a, b) { var d = Math.abs(((a - b) % 360 + 360) % 360); return d > 180 ? 360 - d : d; };
     // u: /rwyuse's answer; wind: { deg, kts } (null: not known); cond: FR24's word for the weather; nowS: now
@@ -3679,7 +3735,9 @@
         var val = x && x.rwys && x.rwys.length ? x.rwys.join(' / ') : 'N/A', tag = x ? '<span class="tl-tag tl-tag-' + (x.tag === 'conf' ? 'conf' : 'pred') + '" style="display:inline-block;margin:0;padding:0 5px;border-radius:3px;font:700 10px/15px \'Open Sans\',Roboto,Arial,sans-serif;letter-spacing:.3px;text-transform:uppercase;white-space:nowrap;color:#fff;background:' + (x.tag === 'conf' ? '#2e8540">Confirmed' : '#327db6">Predicted') + '</span>' : '';
         return tile(label, '<span class="tl-rwyuse-val" style="font-size:1.25rem;line-height:1.6rem">' + rwyEsc(val) + '</span>' + tag, x ? x.why : 'Not known yet', kind);
       };
-      return cell('Departures runway', r && r.dep, 'departures') + cell('Arrivals runway', r && r.arr, 'arrivals');
+      // (1.2.8: two runways in use - parallels, one each way - "runways")
+      var lab = function (w, x) { return w + (x && x.rwys && x.rwys.length > 1 ? ' runways' : ' runway'); };
+      return cell(lab('Departures', r && r.dep), r && r.dep, 'departures') + cell(lab('Arrivals', r && r.arr), r && r.arr, 'arrivals');
     }
     var rwyEsc = function (s0) { return String(s0 == null ? '' : s0).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
     // the map's airport panel: under its Conditions / Temperature / Wind
@@ -4691,15 +4749,17 @@
       if (row >= 9000000000 && row < 20000000000) { var sid = row - 9000000000; return resolved.has(sid) ? liveWant(sid) : null; }
       var br = boardRowsSeen.get(row) || {}, cd = cardInfo.get(row) || {}, ar = archById.get(row) || null, r = (ar && ar.r) || {}, ni = natInfo.get(row) || null;
       // (the flight id made up here for a row of this script's own - in its card and board answers too - is not FR24's)
-      var fs0 = String(cd.fid || br.fid || r.fid || (ar && ar.fid) || ''); if (ar && ar.own && fs0.toLowerCase() === String(ar.fid).toLowerCase()) fs0 = '';
+      var fsAll = String(cd.fid || br.fid || r.fid || (ar && ar.fid) || ''), fs0 = fsAll; if (ar && ar.own && fs0.toLowerCase() === String(ar.fid).toLowerCase()) fs0 = '';
       var fid = fidNum(fs0);
       if (fid && resolved.has(fid)) return liveWant(fid);
       // (1.2.6: a flight id of this script's own - "ff", the aircraft's address, its take-off - is always ours, whatever
       // the aircraft: FR24's own Playback opens the aircraft's page by the card's registration, and with none its list of
-      // aircraft types, /data/aircraft/#ff...)
-      var syn = MX_PB_SYN.test(fs0.toLowerCase()) ? fs0.toLowerCase() : '', synDep = syn ? parseInt(syn.slice(8), 16) || 0 : 0;
+      // aircraft types, /data/aircraft/#ff... 1.2.8: read before a row of this script's own has its id set aside - G-RVNX,
+      // an ordinary Piper on Liverpool's board from the monitor's log, went to FR24's list of aircraft types)
+      var syn = MX_PB_SYN.test(fsAll.toLowerCase()) ? fsAll.toLowerCase() : '', synDep = syn ? parseInt(syn.slice(8), 16) || 0 : 0;
       var reg = String(r.reg || cd.reg || (ni && ni.reg) || regOfCard(card) || '').toUpperCase(), kr = knownByReg(reg);
-      var ours = !!(syn || r.blk || (ni && ni.blk) || (ar && row >= 20000000000 && !r.fid) || kr || (reg && pbBlk.has('A:' + regKey(reg))));
+      // (a row of this script's own: FR24 has no playback of it, whatever the aircraft)
+      var ours = !!(syn || (ar && ar.own) || r.blk || (ni && ni.blk) || (ar && row >= 20000000000 && !r.fid) || kr || (reg && pbBlk.has('A:' + regKey(reg))));
       if (!ours) return null;
       var kind = (ar && ar.kind) || br.kind || cd.kind || '', apId = (ar && ar.apId) || br.apId || cd.apId || 0, dep = kind === 'departures';
       var other = Number(r.ap) || br.ap || (dep ? cd.dst : cd.o) || 0, tRow = Number(r.t) || br.t || 0, t2 = Number(r.t2) || 0;
@@ -4820,7 +4880,7 @@
       else if (d.__tweeksLadd === 'hello') post('ready', { stats: stats, feedReady: !!feedHeaders, hdr: feedHdrPublic(), v: BRIDGE_V });
     });
     window[NS] = { resolved: resolved, routes: routes, naRecs: naRecs, naRoutes: naRoutes, telem: telem, hist: hist, lastPos: lastPos, photoCache: photoCache, psCache: psCache, stats: stats, fetchPhotos: fetchPhotos, hello: function () { post('ready', { stats: stats, feedReady: !!feedHeaders, v: BRIDGE_V }); }, v: BRIDGE_V };
-    if (window.__tlTestHook) try { window.__tlTestHook({ csOf: csOf, patchTopFlights: patchTopFlights, fillFlightList: fillFlightList, routeRows: routeRows, liveDestFix: liveDestFix, hist: hist, preloaded: function () { return preloaded; }, parse: parse, photoFits: photoFits, makerOf: makerOf, patchFollow: patchFollow, patchFlightMsg: patchFlightMsg, pushFollow: pushFollow, followSt: function () { return followSt; }, setFollowSt: function (s) { followSt = s; }, shownPhotos: shownPhotos, photoCache: photoCache, FOLLOW: FOLLOW, DETAILS: DETAILS, fLen: fLen, fStr: fStr, fVar: fVar, patchFlight: patchFlight, patchLiveFeed: patchLiveFeed, fr24Named: fr24Named, psState: function () { return { q: psQ.length, busy: psBusy, last: psLast, blockedFor: Math.max(0, psBlockedUntil - Date.now()), pri: Array.from(psPri), jobs: photoJobs.size, head: psQ.slice(0, 3).map(function (j) { return j.hex; }) }; }, acceptPubTel: acceptPubTel, pubTelFor: pubTelFor, fillNativeCard: fillNativeCard, regsOfCallsign: regsOfCallsign, categoryOf: categoryOf, placeShort: placeShort, nativeFill: nativeFill, natInfo: natInfo, addArch: addArch, acceptBoardArch: acceptBoardArch, telem: telem, b64Encode: b64Encode, b64DecodeInto: b64DecodeInto, frameHeader: frameHeader, concat: concat, varintInt32: varintInt32, PLAYBACK: PLAYBACK, patchPlayback: patchPlayback, patchPlaybackRequest: patchPlaybackRequest, pbRoutes: pbRoutes, pbTelAt: pbTelAt, setPbTrace: function (t) { pbTrace = t; }, patchList: patchList, acceptSites: acceptSites, listSig: listSig, mergeRoutes: mergeRoutes, applyRoutes: applyRoutes, routesAdd: routesAdd, applyAirport: applyAirport, applyBoardPage: applyBoardPage, applyStats: applyStats, mergeFlights: mergeFlights, apData: apData, telAt: telAt, noteTelem: noteTelem, pbTraceOf: function () { return pbTrace; }, logoOf: logoOf, archDetail: archDetail, tsOf: tsOf, noteAirportJson: noteAirportJson, rwyOf: rwyOf, rwyPanel: rwyPanel, panelTick: panelTick, panelData: panelData, promoSlots: promoSlots, acceptAirportPanel: acceptAirportPanel, unlockRunways: unlockRunways, mvRows: mvRows, mvKept: mvKept, dayOf: dayOf, pbPanelTick: pbPanelTick, logoFix: logoFix, liveEntries: liveEntries, pbPos: pbPos, unlockFeed: unlockFeed, derivedVs: derivedVs, altHist: altHist, acceptAir: acceptAir, airCache: airCache, flushAir: flushAir, airWant: function () { return airWant; }, lastPos: lastPos, resolved: resolved, stats: stats, pbFind: pbFind, inBar: inBar, pbBlk: pbBlk, cardInfo: cardInfo, boardRowsSeen: boardRowsSeen, archById: archById, placeBoard: placeBoard, stopBoardHold: stopBoardHold, needBoardArch: needBoardArch, mx: mx, mxPatchCore: mxPatchCore, mxAuth: mxAuth, mxNatList: mxNatList, mxTrackOk: mxTrackOk, stripRestriction: stripRestriction, mxBmMerge: mxBmMerge, mxBmItem: mxBmItem, mxMonTile: mxMonTile, mxMonOr: mxMonOr, mxPinVer: mxPinVer, mxAirportHistory: mxAirportHistory, mxHistItems: mxHistItems, mxTrackFile: mxTrackFile, mxDataTick: mxDataTick, mxPbProps: mxPbProps, mxPbShow: mxPbShow, mxPbStandIn: mxPbStandIn, mxPbReadAt: mxPbReadAt, mxPbStand: mxPbStand, mxBoardRwy: mxBoardRwy, reqIdOf: reqIdOf, mxPbOpen: mxPbOpen, mxPbTake: mxPbTake, setNav: function (f) { mxNav = f; }, mxPbAway: mxPbAway, mxLegacyPbJson: mxLegacyPbJson, mxLegacyPb: mxLegacyPb, mxPbFlags: mxPbFlags, mxPbSynId: mxPbSynId, mxPbParam: mxPbParam, setPbWanted: function (v) { mxPbWanted = v; }, mxPlans: function () { return mxPlans; }, mxLiveRunways: mxLiveRunways, mxRwy: mxRwy, mxSetApply: mxSetApply, mxSetNote: mxSetNote, mxSetKept: mxSetKept, mxLastClicked: mxLastClicked, mxLcList: mxLcList, onLcClick: onLcClick, mxLcFill: mxLcFill, cardRwy: cardRwy, naEndsFill: naEndsFill, onEndsGot: onEndsGot, naEnds: naEnds, boardWant: boardWant, mxLegacyImages: mxLegacyImages, rwyInUse: rwyInUse, windOfText: windOfText, mxRwyAirport: mxRwyAirport, mxRwyByHex: mxRwyByHex, mxRowHex: mxRowHex, mxDataEnds: mxDataEnds, rwyUsePanel: rwyUsePanel, rwyUseData: rwyUseData, rwyUseWant: rwyUseWant, mxLcTick: mxLcTick, mxBmMax: mxBmMax, mxNatParse: mxNatParse, mxAirsigList: mxAirsigList, mxStations: mxStations, mxLightning: mxLightning, mxLx: mxLx, mxFetch: mxFetch, mxWxText: mxWxText, mxWxKind: mxWxKind, mxCsv: mxCsv, patchLiveFeedRequest: patchLiveFeedRequest, mxCats: mxCats, mxOp: mxOp, mxLevels: mxLevels, mxNearest: mxNearest, MX_ICE: MX_ICE, MX_TURB: MX_TURB, mxWafsUrl: mxWafsUrl, routes: routes, setCurFollow: function (id) { curFollowId = id; } }); } catch (e) { /* ignore */ }
+    if (window.__tlTestHook) try { window.__tlTestHook({ csOf: csOf, patchTopFlights: patchTopFlights, fillFlightList: fillFlightList, routeRows: routeRows, liveDestFix: liveDestFix, hist: hist, preloaded: function () { return preloaded; }, parse: parse, photoFits: photoFits, makerOf: makerOf, patchFollow: patchFollow, patchFlightMsg: patchFlightMsg, pushFollow: pushFollow, followSt: function () { return followSt; }, setFollowSt: function (s) { followSt = s; }, shownPhotos: shownPhotos, photoCache: photoCache, FOLLOW: FOLLOW, DETAILS: DETAILS, fLen: fLen, fStr: fStr, fVar: fVar, patchFlight: patchFlight, patchLiveFeed: patchLiveFeed, fr24Named: fr24Named, psState: function () { return { q: psQ.length, busy: psBusy, last: psLast, blockedFor: Math.max(0, psBlockedUntil - Date.now()), pri: Array.from(psPri), jobs: photoJobs.size, head: psQ.slice(0, 3).map(function (j) { return j.hex; }) }; }, acceptPubTel: acceptPubTel, pubTelFor: pubTelFor, fillNativeCard: fillNativeCard, regsOfCallsign: regsOfCallsign, categoryOf: categoryOf, placeShort: placeShort, nativeFill: nativeFill, natInfo: natInfo, addArch: addArch, acceptBoardArch: acceptBoardArch, telem: telem, b64Encode: b64Encode, b64DecodeInto: b64DecodeInto, frameHeader: frameHeader, concat: concat, varintInt32: varintInt32, PLAYBACK: PLAYBACK, patchPlayback: patchPlayback, patchPlaybackRequest: patchPlaybackRequest, pbRoutes: pbRoutes, pbTelAt: pbTelAt, setPbTrace: function (t) { pbTrace = t; }, patchList: patchList, acceptSites: acceptSites, listSig: listSig, mergeRoutes: mergeRoutes, applyRoutes: applyRoutes, routesAdd: routesAdd, applyAirport: applyAirport, applyBoardPage: applyBoardPage, applyStats: applyStats, mergeFlights: mergeFlights, apData: apData, telAt: telAt, noteTelem: noteTelem, pbTraceOf: function () { return pbTrace; }, logoOf: logoOf, archDetail: archDetail, tsOf: tsOf, noteAirportJson: noteAirportJson, rwyOf: rwyOf, rwyPanel: rwyPanel, panelTick: panelTick, panelData: panelData, promoSlots: promoSlots, acceptAirportPanel: acceptAirportPanel, unlockRunways: unlockRunways, mvRows: mvRows, mvKept: mvKept, dayOf: dayOf, pbPanelTick: pbPanelTick, logoFix: logoFix, liveEntries: liveEntries, pbPos: pbPos, unlockFeed: unlockFeed, derivedVs: derivedVs, altHist: altHist, acceptAir: acceptAir, airCache: airCache, flushAir: flushAir, airWant: function () { return airWant; }, lastPos: lastPos, resolved: resolved, stats: stats, pbFind: pbFind, inBar: inBar, pbBlk: pbBlk, cardInfo: cardInfo, boardRowsSeen: boardRowsSeen, archById: archById, placeBoard: placeBoard, stopBoardHold: stopBoardHold, needBoardArch: needBoardArch, mx: mx, mxPatchCore: mxPatchCore, mxAuth: mxAuth, mxNatList: mxNatList, mxTrackOk: mxTrackOk, stripRestriction: stripRestriction, mxBmMerge: mxBmMerge, mxBmItem: mxBmItem, mxMonTile: mxMonTile, mxMonOr: mxMonOr, mxPinVer: mxPinVer, mxAirportHistory: mxAirportHistory, mxHistItems: mxHistItems, mxTrackFile: mxTrackFile, mxDataTick: mxDataTick, mxPbProps: mxPbProps, mxPbShow: mxPbShow, mxPbStandIn: mxPbStandIn, mxPbReadAt: mxPbReadAt, mxPbStand: mxPbStand, mxBoardRwy: mxBoardRwy, reqIdOf: reqIdOf, mxPbOpen: mxPbOpen, mxPbTake: mxPbTake, setNav: function (f) { mxNav = f; }, mxPbAway: mxPbAway, mxLegacyPbJson: mxLegacyPbJson, mxLegacyPb: mxLegacyPb, mxPbFlags: mxPbFlags, mxPbSynId: mxPbSynId, mxPbParam: mxPbParam, setPbWanted: function (v) { mxPbWanted = v; }, mxPlans: function () { return mxPlans; }, mxLiveRunways: mxLiveRunways, mxRwy: mxRwy, mxSetApply: mxSetApply, mxSetNote: mxSetNote, mxSetKept: mxSetKept, mxLastClicked: mxLastClicked, mxLcList: mxLcList, onLcClick: onLcClick, mxLcFill: mxLcFill, cardRwy: cardRwy, naEndsFill: naEndsFill, onEndsGot: onEndsGot, naEnds: naEnds, boardWant: boardWant, mxLegacyImages: mxLegacyImages, rwyInUse: rwyInUse, windOfText: windOfText, mxRwyAirport: mxRwyAirport, mxRwyByHex: mxRwyByHex, mxRowHex: mxRowHex, mxDataEnds: mxDataEnds, rwyUsePanel: rwyUsePanel, rwyUseData: rwyUseData, rwyUseWant: rwyUseWant, cardRwyFill: cardRwyFill, rwyUseKept: rwyUseKept, mxLcTick: mxLcTick, mxBmMax: mxBmMax, mxNatParse: mxNatParse, mxAirsigList: mxAirsigList, mxStations: mxStations, mxLightning: mxLightning, mxLx: mxLx, mxFetch: mxFetch, mxWxText: mxWxText, mxWxKind: mxWxKind, mxCsv: mxCsv, patchLiveFeedRequest: patchLiveFeedRequest, mxCats: mxCats, mxOp: mxOp, mxLevels: mxLevels, mxNearest: mxNearest, MX_ICE: MX_ICE, MX_TURB: MX_TURB, mxWafsUrl: mxWafsUrl, routes: routes, setCurFollow: function (id) { curFollowId = id; } }); } catch (e) { /* ignore */ }
     post('ready', { stats: stats, feedReady: false, v: BRIDGE_V });
   }
 
