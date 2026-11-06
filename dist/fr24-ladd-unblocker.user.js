@@ -3498,6 +3498,12 @@
     var MX_LC_KEY = 'tl.mx.lastclicked', MX_LC_MAX = 10, mxLcSeen = null;
     function mxLcList() { try { var a = JSON.parse(localStorage.getItem(MX_LC_KEY) || '[]'); return Array.isArray(a) ? a.filter(function (x) { return x && x.id != null; }) : []; } catch (e) { return []; } }
     function mxLcSave(a) { try { localStorage.setItem(MX_LC_KEY, JSON.stringify(a.slice(0, MX_LC_MAX))); } catch (e) { /* full */ } }
+    // (1.2.8) A flight's id as FR24's widget has it - its hex, as FR24 writes ids (Number(id).toString(16), at least six
+    // figures): its click opens the flight by that string (showInfoPanel lower-cases it). Kept here as the number; given
+    // to FR24 as the string - the number made its click throw before it did anything, every flight in the air "dead"
+    var lcNum = function (v) { return typeof v === 'number' ? v : /^[0-9a-f]{1,12}$/i.test(String(v == null ? '' : v)) ? parseInt(String(v), 16) : NaN; };
+    var lcHex = function (v) { var n = typeof v === 'number' ? v : lcNum(v); return n > 0 ? n.toString(16).padStart(6, '0').toLowerCase() : String(v == null ? '' : v); };
+    function mxLcOut(list) { return list.slice(0, MX_LC_MAX).map(function (x) { var o = Object.assign({}, x); o.id = lcHex(x.id); return o; }); }
     function mxLcAirport(a) {
       if (!a || typeof a !== 'object') return { code: { iata: null, icao: null }, city: null, name: null };
       var c = a.code && typeof a.code === 'object' ? a.code : {}, pos = a.position || {}, reg = pos.region || {};
@@ -3539,7 +3545,7 @@
       });
       return it;
     }
-    function mxLcShow(list) { try { var p = mxPinia(), lc = p && p._s.get('lastClickedFlights'); if (lc && typeof lc.setList === 'function') lc.setList(list.slice(0, MX_LC_MAX)); } catch (e) { /* not drawn */ } }
+    function mxLcShow(list) { try { var p = mxPinia(), lc = p && p._s.get('lastClickedFlights'); if (lc && typeof lc.setList === 'function') lc.setList(mxLcOut(list)); } catch (e) { /* not drawn */ } }
     function mxLcTick() {
       try {
         var pb = pinStore('playback'); if (pb && pb.active) return;
@@ -3562,12 +3568,6 @@
     // too, by the registration kept with it (FR24 would open nothing: it has no flight number, no registration of it)
     // (FR24's own address of a flight in the air: /<callsign>/<its id in hex>)
     function mxLcLiveUrl(x, id) { var cs = String((x && x.callsign) || '').replace(/[^A-Za-z0-9]/g, ''); return '/' + (cs ? cs + '/' : '') + Number(id).toString(16); }
-    function mxLcOpenLive(x, id) {
-      var ac = pinStore('aircraft'), opened = function () { try { var s = ac && ac.selected, fi = s && s.flightInfo; return !!fi && Number(fi.flightId) === id; } catch (e) { return false; } };
-      try { if (ac && typeof ac.showInfoPanel === 'function') { var r = ac.showInfoPanel(id, { moveMap: true, deselectMarkers: true }); if (r && typeof r.catch === 'function') r.catch(function () { /* checked below */ }); } } catch (e) { stats.errors++; stats.lastError = String(e); }
-      mx.lcLive = (mx.lcLive || 0) + 1;
-      oSetTimeout(function () { if (!opened()) mxNav(mxLcLiveUrl(x, id)); }, 2000);
-    }
     function onLcClick(ev) {
       if (!mx.on || (ev.type === 'click' && ev.button) || (ev.type === 'auxclick' && ev.button !== 1)) return;
       var t = ev.target && ev.target.nodeType === 1 ? ev.target : ev.target && ev.target.parentElement; if (!t || !t.closest) return;
@@ -3575,19 +3575,15 @@
       var box = item.parentElement, items = box ? [].filter.call(box.children, function (c) { return c.querySelector && c.querySelector('[data-testid="last-clicked__callsign"]'); }) : [], i = items.indexOf(item);
       var shown = null; try { var p = mxPinia(), lc = p && p._s.get('lastClickedFlights'); shown = lc && Array.isArray(lc.list) ? lc.list : null; } catch (e) { shown = null; }
       var x = (shown || mxLcList())[i]; if (!x) return;
-      // (1.2.8) still in the air: the flight opened on the map here - FR24's aircraft panel by the flight's id, its store's
-      // own showInfoPanel, as its widget means to - not left to FR24's own click, which opened nothing for any flight in
-      // the air, blocked or not; FR24's own address of the flight if the panel has not opened within 2 s
+      // (still in the air: FR24's own click - the flight selected on the map, the page kept - now that its widget has the
+      // id in FR24's own form; a new tab: FR24's own address of the flight)
       if (item.querySelector('[data-testid="last-clicked__live"]')) {
-        var lid = Number(x.id); if (!(lid > 0)) return;
-        ev.preventDefault(); ev.stopImmediatePropagation();
-        if (ev.type === 'auxclick' || ev.ctrlKey || ev.metaKey || ev.shiftKey) { window.open(mxLcLiveUrl(x, lid), '_blank', 'noopener'); return; }
-        mxLcOpenLive(x, lid);
+        if (ev.type === 'auxclick' || ev.ctrlKey || ev.metaKey || ev.shiftKey) { var lid = lcNum(x.id); if (lid > 0) { ev.preventDefault(); ev.stopImmediatePropagation(); window.open(mxLcLiveUrl(x, lid), '_blank', 'noopener'); } }
         return;
       }
-      var kept = mxLcList().filter(function (k) { return Number(k.id) === Number(x.id); })[0] || {};
+      var xid = lcNum(x.id), kept = mxLcList().filter(function (k) { return lcNum(k.id) === xid; })[0] || {};
       var reg = [x.registration, kept.registration].filter(function (v) { return !mxLcBlank(v); })[0];
-      if (!reg) { var rec = resolved.get(Number(x.id)); reg = rec && rec.reg; }
+      if (!reg) { var rec = resolved.get(xid); reg = rec && rec.reg; }
       if (!reg) return;
       ev.preventDefault(); ev.stopImmediatePropagation();
       window.open('/data/aircraft/' + encodeURIComponent(String(reg).toLowerCase()), '_blank', 'noopener');
@@ -3599,14 +3595,14 @@
       // (each with what is known of it now - kept so: the name of a blocked flight stays with it)
       { var was = JSON.stringify(list); list = list.map(function (x) { return mxLcFill(x); }); if (JSON.stringify(list) !== was) mxLcSave(list); }
       if (method === 'PUT') {
-        var body = mxBmBody(input, init), ids = body && Array.isArray(body.last_clicked_flights) ? body.last_clicked_flights.map(Number) : null;
+        var body = mxBmBody(input, init), ids = body && Array.isArray(body.last_clicked_flights) ? body.last_clicked_flights.map(function (v) { return lcNum(v && typeof v === 'object' ? v.id : v); }) : null;
         if (ids) {
-          var by = {}; list.forEach(function (x) { by[Number(x.id)] = x; });
+          var by = {}; list.forEach(function (x) { by[lcNum(x.id)] = x; });
           list = ids.map(function (i) { return by[i] || null; }).filter(Boolean);
           mxLcSave(list);
         }
       }
-      return Promise.resolve(jsonResponse(null, { last_clicked_flights: { items: list.slice(0, MX_LC_MAX) } }));
+      return Promise.resolve(jsonResponse(null, { last_clicked_flights: { items: mxLcOut(list) } }));
     }
     function mxBmKept() { try { var o = JSON.parse(localStorage.getItem(MX_BM_KEY) || '{}'); return o && typeof o === 'object' ? o : {}; } catch (e) { return {}; } }
     function mxBmSave(o) { try { localStorage.setItem(MX_BM_KEY, JSON.stringify(o)); } catch (e) { /* full */ } }
@@ -3955,8 +3951,9 @@
       rows.forEach(function (r) {
         if (!r || typeof r !== 'object') return;
         var lk = !!(r.locked && r.locked.runway === true); if (!lk && r.runway != null && r.runway !== '') return;
-        // (1.2.6: never FR24's padlock - "N/A" until the runway is known, replaced as it comes)
-        if (lk) { r.locked = Object.assign({}, r.locked, { runway: false }); if (r.runway === undefined) r.runway = null; n++; }
+        // (1.2.6: never FR24's padlock. 1.2.8: the rows themselves show no runway - only each flight's card does, in its
+        // dropdown; the runways are asked for here still, so the card has its own the moment it opens)
+        if (lk) { r.locked = Object.assign({}, r.locked, { runway: false }); r.runway = null; n++; }
         var raw = r.flightId != null ? r.flightId : r.flight && r.flight.id, fid = mxFidHex(raw);
         var st = String((r.status && (r.status.name || r.status.type || r.status.label)) || '').toLowerCase(), t = Number(r.landedTime || r.estimatedTime || r.scheduledTime) || 0;
         var flown = kind === 'on-ground' || kind === 'onGround' || kind === 'on-grounds' || /landed|departed|arrived/.test(st) || (!st && t > 0 && t < now - 300);
@@ -3964,11 +3961,11 @@
         // (1.2.7: a blocked flight's - a row of this script's, FR24's own of one followed here - by its address and time, its
         // ADS-B track's runway as the monitor logged it)
         var hx = mxRowHex(r), vh = hx ? mxRwyByHex(apId, hx, land ? 1 : 0, t) : '';
-        if (vh) { if (r.runway !== vh) { r.runway = vh; n++; } return; }
+        if (vh) return;
         // (a row of this script's own with an id made up here: no track of it anywhere by that id)
         if (!fid || !/^[0-9a-f]{1,12}$/.test(fid) || (r.__tlArch && /^c[0-9a-f]{0,7}$/.test(fid))) return;
         var key = fid + ':' + (land ? 1 : 0), v = mxRwy.get(key);
-        if (v) { if (r.runway !== v) { r.runway = v; n++; } if (lk) r.locked = Object.assign({}, r.locked, { runway: false }); return; }
+        if (v) return;
         if (Date.now() - (mxBrAsked.get(key) || 0) > 600000) ask.push({ fid: fid, landing: land, t: t, key: key });
       });
       var bk = apId + ':' + kind;

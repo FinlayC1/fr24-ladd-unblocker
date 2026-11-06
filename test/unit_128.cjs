@@ -109,6 +109,30 @@ function open(url, store) {
     check('board card: the take-off\'s runway, in after the card was drawn, written into it; the landing\'s not known yet left "N/A"', cells[0] === '05' && cells[1] === 'N/A', cells);
     P.w.close(); }
 
+  // ================= which runway: parallels side by side; never from far-off points alone =================
+  { const APT = M.APT, kk = E.byIcao('EGKK'), gp = E.byIcao('EGGP');
+    // (a take-off from Gatwick's 26L - 200 m from 26R: rolling along its centreline, off, climbing out - seconds apart)
+    const ends = APT.endsOf('EGKK'), L = ends.find(e => e.id === '26L');
+    const along = (e, km, alt, gnd, t, gs) => { const [la, lo] = E.destPoint(e.lat, e.lon, e.hdg, km); return { t, lat: la, lon: lo, alt: gnd ? null : alt, gnd, gs, trk: e.hdg }; };
+    const off = []; for (let i = 0; i <= 12; i++) off.push(along(L, 0.2 + i * 0.25, i < 7 ? 0 : (i - 6) * 300, i < 7, 1e9 + i * 5, 40 + i * 12));
+    check('runway: a take-off from Gatwick\'s 26L, 200 m beside 26R - told apart by its roll and first climb (was "not known")', APT.runwayOf(kk, off, false) === '26L', APT.runwayOf(kk, off, false));
+    // (a landing seen only from far out - none of it within 6 km of a threshold: no answer, not a guess)
+    const P = ends.find(e => e.id === '08R'), far = []; for (let i = 0; i < 6; i++) far.push(along(P, -20 + i * 1.5, 4000 - i * 250, false, 1e9 + i * 20, 160));
+    check('... a landing seen only 12 km and more out: no answer rather than a guess', APT.runwayOf(kk, far, true) === null, APT.runwayOf(kk, far, true));
+    const high = []; for (let i = 0; i < 4; i++) high.push(along(P, -8 + i * 1.5, 4800, false, 1e9 + i * 20, 200));
+    check('... nor one passing over the final at 4,800 ft, far above any approach', APT.runwayOf(kk, high, true) === null, APT.runwayOf(kk, high, true));
+    // ================= the monitor scanning the airports looked at - airliners too =================
+    const c = M.fr24Client(), was = c.liveFeed, wasScan = M.CFG.fr24Scan, asked = [];
+    const e27 = APT.endsOf('EGGP').find(e => e.id === '27'), now2 = Math.floor(Date.now() / 1000);
+    const fl = (alt, gnd, km, ts) => { const [la, lo] = E.destPoint(e27.lat, e27.lon, e27.hdg, km); return { id: 0x3e0b0001, lat: la, lon: lo, alt, gnd, spd: gnd ? 130 : 160, trk: e27.hdg, ts, from: 'LPL', to: 'AMS', cs: 'EZY7001', reg: 'G-EZAA', type: 'A320', hex: '4006aa' }; };
+    let call = 0;
+    c.liveFeed = async q => { asked.push(q); call++; return { flights: call === 1 ? [fl(0, true, 0.6, now2 - 50)] : [fl(1800, false, 4, now2)], serverTime: 0 }; };
+    M.CFG.fr24Scan = true;
+    M.answer(new URL(`http://x/rwyap?ap=${gp.id}&use=1`), now2);
+    await M.rwyHotRound(); await M.rwyHotRound();
+    c.liveFeed = was; M.CFG.fr24Scan = wasScan;
+    check('monitor: an airport looked at scanned for every flight round it - an easyJet off Liverpool\'s 27 logged as it climbs out', asked.length === 2 && asked[0].services.includes(0) && asked[0].services.includes(1) && Math.abs(asked[0].n - asked[0].s - 0.72) < 1e-6 && M.RL.get('3e0b0001:0') === '27', { asked: asked.length, got: M.RL.get('3e0b0001:0'), svc: asked[0] && asked[0].services }); }
+
   // ================= the Bookmarks widget with nothing on a tab: in the middle of it =================
   check('Bookmarks: the empty tab\'s picture and words centred - a rule a browser takes (no :has() inside :has()), only on the empty view (it holds a picture), not FR24\'s "not allowed" box',
     SRC.includes('*:has(> [data-testid="bookmarks__no-data"] > picture){display:flex!important;flex-direction:column!important}') && SRC.includes('[data-testid="bookmarks__no-data"]:has(> picture){margin-top:auto!important;margin-bottom:auto!important') && !/:has\([^)]*:has\(/.test((SRC.match(/BM_EMPTY_STYLE = [^;]*;/) || [''])[0]));

@@ -23,7 +23,7 @@ function createAirportInfo(env) {
     const out = [];
     for (const r of info[icao] || []) {
       if (r[7]) continue;                                                  // (closed)
-      const a = { id: r[0], lat: r[11], lon: r[12], hdg: r[9] }, b = { id: r[1], lat: r[16], lon: r[17], hdg: r[14] };
+      const a = { id: r[0], lat: r[11], lon: r[12], hdg: r[9], len: fin(r[2]) ? r[2] : 0 }, b = { id: r[1], lat: r[16], lon: r[17], hdg: r[14], len: fin(r[2]) ? r[2] : 0 };
       if (fin(a.lat) && fin(b.lat)) { a.hdg = E.brg(a.lat, a.lon, b.lat, b.lon); b.hdg = E.brg(b.lat, b.lon, a.lat, a.lon); }
       else {
         a.lat = a.lon = b.lat = b.lon = null;
@@ -50,33 +50,70 @@ function createAirportInfo(env) {
     else { for (let i = 0; i < pts.length; i++) if (!pts[i].gnd) { iAir = i; break; } }
     if (iAir < 0) return null;
     const tA = pts[iAir].t, near = pts.filter(p => landing ? p.t >= tA - 420 && p.t <= tA + 180 : p.t >= tA - 180 && p.t <= tA + 150);
-    const score = new Map();
+    const score = new Map(), close = new Set();
     const kx = 111.32 * Math.cos(ap.lat * Math.PI / 180), ky = 110.57;
     for (const p of near) {
       if (!fin(p.lat) || !fin(p.lon) || !fin(p.trk)) continue;
       const d = E.dist(p.lat, p.lon, ap.lat, ap.lon); if (d > 25) continue;
       const agl = p.gnd || p.alt == null ? 0 : p.alt - elev; if (agl > 5000) continue;
-      if (p.gnd && !(p.gs > 30)) continue;                                 // (taxiing: its heading says nothing)
+      const slow = p.gnd && !(p.gs > 30);                                 // (taxiing: its heading says nothing...)
       for (const e of ends) {
         const dh = E.angDiff(p.trk, e.hdg); if (dh > 25) continue;
-        let w;
+        let w, s = 0;
         if (fin(e.lat)) {
           const ux = Math.sin(e.hdg * Math.PI / 180), uy = Math.cos(e.hdg * Math.PI / 180);
-          const px = (p.lon - e.lon) * kx, py = (p.lat - e.lat) * ky, s = px * ux + py * uy, xt = px * uy - py * ux;
+          const px = (p.lon - e.lon) * kx, py = (p.lat - e.lat) * ky, xt = px * uy - py * ux; s = px * ux + py * uy;
           // (landing: up to 18 km short of the threshold, or rolling out along the runway; taking off: from the threshold on)
           if (landing ? (s < -15 || s > 4) : (s < -0.5 || s > 10)) continue;
-          w = Math.exp(-0.5 * (xt / (0.2 + 0.045 * Math.abs(s))) ** 2) * (1 - dh / 25);
+          // (...unless lined up on the runway itself - on its centreline within 40 m, at its start, its way: about to roll)
+          if (slow && (Math.abs(xt) > 0.04 || dh > 15 || s < -0.3 || s > 1.5)) continue;
+          w = Math.exp(-0.5 * (xt / (0.2 + 0.045 * Math.abs(s))) ** 2) * (1 - dh / 25) * (slow ? 0.7 : 1);
         } else {
-          if (d > 10 || agl > 3000) continue;
+          if (slow || d > 10 || agl > 3000) continue;
           w = 0.5 * (1 - dh / 25);
         }
-        if (w > 0.05) score.set(e.id, (score.get(e.id) || 0) + w);
+        if (w > 0.05) {
+          score.set(e.id, (score.get(e.id) || 0) + w);
+          // (1.2.8: seen close to it - the roll, the first 4 km of the climb, the final within 10 km - not only far out,
+          // where a track turning away, or another runway's approach, can line up with it by chance: Amsterdam's take-off
+          // from 04, sampled every 30 s, read as 09 from points after its turn)
+          // (a landing: on the final within 10 km and no higher than an approach is there - 350 ft a km and 500 ft more)
+          if (!fin(e.lat) || p.gnd || (landing ? s >= -10 && agl <= 500 + 350 * Math.abs(s) : s <= 4)) close.add(e.id);
+        }
       }
     }
-    const best = [...score].sort((a, b) => b[1] - a[1]);
+    const best = [...score].filter(x => close.has(x[0])).sort((a, b) => b[1] - a[1]);
     if (!best.length || best[0][1] < 0.6) return null;
-    if (best[1] && best[1][1] > best[0][1] * 0.7) return null;              // (two runways alike: no answer)
+    if (best[1] && best[1][1] > best[0][1] * 0.7) return parallels(ends, best[0][0], best[1][0], near, landing, elev, kx, ky);
     return best[0][0];
+  }
+  // (1.2.8) Two runways alike - parallels side by side, the whole approach or climb-out fitting both (Gatwick's 08R/08L,
+  // 200 m apart: every take-off and landing there "not known"; Manchester's 05L/05R, 390 m, far out on the final): told
+  // apart by the positions where the two are far apart for the track - the roll on the ground, the last 3 km of the final
+  // and the first 3 km of the climb - held to the centreline within some 60 m. Still alike, and the two so close (under
+  // 300 m) that only one is ever in use: the main one, the longer. Otherwise no answer.
+  function parallels(ends, idA, idB, near, landing, elev, kx, ky) {
+    const A = ends.find(e => e.id === idA), B = ends.find(e => e.id === idB);
+    if (!A || !B || !fin(A.lat) || !fin(B.lat) || E.angDiff(A.hdg, B.hdg) > 10) return null;
+    const fine = e => {
+      const ux = Math.sin(e.hdg * Math.PI / 180), uy = Math.cos(e.hdg * Math.PI / 180); let w = 0;
+      for (const p of near) {
+        if (!fin(p.lat) || !fin(p.lon) || !fin(p.trk)) continue;
+        const agl = p.gnd || p.alt == null ? 0 : p.alt - elev; if (agl > 1500) continue;
+        if (p.gnd && !(p.gs > 30)) continue;
+        const dh = E.angDiff(p.trk, e.hdg); if (dh > 25) continue;
+        const px = (p.lon - e.lon) * kx, py = (p.lat - e.lat) * ky, s = px * ux + py * uy, xt = px * uy - py * ux;
+        if (landing ? (s < -3 || s > 4) : (s < -0.5 || s > 3)) continue;
+        w += Math.exp(-0.5 * (xt / (p.gnd ? 0.05 : 0.08)) ** 2) * (1 - dh / 25);
+      }
+      return w;
+    };
+    const fA = fine(A), fB = fine(B);
+    if (fA > 0.3 && fA >= fB * 2) return idA;
+    if (fB > 0.3 && fB >= fA * 2) return idB;
+    const ux = Math.sin(A.hdg * Math.PI / 180), uy = Math.cos(A.hdg * Math.PI / 180), bx = (B.lon - A.lon) * kx, by = (B.lat - A.lat) * ky;
+    if (Math.abs(bx * uy - by * ux) < 0.3) return (B.len || 0) > (A.len || 0) ? idB : idA;
+    return null;
   }
   // /airport: its runways and frequencies; which runways the flights tracked there used, the last `days` days
   // (1.0.2) With the day counts kept (apstats.cjs: st): the window's days counted there - every aircraft adsb.lol heard -

@@ -131,7 +131,7 @@ function createRwyLog(env) {
       // (where it was a scan before - kept or not: climbing or not)
       const prev = st.last && ts - st.last.t <= 600 ? st.last : null; st.last = { t: ts, alt: f.gnd ? null : f.alt, gnd: !!f.gnd };
       const p = { t: ts, lat: f.lat, lon: f.lon, alt: f.gnd ? null : f.alt, gnd: !!f.gnd, gs: f.spd, trk: f.trk };
-      if (f.gnd) { st.gAp = aps[0].a.id; st.gT = ts; st.gLat = f.lat; st.gLon = f.lon; }
+      if (f.gnd) { st.gAp = aps[0].a.id; st.gT = ts; st.gLat = f.lat; st.gLon = f.lon; st.gTrk = fin(f.trk) ? f.trk : null; }
       // (FR24's own positions of it there - kept, the track of every flight where it meets an airport)
       if (keepPt(f, aps[0].a, aps[0].d)) { if (!st.pts.length || st.pts[st.pts.length - 1].t < ts) { st.pts.push(p); if (keep) keep(f, p); } }
       st.pts = st.pts.filter(q => ts - q.t <= 900);
@@ -142,7 +142,10 @@ function createRwyLog(env) {
         // a take-off: off the ground here a moment ago, or climbing out along a runway of the field it says it left
         const leftHere = st.gAp === a.id && ts - st.gT < 900;
         if (!st.dep && (leftHere || (f.from && fromHere)) && away(f, a) !== false) {
-          const pts = leftHere ? [{ t: st.gT, lat: st.gLat, lon: st.gLon, alt: null, gnd: true, gs: 0, trk: f.trk }].concat(st.pts.filter(q => q.t > st.gT && !q.gnd)) : st.pts.filter(q => !q.gnd);
+          // (1.2.8: its roll as kept - on the ground and moving fast, along the runway - with its climb: the roll is where
+          // the runway shows, a stand-in at rest at its last ground position said nothing)
+          const roll = st.pts.filter(q => q.gnd && q.gs > 30 && q.t >= st.gT - 300);
+          const pts = leftHere ? (roll.length ? roll : [{ t: st.gT, lat: st.gLat, lon: st.gLon, alt: null, gnd: true, gs: 0, trk: st.gTrk != null ? st.gTrk : f.trk }]).concat(st.pts.filter(q => q.t > st.gT && !q.gnd)) : st.pts.filter(q => !q.gnd);
           const r = APT.runwayOf(a, pts.length ? pts : [p], false);
           if (r) { if (put(fid, 0, r, a.id, (pts.find(q => !q.gnd) || p).t, 'live')) { stats.live.dep++; n++; } st.dep = true; st.depAp = a.id; st.depT = ts; break; }
         }
