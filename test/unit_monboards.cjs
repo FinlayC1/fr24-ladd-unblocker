@@ -119,7 +119,7 @@ const ltn = E.byIcao('EGGW'), lpl = E.byIcao('EGGP');
     const old = M.answer(new URL(`http://x/rwy?f=3c1a2b50:1,3c1a2b51:1&ap=${a.id}&ts=${t0 + 300},${t0}`), Date.now() / 1000), noAp = M.answer(new URL('http://x/rwy?f=3c1a2b52:1'), Date.now() / 1000);
     check('... a flight of 20 days ago from the FR24 positions kept: 27; one not kept none; without the airport only those known', old.list['3c1a2b50:1'] === '27' && !('3c1a2b51:1' in old.list) && Object.keys(noAp.list).length === 0, { old, noAp });
     // (1.2.7: kept in the runway log, by day - read back by a monitor started afresh)
-    M.RL.save(nowS); const RL2 = createRwyLog({ E: M.E, APT: M.APT, store: process.env.MON_STORE }); RL2.load(nowS);
+    M.RL.save(nowS, true); const RL2 = createRwyLog({ E: M.E, APT: M.APT, store: process.env.MON_STORE }); RL2.load(nowS);
     const saved = { a: RL2.get('3c1a2b4f:1', nowS - 3600), b: RL2.get('3c1a2b50:1', t0 + 300) };
     check('... the runways known written for a restart', saved.a === '27' && saved.b === '27', saved); }
   // ---- (1.2.4) every FR24 position the monitor gets kept as it came: an unnamed flight's scan positions and its trail (with

@@ -24,7 +24,7 @@ function createAirportInfo(env) {
     for (const r of info[icao] || []) {
       if (r[7]) continue;                                                  // (closed)
       const a = { id: r[0], lat: r[11], lon: r[12], hdg: r[9], len: fin(r[2]) ? r[2] : 0 }, b = { id: r[1], lat: r[16], lon: r[17], hdg: r[14], len: fin(r[2]) ? r[2] : 0 };
-      if (fin(a.lat) && fin(b.lat)) { a.hdg = E.brg(a.lat, a.lon, b.lat, b.lon); b.hdg = E.brg(b.lat, b.lon, a.lat, a.lon); }
+      if (fin(a.lat) && fin(b.lat)) { a.hdg = E.brg(a.lat, a.lon, b.lat, b.lon); b.hdg = E.brg(b.lat, b.lon, a.lat, a.lon); a.L = b.L = E.dist(a.lat, a.lon, b.lat, b.lon); }
       else {
         a.lat = a.lon = b.lat = b.lon = null;
         const n = s => { const m = /^(\d\d)/.exec(s || ''); return m ? +m[1] * 10 : null; };
@@ -49,7 +49,12 @@ function createAirportInfo(env) {
     if (landing) { for (let i = pts.length - 1; i >= 0; i--) if (!pts[i].gnd) { iAir = i; break; } }
     else { for (let i = 0; i < pts.length; i++) if (!pts[i].gnd) { iAir = i; break; } }
     if (iAir < 0) return null;
-    const tA = pts[iAir].t, near = pts.filter(p => landing ? p.t >= tA - 420 && p.t <= tA + 180 : p.t >= tA - 180 && p.t <= tA + 150);
+    const tA = pts[iAir].t, around = pts.filter(p => landing ? p.t >= tA - 420 && p.t <= tA + 180 : p.t >= tA - 180 && p.t <= tA + 150);
+    // (1.2.10: the straight part only - from the first position in the air on, while the track stays within 30 degrees
+    // of its own, with the roll before it; for a landing, back from the last one in the air, with the roll-out after it.
+    // A circuit's downwind, a straight-in turned away from, a turn after take-off - never counted for a runway they
+    // happened to point at: a Cessna's straight-in towards Daytona's 34, turned off to land on 25, read as 34)
+    const ref = pts[iAir].trk, near = fin(ref) ? straight(around, around.indexOf(pts[iAir]), ref, landing) : around;
     const score = new Map(), close = new Set();
     const kx = 111.32 * Math.cos(ap.lat * Math.PI / 180), ky = 110.57;
     for (const p of near) {
@@ -59,60 +64,92 @@ function createAirportInfo(env) {
       const slow = p.gnd && !(p.gs > 30);                                 // (taxiing: its heading says nothing...)
       for (const e of ends) {
         const dh = E.angDiff(p.trk, e.hdg); if (dh > 25) continue;
-        let w, s = 0;
+        let w, off = 0;
         if (fin(e.lat)) {
-          const ux = Math.sin(e.hdg * Math.PI / 180), uy = Math.cos(e.hdg * Math.PI / 180);
-          const px = (p.lon - e.lon) * kx, py = (p.lat - e.lat) * ky, xt = px * uy - py * ux; s = px * ux + py * uy;
-          // (landing: up to 18 km short of the threshold, or rolling out along the runway; taking off: from the threshold on)
-          if (landing ? (s < -15 || s > 4) : (s < -0.5 || s > 10)) continue;
+          const g = along(e, p, kx, ky), L = runLen(e);
+          // (landing: up to 15 km short of the threshold, or rolling out along the runway; taking off: from the threshold
+          // to 10 km past the runway's far end)
+          if (landing ? (g.s < -15 || g.s > L + 0.3) : (g.s < -0.5 || g.s > L + 10)) continue;
           // (...unless lined up on the runway itself - on its centreline within 40 m, at its start, its way: about to roll)
-          if (slow && (Math.abs(xt) > 0.04 || dh > 15 || s < -0.3 || s > 1.5)) continue;
-          w = Math.exp(-0.5 * (xt / (0.2 + 0.045 * Math.abs(s))) ** 2) * (1 - dh / 25) * (slow ? 0.7 : 1);
+          if (slow && (Math.abs(g.xt) > 0.04 || dh > 15 || g.s < -0.3 || g.s > 1.5)) continue;
+          // (1.2.10: how far off the runway, along it - short of the threshold on the final, past the far end on the climb.
+          // The centreline held to 150 m at the runway, the margin growing 40 m a km out: parallels 380 m apart (Paris
+          // CDG) are not both fitted by the same positions)
+          off = landing ? Math.max(0, -g.s) : Math.max(0, g.s - L);
+          w = Math.exp(-0.5 * (g.xt / (0.15 + 0.04 * off)) ** 2) * (1 - dh / 25) * (slow ? 0.7 : 1);
         } else {
           if (slow || d > 10 || agl > 3000) continue;
           w = 0.5 * (1 - dh / 25);
         }
         if (w > 0.05) {
           score.set(e.id, (score.get(e.id) || 0) + w);
-          // (1.2.9: seen close to it - the roll, the first 4 km of the climb, the final within 10 km - not only far out,
-          // where a track turning away, or another runway's approach, can line up with it by chance: Amsterdam's take-off
-          // from 04, sampled every 30 s, read as 09 from points after its turn)
+          // (1.2.9: seen close to it - the roll, the climb within 4 km of the runway's end, the final within 10 km - not
+          // only far out, where a track turning away, or another runway's approach, can line up with it by chance:
+          // Amsterdam's take-off from 04, sampled every 30 s, read as 09 from points after its turn)
+          // (1.2.10: a take-off's measured from the far end of its runway, not its start: Paris CDG's 26R, 4.2 km long and
+          // its start 600 m before 26L's, was never "close" - its first position in the air already 4.4 km from its start -
+          // so every take-off from it was given to 26L, 380 m off to the side)
           // (a landing: on the final within 10 km and no higher than an approach is there - 350 ft a km and 500 ft more)
-          if (!fin(e.lat) || p.gnd || (landing ? s >= -10 && agl <= 500 + 350 * Math.abs(s) : s <= 4)) close.add(e.id);
+          if (!fin(e.lat) || p.gnd || (landing ? off <= 10 && agl <= 500 + 350 * off : off <= 4)) close.add(e.id);
         }
       }
     }
     const best = [...score].filter(x => close.has(x[0])).sort((a, b) => b[1] - a[1]);
     if (!best.length || best[0][1] < 0.6) return null;
-    if (best[1] && best[1][1] > best[0][1] * 0.7) return parallels(ends, best[0][0], best[1][0], near, landing, elev, kx, ky);
-    return best[0][0];
+    const endOf = id => ends.find(e => e.id === id), par = (a, b) => E.angDiff(endOf(a).hdg, endOf(b).hdg) <= 10;
+    // (a parallel close behind: the two told apart over the same positions)
+    let win = best[0][0];
+    // (any parallel fitting the same positions - close to it or not: two thresholds 600 m apart are not both within the
+    // same 10 km of a final)
+    const rival = [...score].sort((a, b) => b[1] - a[1]).find(x => x[0] !== win && par(win, x[0]) && x[1] > best[0][1] * 0.25);
+    if (rival) { win = parallels(ends, win, rival[0], near, landing, elev, kx, ky); if (!win) return null; }
+    // (another runway, not a parallel, fitting nearly as well: no answer)
+    if (best.some(x => !par(win, x[0]) && x[1] > best[0][1] * 0.7)) return null;
+    return win;
   }
+  // (the positions of one straight run through position i, going the way `ref` says: ahead of it for a take-off, back
+  // from it for a landing - stopping at the first in the air that turned more than 30 degrees off it; on the ground,
+  // the roll the other way along it, taxiing (no heading worth the name) passed over)
+  function straight(win, i, ref, landing) {
+    if (i < 0) return win;
+    const ok = p => p && fin(p.trk) && E.angDiff(p.trk, ref) <= 30, out = [win[i]];
+    for (let k = landing ? i - 1 : i + 1; k >= 0 && k < win.length; k += landing ? -1 : 1) { const p = win[k]; if (p.gnd && !(p.gs > 30)) continue; if (!ok(p)) break; out.push(p); }
+    for (let k = landing ? i + 1 : i - 1; k >= 0 && k < win.length; k += landing ? 1 : -1) { const p = win[k]; if (!p.gnd) break; if (p.gs > 30 && !ok(p)) break; out.push(p); }
+    return out.sort((a, b) => a.t - b.t);
+  }
+  // (a position along a runway end's centreline: s km past its threshold, its way; xt km to the side)
+  function along(e, p, kx, ky) {
+    const ux = Math.sin(e.hdg * Math.PI / 180), uy = Math.cos(e.hdg * Math.PI / 180), px = (p.lon - e.lon) * kx, py = (p.lat - e.lat) * ky;
+    return { s: px * ux + py * uy, xt: px * uy - py * ux };
+  }
+  const runLen = e => fin(e.L) ? e.L : (e.len || 0) * 0.0003048;
   // (1.2.9) Two runways alike - parallels side by side, the whole approach or climb-out fitting both (Gatwick's 08R/08L,
-  // 200 m apart: every take-off and landing there "not known"; Manchester's 05L/05R, 390 m, far out on the final): told
-  // apart by the positions where the two are far apart for the track - the roll on the ground, the last 3 km of the final
-  // and the first 3 km of the climb - held to the centreline within some 60 m. Still alike, and the two so close (under
-  // 300 m) that only one is ever in use: the main one, the longer. Otherwise no answer.
+  // 200 m apart; Manchester's 05L/05R, 390 m; Paris CDG's 26L/26R, 380 m): told apart by how far off each centreline the
+  // same positions were - the roll, the final within 8 km, the climb to 6 km past the runway's end, below 3,000 ft and
+  // going its way. (1.2.10: each position counted for both, its margin growing with the distance out - 100 m at the
+  // runway, 30 m more a km - and none counting for more than three margins off, so one stray position settles nothing.
+  // 1.2.9 took each runway's own first 3 km from its own start, and the two starts are 600 m apart at CDG: a position
+  // counted for one and not the other.) One clearly nearer: it. Otherwise no answer.
   function parallels(ends, idA, idB, near, landing, elev, kx, ky) {
     const A = ends.find(e => e.id === idA), B = ends.find(e => e.id === idB);
     if (!A || !B || !fin(A.lat) || !fin(B.lat) || E.angDiff(A.hdg, B.hdg) > 10) return null;
-    const fine = e => {
-      const ux = Math.sin(e.hdg * Math.PI / 180), uy = Math.cos(e.hdg * Math.PI / 180); let w = 0;
-      for (const p of near) {
-        if (!fin(p.lat) || !fin(p.lon) || !fin(p.trk)) continue;
-        const agl = p.gnd || p.alt == null ? 0 : p.alt - elev; if (agl > 1500) continue;
-        if (p.gnd && !(p.gs > 30)) continue;
-        const dh = E.angDiff(p.trk, e.hdg); if (dh > 25) continue;
-        const px = (p.lon - e.lon) * kx, py = (p.lat - e.lat) * ky, s = px * ux + py * uy, xt = px * uy - py * ux;
-        if (landing ? (s < -3 || s > 4) : (s < -0.5 || s > 3)) continue;
-        w += Math.exp(-0.5 * (xt / (p.gnd ? 0.05 : 0.08)) ** 2) * (1 - dh / 25);
-      }
-      return w;
-    };
-    const fA = fine(A), fB = fine(B);
-    if (fA > 0.3 && fA >= fB * 2) return idA;
-    if (fB > 0.3 && fB >= fA * 2) return idB;
-    const ux = Math.sin(A.hdg * Math.PI / 180), uy = Math.cos(A.hdg * Math.PI / 180), bx = (B.lon - A.lon) * kx, by = (B.lat - A.lat) * ky;
-    if (Math.abs(bx * uy - by * ux) < 0.3) return (B.len || 0) > (A.len || 0) ? idB : idA;
+    const LA = runLen(A), LB = runLen(B), reach = (g, L) => landing ? g.s >= -8 && g.s <= L + 0.3 : g.s >= -0.5 && g.s <= L + 6;
+    const offOf = (g, L) => landing ? Math.max(0, -g.s) : Math.max(0, g.s - L), z2 = (g, L) => Math.min(9, (g.xt / (0.1 + 0.03 * offOf(g, L))) ** 2);
+    let llA = 0, llB = 0, n = 0;
+    for (const p of near) {
+      if (!fin(p.lat) || !fin(p.lon) || !fin(p.trk)) continue;
+      const agl = p.gnd || p.alt == null ? 0 : p.alt - elev; if (agl > 3000) continue;
+      if (p.gnd && !(p.gs > 30)) continue;
+      if (E.angDiff(p.trk, A.hdg) > 15) continue;
+      const a = along(A, p, kx, ky), b = along(B, p, kx, ky);
+      if (!reach(a, LA) && !reach(b, LB)) continue;
+      llA -= 0.5 * z2(a, LA); llB -= 0.5 * z2(b, LB); n++;
+    }
+    if (n && llA - llB >= 2) return idA;
+    if (n && llB - llA >= 2) return idB;
+    // (1.2.10: still alike - no answer, until positions nearer the runway tell them apart. 1.2.9 took the longer of two
+    // under 300 m apart as the one in use: right for Gatwick's 08R beside its stand-by 08L, wrong for Los Angeles, whose
+    // landings are on 24R, the shorter, 210 m from 24L - and for Atlanta's 26L/26R, both in use at once)
     return null;
   }
   // /airport: its runways and frequencies; which runways the flights tracked there used, the last `days` days

@@ -28,9 +28,11 @@ Considered and not used:
 
 **On the monitor (optional).** The monitor reads FR24's live feed (`data-feed.flightradar24.com`, the same LiveFeed and FollowFlight requests the page makes) to find the flights FR24 draws without a callsign:
 
-- **Pace:** one world round every 2 minutes, one request every 0.4 s within it.
+- **Pace:** one world round every minute (every 2 minutes before 1.2.10), one request every 0.4 s within it.
+- **Low scan (1.2.10):** every 30 s, the flights in the air low over the world - all of FR24's services, with FR24's own altitude filter (6,000 ft, more in regions with high airports) - for the runway of every take-off and landing. Eight requests a round.
+- **Airports looked at:** every 40 s, every flight within about 40 km of the four airports most looked at in the last half hour, on the ground too.
 - **Trails:** at most one every 20 s, for flights it cannot name otherwise and for named flights as they land.
-- **Refusals:** any refusal pauses it for 10 minutes, doubling up to 2 hours.
+- **Refusals:** any refusal pauses it for 10 minutes, doubling up to 2 hours. Since 1.2.10 every scan then also runs at half speed for 6 hours, a quarter after a second refusal within them.
 - **Headers:** it uses the feed headers a browser reports (never an authorization or cookie). It uses no account.
 - **Off switch:** `"fr24Scan": false` in `monitor.json` turns it off. The browsers then do their own world scan.
 

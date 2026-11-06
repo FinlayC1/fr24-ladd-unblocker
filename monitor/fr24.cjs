@@ -60,10 +60,13 @@ const frame = msg => cat([Uint8Array.of(0, (msg.length >>> 24) & 255, (msg.lengt
 
 // The request the world scan sends (page.js liveFeedQuery): FR24's sources 0-10, the services asked for, traffic kind,
 // at most `limit` flights, positions up to `maxage` s old, type and registration in every record
+// (1.2.10) q.alt [min, max]: FR24's own altitude filter (its filters, field 3: an altitude range, feet) - the flights
+// low over the world only, every service: taking off and coming in)
 function liveFeedRequest(q) {
   const bounds = cat([fF32(1, q.n), fF32(2, q.s), fF32(3, q.w), fF32(4, q.e)]);
   const settings = cat([fLen(1, Uint8Array.from([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10])), fLen(2, Uint8Array.from(q.services || [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])), fVar(3, q.traffic || 3)]);
-  return cat([fLen(1, bounds), fLen(2, settings), fVar(6, 1), fVar(7, q.limit || 1500), fVar(8, q.maxage || 14400), fVar(9, 0), fLen(10, cat((Array.isArray(q.mask) && q.mask.length ? q.mask : ['type', 'reg']).map(f => fStr(1, f))))]);
+  const filt = Array.isArray(q.alt) && q.alt.length === 2 && q.alt.every(v => Number.isFinite(v) && v >= 0) ? [fLen(3, fLen(1, cat([fVar(1, Math.round(q.alt[0])), fVar(2, Math.round(q.alt[1]))])))] : [];
+  return cat([fLen(1, bounds), fLen(2, settings)].concat(filt, [fVar(6, 1), fVar(7, q.limit || 1500), fVar(8, q.maxage || 14400), fVar(9, 0), fLen(10, cat((Array.isArray(q.mask) && q.mask.length ? q.mask : ['type', 'reg']).map(f => fStr(1, f))))]));
 }
 // (1.1.0) The fields asked for in every record - each step down taken when FR24 refuses the one before: the route and the
 // aircraft's address too (every flight it shows without a destination worked out here), the route alone, type and
@@ -154,6 +157,16 @@ const SCAN_REGIONS = [
   { n: 72, s: 24, w: -170, e: -100 }, { n: 72, s: 24, w: -100, e: -50 }, { n: 72, s: 24, w: -50, e: -30 }, { n: 24, s: -60, w: -170, e: -30 },
   { n: 72, s: -60, w: -30, e: 60 }, { n: 72, s: -10, w: 60, e: 180 }, { n: -10, s: -60, w: 60, e: 180 }
 ];
+// (1.2.10) The low scan's regions, each with the height its airports need - 6,000 ft, and more where airports stand
+// high: the western US (Denver 5,400 ft, Salt Lake City 4,200), Latin America (Mexico City 7,300, Bogota 8,400, La Paz
+// 13,300), Europe, Africa and the Middle East (Samedan 5,600, Nairobi 5,300, Addis Ababa 7,600), Asia (Kunming 6,900,
+// Lhasa 11,700): 5,000 ft over each field at least - all of a take-off's climb and a landing's descent. North America
+// cut so that each takes one request at its busiest (a full answer is asked again in quarters: a request lost)
+const LOW_REGIONS = [
+  { n: 72, s: 24, w: -170, e: -115, alt: [0, 10500] }, { n: 72, s: 24, w: -115, e: -100, alt: [0, 10500] }, { n: 72, s: 24, w: -100, e: -87, alt: [0, 6000] },
+  { n: 72, s: 24, w: -87, e: -78, alt: [0, 6000] }, { n: 72, s: 24, w: -78, e: -30, alt: [0, 6000] }, { n: 24, s: -60, w: -170, e: -30, alt: [0, 17000] },
+  { n: 72, s: -60, w: -30, e: 60, alt: [0, 11000] }, { n: 72, s: -60, w: 60, e: 180, alt: [0, 13000] }
+];
 const quarters = r => { const mLat = (r.n + r.s) / 2, mLon = (r.w + r.e) / 2; return [{ n: r.n, s: mLat, w: r.w, e: mLon }, { n: r.n, s: mLat, w: mLon, e: r.e }, { n: mLat, s: r.s, w: r.w, e: mLon }, { n: mLat, s: r.s, w: mLon, e: r.e }]; };
 async function scanWorld(client, opts) {
   opts = Object.assign({ services: [2, 3, 4, 5, 10, 11], traffic: 2, limit: 1500, gapMs: 400, regions: SCAN_REGIONS }, opts || {});
@@ -164,7 +177,8 @@ async function scanWorld(client, opts) {
       const a = await client.liveFeed(Object.assign({}, opts, it.r)); res.requests++;
       for (const f of a.flights) byId.set(f.id, f);
       res.serverTime = a.serverTime || res.serverTime;
-      if (a.flights.length >= opts.limit - 10 && it.depth < 2) for (const q of quarters(it.r)) work.push({ r: q, depth: it.depth + 1 });
+      // (a region's own altitude band kept by its quarters)
+      if (a.flights.length >= opts.limit - 10 && it.depth < (opts.depth || 2)) for (const q of quarters(it.r)) work.push({ r: it.r.alt ? Object.assign(q, { alt: it.r.alt }) : q, depth: it.depth + 1 });
     } catch (e) { res.failed++; res.err = String(e && e.message || e); if (/paused|429|grpc (3|7|8|14|16)\b|HTTP 40[13]/.test(res.err)) break; }
     if (work.length && opts.gapMs) await new Promise(r => setTimeout(r, opts.gapMs));
   }
@@ -172,4 +186,4 @@ async function scanWorld(client, opts) {
   return res;
 }
 
-module.exports = { parse, frames, frame, liveFeedRequest, decodeLiveFeed, decodeTrail, flightOf, createClient, scanWorld, cleanHeaders, SCAN_REGIONS, quarters, MASKS };
+module.exports = { parse, frames, frame, liveFeedRequest, decodeLiveFeed, decodeTrail, flightOf, createClient, scanWorld, cleanHeaders, SCAN_REGIONS, LOW_REGIONS, quarters, MASKS };

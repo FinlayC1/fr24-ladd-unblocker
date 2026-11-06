@@ -706,6 +706,29 @@
     }
     postToPage('routesGot', { rid: d && d.rid, routes: out });
   }
+  // (1.2.10) Flights in FR24's Most tracked list the page has not identified (off its map's view): their names, as the
+  // monitor gave them (/names: [id, hex, reg, type, callsign, ...]), and their routes (/calc), by FR24's ids
+  async function onTopNeed(d) {
+    const ids = (Array.isArray(d && d.ids) ? d.ids : []).map(Number).filter(x => x > 0).slice(0, 12), names = {}, routes = {};
+    if (!ids.length || !monUp()) return;
+    try {
+      const j = await monGet('/names?ids=' + ids.join(','), { timeout: 6000 });
+      for (const r of (j && Array.isArray(j.list) ? j.list : [])) {
+        const [id, hex, reg, , cs] = r; if (!ids.includes(Number(id)) || !/^[0-9a-f]{6}$/.test(String(hex || ''))) continue;
+        const c = String(cs || '').toUpperCase(), g = String(reg || (store.getHex(hex) || {}).reg || '').toUpperCase();
+        names[id] = /^[A-Z0-9]{2,8}$/.test(c) ? c : g;
+      }
+    } catch (e) { log('most tracked names', String(e && e.message || e)); }
+    try {
+      const j = await monPost('/calc', { v: 1, flights: [], ids, sel: ids[0] });
+      for (const [k, v] of Object.entries(j && j.routes && typeof j.routes === 'object' ? j.routes : {})) {
+        if (!v || !v.r || typeof v.r !== 'object') continue;
+        const r = v.r, o = apById(r.originId), de = apById(r.destId);
+        routes[k] = Object.assign(routeForPage(r), { originIata: r.originIata || (o && (o.iata || o.icao)) || '', destIata: r.destIata || (de && (de.iata || de.icao)) || '', originCity: r.originCity || (o && (o.city || o.name)) || '', destCity: r.destCity || (de && (de.city || de.name)) || '' });
+      }
+    } catch (e) { log('most tracked routes', String(e && e.message || e)); }
+    postToPage('topGot', { names, routes });
+  }
   // (an airfield FR24 does not list goes to the page by its code and name only: FR24's own panel knows only its airports)
   const routeForPage = r => { const da = r.destId ? apById(r.destId) : null, oa = (r.originId && apById(r.originId)) || (r.originSite && fin(r.originSite.lat) ? r.originSite : null); return { originId: fr24Ap(r.originId), destId: fr24Ap(r.destId), originIata: r.originIata, destIata: r.destIata, originCity: r.originCity, destCity: r.destCity, progress: r.progress, std: r.std, sta: r.sta, atd: r.atd, ata: r.ata, eta: r.eta, etd: r.etd, groundAirportId: fr24Ap(r.groundAirportId), landed: r.landed, destConf: r.destConf, destP: r.destP || 0, destReason: r.destReason || '', confirmed: !!(r.confirmed || r.landed || r.destConf === 'confirmed'), quick: !!r.quick,
     // (where the destination is: a flight that goes quiet low beside it has landed, for the boards)

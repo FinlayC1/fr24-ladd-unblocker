@@ -18,7 +18,9 @@
 // asked for. GET /rwyap gives an airport's of a window (its boards: seven days back) in one answer.
 const fs = require('fs'), path = require('path'), zlib = require('zlib');
 const fin = v => typeof v === 'number' && isFinite(v);
-const RL_V = 1;
+// (1.2.10: version 2. A version-1 file - 1.2.7 to 1.2.9 - is read for its landings only: its take-offs were worked out
+// with a rule that gave Paris CDG's 26R departures to 26L, and many a long runway's to none)
+const RL_V = 2;
 
 function createRwyLog(env) {
   const { E, APT } = env;
@@ -39,7 +41,7 @@ function createRwyLog(env) {
     let ap = new Map();
     try {
       const o = JSON.parse(zlib.gunzipSync(fs.readFileSync(file(day))).toString('utf8'));
-      if (o && o.v === RL_V && o.ap) for (const [id, m] of Object.entries(o.ap)) { const mm = new Map(); for (const [k, v] of Object.entries(m || {})) if (Array.isArray(v) && typeof v[0] === 'string') mm.set(k, v); ap.set(+id, mm); }
+      if (o && (o.v === RL_V || o.v === 1) && o.ap) for (const [id, m] of Object.entries(o.ap)) { const mm = new Map(); for (const [k, v] of Object.entries(m || {})) if (Array.isArray(v) && typeof v[0] === 'string' && !(o.v === 1 && k.endsWith(':0'))) mm.set(k, v); ap.set(+id, mm); }
       stats.read++;
     } catch (e) { if (!create) return null; ap = new Map(); }
     b = { ap, dirty: false, used: Date.now() };
@@ -121,11 +123,14 @@ function createRwyLog(env) {
   const toward = (f, a) => { if (!fin(f.trk)) return null; const b = E.brg(f.lat, f.lon, a.lat, a.lon); return E.angDiff(b, f.trk) < 45; };
   function observe(list, nowS, keep) {
     let n = 0;
-    for (const f of list || []) {
+    for (let f of list || []) {
       if (!f || !(f.id > 0) || !fin(f.lat) || !fin(f.lon)) continue;
       const ts = f.ts > 1e9 ? f.ts : nowS, fid = Number(f.id).toString(16);
       // (the airports within 25 km - and only the one it says it left or is going to, where it says)
       const aps = near(f.lat, f.lon, f.gnd ? 4 : 25); if (!aps.length) { const s0 = fl.get(f.id); if (s0) s0.seen = nowS; continue; }
+      // (1.2.10: slow and level with the field, though FR24 says it is in the air - taxiing: a Cruiser's taxi at Bountiful
+      // logged as a take-off from 35)
+      if (!f.gnd && fin(f.spd) && f.spd < 45 && fin(f.alt) && f.alt - (aps[0].a.alt || 0) < 300) f = Object.assign({}, f, { gnd: true });
       let st = fl.get(f.id); if (!st) { st = { pts: [], gAp: 0, gT: 0, dep: false, arrAgl: Infinity, seen: nowS }; fl.set(f.id, st); }
       st.seen = nowS;
       // (where it was a scan before - kept or not: climbing or not)
@@ -141,7 +146,13 @@ function createRwyLog(env) {
         const iata = String(a.iata || '').toUpperCase(), fromHere = !f.from || String(f.from).toUpperCase() === iata, toHere = !f.to || String(f.to).toUpperCase() === iata;
         // a take-off: off the ground here a moment ago, or climbing out along a runway of the field it says it left
         const leftHere = st.gAp === a.id && ts - st.gT < 900;
-        if (!st.dep && (leftHere || (f.from && fromHere)) && away(f, a) !== false) {
+        // (1.2.10: going up or down since the scan before - not the way it points from the middle of the field, which at
+        // a big airport says nothing: a T-6 just off the east end of Atlanta's 26L, heading west across the field, was
+        // logged as landing there. Seen for the first time: a take-off only heading away, a landing only where FR24 says
+        // it is coming here)
+        const up = !!prev && (prev.gnd ? true : fin(prev.alt) && fin(f.alt) && f.alt > prev.alt + 100);
+        const down = !!prev && !prev.gnd && fin(prev.alt) && fin(f.alt) && f.alt < prev.alt - 100;
+        if (!st.dep && (leftHere || (f.from && fromHere)) && (leftHere || up || (!prev && away(f, a) !== false))) {
           // (1.2.9: its roll as kept - on the ground and moving fast, along the runway - with its climb: the roll is where
           // the runway shows, a stand-in at rest at its last ground position said nothing)
           const roll = st.pts.filter(q => q.gnd && q.gs > 30 && q.t >= st.gT - 300);
@@ -151,9 +162,14 @@ function createRwyLog(env) {
         }
         // a landing: on the final approach to a runway of the field it is going to (not climbing out of it - with no
         // route of FR24's to say where it goes, not higher than it was a scan before)
-        const climbing = !f.to && !!prev && !prev.gnd && fin(prev.alt) && fin(f.alt) && f.alt > prev.alt + 100;
-        if (toHere && !climbing && toward(f, a) !== false && !(st.depAp === a.id && ts - st.depT < 900) && agl < 4000 && agl < st.arrAgl - 150) {
-          const r = APT.runwayOf(a, [p], true);
+        const coming = down || (!!f.to && !up && (!prev || !(fin(prev.alt) && fin(f.alt) && f.alt > prev.alt + 100)));
+        // (within 5 km of the field the way to its middle says nothing - a Boeing 200 m short of Los Angeles's 24R was
+        // pointing 46 degrees off it, and its last answer, 24R, was never taken)
+        if (toHere && coming && (toward(f, a) !== false || E.dist(f.lat, f.lon, a.lat, a.lon) <= 5) && !(st.depAp === a.id && ts - st.depT < 900) && agl < 4000 && agl < st.arrAgl - 150) {
+          // (1.2.10: with its positions on this approach kept - the last seven minutes' - not this one alone: one position
+          // far out fits two parallels alike)
+          const ap7 = st.pts.filter(q => !q.gnd && ts - q.t <= 420 && q.t < ts);
+          const r = APT.runwayOf(a, ap7.concat([p]), true);
           if (r) { if (put(fid, 1, r, a.id, ts, 'live')) { stats.live.arr++; n++; } st.arrAgl = agl; break; }
         }
       }
@@ -164,20 +180,35 @@ function createRwyLog(env) {
   }
 
   // ---- kept on disk -----------------------------------------------------------------------------------------------
-  function save(nowS) {
+  // (1.2.10: compressed away from the event loop - a day's file is some 20 MB of text now that every airport's
+  // take-offs and landings are logged; `sync` on stop. One day's write at a time)
+  const writing = new Set();
+  function save(nowS, sync) {
     nowS = nowS || Date.now() / 1000;
     const keepMem = memFrom(nowS);
     for (const [d, b] of days) {
-      if (b.dirty) {
+      if (b.dirty && !writing.has(d)) {
         try {
           fs.mkdirSync(dir, { recursive: true });
           const ap = {}; for (const [id, m] of b.ap) ap[id] = Object.fromEntries(m);
-          const tmp = file(d) + '.tmp'; fs.writeFileSync(tmp, zlib.gzipSync(JSON.stringify({ v: RL_V, day: d, ap }), { level: 6 })); fs.renameSync(tmp, file(d));
-          b.dirty = false; stats.written++;
-        } catch (e) { stats.err = String(e && e.message || e).slice(0, 120); log(stats.err); }
+          const text = JSON.stringify({ v: RL_V, day: d, ap }), tmp = file(d) + '.tmp';
+          b.dirty = false;
+          if (sync) { fs.writeFileSync(tmp, zlib.gzipSync(text, { level: 6 })); fs.renameSync(tmp, file(d)); stats.written++; }
+          else {
+            writing.add(d);
+            zlib.gzip(text, { level: 6 }, (err, buf) => {
+              if (err) { writing.delete(d); b.dirty = true; stats.err = String(err.message || err).slice(0, 120); return; }
+              fs.writeFile(tmp, buf, e2 => {
+                if (!e2) { try { fs.renameSync(tmp, file(d)); stats.written++; } catch (e3) { b.dirty = true; stats.err = String(e3.message || e3).slice(0, 120); } }
+                else { b.dirty = true; stats.err = String(e2.message || e2).slice(0, 120); }
+                writing.delete(d);
+              });
+            });
+          }
+        } catch (e) { b.dirty = true; stats.err = String(e && e.message || e).slice(0, 120); log(stats.err); }
       }
       // (an older day read for an answer: let go after ten minutes; the days in memory kept)
-      if (!b.dirty && d < keepMem && Date.now() - b.used > 600000) { for (const m of b.ap.values()) for (const k of m.keys()) { const x = idx.get(k); if (x && dayOf(x[2]) === d) idx.delete(k); } days.delete(d); }
+      if (!b.dirty && !writing.has(d) && d < keepMem && Date.now() - b.used > 600000) { for (const m of b.ap.values()) for (const k of m.keys()) { const x = idx.get(k); if (x && dayOf(x[2]) === d) idx.delete(k); } days.delete(d); }
     }
     prune(nowS);
   }

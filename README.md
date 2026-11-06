@@ -8,7 +8,7 @@
 
 <br><br>
 
-<a href="CHANGELOG.md"><img alt="Version 1.2.9" src="https://img.shields.io/badge/version-1.2.9-1f6feb?style=flat&labelColor=23272e"></a>
+<a href="CHANGELOG.md"><img alt="Version 1.2.10" src="https://img.shields.io/badge/version-1.2.10-1f6feb?style=flat&labelColor=23272e"></a>
 <a href="PRIVACY.md#counting-installs"><img alt="Users" src="https://img.shields.io/endpoint?url=https%3A%2F%2F143-47-224-210.sslip.io%2Fbadge&style=flat&labelColor=23272e"></a>
 <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/actions/workflows/tests.yml"><img alt="Tests" src="https://github.com/FinlayC1/fr24-ladd-unblocker/actions/workflows/tests.yml/badge.svg"></a>
 <a href="LICENCE"><img alt="Licence: personal use" src="https://img.shields.io/badge/licence-personal%20use-1f6feb?style=flat&labelColor=23272e"></a>

@@ -134,9 +134,23 @@ function createBoards(env) {
     return n;
   }
   // An airport's rows between from and to (by their time), those changed since `since` only when given
+  // (1.2.10: never a "departure" that is FR24 splitting a landing - its flight closed as landed just before touchdown and a
+  // new one begun from the ground positions on the runway, "from" this airport, going nowhere: VLZ78K, Dubai to Oxford,
+  // landed 19:02:20, and "departed Oxford" 19:02:44 on FR24's list of 2-PUBS's flights. Dropped: a departure with no
+  // destination, of the same aircraft (registration, address or callsign), within five minutes after its landing here)
+  function splitOfLanding(r, arr) {
+    if (!r || r.ap) return false;
+    const ids = [r.reg, r.hex, r.cs].map(x => String(x || '').toUpperCase()).filter(Boolean); if (!ids.length) return false;
+    for (const a of arr) {
+      const st = a.st || (a.nat && a.nat.status && a.nat.status.name) || ''; if (st !== 'landed') continue;
+      const t = a.est || a.t; if (!(r.t >= t - 60 && r.t <= t + 300)) continue;
+      if ([a.reg, a.hex, a.cs].some(x => x && ids.includes(String(x).toUpperCase()))) return true;
+    }
+    return false;
+  }
   function rows(apId, from, to, since) {
-    const b = load(num(apId)), out = { arrivals: [], departures: [] };
-    for (const [kind, m] of [['arrivals', b.arr], ['departures', b.dep]]) for (const r of m.values()) if (r.t >= from && r.t <= to && (!since || (r.u || 0) > since)) out[kind].push(r);
+    const b = load(num(apId)), out = { arrivals: [], departures: [] }, arr = [...b.arr.values()];
+    for (const [kind, m] of [['arrivals', b.arr], ['departures', b.dep]]) for (const r of m.values()) if (r.t >= from && r.t <= to && (!since || (r.u || 0) > since) && !(kind === 'departures' && splitOfLanding(r, arr))) out[kind].push(r);
     return Object.assign(out, { at: b.at, fr24At: Math.max(b.fr24At, b.ownAt) });
   }
   // (an airport asked for by a browser: its schedule read here too - FR24 letting the monitor - while it is wanted)
@@ -150,6 +164,7 @@ function createBoards(env) {
       const seen = new Set();
       for (const r of m.values()) {
         if (!went(r)) continue;
+        if (i === 0 && splitOfLanding(r, [...b.arr.values()])) continue;
         const id = r.fid ? 'f' + r.fid : r.k; if (seen.has(id)) continue; seen.add(id);
         const d = dayOf(r.t), c = out.get(d) || out.set(d, [0, 0]).get(d); c[i]++;
       }

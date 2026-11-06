@@ -75,6 +75,38 @@ const cat = parts => { const n = parts.reduce((s, p) => s + p.length, 0), o = ne
   check('... FR24\'s own destination left as it is (BA117 to JFK), byte for byte', Buffer.compare(Buffer.from(H.parse(out)[1].raw), Buffer.from(H.parse(top)[1].raw)) === 0);
   check('... one not worked out yet left N/A, and asked for (with its callsign, origin and type)', !str(items[2], 9) && w.__posted.some(m => m.__tweeksLadd === 'needNaRoutes' && m.list.some(x => x.id === NEW && x.cs === 'RCH359' && x.from === 'ADW' && x.type === 'C17')), w.__posted.map(m => m.__tweeksLadd));
   check('... and asked for again only after a while', (w.__posted.length = 0, H.patchTopFlights(top), !w.__posted.some(m => m.__tweeksLadd === 'needNaRoutes')));
+  // (1.2.10) a blocked flight FR24 lists with only its type - N291VK, Bengaluru to Riyadh; a KC-46A out of Al Udeid with no
+  // callsign; one nothing is known of
+  { const bare = (id, from, fromCity, type, desc) => H.fLen(1, cat([H.fVar(1, id), H.fVar(2, 1696), H.fVar(3, 7424), from ? H.fStr(7, from) : new Uint8Array(0), fromCity ? H.fStr(8, fromCity) : new Uint8Array(0), H.fStr(11, type), H.fStr(12, desc)]));
+    const VK = 0x42768f2e, KC = 0x42762aea, UNK = 0x42760bbb;
+    H.resolved.set(VK, { hex: 'a2fb16', reg: 'N291VK', cs: '', type: 'GLF4' }); H.routes.set(VK, { originIata: 'BLR', originCity: 'Bengaluru', destIata: 'RUH', destCity: 'Riyadh', destConf: 'confirmed', landed: false });
+    H.resolved.set(KC, { hex: 'ae6a01', reg: '18-46049', cs: 'BLUE21', type: 'B762' }); H.routes.set(KC, { originIata: 'XJD', originCity: 'Al Udeid', destIata: 'ADB', destCity: 'Izmir', destConf: 'probable', landed: false });
+    const list = cat([bare(VK, '', '', 'GLF4', 'Gulfstream IV-SP'), bare(KC, 'XJD', 'Al Udeid', 'B762', 'Boeing KC-46A Pegasus'), bare(UNK, '', '', 'B350', 'Beech King Air 350i')]);
+    w.__posted.length = 0;
+    const o3 = H.parse(H.patchTopFlights(list)).map(f => H.parse(f.val));
+    check('Most tracked: N291VK, blocked - FR24 lists only its type ("N/A, GLF4, N/A - N/A") - shown as on its panel: N291VK, BLR Bengaluru - RUH Riyadh', str(o3[0], 5) === 'N291VK' && str(o3[0], 7) === 'BLR' && str(o3[0], 8) === 'Bengaluru' && str(o3[0], 9) === 'RUH' && str(o3[0], 10) === 'Riyadh' && str(o3[0], 11) === 'GLF4' && o3[0].find(f => f.fn === 1).val === VK, o3[0].map(f => f.fn));
+    check('... a KC-46A out of Al Udeid with no callsign: its name and destination added, FR24\'s own origin kept', str(o3[1], 5) === 'BLUE21' && str(o3[1], 7) === 'XJD' && str(o3[1], 8) === 'Al Udeid' && str(o3[1], 9) === 'ADB', [str(o3[1], 5), str(o3[1], 7), str(o3[1], 9)]);
+    check('... one nothing is known of left as FR24 sent it, byte for byte, and asked for', Buffer.compare(Buffer.from(H.parse(H.patchTopFlights(list))[2].raw), Buffer.from(H.parse(list)[2].raw)) === 0 && w.__posted.some(m => m.__tweeksLadd === 'needNaRoutes' && m.list.some(x => x.id === UNK && x.type === 'B350')));
+    H.resolved.delete(VK); H.routes.delete(VK); H.resolved.delete(KC); H.routes.delete(KC); await sleep(50); for (const x of [VK, KC, UNK]) L.naWanted.delete(x); }
+  // (1.2.10) one this page never identified - off the map's view: its name and route asked of the monitor by FR24's id,
+  // in for FR24's next read of the list
+  { const OFF = 0x42769999, bare1 = H.fLen(1, cat([H.fVar(1, OFF), H.fVar(2, 1291), H.fVar(3, 23276), H.fStr(11, 'B350'), H.fStr(12, 'Beech King Air 350i')]));
+    w.__posted.length = 0;
+    H.patchTopFlights(bare1);
+    const asked = w.__posted.find(m => m.__tweeksLadd === 'topNeed');
+    check('Most tracked: a blocked King Air off the map\'s view, unknown here - its name and route asked of the monitor by FR24\'s id', !!asked && asked.ids.includes(OFF), asked);
+    await sleep(300);   // (the page's own ask, answered by the userscript as it came - before the monitor below knew the name)
+    fake.extra = u => u.pathname === '/names' ? [200, JSON.stringify({ list: [[OFF, 'a1b2c3', 'N350KA', 'B350', '', 1, Math.floor(Date.now() / 1000), '']] })] : null;
+    w.__posted.length = 0;
+    await L.onTopNeed({ ids: [OFF] });
+    fake.extra = null;
+    const got = w.__posted.filter(m => m.__tweeksLadd === 'topGot').pop();
+    check('... the monitor\'s name of it handed to the page (its registration - it sends no callsign)', !!got && got.names[OFF] === 'N350KA', got && got.names);
+    H.onTopGot(got || {});
+    const o4 = H.parse(H.patchTopFlights(bare1)).map(f => H.parse(f.val));
+    check('... and on FR24\'s next read of the list it shows N350KA', str(o4[0], 5) === 'N350KA', str(o4[0], 5));
+    check('... not asked again within the minute', (w.__posted.length = 0, H.patchTopFlights(bare1), !w.__posted.some(m => m.__tweeksLadd === 'topNeed' && m.ids.includes(OFF))));
+    await sleep(50); L.naWanted.delete(OFF); }
   check('... the patch is put on FR24\'s TopFlights requests', /Feed\\\/TopFlights/.test(SRC) && /installBinary\(this, patchTopFlights\)/.test(SRC));
 
   // ---- the same list asked for with fetch (gRPC-web, binary and base64 text)
