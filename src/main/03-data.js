@@ -623,6 +623,8 @@
       if (monDue) {
         const mr = await monOwner(hex).catch(() => null), t = Object.assign({ hex }, store.getHex(hex) || hx), o = { monOwnAt: now() };
         if (mr && await applyMonOwner(t, mr)) for (const k of ['reg', 'type', 'desc', 'owner', 'ownerCity', 'msn', 'year', 'country', 'countryId', 'ownerAskedAt', 'faaAt']) if (t[k] && t[k] !== hx[k]) o[k] = t[k];
+        // (1.2.6: a year the monitor worked out kept as the estimate it is - "~" - not as a register's)
+        if (o.year) { o.yearEst = !!t.yearEst; o.yearHow = t.yearHow || ''; }
         hx = store.mergeHex(hex, o) || hx; if (Object.keys(o).length > 1) pushPubIds([hex]);
         // (all of it known now, a register's answer among it: no register asked again here for a month)
         if (!bg && hx.msn && hx.year > 1900 && shownOwner(hx, hx.cs) && !ownerDue) { const m = store.mergeHex(hex, { pubAt: now(), pubFull: true }); return m || hx; }
@@ -631,10 +633,14 @@
       // the serial number of a non-US airframe is only on JetPhotos: asked in parallel, for the aircraft opened
       const jpJob = !bg && r.reg && !/^N\d/i.test(r.reg) && !hx.msn ? fetchJetphotos(r.reg).catch(() => null) : Promise.resolve(null);
       const [idn, jp] = await Promise.all([fetchIdentity(r, !bg, bg).catch(() => ({})), jpJob]);
-      const out = { reg: r.reg || idn.reg || '', msn: hx.msn || idn.msn || (jp && jp.msn) || '', year: hx.year || idn.year || seed.year || 0, owner: (ownerName(hx.owner) ? hx.owner : '') || idn.owner || seed.owner || hx.owner || '', ownerCity: hx.ownerCity || idn.ownerCity || '', country: hx.country || idn.country || '', countryId: hx.countryId || idn.countryId || 0, type: hx.type || idn.type || seed.type || '', desc: hx.desc || idn.desc || seed.desc || (jp && jp.typeName) || '' };
+      const out = { reg: r.reg || idn.reg || '', msn: hx.msn || idn.msn || (jp && jp.msn) || '', year: (hx.year > 1900 && !hx.yearEst ? hx.year : 0) || idn.year || hx.year || seed.year || 0, owner: (ownerName(hx.owner) ? hx.owner : '') || idn.owner || seed.owner || hx.owner || '', ownerCity: hx.ownerCity || idn.ownerCity || '', country: hx.country || idn.country || '', countryId: hx.countryId || idn.countryId || 0, type: hx.type || idn.type || seed.type || '', desc: hx.desc || idn.desc || seed.desc || (jp && jp.typeName) || '' };
       if (!out.year && !bg) { try { await fetchTrace(hex, '', { priority: true }); } catch (e) { /* not flying today */ } const m = traceMeta.get(hex); if (m && m.year) out.year = m.year; }
       out.pubAt = now(); if (idn.regAnswered || !idn.regFailed) { out.ownerAskedAt = now(); out.ownerFailAt = 0; } else out.ownerFailAt = now(); if (!bg) out.pubFull = true; if (r.faaAt) out.faaAt = r.faaAt;
-      const merged = store.mergeHex(hex, out); pushPubIds([hex]); return merged;
+      // (a register's year over the monitor's estimate)
+      if (out.year && out.year === idn.year && hx.yearEst) { out.yearEst = false; out.yearHow = ''; }
+      const merged = store.mergeHex(hex, out); pushPubIds([hex]);
+      identityToMonitor(Object.assign({ hex }, merged || out));
+      return merged;
     })().finally(() => pubJobs.delete(hex));
     pubJobs.set(hex, job);
     return job;
@@ -1008,12 +1014,31 @@
   }
   // (what this browser found of a blocked aircraft, for the monitor)
   function ownerToMonitor(rec, idn) {
-    if (!rec || !rec.hex || !monUp() || !(live.has(rec.id) || rec.ladd || rec.pia || rec.srv || (store.getHex(rec.hex) || {}).ladd)) return;
+    if (!rec || !rec.hex || !monUp()) return;
+    if (!(live.has(rec.id) || rec.ladd || rec.pia || rec.srv || (store.getHex(rec.hex) || {}).ladd)) { identityToMonitor(rec); return; }
     const o = Object.assign({}, ownersOut.get(rec.hex));
-    for (const k of ['reg', 'type', 'desc', 'owner', 'ownerCity', 'country', 'countryIso', 'msn', 'year', 'operatorId', 'operatorIcao', 'operatorName']) if (rec[k]) o[k] = rec[k];
+    for (const k of ['reg', 'type', 'desc', 'owner', 'ownerCity', 'country', 'countryIso', 'msn', 'operatorId', 'operatorIcao', 'operatorName']) if (rec[k]) o[k] = rec[k];
+    // (a build year only as a register or FR24 gives it: the monitor's own estimate - "~" - is not sent back to it as one)
+    if (rec.year > 1900 && !rec.yearEst) o.year = rec.year;
     if (idn && idn.regAnswered) o.regAnswered = true;
     if (idn && idn.ownerReg && rec.owner === idn.owner) o.regOwner = true;
     ownersOut.set(rec.hex, o); if (ownersOut.size > 2000) ownersOut.delete(ownersOut.keys().next().value);
+  }
+  // (1.2.6: any aircraft's - blocked or not - serial number and build year found here, on the map, a board or search card
+  // or its log page, go to the monitor as well: its age worked out there from them, and both given to every other browser
+  // and page that asks)
+  const idSent = new Map();
+  function identityToMonitor(hx) {
+    const hex = String((hx && hx.hex) || '').toLowerCase(); if (!/^[0-9a-f]{6}$/.test(hex) || !monUp()) return;
+    const msn = typeof hx.msn === 'string' ? clean(hx.msn) : '', year = hx.year > 1900 && hx.year < 2100 && !hx.yearEst ? Math.round(hx.year) : 0;
+    if (!msn && !year) return;
+    const o = Object.assign({}, ownersOut.get(hex)), before = JSON.stringify(o);
+    for (const k of ['reg', 'type', 'desc']) if (hx[k] && typeof hx[k] === 'string') o[k] = hx[k];
+    if (msn) o.msn = msn; if (year) o.year = year;
+    // (once a session for the same findings)
+    const key = JSON.stringify(o); if (key === before || idSent.get(hex) === key) return;
+    idSent.set(hex, key); if (idSent.size > 5000) idSent.delete(idSent.keys().next().value);
+    ownersOut.set(hex, o); if (ownersOut.size > 2000) ownersOut.delete(ownersOut.keys().next().value);
   }
   async function enrich(rec) {
     if (!rec.hex) return;
@@ -1655,6 +1680,8 @@
   const normSerial = s => String(s || '').toUpperCase().replace(/\s+/g, '').replace(/^0+(?=\d)/, '');
   const ageAsked = new Map();   // "TYPE~SERIAL~OPERATOR" -> { year, est, how } | null (none) | 0 (asked, no answer yet)
   let ageQ = [], ageT = 0;
+  // (1.2.6: what else shows an age - an aircraft's log page - drawn again when the monitor's answers come in)
+  const ageHooks = new Set();
   function ageAsk(type, msn, op) {
     const k = [type, normSerial(msn), String(op || '').slice(0, 40)].join('~');
     if (ageAsked.has(k)) return ageAsked.get(k) || null;
@@ -1668,7 +1695,7 @@
     try { const j = await monGet('/age?q=' + batch.map(k => k.split('~').map(encodeURIComponent).join('~')).join(';'), {}); list = j && Array.isArray(j.list) ? j.list : null; } catch (e) { log('monitor ages', String(e && e.message || e)); }
     // (no answer: asked again the next time the aircraft is drawn)
     batch.forEach((k, i) => { const r = list && list[i]; if (!list) ageAsked.delete(k); else ageAsked.set(k, r ? { year: +r[0], est: !!r[1], how: String(r[2] || '') } : null); });
-    if (list) syncPanelSoon();
+    if (list) { syncPanelSoon(); for (const fn of ageHooks) { try { fn(); } catch (e) { log('age hook', e); } } }
     if (ageQ.length && !ageT) ageT = setTimeout(flushAgeAsk, 120);
   }
   // the build year as known: a register's (or FR24's own); else the monitor's working out - by the serial number this

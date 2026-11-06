@@ -1043,7 +1043,7 @@ async function pageMode(reg) {
       if (ts && atd) {
         // (a moment or two into the flight: one can fall in a hole in the public coverage)
         // (an aircraft tracked by multilateration only - G-DGFD's R44 on 2 Oct - sends no airspeeds or vertical speed:
-        // those stay "–", each saying why on hover, and none taken from the receivers' estimates - 380 kt for an R44)
+        // those stay "N/A", each saying why on hover, and none taken from the receivers' estimates - 380 kt for an R44)
         let got = [], why = [];
         for (const off of [420, 900, 1500, 2400, 3300]) {
           ts.dataset.timestamp = String(atd + off);
@@ -1051,11 +1051,11 @@ async function pageMode(reg) {
           await sleep(1200);
           const sps = [...w.document.querySelectorAll('span.tl-pb')];
           got = sps.map(sp => clean2(sp.parentElement.querySelector('label').textContent) + ': ' + clean2(sp.textContent));
-          why = sps.filter(sp => /–/.test(sp.textContent)).map(sp => sp.title);
-          if (got.filter(x => !/–$/.test(x)).length >= 3) break;
+          why = sps.filter(sp => /N\/A/.test(sp.textContent)).map(sp => sp.title);
+          if (got.filter(x => !/N\/A$/.test(x)).length >= 3) break;
         }
-        const filled = got.filter(x => !/–$/.test(x)).length, tas = got.map(x => /TRUE AIRSPEED: ([\d,]+)/.exec(x)).find(Boolean);
-        check('playback panel: padlocked GPS altitude / airspeeds / vertical speed / squawk filled from ADS-B (or "–" saying why)', got.length === 5 && (filled >= 3 || (filled >= 1 && why.every(t => /multilateration|No public ADS-B|Not sent/.test(t)))) && !(tas && +tas[1].replace(/,/g, '') > 600), { got, why: [...new Set(why)] });
+        const filled = got.filter(x => !/N\/A$/.test(x)).length, tas = got.map(x => /TRUE AIRSPEED: ([\d,]+)/.exec(x)).find(Boolean);
+        check('playback panel: padlocked GPS altitude / airspeeds / vertical speed / squawk filled from ADS-B (or "N/A" saying why)', got.length === 5 && (filled >= 3 || (filled >= 1 && why.every(t => /multilateration|No public ADS-B|Not sent/.test(t)))) && !(tas && +tas[1].replace(/,/g, '') > 600), { got, why: [...new Set(why)] });
       } else console.log('(no playback panel in the page markup)');
     }
     await ownerCheck();

@@ -301,7 +301,21 @@
   // heard by one ADS-B Exchange feeder, by neither adsb.lol nor adsb.fi): the blocked aircraft of its type whose last
   // flight - the monitor's log, or this page's - ended at this airport and that has not flown since (its track of the
   // days since has no flight in it). One such aircraft only; two that could be it, none.
+  // (1.2.6) Named at once: the moment such an aircraft is seen on the ground - not after the lookups have failed - and
+  // provisionally, as only the most likely answer: confirmed when public ADS-B hears it where FR24 has it (most often once
+  // it is in the air), replaced by the aircraft it hears there instead. D-CVAB, the only PC-24 to have landed at
+  // Braunschweig since Monday, silent on its apron and named only once airborne.
+  const isProv = id => { const r = live.get(id); return !!(r && r.prov); };
+  const settled = id => live.has(id) && !isProv(id);
+  function confirmProv(id, rec, how) {
+    if (!rec || !rec.prov) return;
+    delete rec.prov; rec.provOk = now(); rec.verifiedAt = now();
+    rec.sources = (Array.isArray(rec.sources) ? rec.sources : []).concat(['confirmed by public ADS-B' + (how ? ' (' + how + ')' : '')]);
+    log('provisional name confirmed', id.toString(16), rec.hex, how || '');
+    store.setId(id, rec); pushToPage([rec]); syncPanelSoon();
+  }
   const parkedAsked = new Map();
+  let parkedBusy = 0;
   async function matchParked(f) {
     if (!f || live.has(f.id) || !f.type || now() - (parkedAsked.get(f.id) || 0) < 10 * 60000) return false;
     const here = ENGINE.placeAt(f.lat, f.lon, 7, 2), ap = here && here.airport; if (!ap || ap.id >= 1e7) return false;
@@ -313,20 +327,49 @@
     const j = await monGet(`/parked?ap=${ap.id}&type=${encodeURIComponent(type)}`).catch(() => null);
     for (const a of (j && j.list) || []) consider(a.hex, a.reg, a.type, a.last, a.ladd);
     for (const [h, v] of store.allHex()) if (v && v.ladd && !cands.has(h) && typeRelation(v.type, type) === 'same') consider(h, v.reg, v.type, compactToLegs(v.recent || []).filter(l => l.tStart < nowS() - 300).sort((a, b) => a.tStart - b.tStart).pop(), true);
-    // (not flown since: nothing airborne in its tracks after that landing)
+    const flewSince = async c => { await idleSlice(); const pts = await dayTrack(c.hex, c.last.tEnd); return pts.some(p => p.t > c.last.tEnd + 300 && !p.gnd0 && fin(p.alt) && p.alt > (ap.alt || 0) + 1500); };
+    const name = m => {
+      const from = m.last.from && apById(m.last.from.id), when = new Date(m.last.tEnd * 1000).toISOString().slice(5, 16).replace('T', ' ');
+      const c = { hex: m.hex, reg: m.reg || hexNNumber(m.hex), type: m.type || type, lat: f.lat, lon: f.lon, alt: 0, gs: f.spd || 0, trk: f.trk, gnd: true, ageS: 0, receivedAt: now(), ladd: !!m.ladd, src: 'parked here' };
+      const rec = recordFromMatch(f, { c, rel: 'same', d: 0, s: 0 }, [`on the ground at ${apCode(ap)} since it landed there${from ? ' from ' + apCode(from) : ''} (${when} UTC) - the only ${type} known to have landed here and not left; the public networks do not hear its ground - provisional until it is heard`]);
+      rec.prov = 'parked'; adopt(rec);
+      // (the attempts begun again: looked for in the public lists from now on, to confirm it - in the air above all)
+      attempts.set(f.id, { n: 0, last: now() });
+      log('identified parked (provisional)', f.id.toString(16), m.hex, apCode(ap));
+      return rec;
+    };
+    // (one aircraft only: named at once, its tracks of the days since read after - a flight there since it landed, one the
+    // monitor did not hear: the name taken back)
+    if (cands.size === 1) {
+      if (live.has(f.id)) return true;
+      const m = [...cands.values()][0], rec = name(m);
+      flewSince(m).then(fl => { if (fl && live.get(f.id) === rec && rec.prov) revoke(f.id, 'it had flown since it landed here', true); }).catch(() => {});
+      return true;
+    }
+    // (more than one: those not flown since - nothing airborne in their tracks after that landing)
     const parked = [];
     for (const c of [...cands.values()].slice(0, 8)) {
       if (live.has(f.id)) return true;
-      await idleSlice(); const pts = await dayTrack(c.hex, c.last.tEnd);
-      if (!pts.some(p => p.t > c.last.tEnd + 300 && !p.gnd0 && fin(p.alt) && p.alt > (ap.alt || 0) + 1500)) parked.push(c);
+      if (!(await flewSince(c))) parked.push(c);
     }
     if (parked.length !== 1 || live.has(f.id)) { if (parked.length > 1) log('parked match: more than one could be it', f.id.toString(16), parked.map(x => x.hex)); return false; }
-    const m = parked[0], from = m.last.from && apById(m.last.from.id), when = new Date(m.last.tEnd * 1000).toISOString().slice(5, 16).replace('T', ' ');
-    const c = { hex: m.hex, reg: m.reg || hexNNumber(m.hex), type: m.type || type, lat: f.lat, lon: f.lon, alt: 0, gs: f.spd || 0, trk: f.trk, gnd: true, ageS: 0, receivedAt: now(), ladd: !!m.ladd, src: 'parked here' };
-    adopt(recordFromMatch(f, { c, rel: 'same', d: 0, s: 0 }, [`on the ground at ${apCode(ap)} since it landed there${from ? ' from ' + apCode(from) : ''} (${when} UTC) - the only ${type} known to have landed here and not left; the public networks do not hear its ground`]));
-    log('identified parked', f.id.toString(16), m.hex, apCode(ap));
+    name(parked[0]);
     return true;
   }
+  // (the unnamed aircraft on the ground with a type: the one opened first, then the newest seen - each once in 10 minutes,
+  // one at a time; those the lookups have had a first go at, so one the public networks hear is named by them)
+  function parkedTick() {
+    if (parkedBusy || ENGINE.airports.length < 1000) return;
+    const t = now(), sel = currentId();
+    // (in view only - not the world scan's finds: the monitor names those itself, by the same rule)
+    const want = f => f && !f.bg && !live.has(f.id) && f.gnd && t - f.receivedAt < 120000 && f.type && f.type !== 'GRND' && f.icon !== 25 && !skipFlight(f) && t - (parkedAsked.get(f.id) || 0) >= 10 * 60000;
+    let g = sel != null && want(pending.get(sel)) ? pending.get(sel) : null;
+    if (!g) g = [...pending.values()].filter(f => want(f) && (attempts.get(f.id) || {}).n >= 1).sort((a, b) => b.receivedAt - a.receivedAt)[0] || null;
+    if (!g) return;
+    parkedBusy = 1;
+    matchParked(g).catch(e => log('parked match', e)).finally(() => { parkedBusy = 0; });
+  }
+  setInterval(parkedTick, 3000);
   // Out of public coverage - an ocean, a desert: FR24's satellite (ADS-C) or estimated positions, or no airport within 150
   // km - every unnamed flight there goes through the lookup above, one at a time, the one opened first (each again after
   // ten minutes at most). Whether the page or the monitor ever heard it makes no difference: adsb.lol's history did.
@@ -336,10 +379,8 @@
     const t = now(), sel = currentId();
     const list = [...pending.values()].filter(f => !live.has(f.id) && !f.gnd && f.alt > 10000 && t - f.receivedAt < 120000 && f.type !== 'GRND' && f.icon !== 25 && fin(f.lat) && t - (traceAsked.get(f.id) || 0) >= 10 * 60000 && (f.src === 4 || f.src === 5 || remoteAt(f.lat, f.lon)));
     list.sort((a, b) => (b.id === sel) - (a.id === sel) || b.receivedAt - a.receivedAt);
-    if (list[0]) { matchByTraces(list[0]).catch(e => log('track match', e)); return; }
-    // (and an unnamed aircraft on the ground at an airport, twice looked for in vain: parked there since a landing?)
-    const g = [...pending.values()].find(f => !live.has(f.id) && f.gnd && t - f.receivedAt < 120000 && f.type && f.type !== 'GRND' && f.icon !== 25 && (attempts.get(f.id) || {}).n >= 2 && t - (parkedAsked.get(f.id) || 0) >= 10 * 60000);
-    if (g) matchParked(g).catch(e => log('parked match', e));
+    if (list[0]) matchByTraces(list[0]).catch(e => log('track match', e));
+    // (an unnamed aircraft on the ground: parkedTick, every 3 s)
   }, 30000);
   // (and from the permanent monitor, which heard them while FR24 was closed: every LADD jet of the last 14 hours)
   function monLastSeen() {
@@ -467,6 +508,8 @@
     if (r[5] & 7) noteDbFlags(String(r[1] || '').toLowerCase(), (r[5] & 1 ? 8 : 0) | (r[5] & 2 ? 1 : 0) | (r[5] & 4 ? 4 : 0));
     const rec = { id: r[0], hex: String(r[1] || '').toLowerCase(), cs: r[4] || '', reg: r[2] || hexNNumber(r[1]) || '', type: r[3] || '', ladd: !!(r[5] & 1), mil: !!(r[5] & 2), pia: !!(r[5] & 4),
       src: 'monitor', sources: ['monitor (' + (r[6] || 'named') + ')'], matchedAt: (r[7] || nowS()) * 1000, verifiedAt: now(), srv: true };
+    // (1.2.6: the monitor's parked rule is as provisional as this browser's: confirmed, or replaced, by what is heard)
+    if (r[6] === 'parked') rec.prov = 'parked';
     hydrate(rec);
     // (its owner and operator, as the monitor knows them - kept here too, so they are never looked up again)
     const own = {};
@@ -510,7 +553,9 @@
   }
   // A flight FR24 is drawing now in view (or opened) that the monitor has named: identified at once, as if matched here
   function srvAdopt(id) {
-    const r = srvIds.rows.get(id); if (!r || live.has(id) || revokedIds.has(id)) return false;
+    const r = srvIds.rows.get(id); if (!r || revokedIds.has(id)) return false;
+    // (a provisional name here gives way to the monitor's when the monitor's is not one itself)
+    const cur = live.get(id); if (cur && !(cur.prov && r[6] !== 'parked')) return false;
     adopt(srvRec(r)); return true;
   }
   // (the page told of names: light records - id, address, callsign, registration, type - the rough routes, and where FR24
@@ -845,6 +890,13 @@
   let pushQ = [], pushT = 0;
   function pushSoon(rec) { pushQ.push(rec); if (!pushT) pushT = setTimeout(() => { pushT = 0; const q = pushQ; pushQ = []; pushToPage(q); }, 0); }
   function adopt(rec) {
+    // (1.2.6: a provisional name - the parked rule's - given way to what public ADS-B hears there: the same aircraft
+    // confirmed, another one in its place, its route and figures started again)
+    const prev = live.get(rec.id);
+    if (prev && prev.prov && !rec.prov) {
+      if (prev.hex === rec.hex) { rec.provOk = now(); log('provisional name confirmed', rec.id.toString(16), rec.hex); }
+      else { log('provisional name replaced', rec.id.toString(16), prev.hex, '->', rec.hex); routeState.delete(rec.id); planState.delete(rec.id); telemetry.delete(rec.id); }
+    }
     live.set(rec.id, rec); strikes.delete(rec.id);
     store.setId(rec.id, rec);
     if (rec.hex) store.mergeHex(rec.hex, { hex: rec.hex, reg: rec.reg, type: rec.type, desc: rec.desc, owner: rec.owner, year: rec.year, yearEst: rec.yearEst, yearHow: rec.yearHow, msn: rec.msn, ladd: rec.ladd, pia: rec.pia, mil: rec.mil, cat: rec.cat, countryId: rec.countryId, country: rec.country });
@@ -879,9 +931,10 @@
     }
     if (fr24Named.size > 20000) { const it = fr24Named.values(); for (let i = 0; i < 5000; i++) fr24Named.delete(it.next().value); }
   }
-  function revoke(id, why) {
+  function revoke(id, why, soft) {
     const rec = live.get(id); if (!rec) return;
-    revokedIds.add(id);
+    // (soft: a provisional name taken back - the monitor's name for the flight still taken, should it have one)
+    if (!soft) revokedIds.add(id);
     log('match withdrawn', id.toString(16), rec.hex, why);
     live.delete(id); store.delId(id); strikes.delete(id); routeState.delete(id); planState.delete(id); telemetry.delete(id);
     attempts.set(id, { n: 0, last: now() - 4000 });
@@ -904,14 +957,19 @@
   function matchAgainstList(f) {
     const cands = listCandidatesNear(f, true);
     const m = cands.length ? matchFlight(f, cands) : null;
+    // (a provisional name gives way only to an aircraft heard there - not to one carried along out of coverage)
+    if (isProv(f.id) && !(m && (m.rel === 'same' || m.c.hex === live.get(f.id).hex))) return false;
     if (!m) { const r = matchReckoned(f); if (r) { adoptReckoned(f, r); return true; } return false; }
     const fromList = globalList.byHex.get(m.c.hex) === m.c;
     adopt(recordFromMatch(f, m, [fromList ? (m.c.src || globalList.src) + (m.c.mil && !m.c.ladd ? ' (military list)' : ' (LADD list)') : (m.c.src || 'public ADS-B') + ' (seen moments ago)']));
     return true;
   }
   async function resolveTargeted(id, reason) {
-    const f = pending.get(id); if (!f || live.has(id) || skipFlight(f)) return;
+    const f = pending.get(id); if (!f || settled(id) || skipFlight(f)) return;
     if (matchAgainstList(f)) return;
+    // (1.2.6: on the ground with a type: the parked rule at once, alongside the lookups - provisional, the lookups' answer
+    // over it)
+    if (f.gnd && f.type && !live.has(id)) matchParked(f).catch(e => log('parked match', e));
     const a = attemptsFor(id) || { n: 0, last: 0 };
     if (a.n >= MAX_TARGET_ATTEMPTS || now() - a.last < 5000) return;
     a.n++; a.last = now(); attempts.set(id, a);
@@ -923,26 +981,27 @@
     await Promise.allSettled(sources.map(s => s.area(f.lat, f.lon, TARGET_RADIUS_NM).then(list => {
       used.push(s.name); mergeCands(all, list); noteCands(list);
       said.push(`${s.name} ${list.filter(c => dist(c.lat, c.lon, f.lat, f.lon) < 60).length} near`);
-      if (adopted || live.has(id)) return;
+      if (adopted || settled(id)) return;
       const fresh = pending.get(id) || f;
       const m = matchFlight(fresh, [...all.values()]);
       if (m && (m.rel === 'same' || (m.rel === 'unknown' && !fresh.type))) { adopted = true; adopt(recordFromMatch(fresh, m, used.slice())); }
     }).catch(e => { said.push(`${s.name} ${whyFailed(e)}`); log('source failed', s.name, String(e)); })));
-    if (adopted || live.has(id)) return;
+    if (adopted || settled(id)) return;
     // (what each source said, for the panel - a flight still "identifying" says why)
     a.said = `try ${a.n}: ${said.join(', ')}${used.length ? ' - none fits its type and position' : ''}`;
     // (no source answered - rate-limited, offline: not an attempt; "no match" is only said of sources that answered)
     if (!used.length) { a.n = Math.max(0, a.n - 1); a.last = now() + 10000; return; }
     const fresh = pending.get(id) || f;
     const m = matchFlight(fresh, [...all.values()]);
+    if (isProv(id)) { if (m && (m.rel === 'same' || m.c.hex === live.get(id).hex)) adopt(recordFromMatch(fresh, m, used)); return; }
     if (m) adopt(recordFromMatch(fresh, m, used));
     else { const r = matchReckoned(fresh); if (r) adoptReckoned(fresh, r); else { log('no match yet', id.toString(16), 'candidates', all.size); syncPanelSoon(); if (a.n >= 2) (fresh.gnd ? matchParked(fresh) : matchByTraces(fresh)).catch(e => log('track match', e)); } }
   }
   const whyFailed = e => { const m = String((e && e.message) || e); return /429/.test(m) ? 'rate-limited' : /paused/.test(m) ? 'paused (refused)' : /40[13]/.test(m) ? 'refused' : /timeout|no response/.test(m) ? 'no answer' : /not running/.test(m) ? 'not connected' : 'failed'; };
   function clusterUnresolved() {
     const t = now();
-    const list = [...pending.values()].filter(f => !live.has(f.id) && !f.bg && t - f.receivedAt < PENDING_TTL_MS && !skipFlight(f))
-      .filter(f => { const a = attemptsFor(f.id); return !a || a.n < 12 && t - a.last > 4000 * Math.min(6, a.n); });
+    const list = [...pending.values()].filter(f => !settled(f.id) && !f.bg && t - f.receivedAt < PENDING_TTL_MS && !skipFlight(f))
+      .filter(f => { const a = attemptsFor(f.id); if (isProv(f.id) && !f.gnd) return !a || t - a.last > 8000; return !a || a.n < 12 && t - a.last > 4000 * Math.min(6, a.n); });
     const clusters = [];
     const rKm = AREA_RADIUS_NM * NM_KM * 0.9;
     const center = viewCenter || (list[0] ? { lat: list[0].lat, lon: list[0].lon } : null);
@@ -959,13 +1018,13 @@
       const f = pending.get(id); if (!f || t - f.receivedAt > PENDING_TTL_MS) continue;
       if (!cands.some(c => c.hex === rec.hex)) continue;
       const v = verifyMatch(f, rec, cands);
-      if (v === 'ok') { strikes.delete(id); rec.verifiedAt = t; }
+      if (v === 'ok') { strikes.delete(id); rec.verifiedAt = t; if (rec.prov) confirmProv(id, rec, 'heard where FR24 has it'); }
       else if (v === 'bad') strike(id, rec, 'track diverged');
     }
   }
   async function sweep() {
     if (sweepRunning) return;
-    for (const f of [...pending.values()]) if (!live.has(f.id) && !skipFlight(f)) matchAgainstList(f);
+    for (const f of [...pending.values()]) if (!settled(f.id) && !skipFlight(f)) matchAgainstList(f);
     const clusters = clusterUnresolved().slice(0, 3);
     if (!clusters.length) return;
     sweepRunning = true;
@@ -980,9 +1039,10 @@
         verifyAll(cands, t);
         for (const f of c.flights) {
           const a = attempts.get(f.id) || { n: 0, last: 0 }; a.n++; a.last = t; attempts.set(f.id, a);
-          if (live.has(f.id)) continue;
+          if (settled(f.id)) continue;
           const fresh = pending.get(f.id) || f;
           const m = matchFlight(fresh, cands);
+          if (m && isProv(f.id) && !(m.rel === 'same' || m.c.hex === live.get(f.id).hex)) continue;
           if (m) adopt(recordFromMatch(fresh, m, used));
         }
         log('sweep', used.join('+'), 'cands', cands.length, 'flights', c.flights.length, 'resolved total', live.size);
@@ -1000,7 +1060,7 @@
       const c = globalList.byHex.get(rec.hex); if (c) { const tl = telemOf(c); const cur = telemetry.get(id); if (!cur || (tl.at || 0) > (cur.at || 0)) { telemetry.set(id, tl); if (onScreen(id)) pushTelemetry(id); } }
       const f = pending.get(id); if (!f || t - f.receivedAt > PENDING_TTL_MS || !c) continue;
       const v = verifyMatch(f, rec, cands);
-      if (v === 'ok') { strikes.delete(id); rec.verifiedAt = t; }
+      if (v === 'ok') { strikes.delete(id); rec.verifiedAt = t; if (rec.prov) confirmProv(id, rec, 'the LADD list'); }
       else if (v === 'bad') strike(id, rec, 'LADD list diverged');
     }
   }
@@ -1032,7 +1092,7 @@
         noteCands([c]);
         telemetry.set(id, telemOf(c)); pushTelemetry(id);
         const f = pending.get(id);
-        if (f) { const v = verifyMatch(f, rec, [c]); if (v === 'ok') { strikes.delete(id); rec.verifiedAt = now(); } else if (v === 'bad') strike(id, rec, 'selected aircraft diverged'); }
+        if (f) { const v = verifyMatch(f, rec, [c]); if (v === 'ok') { strikes.delete(id); rec.verifiedAt = now(); if (rec.prov) confirmProv(id, rec, 'heard where FR24 has it'); } else if (v === 'bad') strike(id, rec, 'selected aircraft diverged'); }
         if (c.sq && rec.squawk !== c.squawk) { rec.squawk = c.squawk; }
         syncPanelSoon();
       }

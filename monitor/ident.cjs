@@ -246,6 +246,13 @@ function createIdent(env) {
       if (nowMs - F.seen > 10 * 60000) continue;
       const R = ids.get(F.id);
       if (R) {
+        // (1.2.6: a name the parked rule gave is provisional: once the aircraft is in the air, the one heard where FR24 has
+        // it - the same aircraft, confirmed; another, put in its place)
+        if (R.how === 'parked' && !R.air && !F.gnd && F.src !== 4 && F.src !== 5) {
+          const b = best(F, near(g, F.lat, F.lon), nowMs);
+          if (b && b.c.hex !== R.hex) { assign(F, b.c.hex, infoOf(b.c.hex, env.ac.get(b.c.hex), b.c), cache.has(b.c.hex) ? 'lookup' : 'list', nowMs); continue; }
+          if (b) { R.air = 1; R.ver = Math.round(nowMs / 1000); R.chg = nowMs; }
+        }
         const c = cands.get(R.hex); if (c) verify(F, R, c, nowMs); if (!ids.has(F.id)) { unmatched.push(F); } else {
           // (what the aircraft is, learned later - the LADD flag from a list it turned up on: added to its name, never taken off)
           const b = env.blocked.get(R.hex) || {}, fl = R.flags | (c && c.ladd || b.faa ? FLAG.ladd : 0) | (c && c.mil ? FLAG.mil : 0) | (c && c.pia ? FLAG.pia : 0);
