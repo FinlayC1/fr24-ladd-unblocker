@@ -158,7 +158,7 @@
   // airports, where it was seen down, is the landing place learned there.
   async function pbRouteFor(id, hex, ts) {
     // (worked out before without an end, and now the flight open in the panel: FR24's own track asked as well, below)
-    // (1.2.8: one without its departure worked out again once FR24's own trail of it has come since)
+    // (1.2.9: one without its departure worked out again once FR24's own trail of it has come since)
     const have = pb.routes.get(id), tr0 = fr24Trail.get(id);
     if (have && have.hex === hex && ((have.destIata && (have.originIata || !(tr0 && tr0.at > (have.at || 0)))) || (have.fr24Tried && !(tr0 && tr0.at > (have.at || 0))) || id !== pb.sel)) return have;
     const k = id + ':' + hex; if (pb.routing.has(k)) return null; pb.routing.add(k);
@@ -183,7 +183,7 @@
       let tried = false;
       if (id === pb.sel && (!s || !(s.to && s.ended) || !(s.from || s.startedOnGround))) {
         tried = true;
-        // (1.2.8) FR24's flight-playback answer has nothing for a blocked flight: FR24's own trail of it as its playback draws
+        // (1.2.9) FR24's flight-playback answer has nothing for a blocked flight: FR24's own trail of it as its playback draws
         // it on the map (the page's stream of the flight open in the panel) - N905SH off Dickinson, the take-off public
         // ADS-B never heard, "Departure unknown" under FR24's own green trail from the runway
         let e = await (fr24 || pbFr24Ends(id, ts));

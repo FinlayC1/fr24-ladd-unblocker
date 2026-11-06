@@ -142,7 +142,7 @@ function createRwyLog(env) {
         // a take-off: off the ground here a moment ago, or climbing out along a runway of the field it says it left
         const leftHere = st.gAp === a.id && ts - st.gT < 900;
         if (!st.dep && (leftHere || (f.from && fromHere)) && away(f, a) !== false) {
-          // (1.2.8: its roll as kept - on the ground and moving fast, along the runway - with its climb: the roll is where
+          // (1.2.9: its roll as kept - on the ground and moving fast, along the runway - with its climb: the roll is where
           // the runway shows, a stand-in at rest at its last ground position said nothing)
           const roll = st.pts.filter(q => q.gnd && q.gs > 30 && q.t >= st.gT - 300);
           const pts = leftHere ? (roll.length ? roll : [{ t: st.gT, lat: st.gLat, lon: st.gLon, alt: null, gnd: true, gs: 0, trk: st.gTrk != null ? st.gTrk : f.trk }]).concat(st.pts.filter(q => q.t > st.gT && !q.gnd)) : st.pts.filter(q => !q.gnd);

@@ -1,4 +1,4 @@
-// FR24 LADD Unblocker 1.2.8 - the page-world part (see src/page.js)
+// FR24 LADD Unblocker 1.2.9 - the page-world part (see src/page.js)
 (function () {
   'use strict';
   // ------------------------------------------------------------------------------------------------------------
@@ -7,7 +7,7 @@
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "1.2.8";
+    var BRIDGE_V = "1.2.9";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed
@@ -635,7 +635,7 @@
       if (F.follow && fid) curFollowId = fid;
       // FR24's own trail of this flight: where it began, how high it has been, and the path so far.
       var pts = [], maxAlt = 0;
-      // (1.2.8: FR24's playback's too - where a blocked flight it plays took off, which public ADS-B may never have heard)
+      // (1.2.9: FR24's playback's too - where a blocked flight it plays took off, which public ADS-B may never have heard)
       for (var ti = 0; F.trail && ti < fs.length; ti++) {
         if (fs[ti].fn !== F.trail || fs[ti].wt !== 2) continue;
         try {
@@ -3408,7 +3408,7 @@
     var MX_LC_KEY = 'tl.mx.lastclicked', MX_LC_MAX = 10, mxLcSeen = null;
     function mxLcList() { try { var a = JSON.parse(localStorage.getItem(MX_LC_KEY) || '[]'); return Array.isArray(a) ? a.filter(function (x) { return x && x.id != null; }) : []; } catch (e) { return []; } }
     function mxLcSave(a) { try { localStorage.setItem(MX_LC_KEY, JSON.stringify(a.slice(0, MX_LC_MAX))); } catch (e) { /* full */ } }
-    // (1.2.8) A flight's id as FR24's widget has it - its hex, as FR24 writes ids (Number(id).toString(16), at least six
+    // (1.2.9) A flight's id as FR24's widget has it - its hex, as FR24 writes ids (Number(id).toString(16), at least six
     // figures): its click opens the flight by that string (showInfoPanel lower-cases it). Kept here as the number; given
     // to FR24 as the string - the number made its click throw before it did anything, every flight in the air "dead"
     var lcNum = function (v) { return typeof v === 'number' ? v : /^[0-9a-f]{1,12}$/i.test(String(v == null ? '' : v)) ? parseInt(String(v), 16) : NaN; };
@@ -3861,7 +3861,7 @@
       rows.forEach(function (r) {
         if (!r || typeof r !== 'object') return;
         var lk = !!(r.locked && r.locked.runway === true); if (!lk && r.runway != null && r.runway !== '') return;
-        // (1.2.6: never FR24's padlock. 1.2.8: the rows themselves show no runway - only each flight's card does, in its
+        // (1.2.6: never FR24's padlock. 1.2.9: the rows themselves show no runway - only each flight's card does, in its
         // dropdown; the runways are asked for here still, so the card has its own the moment it opens)
         if (lk) { r.locked = Object.assign({}, r.locked, { runway: false }); r.runway = null; n++; }
         var raw = r.flightId != null ? r.flightId : r.flight && r.flight.id, fid = mxFidHex(raw);

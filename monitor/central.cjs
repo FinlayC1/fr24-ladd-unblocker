@@ -268,7 +268,7 @@ function createCentral(env) {
     let F = flights.get(id);
     if (F && !F.hex && hex) { F.hex = hex; F.rec.hex = hex; histCache.delete(hex); }
     if (!F || (hex && F.hex !== hex)) {
-      // (1.2.8: full - the flight sent nothing longest let go, never the new one refused: a flight just off the ground, a
+      // (1.2.9: full - the flight sent nothing longest let go, never the new one refused: a flight just off the ground, a
       // VFR one, got no answer at all while the monitor held its 1,500 - G-CCVM out of Woodvale, "no airport fits its track")
       if (!F && flights.size >= C.maxFlights) { let old = null; for (const G of flights.values()) if (!old || G.at < old.at) old = G; if (old) flights.delete(old.id); }
       F = { id, hex, rec: { id, hex }, kind: 'pub', pos: null, trail: [], meta: {}, plan: null, st: { maxAlt: 0, landedAt: 0 }, lastLeg: null, rested: false, fleet: null, today: [], at: 0, route: null, routeAt: 0, dirty: true, origin: null };

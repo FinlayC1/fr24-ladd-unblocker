@@ -91,7 +91,7 @@ function open(url) {
     // a board row of a blocked flight (M-PORT's: a row of this script's, no id of FR24's) - its runway by its address
     const rows = [{ id: 1, flightId: null, status: { name: 'landed' }, landedTime: t + 120, runway: null, locked: { runway: true }, __tlHex: '424b68' }];
     H.mxBoardRwy(rows, 'arrivals', ap);
-    check('... a blocked flight\'s board row: no padlock, no runway in the row itself (1.2.8: only its card shows one) - its runway known by its address for the card', rows[0].runway === null && rows[0].locked.runway === false && H.mxRwyByHex(ap, '424b68', 1, t + 120) === '27', rows[0]);
+    check('... a blocked flight\'s board row: no padlock, no runway in the row itself (1.2.9: only its card shows one) - its runway known by its address for the card', rows[0].runway === null && rows[0].locked.runway === false && H.mxRwyByHex(ap, '424b68', 1, t + 120) === '27', rows[0]);
     // its card (M-PORT's: an id made up here) - the landing here, the take-off at Helsinki asked for by that airport
     P.posts.length = 0;
     const cr = H.cardRwy(new Response(JSON.stringify({ data: { flight: { id: 'c1a2b3c4' }, runways: { arrival: { name: null, upsell: false }, departure: { name: null, upsell: false } }, schedule: { atd: t - 9000, ata: t + 60 }, originId: 1190, destinationId: ap } }), { status: 200 }), ap, 'arrivals', true, '424B68');

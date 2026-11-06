@@ -80,7 +80,7 @@
   function onTrail(d) {
     const id = Number(d.id) || null; if (!id || !d.first) return;
     const prev = fr24Trail.get(id);
-    // (1.2.8: one from FR24's playback - the flight as it was then - only where none from its live stream is kept)
+    // (1.2.9: one from FR24's playback - the flight as it was then - only where none from its live stream is kept)
     if (d.pb && prev && !prev.pb) return;
     // keep the longest trail seen for this flight (FR24 may send a shorter one on stream restarts)
     if (!prev || (d.pts || []).length >= (prev.pts || []).length || d.first.t < prev.first.t) fr24Trail.set(id, { first: d.first, pts: d.pts || [], maxAlt: Math.max(d.maxAlt || 0, prev ? prev.maxAlt : 0), at: d.at || now(), pb: !!d.pb });
@@ -88,7 +88,7 @@
     const st = routeState.get(id); if (st && d.maxAlt > (st.maxAlt || 0)) st.maxAlt = d.maxAlt;
     if (live.get(id) || pubRouted(id)) scheduleReplan(id, 100);
     if (naWanted.has(id)) naWantedTick();
-    // (1.2.8: the flight open in FR24's playback, its route worked out without a departure: again, with FR24's trail now in)
+    // (1.2.9: the flight open in FR24's playback, its route worked out without a departure: again, with FR24's trail now in)
     if (id === pb.sel) { const r = pb.routes.get(id); if (r && !r.originIata) syncPanelSoon(); }
   }
   function onBoardSeen(d) {

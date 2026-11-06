@@ -408,7 +408,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   }
   // (the tag says what the aircraft is - LADD-listed or hidden by FR24, PIA, military - and nothing for one that is
   // none of them: EZY54VT, an easyJet A320neo FR24 sent for a moment without its identity, was tagged "LADD").
-  // 1.2.8: FR24's playback's panel too
+  // 1.2.9: FR24's playback's panel too
   function headerTag(panel, hx) {
     const cs = q(panel, SEL.callsign); if (!cs) return;
     const badge = badgeOf(hx), cur = panel.querySelector('.tl-ladd');

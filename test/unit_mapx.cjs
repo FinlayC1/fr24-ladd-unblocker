@@ -183,7 +183,7 @@ function open(opts, answer, fetchImpl) {
       doc.body.appendChild(wrap); [...wrap.children].forEach(el => el.addEventListener('click', () => { fr24++; }));
       doc.getElementById('lc' + pos).firstChild.dispatchEvent(new R.w.MouseEvent('click', { bubbles: true, cancelable: true }));
       check('... clicked once it has landed: its aircraft\'s log page, FR24\'s own (nothing for a blocked flight) not run', opened === '/data/aircraft/d-cvab' && fr24 === 0, { opened, fr24 });
-      // (1.2.8: in the air - FR24's own click, the page kept: the id given to FR24 in its own form, the hex string its
+      // (1.2.9: in the air - FR24's own click, the page kept: the id given to FR24 in its own form, the hex string its
       // showInfoPanel lower-cases - a number made that throw, every flight in the air "dead", and the reload this script did
       // then is gone)
       opened = null; let went = ''; RH.setNav(u => { went = u; });
@@ -280,7 +280,7 @@ function open(opts, answer, fetchImpl) {
     app.__vue_app__ = { config: { globalProperties: { $page: page } } };
     H.mxDataTick(); await sleep(150); H.mxDataTick();
     const fl = page.props.flights;
-    check('departures page: the take-off runway asked by the airport\'s id for its card - not put in the row itself (1.2.8: the rows show no runway), the padlock off; one not yet flown, and a row of ours with a made-up id, not asked - and no padlock on either', asks.length === 1 && asks[0].ap === 975 && asks[0].items.length === 1 && asks[0].items[0].fid === '3d1f0001' && asks[0].items[0].landing === false && fl[0].runway === null && H.mxRwy.get('3d1f0001:0') === '27R' && fl[0].locked.runway === false && fl[1].runway === null && fl[1].locked.runway === false && fl[2].locked.runway === false, { asks: asks.map(a => a.items), fl: fl.map(f => [f.flightId, f.runway, f.locked.runway]) });
+    check('departures page: the take-off runway asked by the airport\'s id for its card - not put in the row itself (1.2.9: the rows show no runway), the padlock off; one not yet flown, and a row of ours with a made-up id, not asked - and no padlock on either', asks.length === 1 && asks[0].ap === 975 && asks[0].items.length === 1 && asks[0].items[0].fid === '3d1f0001' && asks[0].items[0].landing === false && fl[0].runway === null && H.mxRwy.get('3d1f0001:0') === '27R' && fl[0].locked.runway === false && fl[1].runway === null && fl[1].locked.runway === false && fl[2].locked.runway === false, { asks: asks.map(a => a.items), fl: fl.map(f => [f.flightId, f.runway, f.locked.runway]) });
     H.mxDataTick(); check('... not asked again', asks.length === 1);
     // (the map's airport panel: FR24's /api/v1 answer - its rows by flight.id; the landing's runway, a known one at once)
     const n = H.mxBoardRwy([{ flight: { id: '3d1f0003' }, status: { name: 'landed' }, runway: null }], 'arrivals', 975);

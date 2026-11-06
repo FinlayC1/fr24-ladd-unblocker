@@ -613,7 +613,7 @@ const datalink = DL.createDatalink({ isAirport: c => !!E.byIcao(c) });
 // (1.1.0) every answer of central calculation noted and scored once the flight is down - live accuracy, training data
 const { createScores } = require('./scores.cjs');
 const SC = createScores({ store: STORE, E, log: (...a) => log('scores', ...a), logOf: hex => logOf(hex), room: () => !WS.full });
-// (1.2.8) What central calculation may hold, by the heap this process may use: the 1 GB VM's 1,500 flights and 400,000
+// (1.2.9) What central calculation may hold, by the heap this process may use: the 1 GB VM's 1,500 flights and 400,000
 // points with a heap under 4 GB; eight thousand and 2.5 million with more (the A1's 12 GB) - full, it let new flights go
 // unanswered
 function centralCfg() {
@@ -1820,7 +1820,7 @@ function naTrack(list, nowMs) {
   for (const [id, x] of naF) if (nowMs - x.seen > 15 * 60000) naF.delete(id);
   F24.noRoute = naF.size;
 }
-// (1.2.8) The airports people are looking at - a board, its panel, a card asked for in the last half hour: every flight
+// (1.2.9) The airports people are looking at - a board, its panel, a card asked for in the last half hour: every flight
 // round each (some 40 km, all of FR24's services - airliners too, which the world scan leaves out), every 40 s, into the
 // runway log: each one's runway as it takes off or comes in, there when its card is opened. Four at a time at most, the
 // latest asked for first; FR24 pushing back pauses it as it pauses the world scan

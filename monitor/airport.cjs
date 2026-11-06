@@ -74,7 +74,7 @@ function createAirportInfo(env) {
         }
         if (w > 0.05) {
           score.set(e.id, (score.get(e.id) || 0) + w);
-          // (1.2.8: seen close to it - the roll, the first 4 km of the climb, the final within 10 km - not only far out,
+          // (1.2.9: seen close to it - the roll, the first 4 km of the climb, the final within 10 km - not only far out,
           // where a track turning away, or another runway's approach, can line up with it by chance: Amsterdam's take-off
           // from 04, sampled every 30 s, read as 09 from points after its turn)
           // (a landing: on the final within 10 km and no higher than an approach is there - 350 ft a km and 500 ft more)
@@ -87,7 +87,7 @@ function createAirportInfo(env) {
     if (best[1] && best[1][1] > best[0][1] * 0.7) return parallels(ends, best[0][0], best[1][0], near, landing, elev, kx, ky);
     return best[0][0];
   }
-  // (1.2.8) Two runways alike - parallels side by side, the whole approach or climb-out fitting both (Gatwick's 08R/08L,
+  // (1.2.9) Two runways alike - parallels side by side, the whole approach or climb-out fitting both (Gatwick's 08R/08L,
   // 200 m apart: every take-off and landing there "not known"; Manchester's 05L/05R, 390 m, far out on the final): told
   // apart by the positions where the two are far apart for the track - the roll on the ground, the last 3 km of the final
   // and the first 3 km of the climb - held to the centreline within some 60 m. Still alike, and the two so close (under

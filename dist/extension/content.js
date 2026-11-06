@@ -48,7 +48,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
 // ==UserScript==
 // @name         Flightradar24 LADD / N-A Unblocker (feed-level)
 // @namespace    tweeks.io
-// @version      1.2.8
+// @version      1.2.9
 // @description  Identifies every LADD / N/A / blocked military aircraft on Flightradar24 from public ADS-B, and injects callsign, registration, operator, age, country, MSN, squawk, vertical speed, GPS altitude, airspeeds, wind, photos, a reasoned origin/destination with a wind-corrected ETA (also for ordinary flights FR24 shows as N/A - military, private, GA, helicopters, with private landing sites; learned from 63 days of every aircraft worldwide, with live weather and closures), airport-board entries and a rebuilt 7-month flight log straight into FR24's own data - so it all renders like normal FR24 traffic.
 // @author       Finlay Clarke
 // @updateURL    https://raw.githubusercontent.com/FinlayC1/fr24-ladd-unblocker/main/dist/fr24-ladd-unblocker.user.js
@@ -145,7 +145,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "1.2.8";
+    var BRIDGE_V = "1.2.9";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed
@@ -773,7 +773,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       if (F.follow && fid) curFollowId = fid;
       // FR24's own trail of this flight: where it began, how high it has been, and the path so far.
       var pts = [], maxAlt = 0;
-      // (1.2.8: FR24's playback's too - where a blocked flight it plays took off, which public ADS-B may never have heard)
+      // (1.2.9: FR24's playback's too - where a blocked flight it plays took off, which public ADS-B may never have heard)
       for (var ti = 0; F.trail && ti < fs.length; ti++) {
         if (fs[ti].fn !== F.trail || fs[ti].wt !== 2) continue;
         try {
@@ -3546,7 +3546,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     var MX_LC_KEY = 'tl.mx.lastclicked', MX_LC_MAX = 10, mxLcSeen = null;
     function mxLcList() { try { var a = JSON.parse(localStorage.getItem(MX_LC_KEY) || '[]'); return Array.isArray(a) ? a.filter(function (x) { return x && x.id != null; }) : []; } catch (e) { return []; } }
     function mxLcSave(a) { try { localStorage.setItem(MX_LC_KEY, JSON.stringify(a.slice(0, MX_LC_MAX))); } catch (e) { /* full */ } }
-    // (1.2.8) A flight's id as FR24's widget has it - its hex, as FR24 writes ids (Number(id).toString(16), at least six
+    // (1.2.9) A flight's id as FR24's widget has it - its hex, as FR24 writes ids (Number(id).toString(16), at least six
     // figures): its click opens the flight by that string (showInfoPanel lower-cases it). Kept here as the number; given
     // to FR24 as the string - the number made its click throw before it did anything, every flight in the air "dead"
     var lcNum = function (v) { return typeof v === 'number' ? v : /^[0-9a-f]{1,12}$/i.test(String(v == null ? '' : v)) ? parseInt(String(v), 16) : NaN; };
@@ -3999,7 +3999,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       rows.forEach(function (r) {
         if (!r || typeof r !== 'object') return;
         var lk = !!(r.locked && r.locked.runway === true); if (!lk && r.runway != null && r.runway !== '') return;
-        // (1.2.6: never FR24's padlock. 1.2.8: the rows themselves show no runway - only each flight's card does, in its
+        // (1.2.6: never FR24's padlock. 1.2.9: the rows themselves show no runway - only each flight's card does, in its
         // dropdown; the runways are asked for here still, so the card has its own the moment it opens)
         if (lk) { r.locked = Object.assign({}, r.locked, { runway: false }); r.runway = null; n++; }
         var raw = r.flightId != null ? r.flightId : r.flight && r.flight.id, fid = mxFidHex(raw);
@@ -7745,7 +7745,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '1.2.8';
+  const VERSION = '1.2.9';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
@@ -13355,7 +13355,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   }
   // (the tag says what the aircraft is - LADD-listed or hidden by FR24, PIA, military - and nothing for one that is
   // none of them: EZY54VT, an easyJet A320neo FR24 sent for a moment without its identity, was tagged "LADD").
-  // 1.2.8: FR24's playback's panel too
+  // 1.2.9: FR24's playback's panel too
   function headerTag(panel, hx) {
     const cs = q(panel, SEL.callsign); if (!cs) return;
     const badge = badgeOf(hx), cur = panel.querySelector('.tl-ladd');
@@ -16006,7 +16006,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // airports, where it was seen down, is the landing place learned there.
   async function pbRouteFor(id, hex, ts) {
     // (worked out before without an end, and now the flight open in the panel: FR24's own track asked as well, below)
-    // (1.2.8: one without its departure worked out again once FR24's own trail of it has come since)
+    // (1.2.9: one without its departure worked out again once FR24's own trail of it has come since)
     const have = pb.routes.get(id), tr0 = fr24Trail.get(id);
     if (have && have.hex === hex && ((have.destIata && (have.originIata || !(tr0 && tr0.at > (have.at || 0)))) || (have.fr24Tried && !(tr0 && tr0.at > (have.at || 0))) || id !== pb.sel)) return have;
     const k = id + ':' + hex; if (pb.routing.has(k)) return null; pb.routing.add(k);
@@ -16031,7 +16031,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       let tried = false;
       if (id === pb.sel && (!s || !(s.to && s.ended) || !(s.from || s.startedOnGround))) {
         tried = true;
-        // (1.2.8) FR24's flight-playback answer has nothing for a blocked flight: FR24's own trail of it as its playback draws
+        // (1.2.9) FR24's flight-playback answer has nothing for a blocked flight: FR24's own trail of it as its playback draws
         // it on the map (the page's stream of the flight open in the panel) - N905SH off Dickinson, the take-off public
         // ADS-B never heard, "Departure unknown" under FR24's own green trail from the runway
         let e = await (fr24 || pbFr24Ends(id, ts));
@@ -16731,7 +16731,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // (the version whose "what's new" was put away, and the one whose dot on the button the window was opened for)
   const UB_SEEN_KEY = 'tweeks.fr24.ladd.seenver', UB_DOT_KEY = 'tweeks.fr24.ladd.dotver';
   // (the newest CHANGELOG section's headlines, written in by build.mjs: { v, items })
-  const UB_WHATS_NEW = {"v":"1.2.8","items":["Runways load at once. One request per airport now brings everything: every flight's runways for the board and its cards, and the runway in use. The monitor answers it from memory, ready-made for airports looked at lately.","The runway in use shows the moment an airport panel opens, from what your browser kept of that airport last time, and is then brought up to date.","\"Departures runways\" / \"Arrivals runways\" when two runways are in use.","A runway that comes in after a flight card is open is now written into the card, instead of the card staying \"N/A\".","G-RVNX is no longer shown as G-AWTL, the registration it had until 2021. The registration an aircraft sends as its callsign now wins over a public database's out-of-date one.","Playback on a board card of a flight known only to this script no longer opens FR24's list of aircraft types."]};
+  const UB_WHATS_NEW = {"v":"1.2.9","items":["Flights still in the air in the Last-clicked widget open on the map when clicked, without reloading the page.","Board rows no longer show a runway; only a flight's card (the dropdown) does.","Many more runways found, and fewer wrong. Airliners' take-offs and landings at the airports you look at are now logged live. Parallel runways side by side (Gatwick, Manchester) are told apart. A runway is no longer guessed from far-off positions.","In playback, a flight's departure is taken from FR24's own track when public ADS-B missed the take-off (N905SH out of Dickinson).","The monitor no longer gives up on a flight that has just taken off, or a VFR flight (G-CCVM off Woodvale: \"no airport fits its track yet\"). Its route calculation was full and turned new flights away."]};
   // (an aircraft with an open padlock: FR24's outline style - 24 grid, 1.5 stroke in the text colour)
   const UB_ICON = '<svg data-tl-ub-icon="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
   const UB_X = '<svg viewBox="0 0 14 14" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5l11 11M12.5 1.5l-11 11"/></svg>';
@@ -17975,7 +17975,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   function onTrail(d) {
     const id = Number(d.id) || null; if (!id || !d.first) return;
     const prev = fr24Trail.get(id);
-    // (1.2.8: one from FR24's playback - the flight as it was then - only where none from its live stream is kept)
+    // (1.2.9: one from FR24's playback - the flight as it was then - only where none from its live stream is kept)
     if (d.pb && prev && !prev.pb) return;
     // keep the longest trail seen for this flight (FR24 may send a shorter one on stream restarts)
     if (!prev || (d.pts || []).length >= (prev.pts || []).length || d.first.t < prev.first.t) fr24Trail.set(id, { first: d.first, pts: d.pts || [], maxAlt: Math.max(d.maxAlt || 0, prev ? prev.maxAlt : 0), at: d.at || now(), pb: !!d.pb });
@@ -17983,7 +17983,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     const st = routeState.get(id); if (st && d.maxAlt > (st.maxAlt || 0)) st.maxAlt = d.maxAlt;
     if (live.get(id) || pubRouted(id)) scheduleReplan(id, 100);
     if (naWanted.has(id)) naWantedTick();
-    // (1.2.8: the flight open in FR24's playback, its route worked out without a departure: again, with FR24's trail now in)
+    // (1.2.9: the flight open in FR24's playback, its route worked out without a departure: again, with FR24's trail now in)
     if (id === pb.sel) { const r = pb.routes.get(id); if (r && !r.originIata) syncPanelSoon(); }
   }
   function onBoardSeen(d) {
