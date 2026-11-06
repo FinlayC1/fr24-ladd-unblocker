@@ -613,7 +613,15 @@ const datalink = DL.createDatalink({ isAirport: c => !!E.byIcao(c) });
 // (1.1.0) every answer of central calculation noted and scored once the flight is down - live accuracy, training data
 const { createScores } = require('./scores.cjs');
 const SC = createScores({ store: STORE, E, log: (...a) => log('scores', ...a), logOf: hex => logOf(hex), room: () => !WS.full });
-const central = createCentral({ E, onAnswer: (F, r) => SC.note(F, r), fleetOf: hex => fleetOf(hex), log: (...a) => log('central', ...a), logOf: hex => logOf(hex).filter(l => !l.open), surge: () => surgeNow().map, datalink: reg => datalink.byReg.get(String(reg || '').toUpperCase()) || null, selfEvidence: id => selfEvidence(id), busy: () => loopLag > 300, cfg: { msPerMin: +CFG.centralMsPerMin || 12000 },
+// (1.2.8) What central calculation may hold, by the heap this process may use: the 1 GB VM's 1,500 flights and 400,000
+// points with a heap under 4 GB; eight thousand and 2.5 million with more (the A1's 12 GB) - full, it let new flights go
+// unanswered
+function centralCfg() {
+  let lim = 0; try { lim = require('v8').getHeapStatistics().heap_size_limit; } catch (e) { lim = 0; }
+  const big = lim >= 4 * 1073741824;
+  return { msPerMin: +CFG.centralMsPerMin || 12000, maxFlights: +CFG.centralMaxFlights || (big ? 8000 : 1500), allPts: +CFG.centralAllPts || (big ? 2500000 : 400000) };
+}
+const central = createCentral({ E, onAnswer: (F, r) => SC.note(F, r), fleetOf: hex => fleetOf(hex), log: (...a) => log('central', ...a), logOf: hex => logOf(hex).filter(l => !l.open), surge: () => surgeNow().map, datalink: reg => datalink.byReg.get(String(reg || '').toUpperCase()) || null, selfEvidence: id => selfEvidence(id), busy: () => loopLag > 300, cfg: centralCfg(),
   // (1.1.0) a destination a browser's user confirmed for a flight the monitor named (ident.crowdRoute): in its answer for
   // every browser - "confirmed in another browser"
   confirmedOf: (id, hex) => { const R = ident.ids.get(id), c = R && R.hex === hex ? R.crowd : null; return c && c.d && c.dc === 'confirmed' ? { d: c.d, p: c.p, eta: c.eta || 0, at: c.at || 0 } : null; },

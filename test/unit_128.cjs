@@ -133,6 +133,14 @@ function open(url, store) {
     c.liveFeed = was; M.CFG.fr24Scan = wasScan;
     check('monitor: an airport looked at scanned for every flight round it - an easyJet off Liverpool\'s 27 logged as it climbs out', asked.length === 2 && asked[0].services.includes(0) && asked[0].services.includes(1) && Math.abs(asked[0].n - asked[0].s - 0.72) < 1e-6 && M.RL.get('3e0b0001:0') === '27', { asked: asked.length, got: M.RL.get('3e0b0001:0'), svc: asked[0] && asked[0].services }); }
 
+  // ================= central calculation full: a new flight still taken =================
+  { const C = require('../monitor/central.cjs'); let t = 1000;
+    const cen = C.createCentral({ E, now: () => t, cfg: { maxFlights: 2 } });
+    const ev = (id, hex) => ({ id, hex, kind: 'pub', ac: { reg: 'G-X' + id, type: 'RV7' }, pos: { t: 1e9 + t, lat: 53.5, lon: -3, alt: 1500, gs: 120, trk: 180 }, trail: { full: true, pts: [{ t: 1e9 + t, lat: 53.5, lon: -3, alt: 1500, gs: 120, trk: 180 }] } });
+    cen.take(ev(1, '400d01')); t += 10; cen.take(ev(2, '400d02')); t += 10; cen.take(ev(1, '400d01')); t += 10;
+    cen.take(ev(3, '400d86'));
+    check('central calculation holding all it may: a new flight (G-CCVM just off Woodvale) taken, the one sent nothing longest let go - not the new one refused', cen.flights.has(3) && cen.flights.has(1) && !cen.flights.has(2) && cen.flights.size === 2, [...cen.flights.keys()]); }
+
   // ================= the Bookmarks widget with nothing on a tab: in the middle of it =================
   check('Bookmarks: the empty tab\'s picture and words centred - a rule a browser takes (no :has() inside :has()), only on the empty view (it holds a picture), not FR24\'s "not allowed" box',
     SRC.includes('*:has(> [data-testid="bookmarks__no-data"] > picture){display:flex!important;flex-direction:column!important}') && SRC.includes('[data-testid="bookmarks__no-data"]:has(> picture){margin-top:auto!important;margin-bottom:auto!important') && !/:has\([^)]*:has\(/.test((SRC.match(/BM_EMPTY_STYLE = [^;]*;/) || [''])[0]));
