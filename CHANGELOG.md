@@ -12,6 +12,7 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 - The map's airport panel shows the runway in use for departures and arrivals under its weather, tagged PREDICTED (from the wind) or CONFIRMED (the wind and the last hour and a half's traffic agree).
 - FR24's airport data pages (`/data/airports/<code>`) get the same: runways on their rows, "N/A" airports filled, the runway in use under their weather card.
 - The squawk in the flight panel has no padlock any more. Over an ocean (DAL126) it shows the code the aircraft was last heard with since take-off.
+- A blocked jet taking off from Teterboro (N99MB) is no longer given the name of another one landing there at the same moment (N676BA). The wrong name it was given is taken back.
 
 ### Added
 - **Live runway log on the monitor** (`monitor/rwylog.cjs`).
@@ -42,6 +43,21 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
   account whatever the flight sends, and its panel reads the code from the map's record of the flight, which never had the last one heard. The squawk is
   now unlocked like the other panel figures, and the flight open in the panel gets the code it was last heard with since take-off: from the monitor, or,
   when the monitor never heard it, from the aircraft's public ADS-B record of the day.
+- **N99MB (a Challenger) taking off from Teterboro was named N676BA (a G600) that was landing there the same minute.**
+  FR24 lost N676BA, already named, on its final approach at 1,600 ft. Two minutes later it drew N99MB taking off under a new
+  flight number, and the monitor's rule for a flight picked up again after a gap in coverage passed N676BA's name to it.
+  N99MB itself could not compete: adsb.lol's database lists it as a Cessna 210. Fixed on the monitor and in the browser:
+  - A name is passed on after a gap only between flights of the same FR24 type. It is not passed on from a flight lost
+    below 3,000 ft (a landing), or when the aircraft has been heard since somewhere else or on the ground.
+  - A database type that the aircraft's own transponder contradicts is ignored: a light piston type sending a jet's
+    weight category (A2 and up), or flying faster than 260 kt or above FL300.
+  - A business jet of another make than FR24's type (as with N999YX) is matched by its track only when the two tracks
+    agree within 1 km for ten minutes.
+  - The monitor no longer accepts a browser's identification of a type different from FR24's. For another make of
+    business jet, it refuses one that it heard in the last five minutes somewhere that does not fit FR24's flight.
+  - A name is withdrawn when the aircraft is heard parked on the ground while FR24 has the flight airborne, or (for a
+    name passed on after a gap) parked 5 km or more from where FR24 has the flight. FR24's positions of that flight are
+    taken out of the aircraft's log.
 - **The monitor's runway test** read the old runways file, which 1.2.7's runway log replaces. It now checks the runway log is read back after a restart.
 
 ## [1.2.6] - 2026-11-06

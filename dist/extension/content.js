@@ -5051,6 +5051,16 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     // ADS-B's GLEX, FR24's GLF6) - kin, not different, where the two fit as closely as one aircraft does
     const isBizType = t => { t = String(t || '').trim().toUpperCase(); return HEAVY_BIZ.test(t) || BIZJET.test(t); };
     function bizKin(a, b) { return isBizType(a) && isBizType(b); }
+    // (1.2.7) A database's type the transponder itself contradicts is not believed - no type known instead. N99MB, a
+    // Challenger (CL60), is a Cessna 210 in adsb.lol's database: a light piston single that sends "small" (emitter category
+    // A2, 15,500-75,000 lb) and flies at 488 kt at FL330. Kept out as a "different" type, the aircraft FR24 drew was never
+    // matched to it, and a G600 landing at Teterboro as it took off was named in its place.
+    function typeDoubt(t, cat, gs, alt) {
+      t = String(t || '').trim().toUpperCase(); if (!t) return false;
+      const td = typeDesc(t), light = PISTON.test(t) || (!!td && (td[2] === 'P' || td[2] === 'E') && td[3] === 'L');
+      if (!light) return false;
+      return /^A[2-5]$/.test(String(cat || '').trim().toUpperCase()) || (typeof gs === 'number' && gs > 260) || (typeof alt === 'number' && alt > 30000);
+    }
     function classify(ac) {
       const t = String(ac && ac.type || '').toUpperCase(), cat = String(ac && ac.cat || '').toUpperCase(), mil = !!(ac && ac.mil);
       const td0 = typeDesc(t);
@@ -7494,7 +7504,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       return res;
     }
 
-    return { typeFamily, bizKin, isBizType, surgeOf, setTables2, get T2() { return T2; }, trackState, offTrack, fieldShortName, placeShort, placeLabels, setApproach, approachCell, approachPath, apprGroup, apprKey, trackAgree, heatNear, heatMatch, reckon, trackErr, remotePath, flowKeysOf, pgrpOf, grp6, sunElev, airData, gsAlong, minutesTo, flowAt, pathOf, pathDev, ownerKey, parseRunwayLengths, setRunwayLengths, csvLine, SQ_NOINFO, tripBin, regionOf, learnLeg, learnRow, learnCollector, addLearnedOp, odAdd: (x, y, w) => { const k = odKey(String(x).toUpperCase(), String(y).toUpperCase()), v = (OD.get(k) || 0) + w; if (v > 1e-9) OD.set(k, v); else OD.delete(k); }, odWeight: (x, y) => OD.get(odKey(String(x).toUpperCase(), String(y).toUpperCase())) || 0, odCount: () => OD.size, setAirports, setUsage, addUsage, setRunways, parseRunwaysCsv, runwayFit, setWeights, setTables, setLogit, calibrated, mergePoints, finalTo, longFinal, typeRangeKm, FEAT, groupOf, W, classify, isStepClimb, rangeKm, parseTrace, legsFromPoints, summarizeLeg, stitchLegs, chainLegs, histStats, inferOrigin, predict, privateSite, rwyImpossible, typeDesc, heliSpots, heliAirportAt, landedSum, localFlew, climbedOut, approachTo, downAndUp, landingInGap, gapEnds, slowGap, idleHole, currentLeg, circuits, mergeCircuits, setFields, fieldAt, placeAt, isField, nearbyFields, fieldCount: () => FL.length, airportAt, departureFromClimb, arrivalFromDescent, nearby, dist, brg, xtat, destPoint, angDiff, get airports() { return AP; }, byId: id => byId.get(id), byIcao: c => byIcao.get(String(c || '').toUpperCase()) };
+    return { typeFamily, bizKin, isBizType, typeDoubt, surgeOf, setTables2, get T2() { return T2; }, trackState, offTrack, fieldShortName, placeShort, placeLabels, setApproach, approachCell, approachPath, apprGroup, apprKey, trackAgree, heatNear, heatMatch, reckon, trackErr, remotePath, flowKeysOf, pgrpOf, grp6, sunElev, airData, gsAlong, minutesTo, flowAt, pathOf, pathDev, ownerKey, parseRunwayLengths, setRunwayLengths, csvLine, SQ_NOINFO, tripBin, regionOf, learnLeg, learnRow, learnCollector, addLearnedOp, odAdd: (x, y, w) => { const k = odKey(String(x).toUpperCase(), String(y).toUpperCase()), v = (OD.get(k) || 0) + w; if (v > 1e-9) OD.set(k, v); else OD.delete(k); }, odWeight: (x, y) => OD.get(odKey(String(x).toUpperCase(), String(y).toUpperCase())) || 0, odCount: () => OD.size, setAirports, setUsage, addUsage, setRunways, parseRunwaysCsv, runwayFit, setWeights, setTables, setLogit, calibrated, mergePoints, finalTo, longFinal, typeRangeKm, FEAT, groupOf, W, classify, isStepClimb, rangeKm, parseTrace, legsFromPoints, summarizeLeg, stitchLegs, chainLegs, histStats, inferOrigin, predict, privateSite, rwyImpossible, typeDesc, heliSpots, heliAirportAt, landedSum, localFlew, climbedOut, approachTo, downAndUp, landingInGap, gapEnds, slowGap, idleHole, currentLeg, circuits, mergeCircuits, setFields, fieldAt, placeAt, isField, nearbyFields, fieldCount: () => FL.length, airportAt, departureFromClimb, arrivalFromDescent, nearby, dist, brg, xtat, destPoint, angDiff, get airports() { return AP; }, byId: id => byId.get(id), byIcao: c => byIcao.get(String(c || '').toUpperCase()) };
   }
   /* ==/ENGINE== */
 
@@ -8518,8 +8528,9 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       // database has yet - first those last heard right on FR24's track of it - then the blocked aircraft of its type
       const cands = new Map();
       for (const [ty, m] of lastSeenByType) {
-        const rel = typeRelation(ty, type); if (rel === 'different' || (!type && ty)) continue;
+        const rel = typeRelation(ty, type); if (!type && ty) continue;
         for (const { c, t } of m.values()) {
+          if (rel === 'different' && typeRelation(typeOfCand(c), type) === 'different') continue;
           const age = (now() - t) / 1000; if (age < 150 || age > 8 * 3600 || taken.has(c.hex) || heardNow(c.hex)) continue;
           const q = at(t / 1000), off = q ? dist(q[0], q[1], c.lat, c.lon) : Infinity;
           if (trk && off > 10) continue;                                             // (heard somewhere FR24's flight was not)
@@ -8532,7 +8543,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       const list = [...cands.values()].sort((a, b) => a.rank - b.rank).slice(0, 8);
       if (!list.length && !trk) return false;
       const since = trk ? trk[0].t : nowS() - 5 * 3600, fits = [];
-      const agree = (hex, v, pts) => { const a = ENGINE.trackAgree(trk, pts); if (a.n >= 6 && a.span >= 180 && a.bad <= Math.max(1, a.n * 0.05)) fits.push({ hex, v, pts, s: a.medKm, why: `its ADS-B track lies on FR24's for ${Math.round(a.span / 60)} min` }); };
+      const agree = (hex, v, pts) => { const a = ENGINE.trackAgree(trk, pts); if (trackFits(a, typeRelation(v.type, type))) fits.push({ hex, v, pts, s: a.medKm, why: `its ADS-B track lies on FR24's for ${Math.round(a.span / 60)} min` }); };
       for (const { hex, v } of list) {
         if (live.has(f.id)) return true;
         await idleSlice(); const pts = await dayTrack(hex, since); if (!pts.length) continue;
@@ -8973,6 +8984,13 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   function fr24Age(f, t) { const base = f.serverTime && f.ts ? Math.max(0, f.serverTime / 1000 - f.ts) : 0; return base + Math.max(0, (t - f.receivedAt) / 1000); }
   const typeFamily = t => ENGINE.typeFamily(clean(t));   // (a maker's line: GA7C and GLF6 alike - engine TYPE_LINES)
   function typeRelation(a, b) { a = clean(a).toUpperCase(); b = clean(b).toUpperCase(); if (!a || !b) return 'unknown'; if (a === b) return 'same'; return typeFamily(a) === typeFamily(b) ? 'family' : ENGINE.bizKin(a, b) ? 'kin' : 'different'; }
+  // (1.2.7) a candidate's type as believed: none where its own transponder contradicts the database (N99MB, a Challenger
+  // filed as a Cessna 210 - engine typeDoubt)
+  const typeOfCand = c => !c ? '' : ENGINE.typeDoubt && ENGINE.typeDoubt(c.type, c.cat, c.gs, c.alt) ? '' : (c.type || '');
+  // (1.2.7) FR24's track of a flight and an aircraft's ADS-B track laid side by side: a business jet of another make (kin -
+  // N676BA's G600 for FR24's Challenger) only where the two are one aircraft beyond doubt - ten minutes and more, every
+  // report within a kilometre. Within 3 km for three minutes, a jet landing at Teterboro "agreed" with the one taking off.
+  const trackFits = (a, rel) => rel === 'kin' ? a.n >= 12 && a.span >= 600 && a.bad === 0 && a.medKm <= 1 : a.n >= 6 && a.span >= 180 && a.bad <= Math.max(1, a.n * 0.05);
   // (1.2.3) two business jets the databases name differently (N999YX: ADS-B's GLEX, FR24's GLF6): the one aircraft only
   // where it fits as one aircraft does - in the air, within 4 km, 800 ft, 20 degrees and 50 kt - and behind any candidate
   // of FR24's own type (the monitor's rule, monitor/ident.cjs)
@@ -8981,7 +8999,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     const cAge = c.ageS + Math.max(0, (t - c.receivedAt) / 1000);
     if (cAge > 120) return null;
     if (f.reg && c.reg && f.reg.toUpperCase() !== c.reg.toUpperCase()) return null;
-    const rel = typeRelation(f.type, c.type);
+    const cType = typeOfCand(c), rel = typeRelation(f.type, cType);
     if (rel === 'different') return null;
     // (on an apron an untyped transponder beside it - a tug, a fuel truck, an aircraft no database has - is not it when
     // FR24 knows the type: only a blocked one of no known type may be)
@@ -8995,7 +9013,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     if (!!f.gnd !== !!c.gnd && f.alt > 1500) return null;
     if (!f.gnd && fin(f.trk) && fin(c.trk) && f.spd > 60 && c.gs > 60) { const dt = angDiff(f.trk, c.trk); if (dt > 50) return null; s += dt / 8; }
     if (fin(f.spd) && fin(c.gs) && f.spd > 60) { const ds = Math.abs(f.spd - c.gs); if (ds > 140) return null; s += ds / 25; }
-    if (rel === 'same') s -= 2; else if (rel === 'family') s += 1; else if (rel === 'kin') s += 3; else if (f.type && !c.type) s += 0.5;
+    if (rel === 'same') s -= 2; else if (rel === 'family') s += 1; else if (rel === 'kin') s += 3; else if (f.type && !cType) s += 0.5;
     if (f.reg && c.reg) s -= 3;
     if (c.ladd || c.pia) s -= 0.75;
     if (c.nonIcao) s += 2;
@@ -9025,13 +9043,15 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     badWhy = null;
     const c = cands.find(x => x.hex === rec.hex);
     if (!c) return 'unknown';
-    if (typeRelation(f.type, c.type) === 'different') { badWhy = { kind: 'type' }; return 'bad'; }
+    if (typeRelation(f.type, typeOfCand(c)) === 'different') { badWhy = { kind: 'type' }; return 'bad'; }
     const t = now();
     const [flat, flon] = project(f.lat, f.lon, f.spd, f.trk, fr24Age(f, t));
     const cAge = c.ageS + Math.max(0, (t - c.receivedAt) / 1000);
     if (cAge > 60 || fr24Age(f, t) > 60) return 'unknown';
     const [clat, clon] = project(c.lat, c.lon, c.gs, c.trk, cAge);
     const d = dist(flat, flon, clat, clon);
+    // (1.2.7) heard standing on the ground while FR24 has the flight in the air (1,500 ft up, 3 km away): not it
+    if (c.gnd && !f.gnd && fin(f.alt) && f.alt > 1500 && d > 3) { badWhy = { kind: 'gnd', d }; return 'bad'; }
     if (d > (f.gnd ? 2 : 8)) { badWhy = { kind: 'dist', d, gnd: !!f.gnd }; return 'bad'; }
     if (!f.gnd && fin(f.alt) && fin(c.alt) && Math.abs(f.alt - c.alt) > 4000) { badWhy = { kind: 'alt', d: Math.abs(f.alt - c.alt) }; return 'bad'; }
     return 'ok';
@@ -9047,7 +9067,8 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     if (b.kind === 'alt' && b.d < 8000) return;
     const t = now(), s = strikes.get(id) || { n: 0, first: t };
     s.n++; strikes.set(id, s);
-    if (s.n >= 4 && t - s.first >= 180000) revoke(id, why);
+    if (b.kind === 'gnd') { s.gnd = (s.gnd || 0) + 1; if (!s.gndAt) s.gndAt = t; }
+    if ((s.n >= 4 && t - s.first >= 180000) || (s.gnd >= 2 && t - s.gndAt >= 30000)) revoke(id, why);
   }
 
   // ---- resolver state ------------------------------------------------------------------------------------------
@@ -16598,7 +16619,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // (the version whose "what's new" was put away, and the one whose dot on the button the window was opened for)
   const UB_SEEN_KEY = 'tweeks.fr24.ladd.seenver', UB_DOT_KEY = 'tweeks.fr24.ladd.dotver';
   // (the newest CHANGELOG section's headlines, written in by build.mjs: { v, items })
-  const UB_WHATS_NEW = {"v":"1.2.7","items":["The runway of every take-off and landing in the world is now logged on the monitor as it happens, from FR24's own tracks: the departure runway the moment a flight climbs out, the arrival runway the moment it is on final approach. Boards and flight cards open with their runways already in, at large airports too.","Blocked flights' runways now show on boards and cards (M-PORT's), from their ADS-B tracks.","The map's airport panel shows the runway in use for departures and arrivals under its weather, tagged PREDICTED (from the wind) or CONFIRMED (the wind and the last hour and a half's traffic agree).","FR24's airport data pages (/data/airports/<code>) get the same: runways on their rows, \"N/A\" airports filled, the runway in use under their weather card."]};
+  const UB_WHATS_NEW = {"v":"1.2.7","items":["The runway of every take-off and landing in the world is now logged on the monitor as it happens, from FR24's own tracks: the departure runway the moment a flight climbs out, the arrival runway the moment it is on final approach. Boards and flight cards open with their runways already in, at large airports too.","Blocked flights' runways now show on boards and cards (M-PORT's), from their ADS-B tracks.","The map's airport panel shows the runway in use for departures and arrivals under its weather, tagged PREDICTED (from the wind) or CONFIRMED (the wind and the last hour and a half's traffic agree).","FR24's airport data pages (/data/airports/<code>) get the same: runways on their rows, \"N/A\" airports filled, the runway in use under their weather card.","The squawk in the flight panel has no padlock any more. Over an ocean (DAL126) it shows the code the aircraft was last heard with since take-off.","A blocked jet taking off from Teterboro (N99MB) is no longer given the name of another one landing there at the same moment (N676BA). The wrong name it was given is taken back."]};
   // (an aircraft with an open padlock: FR24's outline style - 24 grid, 1.5 stroke in the text colour)
   const UB_ICON = '<svg data-tl-ub-icon="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
   const UB_X = '<svg viewBox="0 0 14 14" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5l11 11M12.5 1.5l-11 11"/></svg>';

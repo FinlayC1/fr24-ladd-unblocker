@@ -244,8 +244,9 @@
       // database has yet - first those last heard right on FR24's track of it - then the blocked aircraft of its type
       const cands = new Map();
       for (const [ty, m] of lastSeenByType) {
-        const rel = typeRelation(ty, type); if (rel === 'different' || (!type && ty)) continue;
+        const rel = typeRelation(ty, type); if (!type && ty) continue;
         for (const { c, t } of m.values()) {
+          if (rel === 'different' && typeRelation(typeOfCand(c), type) === 'different') continue;
           const age = (now() - t) / 1000; if (age < 150 || age > 8 * 3600 || taken.has(c.hex) || heardNow(c.hex)) continue;
           const q = at(t / 1000), off = q ? dist(q[0], q[1], c.lat, c.lon) : Infinity;
           if (trk && off > 10) continue;                                             // (heard somewhere FR24's flight was not)
@@ -258,7 +259,7 @@
       const list = [...cands.values()].sort((a, b) => a.rank - b.rank).slice(0, 8);
       if (!list.length && !trk) return false;
       const since = trk ? trk[0].t : nowS() - 5 * 3600, fits = [];
-      const agree = (hex, v, pts) => { const a = ENGINE.trackAgree(trk, pts); if (a.n >= 6 && a.span >= 180 && a.bad <= Math.max(1, a.n * 0.05)) fits.push({ hex, v, pts, s: a.medKm, why: `its ADS-B track lies on FR24's for ${Math.round(a.span / 60)} min` }); };
+      const agree = (hex, v, pts) => { const a = ENGINE.trackAgree(trk, pts); if (trackFits(a, typeRelation(v.type, type))) fits.push({ hex, v, pts, s: a.medKm, why: `its ADS-B track lies on FR24's for ${Math.round(a.span / 60)} min` }); };
       for (const { hex, v } of list) {
         if (live.has(f.id)) return true;
         await idleSlice(); const pts = await dayTrack(hex, since); if (!pts.length) continue;
@@ -699,6 +700,13 @@
   function fr24Age(f, t) { const base = f.serverTime && f.ts ? Math.max(0, f.serverTime / 1000 - f.ts) : 0; return base + Math.max(0, (t - f.receivedAt) / 1000); }
   const typeFamily = t => ENGINE.typeFamily(clean(t));   // (a maker's line: GA7C and GLF6 alike - engine TYPE_LINES)
   function typeRelation(a, b) { a = clean(a).toUpperCase(); b = clean(b).toUpperCase(); if (!a || !b) return 'unknown'; if (a === b) return 'same'; return typeFamily(a) === typeFamily(b) ? 'family' : ENGINE.bizKin(a, b) ? 'kin' : 'different'; }
+  // (1.2.7) a candidate's type as believed: none where its own transponder contradicts the database (N99MB, a Challenger
+  // filed as a Cessna 210 - engine typeDoubt)
+  const typeOfCand = c => !c ? '' : ENGINE.typeDoubt && ENGINE.typeDoubt(c.type, c.cat, c.gs, c.alt) ? '' : (c.type || '');
+  // (1.2.7) FR24's track of a flight and an aircraft's ADS-B track laid side by side: a business jet of another make (kin -
+  // N676BA's G600 for FR24's Challenger) only where the two are one aircraft beyond doubt - ten minutes and more, every
+  // report within a kilometre. Within 3 km for three minutes, a jet landing at Teterboro "agreed" with the one taking off.
+  const trackFits = (a, rel) => rel === 'kin' ? a.n >= 12 && a.span >= 600 && a.bad === 0 && a.medKm <= 1 : a.n >= 6 && a.span >= 180 && a.bad <= Math.max(1, a.n * 0.05);
   // (1.2.3) two business jets the databases name differently (N999YX: ADS-B's GLEX, FR24's GLF6): the one aircraft only
   // where it fits as one aircraft does - in the air, within 4 km, 800 ft, 20 degrees and 50 kt - and behind any candidate
   // of FR24's own type (the monitor's rule, monitor/ident.cjs)
@@ -707,7 +715,7 @@
     const cAge = c.ageS + Math.max(0, (t - c.receivedAt) / 1000);
     if (cAge > 120) return null;
     if (f.reg && c.reg && f.reg.toUpperCase() !== c.reg.toUpperCase()) return null;
-    const rel = typeRelation(f.type, c.type);
+    const cType = typeOfCand(c), rel = typeRelation(f.type, cType);
     if (rel === 'different') return null;
     // (on an apron an untyped transponder beside it - a tug, a fuel truck, an aircraft no database has - is not it when
     // FR24 knows the type: only a blocked one of no known type may be)
@@ -721,7 +729,7 @@
     if (!!f.gnd !== !!c.gnd && f.alt > 1500) return null;
     if (!f.gnd && fin(f.trk) && fin(c.trk) && f.spd > 60 && c.gs > 60) { const dt = angDiff(f.trk, c.trk); if (dt > 50) return null; s += dt / 8; }
     if (fin(f.spd) && fin(c.gs) && f.spd > 60) { const ds = Math.abs(f.spd - c.gs); if (ds > 140) return null; s += ds / 25; }
-    if (rel === 'same') s -= 2; else if (rel === 'family') s += 1; else if (rel === 'kin') s += 3; else if (f.type && !c.type) s += 0.5;
+    if (rel === 'same') s -= 2; else if (rel === 'family') s += 1; else if (rel === 'kin') s += 3; else if (f.type && !cType) s += 0.5;
     if (f.reg && c.reg) s -= 3;
     if (c.ladd || c.pia) s -= 0.75;
     if (c.nonIcao) s += 2;
@@ -751,13 +759,15 @@
     badWhy = null;
     const c = cands.find(x => x.hex === rec.hex);
     if (!c) return 'unknown';
-    if (typeRelation(f.type, c.type) === 'different') { badWhy = { kind: 'type' }; return 'bad'; }
+    if (typeRelation(f.type, typeOfCand(c)) === 'different') { badWhy = { kind: 'type' }; return 'bad'; }
     const t = now();
     const [flat, flon] = project(f.lat, f.lon, f.spd, f.trk, fr24Age(f, t));
     const cAge = c.ageS + Math.max(0, (t - c.receivedAt) / 1000);
     if (cAge > 60 || fr24Age(f, t) > 60) return 'unknown';
     const [clat, clon] = project(c.lat, c.lon, c.gs, c.trk, cAge);
     const d = dist(flat, flon, clat, clon);
+    // (1.2.7) heard standing on the ground while FR24 has the flight in the air (1,500 ft up, 3 km away): not it
+    if (c.gnd && !f.gnd && fin(f.alt) && f.alt > 1500 && d > 3) { badWhy = { kind: 'gnd', d }; return 'bad'; }
     if (d > (f.gnd ? 2 : 8)) { badWhy = { kind: 'dist', d, gnd: !!f.gnd }; return 'bad'; }
     if (!f.gnd && fin(f.alt) && fin(c.alt) && Math.abs(f.alt - c.alt) > 4000) { badWhy = { kind: 'alt', d: Math.abs(f.alt - c.alt) }; return 'bad'; }
     return 'ok';
@@ -773,7 +783,8 @@
     if (b.kind === 'alt' && b.d < 8000) return;
     const t = now(), s = strikes.get(id) || { n: 0, first: t };
     s.n++; strikes.set(id, s);
-    if (s.n >= 4 && t - s.first >= 180000) revoke(id, why);
+    if (b.kind === 'gnd') { s.gnd = (s.gnd || 0) + 1; if (!s.gndAt) s.gndAt = t; }
+    if ((s.n >= 4 && t - s.first >= 180000) || (s.gnd >= 2 && t - s.gndAt >= 30000)) revoke(id, why);
   }
 
   // ---- resolver state ------------------------------------------------------------------------------------------
