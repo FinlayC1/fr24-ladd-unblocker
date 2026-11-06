@@ -632,7 +632,8 @@
       if (F.follow && fid) curFollowId = fid;
       // FR24's own trail of this flight: where it began, how high it has been, and the path so far.
       var pts = [], maxAlt = 0;
-      for (var ti = 0; F.trail && !F.pb && ti < fs.length; ti++) {
+      // (1.2.8: FR24's playback's too - where a blocked flight it plays took off, which public ADS-B may never have heard)
+      for (var ti = 0; F.trail && ti < fs.length; ti++) {
         if (fs[ti].fn !== F.trail || fs[ti].wt !== 2) continue;
         try {
           var tp = parse(fs[ti].val), talt = numOf(tp, 4);
@@ -645,13 +646,13 @@
         pts.sort(function (a, b) { return a.t - b.t; });
         if (F.follow && pts[0].t > 0) st.t0 = pts[0].t;
         // (the trail's last minutes: a vertical speed from the first frame of the panel)
-        for (var tq = Math.max(0, pts.length - 12); tq < pts.length; tq++) altNote(altHist, fid, pts[tq].t, pts[tq].alt, !(pts[tq].alt > 0));
+        if (!F.pb) for (var tq = Math.max(0, pts.length - 12); tq < pts.length; tq++) altNote(altHist, fid, pts[tq].t, pts[tq].alt, !(pts[tq].alt > 0));
         // every 15 s for the take-off (first 30 min) and the last hour, every 90 s in between - so a long flight's
         // departure (where it took off from) is never cut off, whatever its length
         var thin = [], t0 = pts[0].t, tN = pts[pts.length - 1].t;
         for (var k = 0; k < pts.length; k++) { var step = pts[k].t - t0 < 1800 || tN - pts[k].t < 3600 ? 15 : 90; if (!thin.length || pts[k].t - thin[thin.length - 1].t >= step || k === pts.length - 1) thin.push(pts[k]); }
         if (thin.length > 1000) { var head = thin.slice(0, 150), tail = thin.slice(-600), mid = thin.slice(150, -600), every = Math.ceil(mid.length / 250); thin = head.concat(mid.filter(function (_, i) { return i % every === 0; }), tail); }
-        post('trail', { id: fid, first: pts[0], n: pts.length, maxAlt: maxAlt, pts: thin, at: Date.now() });
+        post('trail', { id: fid, first: pts[0], n: pts.length, maxAlt: maxAlt, pts: thin, at: Date.now(), pb: !!F.pb });
       }
       // (1.2.4: the aircraft's address and registration, for the squawk it was last heard with)
       if (F.follow) { var aiS = find(fs, F.ai); if (aiS && aiS.wt === 2) { var aiSf = parse(aiS.val), hxS = numOf(aiSf, 1); if (hxS > 0) st.hex = ('000000' + hxS.toString(16)).slice(-6); var rgS = strOf(aiSf, 2); if (rgS) st.reg = rgS.toUpperCase(); } }

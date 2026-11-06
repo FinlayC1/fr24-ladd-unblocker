@@ -404,8 +404,13 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
         if (mine && mine.textContent !== name) mine.textContent = name;
       }
     }
-    // (the tag says what the aircraft is - LADD-listed or hidden by FR24, PIA, military - and nothing for one that is
-    // none of them: EZY54VT, an easyJet A320neo FR24 sent for a moment without its identity, was tagged "LADD")
+    headerTag(panel, hx);
+  }
+  // (the tag says what the aircraft is - LADD-listed or hidden by FR24, PIA, military - and nothing for one that is
+  // none of them: EZY54VT, an easyJet A320neo FR24 sent for a moment without its identity, was tagged "LADD").
+  // 1.2.8: FR24's playback's panel too
+  function headerTag(panel, hx) {
+    const cs = q(panel, SEL.callsign); if (!cs) return;
     const badge = badgeOf(hx), cur = panel.querySelector('.tl-ladd');
     if (cur && cur.textContent !== badge) cur.remove();
     if (badge && !panel.querySelector('.tl-ladd')) {

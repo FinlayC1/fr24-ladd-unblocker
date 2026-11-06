@@ -158,7 +158,9 @@
   // airports, where it was seen down, is the landing place learned there.
   async function pbRouteFor(id, hex, ts) {
     // (worked out before without an end, and now the flight open in the panel: FR24's own track asked as well, below)
-    const have = pb.routes.get(id); if (have && have.hex === hex && (have.destIata || have.fr24Tried || id !== pb.sel)) return have;
+    // (1.2.8: one without its departure worked out again once FR24's own trail of it has come since)
+    const have = pb.routes.get(id), tr0 = fr24Trail.get(id);
+    if (have && have.hex === hex && ((have.destIata && (have.originIata || !(tr0 && tr0.at > (have.at || 0)))) || (have.fr24Tried && !(tr0 && tr0.at > (have.at || 0))) || id !== pb.sel)) return have;
     const k = id + ':' + hex; if (pb.routing.has(k)) return null; pb.routing.add(k);
     let out = null;
     try {
@@ -179,9 +181,17 @@
       // (CAPTR33's Hawk out of Leeming, 15 Oct: "N/A" in playback), a flight with no public track at all: where FR24's
       // own track of the flight began and ended, when that was down at a field
       let tried = false;
-      if (id === pb.sel && (!s || !(s.to && s.ended) || !(s.from || s.startedOnGround))) { tried = true; s = pbWithFr24Ends(s, await (fr24 || pbFr24Ends(id, ts)), heli, !!ac.mil, heli || cls === 'piston' || cls === 'glider'); }
+      if (id === pb.sel && (!s || !(s.to && s.ended) || !(s.from || s.startedOnGround))) {
+        tried = true;
+        // (1.2.8) FR24's flight-playback answer has nothing for a blocked flight: FR24's own trail of it as its playback draws
+        // it on the map (the page's stream of the flight open in the panel) - N905SH off Dickinson, the take-off public
+        // ADS-B never heard, "Departure unknown" under FR24's own green trail from the runway
+        let e = await (fr24 || pbFr24Ends(id, ts));
+        if (!(e && e.start && e.end)) { const tr = fr24Trail.get(id), tp = tr && Array.isArray(tr.pts) && tr.pts.length ? tr.pts : null; if (tp) e = { start: tr.first && fin(tr.first.t) ? tr.first : tp[0], end: tp[tp.length - 1] }; }
+        s = pbWithFr24Ends(s, e, heli, !!ac.mil, heli || cls === 'piston' || cls === 'glider');
+      }
       if (!s) return null;
-      const r = pbRouteOf(hex, s, heli); if (tried) r.fr24Tried = true;
+      const r = pbRouteOf(hex, s, heli); if (tried) r.fr24Tried = true; r.at = now();
       out = pbRouteSet(id, r);
       return out;
     } finally {
@@ -426,6 +436,7 @@
     const route = id ? pb.routes.get(id) || null : null;
     const hx = rec ? withStored(rec) : hex ? Object.assign({ hex }, store.getHex(hex) || {}) : null;
     pbLocked(panel, hx);
+    if (hx && (!shown || shown === hx.hex)) headerTag(panel, hx);
     // (its pictures in the panel as they come: FR24 drew it once, before they were in)
     if (rec && (!shown || shown === rec.hex)) applyPhoto(panel, hx);
     // FR24 has no destination for it: the route as flown into its own boxes, wherever they say "N/A" - the panel's answer

@@ -726,7 +726,8 @@
       if (F.follow && fid) curFollowId = fid;
       // FR24's own trail of this flight: where it began, how high it has been, and the path so far.
       var pts = [], maxAlt = 0;
-      for (var ti = 0; F.trail && !F.pb && ti < fs.length; ti++) {
+      // (1.2.8: FR24's playback's too - where a blocked flight it plays took off, which public ADS-B may never have heard)
+      for (var ti = 0; F.trail && ti < fs.length; ti++) {
         if (fs[ti].fn !== F.trail || fs[ti].wt !== 2) continue;
         try {
           var tp = parse(fs[ti].val), talt = numOf(tp, 4);
@@ -739,13 +740,13 @@
         pts.sort(function (a, b) { return a.t - b.t; });
         if (F.follow && pts[0].t > 0) st.t0 = pts[0].t;
         // (the trail's last minutes: a vertical speed from the first frame of the panel)
-        for (var tq = Math.max(0, pts.length - 12); tq < pts.length; tq++) altNote(altHist, fid, pts[tq].t, pts[tq].alt, !(pts[tq].alt > 0));
+        if (!F.pb) for (var tq = Math.max(0, pts.length - 12); tq < pts.length; tq++) altNote(altHist, fid, pts[tq].t, pts[tq].alt, !(pts[tq].alt > 0));
         // every 15 s for the take-off (first 30 min) and the last hour, every 90 s in between - so a long flight's
         // departure (where it took off from) is never cut off, whatever its length
         var thin = [], t0 = pts[0].t, tN = pts[pts.length - 1].t;
         for (var k = 0; k < pts.length; k++) { var step = pts[k].t - t0 < 1800 || tN - pts[k].t < 3600 ? 15 : 90; if (!thin.length || pts[k].t - thin[thin.length - 1].t >= step || k === pts.length - 1) thin.push(pts[k]); }
         if (thin.length > 1000) { var head = thin.slice(0, 150), tail = thin.slice(-600), mid = thin.slice(150, -600), every = Math.ceil(mid.length / 250); thin = head.concat(mid.filter(function (_, i) { return i % every === 0; }), tail); }
-        post('trail', { id: fid, first: pts[0], n: pts.length, maxAlt: maxAlt, pts: thin, at: Date.now() });
+        post('trail', { id: fid, first: pts[0], n: pts.length, maxAlt: maxAlt, pts: thin, at: Date.now(), pb: !!F.pb });
       }
       // (1.2.4: the aircraft's address and registration, for the squawk it was last heard with)
       if (F.follow) { var aiS = find(fs, F.ai); if (aiS && aiS.wt === 2) { var aiSf = parse(aiS.val), hxS = numOf(aiSf, 1); if (hxS > 0) st.hex = ('000000' + hxS.toString(16)).slice(-6); var rgS = strOf(aiSf, 2); if (rgS) st.reg = rgS.toUpperCase(); } }
@@ -13303,8 +13304,13 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
         if (mine && mine.textContent !== name) mine.textContent = name;
       }
     }
-    // (the tag says what the aircraft is - LADD-listed or hidden by FR24, PIA, military - and nothing for one that is
-    // none of them: EZY54VT, an easyJet A320neo FR24 sent for a moment without its identity, was tagged "LADD")
+    headerTag(panel, hx);
+  }
+  // (the tag says what the aircraft is - LADD-listed or hidden by FR24, PIA, military - and nothing for one that is
+  // none of them: EZY54VT, an easyJet A320neo FR24 sent for a moment without its identity, was tagged "LADD").
+  // 1.2.8: FR24's playback's panel too
+  function headerTag(panel, hx) {
+    const cs = q(panel, SEL.callsign); if (!cs) return;
     const badge = badgeOf(hx), cur = panel.querySelector('.tl-ladd');
     if (cur && cur.textContent !== badge) cur.remove();
     if (badge && !panel.querySelector('.tl-ladd')) {
@@ -15953,7 +15959,9 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // airports, where it was seen down, is the landing place learned there.
   async function pbRouteFor(id, hex, ts) {
     // (worked out before without an end, and now the flight open in the panel: FR24's own track asked as well, below)
-    const have = pb.routes.get(id); if (have && have.hex === hex && (have.destIata || have.fr24Tried || id !== pb.sel)) return have;
+    // (1.2.8: one without its departure worked out again once FR24's own trail of it has come since)
+    const have = pb.routes.get(id), tr0 = fr24Trail.get(id);
+    if (have && have.hex === hex && ((have.destIata && (have.originIata || !(tr0 && tr0.at > (have.at || 0)))) || (have.fr24Tried && !(tr0 && tr0.at > (have.at || 0))) || id !== pb.sel)) return have;
     const k = id + ':' + hex; if (pb.routing.has(k)) return null; pb.routing.add(k);
     let out = null;
     try {
@@ -15974,9 +15982,17 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       // (CAPTR33's Hawk out of Leeming, 15 Oct: "N/A" in playback), a flight with no public track at all: where FR24's
       // own track of the flight began and ended, when that was down at a field
       let tried = false;
-      if (id === pb.sel && (!s || !(s.to && s.ended) || !(s.from || s.startedOnGround))) { tried = true; s = pbWithFr24Ends(s, await (fr24 || pbFr24Ends(id, ts)), heli, !!ac.mil, heli || cls === 'piston' || cls === 'glider'); }
+      if (id === pb.sel && (!s || !(s.to && s.ended) || !(s.from || s.startedOnGround))) {
+        tried = true;
+        // (1.2.8) FR24's flight-playback answer has nothing for a blocked flight: FR24's own trail of it as its playback draws
+        // it on the map (the page's stream of the flight open in the panel) - N905SH off Dickinson, the take-off public
+        // ADS-B never heard, "Departure unknown" under FR24's own green trail from the runway
+        let e = await (fr24 || pbFr24Ends(id, ts));
+        if (!(e && e.start && e.end)) { const tr = fr24Trail.get(id), tp = tr && Array.isArray(tr.pts) && tr.pts.length ? tr.pts : null; if (tp) e = { start: tr.first && fin(tr.first.t) ? tr.first : tp[0], end: tp[tp.length - 1] }; }
+        s = pbWithFr24Ends(s, e, heli, !!ac.mil, heli || cls === 'piston' || cls === 'glider');
+      }
       if (!s) return null;
-      const r = pbRouteOf(hex, s, heli); if (tried) r.fr24Tried = true;
+      const r = pbRouteOf(hex, s, heli); if (tried) r.fr24Tried = true; r.at = now();
       out = pbRouteSet(id, r);
       return out;
     } finally {
@@ -16221,6 +16237,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     const route = id ? pb.routes.get(id) || null : null;
     const hx = rec ? withStored(rec) : hex ? Object.assign({ hex }, store.getHex(hex) || {}) : null;
     pbLocked(panel, hx);
+    if (hx && (!shown || shown === hx.hex)) headerTag(panel, hx);
     // (its pictures in the panel as they come: FR24 drew it once, before they were in)
     if (rec && (!shown || shown === rec.hex)) applyPhoto(panel, hx);
     // FR24 has no destination for it: the route as flown into its own boxes, wherever they say "N/A" - the panel's answer
@@ -17911,11 +17928,16 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   function onTrail(d) {
     const id = Number(d.id) || null; if (!id || !d.first) return;
     const prev = fr24Trail.get(id);
+    // (1.2.8: one from FR24's playback - the flight as it was then - only where none from its live stream is kept)
+    if (d.pb && prev && !prev.pb) return;
     // keep the longest trail seen for this flight (FR24 may send a shorter one on stream restarts)
-    if (!prev || (d.pts || []).length >= (prev.pts || []).length || d.first.t < prev.first.t) fr24Trail.set(id, { first: d.first, pts: d.pts || [], maxAlt: Math.max(d.maxAlt || 0, prev ? prev.maxAlt : 0), at: d.at || now() });
+    if (!prev || (d.pts || []).length >= (prev.pts || []).length || d.first.t < prev.first.t) fr24Trail.set(id, { first: d.first, pts: d.pts || [], maxAlt: Math.max(d.maxAlt || 0, prev ? prev.maxAlt : 0), at: d.at || now(), pb: !!d.pb });
+    if (d.pb) { if (id === pb.sel) { const r = pb.routes.get(id); if (r && !r.originIata) syncPanelSoon(); } return; }
     const st = routeState.get(id); if (st && d.maxAlt > (st.maxAlt || 0)) st.maxAlt = d.maxAlt;
     if (live.get(id) || pubRouted(id)) scheduleReplan(id, 100);
     if (naWanted.has(id)) naWantedTick();
+    // (1.2.8: the flight open in FR24's playback, its route worked out without a departure: again, with FR24's trail now in)
+    if (id === pb.sel) { const r = pb.routes.get(id); if (r && !r.originIata) syncPanelSoon(); }
   }
   function onBoardSeen(d) {
     // an airport board just listed these flights: make sure their photos and a proper route are ready before a click
