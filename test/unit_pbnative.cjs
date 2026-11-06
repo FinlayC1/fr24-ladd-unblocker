@@ -88,10 +88,11 @@ function trace(hex, dayStart, t, from, to) {
       H.setCurFollow(pid);
       H.acceptBoardArch({ apId: 3901, arr: [], dep: [
         { k: 'n600eb-13', t: t0, t2: t0 + 3600, hex: 'a80b2e', reg: 'N600EB', cs: 'N600EB', src: 'log', blk: 1, ap: 3500 },
-        { k: 'fr898-13', t: t0 + 600, hex: '4ca7b5', reg: 'EI-DAC', cs: 'RYR898', num: 'FR898', src: 'fr24', id: 5869000001, fid: '3c000001', ap: 3501 }] });
+        { k: 'fr898-13', t: t0 + 600, hex: '4ca7b5', reg: 'EI-DAC', cs: 'RYR898', num: 'FR898', src: 'fr24', id: 5869000001, fid: '3c000001', ap: 3501 },
+        { k: 'glfst-13', t: t0 + 1200, hex: '403169', reg: '', cs: 'GLFST', src: 'live', fid: 'ff403169' + ('00000000' + (t0 + 1200).toString(16)).slice(-8), ap: 3501 }] });
       const j = { data: [] }; H.addArch(j, 3901, 'departures');
       const ids = j.data.map(e => e.id);
-      window.__S.rows = [{ id: 9000000000 + pid, cs: 'VSB82', reg: 'M-ARNZ' }, { id: ids[0], cs: 'N600EB', reg: 'N600EB' }, { id: ids[1], cs: 'RYR898', reg: 'EI-DAC' }];
+      window.__S.rows = [{ id: 9000000000 + pid, cs: 'VSB82', reg: 'M-ARNZ' }, { id: ids[0], cs: 'N600EB', reg: 'N600EB' }, { id: ids[1], cs: 'RYR898', reg: 'EI-DAC' }, { id: ids[2], cs: 'GLFST', reg: '' }];
       window.__S.search = [{ k: 'live:' + pid.toString(16), l: 'VSB82' }, { k: 'aircraft:g-ezbx', l: 'G-EZBX' }];
       return ids;
     }, { pid, T, t0 });
@@ -129,6 +130,11 @@ function trace(hex, dayStart, t, from, to) {
   ids = await fresh();
   { const r = await clickPb(`#pRow${ids[1]}`);
     check('an ordinary flight\'s kept row: FR24\'s own Playback (its log page), not ours', !r.v.length && r.w.join() === 'log:' + ids[1], r); }
+  // (1.2.6: a row kept under this script's own flight id - an aircraft not blocked, no registration on its card, nothing of
+  // its flight to play: never FR24's own Playback, which opens its list of aircraft types, /data/aircraft/#ff...)
+  ids = await fresh();
+  { const r = await clickPb(`#pRow${ids[2]}`);
+    check('a kept row under this script\'s own flight id, no registration anywhere: not FR24\'s own Playback - never its list of aircraft types', !r.w.length && !/\/data\/aircraft\/(#|$)/.test(r.here) && !/\/data\/aircraft\/(#|$)/.test(r.pop) && !r.apl, r); }
   // ---- search results
   { const r = await clickPb('#pSr1');
     check('a search result of an ordinary aircraft: FR24\'s own', !r.v.length && r.w[r.w.length - 1] === 'log:aircraft:g-ezbx', r); }

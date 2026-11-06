@@ -330,7 +330,24 @@
   // (read before it is played: the row under the pointer, and the latest flights as the page opens)
   function pbWarm(hex, t) { if (/^[0-9a-f]{6}$/.test(hex || '') && t > 0) { pbPoints(hex, t); pbMore(hex, t); } }
   let pbSeq = 0, pbLast = '';
+  // (1.2.6: never FR24's padlock, not even while the track is read: "N/A", as FR24 writes a figure it has not got)
+  const PB_NA = 'N/A';
+  function pbPut(re, html, title) {
+    const lb = [...document.querySelectorAll('.playback-control label, .playback-player label')].find(l => re.test(clean(l.textContent))); if (!lb) return;
+    const row = lb.parentElement; let span = row.querySelector('span.tl-pb');
+    if (!span) { const lock = row.querySelector('a.premium-content'); span = document.createElement('span'); span.className = 'text-open-2 tl-pb'; if (lock) lock.replaceWith(span); else row.appendChild(span); }
+    if (span.innerHTML !== html) span.innerHTML = html;
+    if (title && span.title !== title) span.title = title;
+  }
+  const PB_FIELDS = [/^GPS ALTITUDE$/i, /^TRUE AIRSPEED$/i, /^INDICATED AIRSPEED$/i, /^VERTICAL SPEED$/i, /^SQUAWK$/i];
+  function pbNoLocks() {
+    for (const re of PB_FIELDS) {
+      const lb = [...document.querySelectorAll('.playback-control label, .playback-player label')].find(l => re.test(clean(l.textContent)));
+      if (lb && lb.parentElement.querySelector('a.premium-content')) pbPut(re, PB_NA, 'Being read from public ADS-B data (LADD unblocker)');
+    }
+  }
   async function fillPlaybackData(hex) {
+    pbNoLocks();
     const tsEl = document.getElementById('txt-track-timestamp'), t = tsEl ? Number(tsEl.dataset.timestamp) : 0;
     if (!t) return;
     // (both networks' tracks of that day asked for at once - merged as soon as the second is in, and shown again then)
@@ -349,20 +366,14 @@
     const geom = p && fin(p.altGeom) ? p.altGeom : gRef && fin(baro) ? baro + (gRef.altGeom - gRef.alt) : NaN;
     const sq = (p && p.sq) || (far && far.sq) || '';
     const n = v => Math.round(v).toLocaleString('en-GB');
-    // (a figure left as "–" says why on hover: not sent by this aircraft, or no public data at this moment)
     const why0 = !p ? 'No public ADS-B data within a minute of this moment' : p.own === false ? 'Not sent by this aircraft here - its position is from multilateration (worked out by the receivers)' : 'Not sent by this aircraft';
-    const put = (re, html) => {
-      const lb = [...document.querySelectorAll('.playback-control label, .playback-player label')].find(l => re.test(clean(l.textContent))); if (!lb) return;
-      const row = lb.parentElement; let span = row.querySelector('span.tl-pb');
-      if (!span) { const lock = row.querySelector('a.premium-content'); span = document.createElement('span'); span.className = 'text-open-2 tl-pb'; if (lock) lock.replaceWith(span); else row.appendChild(span); }
-      if (span.innerHTML !== html) span.innerHTML = html;
-      span.title = html === '–' ? why0 + ' (LADD unblocker)' : 'From public ADS-B data (LADD unblocker)';
-    };
-    put(/^GPS ALTITUDE$/i, fin(geom) ? n(geom) + ' <small>FT</small>' : '–');
-    put(/^TRUE AIRSPEED$/i, p && fin(p.tas) ? n(p.tas) + ' <small>KTS</small>' : '–');
-    put(/^INDICATED AIRSPEED$/i, p && fin(p.ias) ? n(p.ias) + ' <small>KTS</small>' : '–');
-    put(/^VERTICAL SPEED$/i, p && p.own !== false && fin(p.vr) ? (p.vr > 0 ? '+' : '') + n(p.vr) + ' <small>FPM</small>' : '–');
-    put(/^SQUAWK$/i, sq ? esc(sq) : '–');
+    // (a figure left as "N/A" says why on hover: not sent by this aircraft, or no public data at this moment)
+    const put = (re, html) => pbPut(re, html, html === PB_NA ? why0 + ' (LADD unblocker)' : 'From public ADS-B data (LADD unblocker)');
+    put(PB_FIELDS[0], fin(geom) ? n(geom) + ' <small>FT</small>' : PB_NA);
+    put(PB_FIELDS[1], p && fin(p.tas) ? n(p.tas) + ' <small>KTS</small>' : PB_NA);
+    put(PB_FIELDS[2], p && fin(p.ias) ? n(p.ias) + ' <small>KTS</small>' : PB_NA);
+    put(PB_FIELDS[3], p && p.own !== false && fin(p.vr) ? (p.vr > 0 ? '+' : '') + n(p.vr) + ' <small>FPM</small>' : PB_NA);
+    put(PB_FIELDS[4], sq ? esc(sq) : PB_NA);
   }
   // ---- the padlocked KML / CSV of each of FR24's own rows (an aircraft's log, a flight number's): the flight's public
   // ADS-B track (adsb.lol / airplanes.live, under the ODbL - the files say so) made into those files here, in FR24's own
@@ -501,16 +512,26 @@
     exportClicks((tr, fid, ts) => hexOfFid(fid, ts, regOfRow(tr)), () => cs);
   }
   // The aircraft page's own header: MSN, AGE and OPERATOR filled in, pictures on the right as FR24 shows them.
-  function fillAircraftHeader(hx, reg) {
+  // (1.2.6: the header as last filled - drawn again when the monitor's ages come in)
+  let acHead = null;
+  ageHooks.add(() => { if (acHead && acHead.path === location.pathname) fillAircraftHeader(acHead.hx, acHead.reg); });
+  function fillAircraftHeader(hx0, reg) {
     try {
+      acHead = { hx: hx0, reg, path: location.pathname };
       const rows = [...document.querySelectorAll('#cnt-aircraft-info .row')];
+      const spanOf = labelText => { const row = rows.find(r => { const l = r.querySelector('label'); return l && clean(l.textContent).toUpperCase() === labelText; }); return row && row.querySelector('span.details'); };
       const setField = (labelText, value, title, force) => {
         if (!value) return;
-        const row = rows.find(r => { const l = r.querySelector('label'); return l && clean(l.textContent).toUpperCase() === labelText; });
-        const span = row && row.querySelector('span.details'); if (!span || span.dataset.tlVal === String(value)) return;
+        const span = spanOf(labelText); if (!span || span.dataset.tlVal === String(value)) return;
         if (!force && !span.dataset.tlVal && !span.querySelector('.icon-fr24-lock') && clean(span.textContent) && clean(span.textContent) !== '-') return;
         span.textContent = ' ' + value + ' '; span.dataset.tlVal = String(value); span.title = title || 'From public registry / ADS-B data (LADD unblocker)';
       };
+      // (1.2.6: the age worked out as the map's panel does it - the type and serial number FR24's own header shows, where
+      // the records here have none: the monitor dates the airframe by them)
+      const shown = labelText => { const sp = spanOf(labelText); if (!sp || sp.dataset.tlVal || sp.querySelector('.icon-fr24-lock')) return ''; const v = clean(sp.textContent); return v && !/^(?:-|N\/A)$/i.test(v) ? v : ''; };
+      const hx = Object.assign({}, hx0);
+      if (!isTypeCode(String(hx.type || '').toUpperCase())) { const t = shown('TYPE CODE').toUpperCase(); if (isTypeCode(t)) hx.type = t; }
+      if (!hx.msn && !hx.otherAirframe) { const m = shown('SERIAL NUMBER (MSN)') || pageMsn; if (m) hx.msn = m; }
       // the log is of another airframe than FR24's register names for this registration: its type, address and serial
       // number replace the other aircraft's (T7-BGD: FR24's CRJ-100SE, MSN 7008 - the one flying is a Gulfstream V)
       if (hx.otherAirframe) {
@@ -527,6 +548,8 @@
       }
       setField('SERIAL NUMBER (MSN)', hx.msn);
       setField('AGE', ageText(hx), ageTitle(hx));
+      // (never a padlock: "N/A" until it is known - replaced the moment it is)
+      for (const lb of ['SERIAL NUMBER (MSN)', 'AGE']) { const sp = spanOf(lb); if (sp && !sp.dataset.tlVal && sp.querySelector('.icon-fr24-lock')) { sp.textContent = ' N/A '; sp.dataset.tlVal = 'N/A'; sp.title = 'Not known yet (LADD unblocker)'; } }
       setField('OPERATOR', shownOwner(hx, hx.cs) || '', hx.ownerCity && ownerName(hx.owner) ? 'Registered to ' + (ownerName(hx.owner) || '') + ', ' + placeName(ENGINE.placeShort(hx.ownerCity)) : '');
       // (an aircraft FR24 lists under "Private owner": its registered owner / operator there instead - a real airline
       // FR24 names stays)
@@ -618,6 +641,8 @@
       if (/^[0-9a-f]{6}$/.test(hex0)) {
         const titleMsn0 = clean((document.title.match(/\[([^\]]+)\]/) || [])[1]);
         if (titleMsn0) pageMsn = titleMsn0;
+        // (at once from what is kept here and FR24's own header - no padlock while the rest is looked up)
+        fillAircraftHeader(Object.assign({ hex: hex0, reg }, store.getHex(hex0) || {}), reg);
         publicIdentity(hex0, reg).then(hx => { if (hx) { if (hx.msn) pageMsn = hx.msn; fillAircraftHeader(Object.assign({ hex: hex0, reg }, hx), reg); fillPlayback(); } }).catch(e => log('aircraft page identity', e));
         // (the playback panel's padlocked figures, as it plays - from the start, not once the airport lists are in; the
         // tracks of the two latest flights read now, any other's as the pointer reaches its row)

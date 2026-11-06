@@ -346,6 +346,50 @@
     // another browser's, is what every board has)
     monP.then(at => { if (!(at > nowS() - 900)) return boardFr24Fill(apId); }).catch(e => log('board schedule', e));
   }
+  // (1.2.6) FR24's own row of an ordinary flight with no other airport - "N/A" where it came from or went: G-BSGD's
+  // GLFST into Liverpool, a club PA-28 flying without a plan. Its other end from its own track - the monitor's copy of
+  // FR24's positions of the flight first (fr24raw, 730 days), else FR24's playback of it (its week) - where that track
+  // begins (an arrival) or ends (a departure that has landed) on the ground or low over an airfield. Each asked for once.
+  const endsDone = new Map();   // "fid:0|1" -> airport id (0: none found)
+  async function onNeedEnds(d) {
+    const list = (Array.isArray(d && d.list) ? d.list : []).filter(x => x && /^[0-9a-f]{5,8}$/.test(x.fid || '') && (x.end === 0 || x.end === 1)).slice(0, 15);
+    if (!list.length) return;
+    try { await loadAirports(); } catch (e) { /* none yet */ }
+    const out = [];
+    for (const x of list) {
+      const k = x.fid + ':' + x.end;
+      if (endsDone.has(k)) { out.push({ k, ap: endsDone.get(k), fin: 1 }); continue; }
+      let pts = [];
+      try {
+        const j = await monGet('/fr24raw?f=' + x.fid + (fin(x.t) && x.t > 1e9 ? '&t=' + Math.round(x.t) : ''), { timeout: 8000 }), C = (j && j.cols) || [], at = c => C.indexOf(c);
+        for (const r of (j && Array.isArray(j.p) ? j.p : [])) { const p = { t: r[at('t')], lat: r[at('lat')], lon: r[at('lon')], alt: r[at('alt')], gnd: r[at('gnd')] === 1 }; if (fin(p.t) && fin(p.lat) && fin(p.lon)) pts.push(p); }
+      } catch (e) { /* the monitor's later */ }
+      if (pts.length < 2) {
+        try {
+          const ts = fin(x.t) && x.t > 1e9 ? Math.round(x.t) : Math.round(now() / 1000);
+          const j = await gmRequest(`https://api.flightradar24.com/common/v1/flight-playback.json?flightId=${encodeURIComponent(x.fid)}&timestamp=${ts}`, { timeout: 15000 });
+          const tr = j && j.result && j.result.response && j.result.response.data && j.result.response.data.flight && j.result.response.data.flight.track;
+          pts = (Array.isArray(tr) ? tr : []).map(p => ({ t: p && p.timestamp, lat: p && p.latitude, lon: p && p.longitude, alt: p && p.altitude && fin(p.altitude.feet) ? p.altitude.feet : null, gnd: !!(p && p.altitude && p.altitude.feet === 0) })).filter(p => fin(p.t) && fin(p.lat) && fin(p.lon));
+        } catch (e) { /* none */ }
+      }
+      pts.sort((a, b) => a.t - b.t);
+      // (an end seen on the ground, or below 2,500 ft over a field - and a departure's only once it has landed: its
+      // track ended ten minutes and more ago)
+      const e = pts.length >= 2 ? (x.end === 0 ? pts[0] : pts[pts.length - 1]) : null;
+      let ap = 0;
+      if (e && (e.gnd || (fin(e.alt) && e.alt < 2500)) && (x.end === 0 || nowS() - e.t > 600)) {
+        const here = ENGINE.placeAt(e.lat, e.lon, 7, 2), a = here && here.airport;
+        if (a && boardOk(a.id)) ap = a.id;
+      }
+      // (final: an end found, or a track that has its end and none there - one with no track yet, or a departure still in the
+      // air, asked again later)
+      const fin1 = !!ap || (!!e && !(x.end === 1 && nowS() - e.t < 600));
+      if (fin1) { endsDone.set(k, ap); if (endsDone.size > 5000) endsDone.delete(endsDone.keys().next().value); }
+      out.push({ k, ap, fin: fin1 ? 1 : 0 });
+      await sleep(250);
+    }
+    postToPage('endsGot', { list: out });
+  }
   // FR24's own rows of a board as it served them (kept for when they have dropped off its free day)
   function onBoardRows(d) {
     const apId = Number(d.apId), kind = d.kind === 'departures' ? 'departures' : d.kind === 'arrivals' ? 'arrivals' : ''; if (!kind || !boardOk(apId)) return;

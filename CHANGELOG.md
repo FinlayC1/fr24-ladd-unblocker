@@ -4,6 +4,37 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 
 1.0.0 is the first release. The versions before it are the betas, labelled B: B22.31.12 is version 22.31.12.
 
+## [1.2.6] - 2026-11-06
+
+### In short
+- A blocked aircraft on the ground that no public receiver hears is named the moment it is seen, when it is the only aircraft of its type to have landed at that airport and not left (D-CVAB, a PC-24 at Braunschweig). The name is provisional: once the aircraft is heard (usually after take-off) it is confirmed, or replaced by the aircraft actually heard there.
+- No padlocks: airport flight cards show both runways (or "N/A" while one is not known), and so do board rows, the log page's age and serial number, and its player's figures.
+- Airport boards fill in where FR24's own rows say "N/A" for where a flight came from or went, ordinary flights included (G-BSGD into Liverpool).
+- A Playback no longer opens FR24's list of aircraft types.
+- The log page's player shows the aircraft's pictures instead of FR24's "no picture".
+- The log page works out the age as the map's panel does, and serial numbers and ages found anywhere are shared through the monitor.
+- Last clicked flights: a blocked flight keeps its name and route, and a flight that has landed opens its aircraft's log page.
+
+### Fixed
+- **Playback sent to FR24's list of aircraft types** (`/data/aircraft/#ff…`). A board row this script added under its own flight id, for an aircraft that is not blocked and has no registration on its card, was left to FR24's own Playback, which opens the aircraft's page by registration. Such a row is now always played here. A flight with no registration anywhere opens in FR24's player page.
+- **The log page's player showed no picture.** FR24's player takes a "side view" before any photo, and for many types it has no file of one (`GL5T.jpg`, 404). FR24's answer is now kept only when it has a real photo. Otherwise the aircraft's own pictures are shown (JetPhotos first, then Planespotters), and a real photo is shown over a side view.
+- **Runways on airport flight cards.** The departure and arrival runways of a card were always "N/A" for this script's rows and padlocked on FR24's own. Each is now worked out from the flight's own track, as board rows are: the take-off at the airport it left, the landing where it landed. A card waits at most 2.5 seconds for them, and less as soon as both are in.
+- **Board rows still padlocked** where the runway was not known yet. They now show "N/A" until it is.
+- **"N/A" where a flight came from or went, on FR24's own board rows:**
+  - A blocked flight this script has named now gets the airport from its route.
+  - Any other flight gets it from its own track: the monitor's copy of FR24's positions, else FR24's playback. It is asked for once per flight and filled in at once after that, also after the flight has left the live map.
+- **The log page's age stayed padlocked.** The page asked the monitor for the age but was never drawn again when the answer came. The age is now worked out as on the map's panel, from the type and serial number FR24's own header shows where nothing else has them. The page is drawn again when the answer comes. Until then it shows "N/A", never the padlock. The same goes for the serial number.
+- **The log page's player figures** (GPS altitude, airspeeds, vertical speed, squawk) showed FR24's padlock while the track was read, and "–" for a figure with no data. They now show "N/A" from the start, as FR24 writes a figure it has not got.
+- **Last clicked flights:**
+  - A blocked flight went back to "N/A N/A–N/A": FR24's panel shows "N/A" for a moment when it opens one, and that overwrote what was known. An entry's name, aircraft and airports are now never replaced by "N/A", and are filled from what is known of the flight here.
+  - An entry that has landed now opens its aircraft's log page (FR24 opened nothing for a blocked flight). One in the air still goes back to it on the map, as FR24 does.
+
+### Changed
+- **On the ground, named at once.** The rule for a silent aircraft on the ground (the only one of its type to have landed at that airport and not left) used to run only after two failed lookups, and only when no oceanic flight was waiting. Since the world scan nearly always has one waiting, it almost never ran. It now runs straight away for the aircraft opened, and within seconds for any other on screen.
+  - The name is provisional. It is confirmed when public ADS-B hears that aircraft where FR24 has it, or replaced by the aircraft heard there instead. It is withdrawn if its tracks show it flew since it landed there.
+  - The monitor's version of the rule is provisional in the same way: in the air, it is confirmed or replaced.
+- **Serial numbers and build years of any aircraft** found in a browser (on the map, a card or a log page) now go to the monitor with its regular report, not only those of blocked aircraft. A year the monitor estimated is kept marked as an estimate ("~") and is not sent back to it as a register's.
+
 ## [1.2.5] - 2026-11-05
 
 ### In short
