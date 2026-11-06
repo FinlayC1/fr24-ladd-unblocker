@@ -641,8 +641,23 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     if (!panel || !rec || !histShown.has(String(rec.reg || '').toUpperCase())) return;
     for (const el of panel.querySelectorAll('[data-testid="aircraft-panel__recent-flights__callsign"]')) addChip(el, rec);
   }
+  // The Last-clicked flights widget: the tag after each flight's callsign, as on the boards - the flight found in the list
+  // the page part keeps for the widget (localStorage, its callsign or registration), else by the label shown
+  function tagLastClicked() {
+    const cells = document.querySelectorAll('[data-testid="last-clicked__callsign"]'); if (!cells.length) return;
+    let kept = []; try { kept = JSON.parse(localStorage.getItem('tl.mx.lastclicked') || '[]'); } catch (e) { kept = []; }
+    if (!Array.isArray(kept)) kept = [];
+    for (const cell of cells) {
+      const label = clean(cell.textContent).toUpperCase(); if (!label) continue;
+      const k = kept.find(x => x && ((x.callsign && String(x.callsign).toUpperCase() === label) || (x.registration && String(x.registration).toUpperCase() === label)));
+      let rec = k ? live.get(Number(k.id)) || null : null;
+      if (!rec && k && /^[0-9a-f]{6}$/.test(String(k.hex || ''))) rec = { hex: String(k.hex) };
+      if (!rec) rec = recByLabel(label);
+      addChip(cell, rec);
+    }
+  }
   function tagEverything(added) {
-    try { tagSearchResults(); tagBoards(added); const panel = document.querySelector(SEL.panel); if (panel) tagRecent(panel, live.get(currentId())); } catch (e) { log('tags', e); }
+    try { tagSearchResults(); tagLastClicked(); tagBoards(added); const panel = document.querySelector(SEL.panel); if (panel) tagRecent(panel, live.get(currentId())); } catch (e) { log('tags', e); }
   }
   // Run straight from the observer: its callback comes after the DOM change and before the next paint, so a new row
   // never shows up untagged (an animation-frame hop is not reliable - some embedded/background views never fire it).

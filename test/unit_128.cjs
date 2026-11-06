@@ -7,6 +7,7 @@
 //   - an airport's runways in one answer (/rwyap&use=1): every flight's of the boards' window and the runways in use
 //     (ends, runways, the last day's movements), from the days in memory, made once for everyone asking; the blocked
 //     flights' by airport
+//   - the Bookmarks widget's empty tab centred; a flight in the air in the Last-clicked widget opened on the map
 //   - the page: the runway in use from that same answer, and from the one this browser kept of the airport while it
 //     comes; "runways" when two are in use; a card's runway written into it when it comes after the card was drawn
 // usage: node test/unit_128.cjs <node_modules dir> <data dir>
@@ -107,6 +108,10 @@ function open(url, store) {
     const cells = [...card.querySelectorAll('dd')].map(d => d.textContent.trim());
     check('board card: the take-off\'s runway, in after the card was drawn, written into it; the landing\'s not known yet left "N/A"', cells[0] === '05' && cells[1] === 'N/A', cells);
     P.w.close(); }
+
+  // ================= the Bookmarks widget with nothing on a tab: in the middle of it =================
+  check('Bookmarks: the empty tab\'s picture and words centred - a rule a browser takes (no :has() inside :has()), only on the empty view (it holds a picture), not FR24\'s "not allowed" box',
+    SRC.includes('*:has(> [data-testid="bookmarks__no-data"] > picture){display:flex!important;flex-direction:column!important}') && SRC.includes('[data-testid="bookmarks__no-data"]:has(> picture){margin-top:auto!important;margin-bottom:auto!important') && !/:has\([^)]*:has\(/.test((SRC.match(/BM_EMPTY_STYLE = [^;]*;/) || [''])[0]));
 
   console.log(fails ? `\n${fails} failed` : '\nall passed');
   process.exit(fails ? 1 : 0);

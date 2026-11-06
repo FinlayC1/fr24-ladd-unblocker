@@ -1122,7 +1122,13 @@ html.tl-no-strip .tl-strip{display:none!important}`;
       if (UB_LABELS.some(l => t.includes(l))) { ubTryAt = clock(); ubDirty = true; ensureBarButton(); return; }
     }
   }
-  function addUnblockStyle() { if (document.getElementById('tl-ub-style')) return; const s = document.createElement('style'); s.id = 'tl-ub-style'; s.textContent = UB_STYLE + BN_STYLE + '\n[data-tl-gone],[data-tl-beg],[data-tl-ub-hid],[data-tl-ub-under]{display:none!important}'; (document.head || document.documentElement).appendChild(s); ubIconStyle(); }
+  // (1.2.8) FR24's Bookmarks widget with nothing on a tab - its picture, "Add an aircraft to bookmarks!" and how - set at the
+  // top of the tab (laid out round the upgrade box this script takes out): in the middle of it, as the Last-clicked
+  // widget's own empty list is; from the top, scrolled, where the tab is too small for it
+  // (its own empty view holds a picture, FR24's "not allowed" box none - :has() cannot hold another :has())
+  const BM_EMPTY_STYLE = '\n*:has(> [data-testid="bookmarks__no-data"] > picture){display:flex!important;flex-direction:column!important}'
+    + '\n[data-testid="bookmarks__no-data"]:has(> picture){margin-top:auto!important;margin-bottom:auto!important;padding-top:.5rem!important;padding-bottom:.5rem!important;justify-content:center!important;flex:none!important}';
+  function addUnblockStyle() { if (document.getElementById('tl-ub-style')) return; const s = document.createElement('style'); s.id = 'tl-ub-style'; s.textContent = UB_STYLE + BN_STYLE + '\n[data-tl-gone],[data-tl-beg],[data-tl-ub-hid],[data-tl-ub-under]{display:none!important}' + BM_EMPTY_STYLE; (document.head || document.documentElement).appendChild(s); ubIconStyle(); }
   function startUnblockWindow() {
     const go = () => {
       addUnblockStyle(); if (opt.on) applyOptsLive();

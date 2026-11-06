@@ -3560,14 +3560,31 @@
     // (1.2.6) An entry clicked: FR24 takes the map back to it while it is in the air (its own "live" mark on it); one that
     // has landed opens its aircraft's log page - as FR24 opens a page from the widget, in a new tab - a blocked flight's
     // too, by the registration kept with it (FR24 would open nothing: it has no flight number, no registration of it)
+    // (FR24's own address of a flight in the air: /<callsign>/<its id in hex>)
+    function mxLcLiveUrl(x, id) { var cs = String((x && x.callsign) || '').replace(/[^A-Za-z0-9]/g, ''); return '/' + (cs ? cs + '/' : '') + Number(id).toString(16); }
+    function mxLcOpenLive(x, id) {
+      var ac = pinStore('aircraft'), opened = function () { try { var s = ac && ac.selected, fi = s && s.flightInfo; return !!fi && Number(fi.flightId) === id; } catch (e) { return false; } };
+      try { if (ac && typeof ac.showInfoPanel === 'function') { var r = ac.showInfoPanel(id, { moveMap: true, deselectMarkers: true }); if (r && typeof r.catch === 'function') r.catch(function () { /* checked below */ }); } } catch (e) { stats.errors++; stats.lastError = String(e); }
+      mx.lcLive = (mx.lcLive || 0) + 1;
+      oSetTimeout(function () { if (!opened()) mxNav(mxLcLiveUrl(x, id)); }, 2000);
+    }
     function onLcClick(ev) {
       if (!mx.on || (ev.type === 'click' && ev.button) || (ev.type === 'auxclick' && ev.button !== 1)) return;
       var t = ev.target && ev.target.nodeType === 1 ? ev.target : ev.target && ev.target.parentElement; if (!t || !t.closest) return;
       var item = t.closest('.cursor-pointer'); if (!item || !item.querySelector('[data-testid="last-clicked__callsign"]')) return;
-      if (item.querySelector('[data-testid="last-clicked__live"]')) return;
       var box = item.parentElement, items = box ? [].filter.call(box.children, function (c) { return c.querySelector && c.querySelector('[data-testid="last-clicked__callsign"]'); }) : [], i = items.indexOf(item);
       var shown = null; try { var p = mxPinia(), lc = p && p._s.get('lastClickedFlights'); shown = lc && Array.isArray(lc.list) ? lc.list : null; } catch (e) { shown = null; }
       var x = (shown || mxLcList())[i]; if (!x) return;
+      // (1.2.8) still in the air: the flight opened on the map here - FR24's aircraft panel by the flight's id, its store's
+      // own showInfoPanel, as its widget means to - not left to FR24's own click, which opened nothing for any flight in
+      // the air, blocked or not; FR24's own address of the flight if the panel has not opened within 2 s
+      if (item.querySelector('[data-testid="last-clicked__live"]')) {
+        var lid = Number(x.id); if (!(lid > 0)) return;
+        ev.preventDefault(); ev.stopImmediatePropagation();
+        if (ev.type === 'auxclick' || ev.ctrlKey || ev.metaKey || ev.shiftKey) { window.open(mxLcLiveUrl(x, lid), '_blank', 'noopener'); return; }
+        mxLcOpenLive(x, lid);
+        return;
+      }
       var kept = mxLcList().filter(function (k) { return Number(k.id) === Number(x.id); })[0] || {};
       var reg = [x.registration, kept.registration].filter(function (v) { return !mxLcBlank(v); })[0];
       if (!reg) { var rec = resolved.get(Number(x.id)); reg = rec && rec.reg; }
@@ -13526,8 +13543,23 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     if (!panel || !rec || !histShown.has(String(rec.reg || '').toUpperCase())) return;
     for (const el of panel.querySelectorAll('[data-testid="aircraft-panel__recent-flights__callsign"]')) addChip(el, rec);
   }
+  // The Last-clicked flights widget: the tag after each flight's callsign, as on the boards - the flight found in the list
+  // the page part keeps for the widget (localStorage, its callsign or registration), else by the label shown
+  function tagLastClicked() {
+    const cells = document.querySelectorAll('[data-testid="last-clicked__callsign"]'); if (!cells.length) return;
+    let kept = []; try { kept = JSON.parse(localStorage.getItem('tl.mx.lastclicked') || '[]'); } catch (e) { kept = []; }
+    if (!Array.isArray(kept)) kept = [];
+    for (const cell of cells) {
+      const label = clean(cell.textContent).toUpperCase(); if (!label) continue;
+      const k = kept.find(x => x && ((x.callsign && String(x.callsign).toUpperCase() === label) || (x.registration && String(x.registration).toUpperCase() === label)));
+      let rec = k ? live.get(Number(k.id)) || null : null;
+      if (!rec && k && /^[0-9a-f]{6}$/.test(String(k.hex || ''))) rec = { hex: String(k.hex) };
+      if (!rec) rec = recByLabel(label);
+      addChip(cell, rec);
+    }
+  }
   function tagEverything(added) {
-    try { tagSearchResults(); tagBoards(added); const panel = document.querySelector(SEL.panel); if (panel) tagRecent(panel, live.get(currentId())); } catch (e) { log('tags', e); }
+    try { tagSearchResults(); tagLastClicked(); tagBoards(added); const panel = document.querySelector(SEL.panel); if (panel) tagRecent(panel, live.get(currentId())); } catch (e) { log('tags', e); }
   }
   // Run straight from the observer: its callback comes after the DOM change and before the next paint, so a new row
   // never shows up untagged (an animation-frame hop is not reliable - some embedded/background views never fire it).
@@ -17748,7 +17780,13 @@ html.tl-no-strip .tl-strip{display:none!important}`;
       if (UB_LABELS.some(l => t.includes(l))) { ubTryAt = clock(); ubDirty = true; ensureBarButton(); return; }
     }
   }
-  function addUnblockStyle() { if (document.getElementById('tl-ub-style')) return; const s = document.createElement('style'); s.id = 'tl-ub-style'; s.textContent = UB_STYLE + BN_STYLE + '\n[data-tl-gone],[data-tl-beg],[data-tl-ub-hid],[data-tl-ub-under]{display:none!important}'; (document.head || document.documentElement).appendChild(s); ubIconStyle(); }
+  // (1.2.8) FR24's Bookmarks widget with nothing on a tab - its picture, "Add an aircraft to bookmarks!" and how - set at the
+  // top of the tab (laid out round the upgrade box this script takes out): in the middle of it, as the Last-clicked
+  // widget's own empty list is; from the top, scrolled, where the tab is too small for it
+  // (its own empty view holds a picture, FR24's "not allowed" box none - :has() cannot hold another :has())
+  const BM_EMPTY_STYLE = '\n*:has(> [data-testid="bookmarks__no-data"] > picture){display:flex!important;flex-direction:column!important}'
+    + '\n[data-testid="bookmarks__no-data"]:has(> picture){margin-top:auto!important;margin-bottom:auto!important;padding-top:.5rem!important;padding-bottom:.5rem!important;justify-content:center!important;flex:none!important}';
+  function addUnblockStyle() { if (document.getElementById('tl-ub-style')) return; const s = document.createElement('style'); s.id = 'tl-ub-style'; s.textContent = UB_STYLE + BN_STYLE + '\n[data-tl-gone],[data-tl-beg],[data-tl-ub-hid],[data-tl-ub-under]{display:none!important}' + BM_EMPTY_STYLE; (document.head || document.documentElement).appendChild(s); ubIconStyle(); }
   function startUnblockWindow() {
     const go = () => {
       addUnblockStyle(); if (opt.on) applyOptsLive();

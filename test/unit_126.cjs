@@ -210,6 +210,15 @@ const LOCKED = () => ({ arrival: { name: null, upsell: true }, departure: { name
       try { L.verifyAll([g6()], win.Date.now()); } finally { win.Date.now = dn; }
       check('... a wrong name (N676BA): heard parked 10 km off while FR24 has the flight at 3,000 ft - withdrawn on the second check', kept && !L.live.get(fid2), { kept, now: L.live.get(fid2) && L.live.get(fid2).hex });
     }
+    // ================= (1.2.8) the Last-clicked widget: the LADD tag after a flight's callsign, as on the boards =================
+    { const doc = win.document;
+      win.localStorage.setItem('tl.mx.lastclicked', JSON.stringify([{ id: 0x3e5a0002, callsign: 'LRT99', registration: 'N99MB', hex: 'add15f', type: 'CL60' }, { id: 0x3e5a0099, callsign: 'EZY47FH', registration: 'G-EZWX', hex: '406c72', type: 'A320' }]));
+      const wrap = doc.createElement('div');
+      wrap.innerHTML = '<div class="cursor-pointer"><div class="flex"><div data-testid="last-clicked__callsign"><span>LRT99</span></div></div></div><div class="cursor-pointer"><div class="flex"><div data-testid="last-clicked__callsign"><span>EZY47FH</span></div></div></div>';
+      doc.body.appendChild(wrap); await sleep(400);
+      const chips = [...wrap.querySelectorAll('[data-testid="last-clicked__callsign"]')].map(c => c.nextElementSibling && c.nextElementSibling.classList.contains('tl-ladd-chip') ? c.nextElementSibling.textContent : '');
+      check('Last-clicked widget: the LADD tag after a LADD aircraft\'s callsign (N99MB), none on an easyJet', chips[0] === 'LADD' && chips[1] === '', chips);
+      wrap.remove(); }
     // ================= the log page's header: age as the map's panel works it out; no padlock =================
     { let ageQ = '';
       // (the monitor's /age: one answer per key asked, in order - only the PC-24 dated here)

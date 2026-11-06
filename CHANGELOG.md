@@ -13,6 +13,8 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 - A runway that comes in after a flight card is open is now written into the card, instead of the card staying "N/A".
 - G-RVNX is no longer shown as G-AWTL, the registration it had until 2021. The registration an aircraft sends as its callsign now wins over a public database's out-of-date one.
 - Playback on a board card of a flight known only to this script no longer opens FR24's list of aircraft types.
+- Flights still in the air in the Last-clicked widget open again when clicked.
+- An empty Bookmarks tab now has its picture and text centred.
 
 ### Changed
 - **Runways at once** (monitor `/rwyap`, page).
@@ -29,6 +31,8 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 - **G-RVNX shown as G-AWTL.** The aircraft was re-registered G-RVNX in 2021 and kept its Mode S address (4017CD). It sends "GRVNX" as its callsign, but adsb.lol's database still names it G-AWTL. Now, when a callsign is in its own country's registration form (the nationality mark and three or four letters, with no figures, as an airline's flight number would have), it is taken over the database's registration. This applies on the monitor (its aircraft, its identifications, its flight logs) and in the browser.
   - Once learned, it is kept when the aircraft later flies under another callsign. It is given up when the database itself agrees.
   - Never for American aircraft, whose address comes from their N-number.
+- **A flight still in the air in the Last-clicked widget opened nothing when clicked**, blocked or not. FR24's own click on such a flight did nothing; only landed flights (opened by this script) worked. The script now opens the flight itself through FR24's own aircraft panel, by the flight's id. If the panel hasn't opened within 2 seconds, FR24's own address for the flight (`/<callsign>/<id>`) opens instead. Ctrl- or middle-click opens it in a new tab.
+- **An empty Bookmarks tab** (no aircraft, flights, airports or locations saved) was laid out from the top, around the upgrade box this script removes, and ran under the "Add bookmark" button. It is now centred in the tab, and still scrolls from the top where the tab is too small for it.
 - **Playback on a board card of a flight known only to this script opened FR24's list of aircraft types** (`/data/aircraft/#ff4017cd…`). Such a row's made-up flight id was set aside before it was checked, so for an aircraft that isn't blocked (G-RVNX) the click went back to FR24. FR24's card has no registration, so its Playback opened its type list. The id is now read first, and a row of this script's own is always played here.
 
 ## [1.2.7] - 2026-11-06

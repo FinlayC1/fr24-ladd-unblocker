@@ -183,9 +183,19 @@ function open(opts, answer, fetchImpl) {
       doc.body.appendChild(wrap); [...wrap.children].forEach(el => el.addEventListener('click', () => { fr24++; }));
       doc.getElementById('lc' + pos).firstChild.dispatchEvent(new R.w.MouseEvent('click', { bubbles: true, cancelable: true }));
       check('... clicked once it has landed: its aircraft\'s log page, FR24\'s own (nothing for a blocked flight) not run', opened === '/data/aircraft/d-cvab' && fr24 === 0, { opened, fr24 });
-      opened = null; const other = pos === 0 ? 1 : 0;
+      opened = null; const other = pos === 0 ? 1 : 0, otherId = Number(lcs.list[other].id), otherUrl = '/' + String(lcs.list[other].callsign).replace(/[^A-Za-z0-9]/g, '') + '/' + Number(lcs.list[other].id).toString(16);
+      // (1.2.8: FR24's own click opened nothing for a flight in the air - its panel opened here, by its store, as FR24 means to)
+      let shownId = null, went = ''; store.showInfoPanel = (id, o) => { shownId = id; store.selected = { flightInfo: { flightId: id } }; return Promise.resolve(); }; RH.setNav(u => { went = u; });
       doc.getElementById('lc' + other).firstChild.dispatchEvent(new R.w.MouseEvent('click', { bubbles: true, cancelable: true }));
-      check('... clicked while it is in the air (FR24\'s live mark on it): FR24\'s own - back to the flight on the map', opened === null && fr24 === 1, { opened, fr24 });
+      await sleep(2100);
+      check('... clicked while it is in the air (FR24\'s live mark on it): the flight opened on the map here (FR24\'s aircraft panel by its id), FR24\'s own click not run', shownId === otherId && fr24 === 0 && opened === null && went === '', { shownId, otherId, fr24, went });
+      // (the panel not opening - FR24's store refusing: FR24's own address of the flight, /<callsign>/<id in hex>)
+      store.showInfoPanel = () => { throw new Error('no'); }; store.selected = null; went = '';
+      wrap.innerHTML = lcs.list.map((x, i) => `<div class="cursor-pointer" id="lc${i}"><div data-testid="last-clicked__callsign">${x.callsign}</div><span data-testid="last-clicked__live"></span></div>`).join('');
+      const at2 = lcs.list.findIndex(x => Number(x.id) === otherId);
+      doc.getElementById('lc' + at2).firstChild.dispatchEvent(new R.w.MouseEvent('click', { bubbles: true, cancelable: true }));
+      await sleep(2100);
+      check('... its panel not opened within 2 s: FR24\'s own address of the flight', went === otherUrl && fr24 === 0, { went, otherUrl });
       wrap.remove(); }
     await RH.mxLastClicked('https://www.flightradar24.com/restapi/v1/widgets/last-clicked-flights', { method: 'PUT', body: JSON.stringify({ last_clicked_flights: [] }) });
     check('... FR24\'s "Clear list": none kept', RH.mxLcList().length === 0);
