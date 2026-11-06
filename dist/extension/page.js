@@ -1148,6 +1148,20 @@
     //   TopFlightsResponse 1 FollowedFlight (repeated): 1 flight_id 2 live_clicks 3 total_clicks 4 flight_number 5 callsign
     //   6 squawk 7 from_iata 8 from_city 9 to_iata 10 to_city 11 type 12 full_description
     var naAsked = new Map();
+    // (1.2.10: a flight in it that this page has not identified - off the map's view - its name and route asked of the
+    // monitor by FR24's id: in for FR24's next read of the list)
+    var topNames = new Map(), topAsked = new Map();
+    function askTop(ids) {
+      var now = Date.now(), want = ids.filter(function (id) { var t = topAsked.get(id); return !t || now - t > 60000; }).slice(0, 12);
+      if (!want.length) return;
+      want.forEach(function (id) { topAsked.set(id, now); }); if (topAsked.size > 300) topAsked.delete(topAsked.keys().next().value);
+      post('topNeed', { ids: want });
+    }
+    function onTopGot(d) {
+      Object.keys((d && d.names) || {}).forEach(function (k) { var v = String(d.names[k] || '').replace(/[^A-Za-z0-9-]/g, '').toUpperCase(); if (v) topNames.set(Number(k), v.replace(/-/g, '')); });
+      Object.keys((d && d.routes) || {}).forEach(function (k) { var r = d.routes[k]; if (r && !routes.has(Number(k))) routes.set(Number(k), r); });
+      while (topNames.size > 300) topNames.delete(topNames.keys().next().value);
+    }
     var isCode = function (c) { return /^[A-Z0-9]{3,4}$/.test(String(c || '')); };
     function destFor(id) { var r = id ? routeNow(id) : null; return r && isCode(r.destIata) ? r : null; }
     function askNaRoutes(list) {
@@ -1157,22 +1171,31 @@
       ask.forEach(function (x) { naAsked.set(x.id, now); }); if (naAsked.size > 300) naAsked.delete(naAsked.keys().next().value);
       post('needNaRoutes', { list: ask });
     }
+    // (1.2.10) Every flight worked out or identified here shows in it as on its panel: a blocked one FR24 lists with nothing
+    // but its type - "N/A, GLF4, N/A - N/A" for N291VK, Bengaluru to Riyadh, the fifth most tracked - gets its name (the
+    // panel's: its callsign, else registration), where it took off and where it is going. 1.2.9 and before left any entry
+    // with no flight number or callsign as FR24 sent it, which is every blocked flight's. FR24's own values never replaced.
     function patchTopFlights(body) {
-      var fs = parse(body), parts = [], changed = false, ask = [];
+      var fs = parse(body), parts = [], changed = false, ask = [], need = [];
       for (var i = 0; i < fs.length; i++) {
         var f = fs[i], it = null;
         if (f.fn === 1 && f.wt === 2) { try { it = parse(f.val); } catch (e) { it = null; } }
-        // (only what reads as FR24's entry: an id, a flight number or callsign, its airports as codes - and no destination)
-        var id = it ? numOf(it, 1) : 0, from = it ? strOf(it, 7) : '', to = it ? strOf(it, 9) : '';
-        if (!id || !(strOf(it, 4) || strOf(it, 5)) || (from && !isCode(from)) || to) { parts.push(f.raw); continue; }
-        var r = destFor(id);
-        ask.push({ id: id, cs: strOf(it, 5) || strOf(it, 4), from: from, type: strOf(it, 11), has: !!r });
-        if (!r) { parts.push(f.raw); continue; }
-        var keep = it.filter(function (x) { return x.fn !== 9 && x.fn !== 10; }).map(function (x) { return x.raw; });
-        keep.push(fStr(9, r.destIata)); if (r.destCity) keep.push(fStr(10, r.destCity));
+        var id = it ? numOf(it, 1) : 0, num = it ? strOf(it, 4) : '', cs = it ? strOf(it, 5) : '', from = it ? strOf(it, 7) : '', to = it ? strOf(it, 9) : '';
+        // (only what reads as FR24's entry: an id, its airports as codes where it has them)
+        if (!id || (from && !isCode(from)) || (to && !isCode(to))) { parts.push(f.raw); continue; }
+        var r = routeNow(id), label = !num && !cs ? (csOf(recOf(id)) || topNames.get(id) || '') : '';
+        var addFrom = !from && !!r && isCode(r.originIata), addTo = !to && !!r && isCode(r.destIata);
+        if (!to) ask.push({ id: id, cs: cs || num || label, from: from || (addFrom ? r.originIata : ''), type: strOf(it, 11), has: addTo });
+        if ((!num && !cs && !label) || (!r && (!to || !from))) need.push(id);
+        if (!label && !addFrom && !addTo) { parts.push(f.raw); continue; }
+        var keep = it.filter(function (x) { return !(label && x.fn === 5) && !(addFrom && (x.fn === 7 || x.fn === 8)) && !(addTo && (x.fn === 9 || x.fn === 10)); }).map(function (x) { return x.raw; });
+        if (label) keep.push(fStr(5, label));
+        if (addFrom) { keep.push(fStr(7, r.originIata)); if (r.originCity) keep.push(fStr(8, r.originCity)); }
+        if (addTo) { keep.push(fStr(9, r.destIata)); if (r.destCity) keep.push(fStr(10, r.destCity)); }
         parts.push(fLen(1, concat(keep))); changed = true;
       }
       if (ask.length) askNaRoutes(ask);
+      if (need.length) askTop(need);
       if (changed) stats.topFlights = (stats.topFlights || 0) + 1;
       return changed ? concat(parts) : body;
     }
@@ -1187,6 +1210,11 @@
         if (id && tk && !isCode(o[tk])) {
           var r = destFor(id), ck = ['to_city', 'toCity', 'destination_city', 'destinationCity'].filter(function (k) { return k in o; })[0];
           if (r) { o[tk] = r.destIata; if (ck && r.destCity) o[ck] = r.destCity; n++; }
+          // (1.2.10: a blocked flight's name and origin too, where FR24's are empty)
+          var rn = routeNow(id), fk = ['from_iata', 'fromIata', 'origin_iata', 'originIata'].filter(function (k) { return k in o; })[0], fck = ['from_city', 'fromCity', 'origin_city', 'originCity'].filter(function (k) { return k in o; })[0];
+          if (fk && !isCode(o[fk]) && rn && isCode(rn.originIata)) { o[fk] = rn.originIata; if (fck && rn.originCity) o[fck] = rn.originCity; n++; }
+          var nk = ['callsign', 'flight', 'flight_number', 'flightNumber'].filter(function (k) { return k in o; }), lb = csOf(recOf(id));
+          if (lb && nk.length && nk.every(function (k) { return !o[k]; })) { o[nk[0]] = lb; n++; }
           ask.push({ id: id, cs: String(o.callsign || o.flight || o.flight_number || o.flightNumber || ''), from: String(o.from_iata || o.fromIata || ''), type: String(o.model || o.type || ''), has: !!r });
           return;
         }
@@ -4840,6 +4868,7 @@
       else if (d.__tweeksLadd === 'revoke') { for (var i = 0; i < (d.ids || []).length; i++) { resolved.delete(Number(d.ids[i])); routes.delete(Number(d.ids[i])); telem.delete(Number(d.ids[i])); } }
       else if (d.__tweeksLadd === 'route') { if (d.id != null) { if (d.route) routes.set(Number(d.id), d.route); else routes.delete(Number(d.id)); if (followSt && Number(d.id) === followSt.id) pushFollowSoon(); if (boardAffected([d.id])) refreshBoardSoon(); } }
       else if (d.__tweeksLadd === 'routesGot') onRoutesGot(d);
+      else if (d.__tweeksLadd === 'topGot') onTopGot(d);
       else if (d.__tweeksLadd === 'lastSq') onLastSq(d);
       else if (d.__tweeksLadd === 'rwyGot') onRwyGot(d);
       else if (d.__tweeksLadd === 'endsGot') onEndsGot(d);
@@ -4897,7 +4926,7 @@
       else if (d.__tweeksLadd === 'hello') post('ready', { stats: stats, feedReady: !!feedHeaders, hdr: feedHdrPublic(), v: BRIDGE_V });
     });
     window[NS] = { resolved: resolved, routes: routes, naRecs: naRecs, naRoutes: naRoutes, telem: telem, hist: hist, lastPos: lastPos, photoCache: photoCache, psCache: psCache, stats: stats, fetchPhotos: fetchPhotos, hello: function () { post('ready', { stats: stats, feedReady: !!feedHeaders, v: BRIDGE_V }); }, v: BRIDGE_V };
-    if (window.__tlTestHook) try { window.__tlTestHook({ csOf: csOf, patchTopFlights: patchTopFlights, fillFlightList: fillFlightList, routeRows: routeRows, liveDestFix: liveDestFix, hist: hist, preloaded: function () { return preloaded; }, parse: parse, photoFits: photoFits, makerOf: makerOf, patchFollow: patchFollow, patchFlightMsg: patchFlightMsg, pushFollow: pushFollow, followSt: function () { return followSt; }, setFollowSt: function (s) { followSt = s; }, shownPhotos: shownPhotos, photoCache: photoCache, FOLLOW: FOLLOW, DETAILS: DETAILS, fLen: fLen, fStr: fStr, fVar: fVar, patchFlight: patchFlight, patchLiveFeed: patchLiveFeed, fr24Named: fr24Named, psState: function () { return { q: psQ.length, busy: psBusy, last: psLast, blockedFor: Math.max(0, psBlockedUntil - Date.now()), pri: Array.from(psPri), jobs: photoJobs.size, head: psQ.slice(0, 3).map(function (j) { return j.hex; }) }; }, acceptPubTel: acceptPubTel, pubTelFor: pubTelFor, fillNativeCard: fillNativeCard, regsOfCallsign: regsOfCallsign, categoryOf: categoryOf, placeShort: placeShort, nativeFill: nativeFill, natInfo: natInfo, addArch: addArch, acceptBoardArch: acceptBoardArch, telem: telem, b64Encode: b64Encode, b64DecodeInto: b64DecodeInto, frameHeader: frameHeader, concat: concat, varintInt32: varintInt32, PLAYBACK: PLAYBACK, patchPlayback: patchPlayback, patchPlaybackRequest: patchPlaybackRequest, pbRoutes: pbRoutes, pbTelAt: pbTelAt, setPbTrace: function (t) { pbTrace = t; }, patchList: patchList, acceptSites: acceptSites, listSig: listSig, mergeRoutes: mergeRoutes, applyRoutes: applyRoutes, routesAdd: routesAdd, applyAirport: applyAirport, applyBoardPage: applyBoardPage, applyStats: applyStats, mergeFlights: mergeFlights, apData: apData, telAt: telAt, noteTelem: noteTelem, pbTraceOf: function () { return pbTrace; }, logoOf: logoOf, archDetail: archDetail, tsOf: tsOf, noteAirportJson: noteAirportJson, rwyOf: rwyOf, rwyPanel: rwyPanel, panelTick: panelTick, panelData: panelData, promoSlots: promoSlots, acceptAirportPanel: acceptAirportPanel, unlockRunways: unlockRunways, mvRows: mvRows, mvKept: mvKept, dayOf: dayOf, pbPanelTick: pbPanelTick, logoFix: logoFix, liveEntries: liveEntries, pbPos: pbPos, unlockFeed: unlockFeed, derivedVs: derivedVs, altHist: altHist, acceptAir: acceptAir, airCache: airCache, flushAir: flushAir, airWant: function () { return airWant; }, lastPos: lastPos, resolved: resolved, stats: stats, pbFind: pbFind, inBar: inBar, pbBlk: pbBlk, cardInfo: cardInfo, boardRowsSeen: boardRowsSeen, archById: archById, placeBoard: placeBoard, stopBoardHold: stopBoardHold, needBoardArch: needBoardArch, mx: mx, mxPatchCore: mxPatchCore, mxAuth: mxAuth, mxNatList: mxNatList, mxTrackOk: mxTrackOk, stripRestriction: stripRestriction, mxBmMerge: mxBmMerge, mxBmItem: mxBmItem, mxMonTile: mxMonTile, mxMonOr: mxMonOr, mxPinVer: mxPinVer, mxAirportHistory: mxAirportHistory, mxHistItems: mxHistItems, mxTrackFile: mxTrackFile, mxDataTick: mxDataTick, mxPbProps: mxPbProps, mxPbShow: mxPbShow, mxPbStandIn: mxPbStandIn, mxPbReadAt: mxPbReadAt, mxPbStand: mxPbStand, mxBoardRwy: mxBoardRwy, reqIdOf: reqIdOf, mxPbOpen: mxPbOpen, mxPbTake: mxPbTake, setNav: function (f) { mxNav = f; }, mxPbAway: mxPbAway, mxLegacyPbJson: mxLegacyPbJson, mxLegacyPb: mxLegacyPb, mxPbFlags: mxPbFlags, mxPbSynId: mxPbSynId, mxPbParam: mxPbParam, setPbWanted: function (v) { mxPbWanted = v; }, mxPlans: function () { return mxPlans; }, mxLiveRunways: mxLiveRunways, mxRwy: mxRwy, mxSetApply: mxSetApply, mxSetNote: mxSetNote, mxSetKept: mxSetKept, mxLastClicked: mxLastClicked, mxLcList: mxLcList, onLcClick: onLcClick, mxLcFill: mxLcFill, cardRwy: cardRwy, naEndsFill: naEndsFill, onEndsGot: onEndsGot, naEnds: naEnds, boardWant: boardWant, mxLegacyImages: mxLegacyImages, rwyInUse: rwyInUse, windOfText: windOfText, mxRwyAirport: mxRwyAirport, mxRwyByHex: mxRwyByHex, mxRowHex: mxRowHex, mxDataEnds: mxDataEnds, rwyUsePanel: rwyUsePanel, rwyUseData: rwyUseData, rwyUseWant: rwyUseWant, cardRwyFill: cardRwyFill, rwyUseKept: rwyUseKept, mxLcTick: mxLcTick, mxBmMax: mxBmMax, mxNatParse: mxNatParse, mxAirsigList: mxAirsigList, mxStations: mxStations, mxLightning: mxLightning, mxLx: mxLx, mxFetch: mxFetch, mxWxText: mxWxText, mxWxKind: mxWxKind, mxCsv: mxCsv, patchLiveFeedRequest: patchLiveFeedRequest, mxCats: mxCats, mxOp: mxOp, mxLevels: mxLevels, mxNearest: mxNearest, MX_ICE: MX_ICE, MX_TURB: MX_TURB, mxWafsUrl: mxWafsUrl, routes: routes, setCurFollow: function (id) { curFollowId = id; } }); } catch (e) { /* ignore */ }
+    if (window.__tlTestHook) try { window.__tlTestHook({ csOf: csOf, patchTopFlights: patchTopFlights, onTopGot: onTopGot, topNames: topNames, fillFlightList: fillFlightList, routeRows: routeRows, liveDestFix: liveDestFix, hist: hist, preloaded: function () { return preloaded; }, parse: parse, photoFits: photoFits, makerOf: makerOf, patchFollow: patchFollow, patchFlightMsg: patchFlightMsg, pushFollow: pushFollow, followSt: function () { return followSt; }, setFollowSt: function (s) { followSt = s; }, shownPhotos: shownPhotos, photoCache: photoCache, FOLLOW: FOLLOW, DETAILS: DETAILS, fLen: fLen, fStr: fStr, fVar: fVar, patchFlight: patchFlight, patchLiveFeed: patchLiveFeed, fr24Named: fr24Named, psState: function () { return { q: psQ.length, busy: psBusy, last: psLast, blockedFor: Math.max(0, psBlockedUntil - Date.now()), pri: Array.from(psPri), jobs: photoJobs.size, head: psQ.slice(0, 3).map(function (j) { return j.hex; }) }; }, acceptPubTel: acceptPubTel, pubTelFor: pubTelFor, fillNativeCard: fillNativeCard, regsOfCallsign: regsOfCallsign, categoryOf: categoryOf, placeShort: placeShort, nativeFill: nativeFill, natInfo: natInfo, addArch: addArch, acceptBoardArch: acceptBoardArch, telem: telem, b64Encode: b64Encode, b64DecodeInto: b64DecodeInto, frameHeader: frameHeader, concat: concat, varintInt32: varintInt32, PLAYBACK: PLAYBACK, patchPlayback: patchPlayback, patchPlaybackRequest: patchPlaybackRequest, pbRoutes: pbRoutes, pbTelAt: pbTelAt, setPbTrace: function (t) { pbTrace = t; }, patchList: patchList, acceptSites: acceptSites, listSig: listSig, mergeRoutes: mergeRoutes, applyRoutes: applyRoutes, routesAdd: routesAdd, applyAirport: applyAirport, applyBoardPage: applyBoardPage, applyStats: applyStats, mergeFlights: mergeFlights, apData: apData, telAt: telAt, noteTelem: noteTelem, pbTraceOf: function () { return pbTrace; }, logoOf: logoOf, archDetail: archDetail, tsOf: tsOf, noteAirportJson: noteAirportJson, rwyOf: rwyOf, rwyPanel: rwyPanel, panelTick: panelTick, panelData: panelData, promoSlots: promoSlots, acceptAirportPanel: acceptAirportPanel, unlockRunways: unlockRunways, mvRows: mvRows, mvKept: mvKept, dayOf: dayOf, pbPanelTick: pbPanelTick, logoFix: logoFix, liveEntries: liveEntries, pbPos: pbPos, unlockFeed: unlockFeed, derivedVs: derivedVs, altHist: altHist, acceptAir: acceptAir, airCache: airCache, flushAir: flushAir, airWant: function () { return airWant; }, lastPos: lastPos, resolved: resolved, stats: stats, pbFind: pbFind, inBar: inBar, pbBlk: pbBlk, cardInfo: cardInfo, boardRowsSeen: boardRowsSeen, archById: archById, placeBoard: placeBoard, stopBoardHold: stopBoardHold, needBoardArch: needBoardArch, mx: mx, mxPatchCore: mxPatchCore, mxAuth: mxAuth, mxNatList: mxNatList, mxTrackOk: mxTrackOk, stripRestriction: stripRestriction, mxBmMerge: mxBmMerge, mxBmItem: mxBmItem, mxMonTile: mxMonTile, mxMonOr: mxMonOr, mxPinVer: mxPinVer, mxAirportHistory: mxAirportHistory, mxHistItems: mxHistItems, mxTrackFile: mxTrackFile, mxDataTick: mxDataTick, mxPbProps: mxPbProps, mxPbShow: mxPbShow, mxPbStandIn: mxPbStandIn, mxPbReadAt: mxPbReadAt, mxPbStand: mxPbStand, mxBoardRwy: mxBoardRwy, reqIdOf: reqIdOf, mxPbOpen: mxPbOpen, mxPbTake: mxPbTake, setNav: function (f) { mxNav = f; }, mxPbAway: mxPbAway, mxLegacyPbJson: mxLegacyPbJson, mxLegacyPb: mxLegacyPb, mxPbFlags: mxPbFlags, mxPbSynId: mxPbSynId, mxPbParam: mxPbParam, setPbWanted: function (v) { mxPbWanted = v; }, mxPlans: function () { return mxPlans; }, mxLiveRunways: mxLiveRunways, mxRwy: mxRwy, mxSetApply: mxSetApply, mxSetNote: mxSetNote, mxSetKept: mxSetKept, mxLastClicked: mxLastClicked, mxLcList: mxLcList, onLcClick: onLcClick, mxLcFill: mxLcFill, cardRwy: cardRwy, naEndsFill: naEndsFill, onEndsGot: onEndsGot, naEnds: naEnds, boardWant: boardWant, mxLegacyImages: mxLegacyImages, rwyInUse: rwyInUse, windOfText: windOfText, mxRwyAirport: mxRwyAirport, mxRwyByHex: mxRwyByHex, mxRowHex: mxRowHex, mxDataEnds: mxDataEnds, rwyUsePanel: rwyUsePanel, rwyUseData: rwyUseData, rwyUseWant: rwyUseWant, cardRwyFill: cardRwyFill, rwyUseKept: rwyUseKept, mxLcTick: mxLcTick, mxBmMax: mxBmMax, mxNatParse: mxNatParse, mxAirsigList: mxAirsigList, mxStations: mxStations, mxLightning: mxLightning, mxLx: mxLx, mxFetch: mxFetch, mxWxText: mxWxText, mxWxKind: mxWxKind, mxCsv: mxCsv, patchLiveFeedRequest: patchLiveFeedRequest, mxCats: mxCats, mxOp: mxOp, mxLevels: mxLevels, mxNearest: mxNearest, MX_ICE: MX_ICE, MX_TURB: MX_TURB, mxWafsUrl: mxWafsUrl, routes: routes, setCurFollow: function (id) { curFollowId = id; } }); } catch (e) { /* ignore */ }
     post('ready', { stats: stats, feedReady: false, v: BRIDGE_V });
   }
 
