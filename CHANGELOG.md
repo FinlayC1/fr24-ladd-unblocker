@@ -4,6 +4,26 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 
 1.0.0 is the first release. The versions before it are the betas, labelled B: B22.31.12 is version 22.31.12.
 
+## [1.2.9] - 2026-11-06
+
+### In short
+- Flights still in the air in the Last-clicked widget open on the map when clicked, without reloading the page.
+- Board rows no longer show a runway; only a flight's card (the dropdown) does.
+- Many more runways found, and fewer wrong. Airliners' take-offs and landings at the airports you look at are now logged live. Parallel runways side by side (Gatwick, Manchester) are told apart. A runway is no longer guessed from far-off positions.
+- In playback, a flight's departure is taken from FR24's own track when public ADS-B missed the take-off (N905SH out of Dickinson).
+- The monitor no longer gives up on a flight that has just taken off, or a VFR flight (G-CCVM off Woodvale: "no airport fits its track yet"). Its route calculation was full and turned new flights away.
+
+### Fixed
+- **Clicking a flight in the air in the Last-clicked widget reloaded the whole page** (1.2.8). 1.2.8 opened such a flight itself and, if FR24's panel hadn't opened within 2 seconds, went to the flight's address, which reloaded the page. The real fault was older: this script gave FR24's widget each flight's id as a number. FR24 writes ids as text (the id in hex) and its click lower-cases the id before opening the flight, so it failed on a number. The widget now gets the ids in FR24's own form, and FR24's own click opens the flight on the map, without reloading anything. Ctrl- or middle-click opens FR24's own address of the flight in a new tab.
+- **Runways on the board rows themselves** - the small badge after each flown flight - are gone. They were never asked for: a flight's runways show in its card only. The rows' padlock stays off, and the runways are still asked for in the background, so each card has its own at once.
+- **Runways missed, or wrong.**
+  - **Airliners:** the monitor's scan of FR24's map, every two minutes, covers business, private, military and other flights, never airliners or freighters. An easyJet's or a Ryanair's runway was only ever worked out when its card was opened. The airports someone is looking at (a board, its panel or a card, in the last half hour; four at most, the most looked-at first) are now scanned every 40 seconds for every flight within about 40 km. Each flight's runway is logged as it takes off or comes in.
+  - **Parallel runways side by side.** Tested against the day's real ADS-B tracks: every take-off and landing at Gatwick (08R/08L, 200 m apart) came out "not known", and Manchester's 05L/05R (390 m) were alike far out on the final. The two are now told apart by the positions where they differ: the roll, the last 3 km of the final, and the first climb, held to the centreline within some 60 m. If they are still alike and less than 300 m apart, only one is ever in use, so the main (longer) one is taken.
+  - **No guessing from far-off positions.** A runway is now given only when the flight was seen close to it: on the ground, within 4 km of the start of its take-off, or on the final within 10 km of the threshold and no higher than an approach would be there. A take-off from Amsterdam's 04, sampled every 30 seconds, had read as 09 from positions after its turn. It now reads as not known, rather than wrong.
+  - **Take-offs logged live:** the roll as it was seen (on the ground, moving fast along the runway) now counts, and so does an aircraft lined up on the runway's centreline at its start, about to roll.
+- **Playback showed no departure when public ADS-B missed the take-off** (N905SH, plainly out of Dickinson, shown as N/A). Its route was worked out from the public ADS-B trace alone, which had a gap over the departure, and was not worked out again once FR24's own playback track came in. It is now worked out again when FR24's track arrives and the route still has no origin, and the ends of FR24's own track are used when its playback gives none.
+- **The monitor gave up on flights that had just taken off, VFR flights above all** (G-CCVM, an RV-7 off RAF Woodvale: "no airport fits its track yet"). Its route calculation holds at most 1,500 flights at once; it held 1,499, and every flight sent to it past that got no answer at all. Given G-CCVM's FR24 track it works out at once that the aircraft took off from Woodvale. Now, when full, it lets go of the flight it has heard nothing about for longest, rather than turning the new one away. Its limits are also sized by the monitor's heap: 8,000 flights and 2.5 million track points when the heap is 4 GB or more (the A1 after a deploy), as before otherwise.
+
 ## [1.2.8] - 2026-11-06
 
 ### In short

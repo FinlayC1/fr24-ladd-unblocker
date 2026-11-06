@@ -613,7 +613,15 @@ const datalink = DL.createDatalink({ isAirport: c => !!E.byIcao(c) });
 // (1.1.0) every answer of central calculation noted and scored once the flight is down - live accuracy, training data
 const { createScores } = require('./scores.cjs');
 const SC = createScores({ store: STORE, E, log: (...a) => log('scores', ...a), logOf: hex => logOf(hex), room: () => !WS.full });
-const central = createCentral({ E, onAnswer: (F, r) => SC.note(F, r), fleetOf: hex => fleetOf(hex), log: (...a) => log('central', ...a), logOf: hex => logOf(hex).filter(l => !l.open), surge: () => surgeNow().map, datalink: reg => datalink.byReg.get(String(reg || '').toUpperCase()) || null, selfEvidence: id => selfEvidence(id), busy: () => loopLag > 300, cfg: { msPerMin: +CFG.centralMsPerMin || 12000 },
+// (1.2.9) What central calculation may hold, by the heap this process may use: the 1 GB VM's 1,500 flights and 400,000
+// points with a heap under 4 GB; eight thousand and 2.5 million with more (the A1's 12 GB) - full, it let new flights go
+// unanswered
+function centralCfg() {
+  let lim = 0; try { lim = require('v8').getHeapStatistics().heap_size_limit; } catch (e) { lim = 0; }
+  const big = lim >= 4 * 1073741824;
+  return { msPerMin: +CFG.centralMsPerMin || 12000, maxFlights: +CFG.centralMaxFlights || (big ? 8000 : 1500), allPts: +CFG.centralAllPts || (big ? 2500000 : 400000) };
+}
+const central = createCentral({ E, onAnswer: (F, r) => SC.note(F, r), fleetOf: hex => fleetOf(hex), log: (...a) => log('central', ...a), logOf: hex => logOf(hex).filter(l => !l.open), surge: () => surgeNow().map, datalink: reg => datalink.byReg.get(String(reg || '').toUpperCase()) || null, selfEvidence: id => selfEvidence(id), busy: () => loopLag > 300, cfg: centralCfg(),
   // (1.1.0) a destination a browser's user confirmed for a flight the monitor named (ident.crowdRoute): in its answer for
   // every browser - "confirmed in another browser"
   confirmedOf: (id, hex) => { const R = ident.ids.get(id), c = R && R.hex === hex ? R.crowd : null; return c && c.d && c.dc === 'confirmed' ? { d: c.d, p: c.p, eta: c.eta || 0, at: c.at || 0 } : null; },
@@ -693,13 +701,14 @@ function laddRwys(apId, from, to) {
 // airport in the world kept as it happens - so no answer waits on the disk; an older window (old=1) reads the days kept
 // on disk. Each airport's answer made once every 20 s whoever asks; the airports asked for lately made afresh every
 // minute ahead of the next asking.
-const rwyApCache = new Map(), rwyApHot = new Map();
+const rwyApCache = new Map(), rwyApHot = new Map(), rwyApHits = new Map();   // (apId -> last asked; apId -> [times asked])
 function rwyApAnswer(ap, from, to, use, old, nowS) {
   const a = E.byId(ap); if (!a) return null;
   const memFrom = Math.floor(nowS / 86400) * 86400 - 86400;
   if (!old) from = Math.max(from, memFrom);
   const key = ap + ':' + (use ? 1 : 0) + ':' + (old ? Math.floor(from / 3600) : 0), c = rwyApCache.get(key);
   rwyApHot.set(ap, Date.now()); if (rwyApHot.size > 2000) rwyApHot.delete(rwyApHot.keys().next().value);
+  { const h = (rwyApHits.get(ap) || []).filter(t => Date.now() - t < 30 * 60000); h.push(Date.now()); rwyApHits.set(ap, h.slice(-60)); if (rwyApHits.size > 2000) rwyApHits.delete(rwyApHits.keys().next().value); }
   if (c && Date.now() - c.at < 20000 && (old || c.to >= to - 120)) return c.j;
   const j = { v: 1, ap, at: Math.round(nowS), f: RL.airport(ap, from, to), h: laddRwys(ap, from, to) };
   if (use && a.icao) {
@@ -1811,6 +1820,31 @@ function naTrack(list, nowMs) {
   for (const [id, x] of naF) if (nowMs - x.seen > 15 * 60000) naF.delete(id);
   F24.noRoute = naF.size;
 }
+// (1.2.9) The airports people are looking at - a board, its panel, a card asked for in the last half hour: every flight
+// round each (some 40 km, all of FR24's services - airliners too, which the world scan leaves out), every 40 s, into the
+// runway log: each one's runway as it takes off or comes in, there when its card is opened. Four at a time at most, the
+// latest asked for first; FR24 pushing back pauses it as it pauses the world scan
+async function rwyHotRound() {
+  if (!CFG.fr24Scan || Date.now() < fr24.st.pauseUntil) return 0;
+  // (an airport whose board or panel is open asks every minute: the most asked for first - a card's other end, asked
+  // once, after them)
+  const cut = Date.now() - 30 * 60000, hits = ap => (rwyApHits.get(ap) || []).filter(t => t >= cut).length;
+  const hot = [...rwyApHot].filter(x => x[1] >= cut).sort((a, b) => hits(b[0]) - hits(a[0]) || b[1] - a[1]).slice(0, +CFG.rwyHotMax || 4);
+  const mask = FR.MASKS[Math.min(F24.mask, FR.MASKS.length - 1)];
+  let n = 0;
+  for (const [apId] of hot) {
+    const a = E.byId(apId); if (!a || !Number.isFinite(a.lat) || !Number.isFinite(a.lon)) continue;
+    const dLat = 0.36, dLon = 0.36 / Math.max(0.2, Math.cos(a.lat * Math.PI / 180));
+    try {
+      const r = await fr24.liveFeed({ n: a.lat + dLat, s: a.lat - dLat, w: a.lon - dLon, e: a.lon + dLon, services: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], traffic: 3, limit: 1500, maxage: 900, mask });
+      n += RL.observe(r.flights, Date.now() / 1000, (f, p) => fr24apt.put(f.id, { hex: f.hex || '', reg: f.reg || '', cs: f.cs || '', type: f.type || '' }, [p]));
+      RL.stats.hot = (RL.stats.hot || 0) + 1;
+    } catch (e) { RL.stats.hotErr = String(e && e.message || e).slice(0, 120); if (/paused|429|grpc (8|14)\b|HTTP 40[13]/.test(RL.stats.hotErr)) break; }
+    await sleep(CFG.fr24Gap || 400);
+  }
+  return n;
+}
+async function rwyHotLoop() { for (;;) { await sleep((+CFG.rwyHotEvery || 40) * 1000); try { await rwyHotRound(); } catch (e) { log('runways', String(e && e.stack || e)); } } }
 async function fr24Loop() { for (;;) { const t0 = Date.now(); try { await fr24Round(); } catch (e) { log('fr24', String(e && e.stack || e)); } await sleep(Math.max(5000, CFG.fr24Every * 1000 - (Date.now() - t0))); } }
 // (between scans: the browsers' reports matched as they come, every 30 s)
 async function identLoop() { for (;;) { await sleep(30000); try { await identRound(); } catch (e) { log('ident', String(e && e.stack || e)); } } }
@@ -2689,7 +2723,7 @@ if (require.main === module) {
   if (CFG.datalink) setTimeout(datalinkLoop, 20000);
   if (+CFG.tatEvery > 0) setTimeout(tatLoop, 15000);
   if (+CFG.archiveDays > 0) for (let i = 0; i < Math.max(1, Math.min(4, +CFG.archiveJobs || 1)); i++) setTimeout(archiveLoop, i * 3000);
-  fr24Loop(); identLoop(); trailLoop(); waitLoop();
+  fr24Loop(); identLoop(); trailLoop(); waitLoop(); rwyHotLoop();
   // (every blocked aircraft's owner not known yet: looked up, fifteen a minute at most, those flying now first)
   for (const [hex, b] of blocked) owners.want(hex, b.reg);
   ownersLoop();
@@ -2699,5 +2733,5 @@ if (require.main === module) {
   // (airports' schedules read from FR24 here, for the boards browsers open)
   setInterval(() => { BD.pump().catch(e => log('boards', String(e))); }, 5000);
 }
-module.exports = { boardPlan, rwyFit, rwyKnown, rwyAnswer, rwySave, RL, rwyApAnswer, rwyApWarm, laddRwys, fr24raw, fr24RawRound, wxmap, AGES, agesLearn, withAge, AC, acdbSweep, central, centralStart, centralRound, CR, SC, fleetOf, FL, naF, naTrack, selfEvidence, F24ref2: () => F24, WORLD, WS, AS, BD, boardRows, airportAnswer, apLegs, fr24Track, F24T, worldDay, worldWants, worldRoom, worldStatus, worldRecheck: () => { freeAt = 0; }, pollTat, TAT, TAT_HOST, carriesOn, liveExtra, logOf, heardPts, archBreath, memAvail, archTrace, archiveJob, indexDay, idxLookup, idxHave, archIdx, idxFile, ARC, setArcRange: f => { arcRange = f; }, surgeNow, datalink, datalinkRound, dlSeen, classifyTrace, traceGet, netSt, archiveDay, archiveState, archiveNext, archMark, archTried, archDays, archRunning, traceOf, AR, apliveTrace, HIST_V, HIST_RESET, resetHistLogs, histResetMark, get histResetN() { return histResetN; }, adminAnswer, ctl, logRing, log, MON_VER, learnCheck, learnFromCrowd, crowdLearnSave, crowdRows, LC, tracks, waiting, waitRound, waitLive, waitNamed, waitClaims, WAIT, saveWaiting, loadWaiting, pbMatch, learnedBuild, learnedDue, learnedLoad, learnedRef: () => learnedOut, liveBusy, backWaits, E, CFG, loadEngine, ingest, buildLegs, fr24Legs, fr24Leg, F24ref: () => F24, owners, ownersLoop, APT, legRunways, names, nearAnswer, telAnswer, tel, wx, pbNames, get PUBLIC() { return PUBLIC; }, get RATE() { return RATE; }, limited, tokenOk, installs, opts, optionsSet, optionsLoad, latestCheck, latestVer, helloAnswer, badge, wakeQuiet, parkedAt, boardLegs, flightsOfCs, lastHeard, legs, ac, backfillOne, backQ, blocked, markBlocked, seed, gapFill, addArea, userAreas,
+module.exports = { boardPlan, rwyFit, rwyKnown, rwyAnswer, rwySave, RL, rwyApAnswer, rwyApWarm, laddRwys, rwyHotRound, fr24Client: () => fr24, fr24raw, fr24RawRound, wxmap, AGES, agesLearn, withAge, AC, acdbSweep, central, centralStart, centralRound, CR, SC, fleetOf, FL, naF, naTrack, selfEvidence, F24ref2: () => F24, WORLD, WS, AS, BD, boardRows, airportAnswer, apLegs, fr24Track, F24T, worldDay, worldWants, worldRoom, worldStatus, worldRecheck: () => { freeAt = 0; }, pollTat, TAT, TAT_HOST, carriesOn, liveExtra, logOf, heardPts, archBreath, memAvail, archTrace, archiveJob, indexDay, idxLookup, idxHave, archIdx, idxFile, ARC, setArcRange: f => { arcRange = f; }, surgeNow, datalink, datalinkRound, dlSeen, classifyTrace, traceGet, netSt, archiveDay, archiveState, archiveNext, archMark, archTried, archDays, archRunning, traceOf, AR, apliveTrace, HIST_V, HIST_RESET, resetHistLogs, histResetMark, get histResetN() { return histResetN; }, adminAnswer, ctl, logRing, log, MON_VER, learnCheck, learnFromCrowd, crowdLearnSave, crowdRows, LC, tracks, waiting, waitRound, waitLive, waitNamed, waitClaims, WAIT, saveWaiting, loadWaiting, pbMatch, learnedBuild, learnedDue, learnedLoad, learnedRef: () => learnedOut, liveBusy, backWaits, E, CFG, loadEngine, ingest, buildLegs, fr24Legs, fr24Leg, F24ref: () => F24, owners, ownersLoop, APT, legRunways, names, nearAnswer, telAnswer, tel, wx, pbNames, get PUBLIC() { return PUBLIC; }, get RATE() { return RATE; }, limited, tokenOk, installs, opts, optionsSet, optionsLoad, latestCheck, latestVer, helloAnswer, badge, wakeQuiet, parkedAt, boardLegs, flightsOfCs, lastHeard, legs, ac, backfillOne, backQ, blocked, markBlocked, seed, gapFill, addArea, userAreas,
   serve, fr24, ident, dest, F24, report, identRound, fr24Round, saveIdent, loadIdent, histUnknown, learnSince, learnWrite, diskLegs, KEEP_LADD, save, loadStore, dirtyDays, pollOpenSky, adsbxUse, live, liveList, answer, step, P, piaState, apiGet, gate, stats, lastOk, noteWatch, watch, watchedAll, flew, closeDays, histQ, histPend, histOne, histDay, histOf, histRead, histWrite, histFile, fillHist, fillAsked, queueHist, photos, nextHist, saveState, loadState, lastW, get closed() { return closed; }, set closed(v) { closed = v; }, pause };

@@ -162,7 +162,7 @@ function open(opts, answer, fetchImpl) {
     open1(1009392385, 'TWY677', 'N999YX'); open1(1009392386, 'RYR6LY', 'EI-DLB'); open1(1009392385, 'TWY677', 'N999YX');
     const j = await (await RH.mxLastClicked('https://www.flightradar24.com/restapi/v1/widgets/last-clicked-flights', {})).json();
     const items = j.last_clicked_flights.items;
-    check('last clicked: each flight opened, newest first, once each - in the form FR24\'s widget reads', items.length === 2 && items[0].id === 1009392385 && items[0].callsign === 'TWY677' && items[0].airport.origin.code.iata === 'LIN' && items[0].airport.origin.city === 'Milan' && items[1].registration === 'EI-DLB' && lcs.list.length === 2, items);
+    check('last clicked: each flight opened, newest first, once each - in the form FR24\'s widget reads', items.length === 2 && items[0].id === (1009392385).toString(16) && items[0].callsign === 'TWY677' && items[0].airport.origin.code.iata === 'LIN' && items[0].airport.origin.city === 'Milan' && items[1].registration === 'EI-DLB' && lcs.list.length === 2, items);
     // (1.2.6) a blocked flight: FR24's panel "N/A" as it opens it - then nothing of it once it has landed. Kept named,
     // its aircraft and route from what is known of it here; never written over with "N/A" again
     RH.resolved.set(1009392390, { cs: 'BTX7P', reg: 'D-CVAB', hex: '3c4a8e', type: 'PC24' });
@@ -173,29 +173,30 @@ function open(opts, answer, fetchImpl) {
     check('last clicked: a blocked flight opened while FR24 shows "N/A" - kept with its name, aircraft and route', b0.id === 1009392390 && b0.callsign === 'BTX7P' && b0.registration === 'D-CVAB' && b0.type === 'PC24' && b0.airport.origin.code.iata === 'IGS' && b0.airport.origin.city === 'Ingolstadt' && b0.airport.destination.code.iata === 'BWE', b0);
     RH.resolved.delete(1009392390); RH.routes.delete(1009392390);
     store.selected = { flightInfo: { flightId: 1009392390, callsign: 'N/A' }, aircraftInfo: { reg: 'N/A', type: null }, scheduleInfo: { flightNumber: null } }; RH.mxLcTick();
-    const j2 = await (await RH.mxLastClicked('https://www.flightradar24.com/restapi/v1/widgets/last-clicked-flights', {})).json(), b1 = j2.last_clicked_flights.items.find(x => x.id === 1009392390);
+    const j2 = await (await RH.mxLastClicked('https://www.flightradar24.com/restapi/v1/widgets/last-clicked-flights', {})).json(), b1 = j2.last_clicked_flights.items.find(x => x.id === (1009392390).toString(16));
     check('... FR24\'s panel and this page knowing nothing of it any more: still named - no "N/A N/A-N/A"', !!b1 && b1.callsign === 'BTX7P' && b1.registration === 'D-CVAB' && b1.airport.origin.code.iata === 'IGS' && b1.airport.destination.code.iata === 'BWE', b1);
     // (clicked: one landed - its aircraft's log page in a new tab, FR24's own handler not run; one in the air - FR24's)
     { const doc = R.w.document, wrap = doc.createElement('div'); let opened = null, fr24 = 0; R.w.open = u => { opened = u; return null; };
       lcs.list = j2.last_clicked_flights.items;
-      const pos = lcs.list.findIndex(x => x.id === 1009392390);
+      const pos = lcs.list.findIndex(x => x.id === (1009392390).toString(16));
       wrap.innerHTML = lcs.list.map((x, i) => `<div class="cursor-pointer" id="lc${i}"><div data-testid="last-clicked__callsign">${x.callsign}</div>${i === pos ? '' : '<span data-testid="last-clicked__live"></span>'}</div>`).join('');
       doc.body.appendChild(wrap); [...wrap.children].forEach(el => el.addEventListener('click', () => { fr24++; }));
       doc.getElementById('lc' + pos).firstChild.dispatchEvent(new R.w.MouseEvent('click', { bubbles: true, cancelable: true }));
       check('... clicked once it has landed: its aircraft\'s log page, FR24\'s own (nothing for a blocked flight) not run', opened === '/data/aircraft/d-cvab' && fr24 === 0, { opened, fr24 });
-      opened = null; const other = pos === 0 ? 1 : 0, otherId = Number(lcs.list[other].id), otherUrl = '/' + String(lcs.list[other].callsign).replace(/[^A-Za-z0-9]/g, '') + '/' + Number(lcs.list[other].id).toString(16);
-      // (1.2.8: FR24's own click opened nothing for a flight in the air - its panel opened here, by its store, as FR24 means to)
-      let shownId = null, went = ''; store.showInfoPanel = (id, o) => { shownId = id; store.selected = { flightInfo: { flightId: id } }; return Promise.resolve(); }; RH.setNav(u => { went = u; });
+      // (1.2.9: in the air - FR24's own click, the page kept: the id given to FR24 in its own form, the hex string its
+      // showInfoPanel lower-cases - a number made that throw, every flight in the air "dead", and the reload this script did
+      // then is gone)
+      opened = null; let went = ''; RH.setNav(u => { went = u; });
+      const other = pos === 0 ? 1 : 0, sid = lcs.list[other].id;
       doc.getElementById('lc' + other).firstChild.dispatchEvent(new R.w.MouseEvent('click', { bubbles: true, cancelable: true }));
-      await sleep(2100);
-      check('... clicked while it is in the air (FR24\'s live mark on it): the flight opened on the map here (FR24\'s aircraft panel by its id), FR24\'s own click not run', shownId === otherId && fr24 === 0 && opened === null && went === '', { shownId, otherId, fr24, went });
-      // (the panel not opening - FR24's store refusing: FR24's own address of the flight, /<callsign>/<id in hex>)
-      store.showInfoPanel = () => { throw new Error('no'); }; store.selected = null; went = '';
-      wrap.innerHTML = lcs.list.map((x, i) => `<div class="cursor-pointer" id="lc${i}"><div data-testid="last-clicked__callsign">${x.callsign}</div><span data-testid="last-clicked__live"></span></div>`).join('');
-      const at2 = lcs.list.findIndex(x => Number(x.id) === otherId);
-      doc.getElementById('lc' + at2).firstChild.dispatchEvent(new R.w.MouseEvent('click', { bubbles: true, cancelable: true }));
-      await sleep(2100);
-      check('... its panel not opened within 2 s: FR24\'s own address of the flight', went === otherUrl && fr24 === 0, { went, otherUrl });
+      await sleep(2200);
+      check('... clicked while it is in the air: FR24\'s own click (its id the hex string FR24 lower-cases), nothing reloaded or opened here', fr24 === 1 && typeof sid === 'string' && /^[0-9a-f]{6,}$/.test(sid) && sid.toLowerCase() === sid && went === '' && opened === null, { fr24, sid, went, opened });
+      // (a new tab asked for - ctrl: FR24's own address of the flight)
+      doc.getElementById('lc' + other).firstChild.dispatchEvent(new R.w.MouseEvent('click', { bubbles: true, cancelable: true, ctrlKey: true }));
+      check('... ctrl-clicked: FR24\'s own address of the flight in a new tab', opened === '/' + String(lcs.list[other].callsign).replace(/[^A-Za-z0-9]/g, '') + '/' + sid, opened);
+      // (FR24's widget reordering or clearing by its own ids - the hex strings - understood)
+      await RH.mxLastClicked('https://www.flightradar24.com/restapi/v1/widgets/last-clicked-flights', { method: 'PUT', body: JSON.stringify({ last_clicked_flights: lcs.list.map(x => x.id).reverse() }) });
+      check('... FR24 reordering it by its own ids: kept in that order', RH.mxLcList().map(x => x.id).join() === lcs.list.map(x => parseInt(x.id, 16)).reverse().join(), RH.mxLcList().map(x => x.id));
       wrap.remove(); }
     await RH.mxLastClicked('https://www.flightradar24.com/restapi/v1/widgets/last-clicked-flights', { method: 'PUT', body: JSON.stringify({ last_clicked_flights: [] }) });
     check('... FR24\'s "Clear list": none kept', RH.mxLcList().length === 0);
@@ -279,13 +280,13 @@ function open(opts, answer, fetchImpl) {
     app.__vue_app__ = { config: { globalProperties: { $page: page } } };
     H.mxDataTick(); await sleep(150); H.mxDataTick();
     const fl = page.props.flights;
-    check('departures page: the take-off runway asked by the airport\'s id, put in its row, the padlock off; one not yet flown, and a row of ours with a made-up id, not asked - and no padlock on either ("N/A", 1.2.6)', asks.length === 1 && asks[0].ap === 975 && asks[0].items.length === 1 && asks[0].items[0].fid === '3d1f0001' && asks[0].items[0].landing === false && fl[0].runway === '27R' && fl[0].locked.runway === false && fl[1].runway === null && fl[1].locked.runway === false && fl[2].locked.runway === false, { asks: asks.map(a => a.items), fl: fl.map(f => [f.flightId, f.runway, f.locked.runway]) });
+    check('departures page: the take-off runway asked by the airport\'s id for its card - not put in the row itself (1.2.9: the rows show no runway), the padlock off; one not yet flown, and a row of ours with a made-up id, not asked - and no padlock on either', asks.length === 1 && asks[0].ap === 975 && asks[0].items.length === 1 && asks[0].items[0].fid === '3d1f0001' && asks[0].items[0].landing === false && fl[0].runway === null && H.mxRwy.get('3d1f0001:0') === '27R' && fl[0].locked.runway === false && fl[1].runway === null && fl[1].locked.runway === false && fl[2].locked.runway === false, { asks: asks.map(a => a.items), fl: fl.map(f => [f.flightId, f.runway, f.locked.runway]) });
     H.mxDataTick(); check('... not asked again', asks.length === 1);
     // (the map's airport panel: FR24's /api/v1 answer - its rows by flight.id; the landing's runway, a known one at once)
     const n = H.mxBoardRwy([{ flight: { id: '3d1f0003' }, status: { name: 'landed' }, runway: null }], 'arrivals', 975);
     await sleep(150);
     const rows2 = [{ flight: { id: '3d1f0003' }, status: { name: 'landed' }, runway: null }, { flight: { id: '3d1f0004' }, status: { name: 'estimated' }, runway: null }], n2 = H.mxBoardRwy(rows2, 'arrivals', 975);
-    check('map panel rows: the landing\'s runway asked, then put in from what came back; one still in the air left alone', n === 0 && asks.length === 2 && asks[1].items[0].landing === true && n2 === 1 && rows2[0].runway === '09L' && rows2[1].runway === null, { n, n2, rows2 });
+    check('map panel rows: the landing\'s runway asked and kept for its card, the row itself left without one; one still in the air not asked', n === 0 && asks.length === 2 && asks[1].items[0].landing === true && asks[1].items.length === 1 && n2 === 0 && rows2[0].runway === null && rows2[1].runway === null && H.mxRwy.get('3d1f0003:1') === '09L', { n, n2, rows2 });
     R.w.close(); }
   // ---- the switch off
   const Q = open({ mapx: false }, answer); await sleep(200);
