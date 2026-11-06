@@ -136,14 +136,16 @@ const LOCKED = () => ({ arrival: { name: null, upsell: true }, departure: { name
   // ================= the userscript: named on the ground at once, provisionally; confirmed or replaced once heard ==========
   { const FIDB = require(path.join(NM, 'fake-indexeddb'));
     const AIRPORTS = fs.readFileSync(path.join(D, 'airports.json'), 'utf8'), MON = 'https://143-47-224-210.sslip.io';
+    // (a request to the monitor: its path - the address read, its origin compared whole)
+    const monPath = u => { try { const x = new URL(String(u)); return x.origin === MON ? x.pathname : null; } catch (e) { return null; } };
     const E = createRouteEngine(); E.setAirports(JSON.parse(AIRPORTS).rows);
     const bwe = E.byIcao('EDVE'), tEnd = now - 3 * 86400;
     let parkedAsked = 0;
     const answer = url => {
       if (/flightradar24\.com\/mobile\/airports\/format/.test(url)) return [200, AIRPORTS];
-      if (url.startsWith(MON + '/status')) return [200, JSON.stringify({ v: 1, public: true })];
-      if (url.startsWith(MON + '/parked')) { parkedAsked++; return [200, JSON.stringify({ list: [{ hex: '3c4a8e', reg: 'D-CVAB', type: 'PC24', ladd: true, last: { from: { id: bwe.id + 1 }, to: { id: bwe.id }, ended: true, open: false, tStart: tEnd - 3600, tEnd, type: 'PC24', reg: 'D-CVAB' } }] })]; }
-      if (url.startsWith(MON)) return [200, '{}'];
+      if (monPath(url) === '/status') return [200, JSON.stringify({ v: 1, public: true })];
+      if (monPath(url) === '/parked') { parkedAsked++; return [200, JSON.stringify({ list: [{ hex: '3c4a8e', reg: 'D-CVAB', type: 'PC24', ladd: true, last: { from: { id: bwe.id + 1 }, to: { id: bwe.id }, ended: true, open: false, tStart: tEnd - 3600, tEnd, type: 'PC24', reg: 'D-CVAB' } }] })]; }
+      if (monPath(url) !== null) return [200, '{}'];
       return [404, ''];
     };
     const win = new JSDOM('<!doctype html><html><head></head><body><div id="app"></div></body></html>', { url: 'https://www.flightradar24.com/52.32,10.55/12', runScripts: 'dangerously', pretendToBeVisual: true }).window;
@@ -184,8 +186,8 @@ const LOCKED = () => ({ arrival: { name: null, upsell: true }, departure: { name
       // (the monitor's /age: one answer per key asked, in order - only the PC-24 dated here)
       const ageAns = u => JSON.stringify({ list: decodeURIComponent(String(u).split('q=')[1] || '').split(';').map(k => /^GL5T~9868~/.test(k) ? [2009, 0, 'its serial number'] : null) });
       const answer0 = answer;
-      win.fetch = input => { let u = typeof input === 'string' ? input : input.url; if (u.startsWith(MON + '/age')) { ageQ = u; return Promise.resolve(new Response(ageAns(u), { status: 200 })); } const [st, text] = answer0(u); return Promise.resolve(new Response(text, { status: st })); };
-      const ga = win.GM_xmlhttpRequest; win.GM_xmlhttpRequest = o => { if (String(o.url).startsWith(MON + '/age')) { ageQ = String(o.url); setTimeout(() => o.onload && o.onload({ status: 200, responseText: ageAns(o.url), responseHeaders: '' }), 5); return { abort() {} }; } return ga(o); };
+      win.fetch = input => { let u = typeof input === 'string' ? input : input.url; if (monPath(u) === '/age') { ageQ = u; return Promise.resolve(new Response(ageAns(u), { status: 200 })); } const [st, text] = answer0(u); return Promise.resolve(new Response(text, { status: st })); };
+      const ga = win.GM_xmlhttpRequest; win.GM_xmlhttpRequest = o => { if (monPath(o.url) === '/age') { ageQ = String(o.url); setTimeout(() => o.onload && o.onload({ status: 200, responseText: ageAns(o.url), responseHeaders: '' }), 5); return { abort() {} }; } return ga(o); };
       const box = win.document.createElement('div'); box.id = 'cnt-aircraft-info';
       box.innerHTML = '<div class="row"><label>TYPE CODE</label> <span class="details">GL5T</span></div><div class="row"><label>SERIAL NUMBER (MSN)</label> <span class="details">9868</span></div>'
         + '<div class="row"><label>AGE</label> <span class="details"><a class="disabled premium-content"><svg class="icon-fr24-lock"></svg></a></span></div>';
