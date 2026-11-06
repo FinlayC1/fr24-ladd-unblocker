@@ -11,6 +11,7 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 - Blocked flights' runways now show on boards and cards (M-PORT's), from their ADS-B tracks.
 - The map's airport panel shows the runway in use for departures and arrivals under its weather, tagged PREDICTED (from the wind) or CONFIRMED (the wind and the last hour and a half's traffic agree).
 - FR24's airport data pages (`/data/airports/<code>`) get the same: runways on their rows, "N/A" airports filled, the runway in use under their weather card.
+- The squawk in the flight panel has no padlock any more. Over an ocean (DAL126) it shows the code the aircraft was last heard with since take-off.
 
 ### Added
 - **Live runway log on the monitor** (`monitor/rwylog.cjs`).
@@ -37,6 +38,11 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
   - Runways on their rows, blocked flights' included.
   - The other airport filled in on FR24's own rows that said "N/A".
   - The runway in use.
+- **The flight panel's squawk was still padlocked, and a flight out of coverage showed no code** (DAL126 over the Atlantic). FR24 locks the squawk for a free
+  account whatever the flight sends, and its panel reads the code from the map's record of the flight, which never had the last one heard. The squawk is
+  now unlocked like the other panel figures, and the flight open in the panel gets the code it was last heard with since take-off: from the monitor, or,
+  when the monitor never heard it, from the aircraft's public ADS-B record of the day.
+- **The monitor's runway test** read the old runways file, which 1.2.7's runway log replaces. It now checks the runway log is read back after a restart.
 
 ## [1.2.6] - 2026-11-06
 

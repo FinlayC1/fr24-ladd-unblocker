@@ -1164,11 +1164,19 @@
   }
   // (1.2.4) the squawk an aircraft was last heard with in the air - the monitor keeps each one 16 hours - for FR24's panel of
   // a flight no receiver hears now (over an ocean); the page takes it only if heard since this flight took off
+  // (1.2.7: and where the monitor never heard it - an airliner off New York with nobody looking there - the aircraft's
+  // public ADS-B record of the day, adsb.lol's, as read for its log: the last code it sent in the air)
   async function onWantSq(d) {
-    const hex = String(d && d.hex || '').toLowerCase(); if (!/^[0-9a-f]{6}$/.test(hex) || !monUp()) return;
-    const j = await monGet(`/tel?hex=${hex}`, { timeout: 8000 });
-    const l = j && j.last && j.last[hex];
-    if (Array.isArray(l) && /^[0-7]{4}$/.test(String(l[0])) && fin(l[1])) postToPage('lastSq', { hex, sq: String(l[0]), at: l[1] * 1000 });
+    const hex = String(d && d.hex || '').toLowerCase(); if (!/^[0-9a-f]{6}$/.test(hex)) return;
+    let got = false;
+    if (monUp()) {
+      const j = await monGet(`/tel?hex=${hex}`, { timeout: 8000 }).catch(() => null);
+      const l = j && j.last && j.last[hex];
+      if (Array.isArray(l) && /^[0-7]{4}$/.test(String(l[0])) && fin(l[1])) { postToPage('lastSq', { hex, sq: String(l[0]), at: l[1] * 1000 }); got = true; }
+    }
+    if (got) return;
+    const td = await loadToday(hex, 600000).catch(() => null), pts = (td && Array.isArray(td.pts)) ? td.pts : [];
+    for (let i = pts.length - 1; i >= 0; i--) { const p = pts[i]; if (p && !p.gnd0 && /^[0-7]{4}$/.test(String(p.sq || '')) && fin(p.t)) { postToPage('lastSq', { hex, sq: String(p.sq), at: p.t * 1000 }); return; } }
   }
   const nz = v => (fin(v) ? v : null);
   function pushPubTel(list) {

@@ -283,6 +283,17 @@
       sqAsked.set(hex, Date.now()); if (sqAsked.size > 4000) sqAsked.delete(sqAsked.keys().next().value);
       post('wantSq', { hex: hex });
     }
+    // (1.2.7) The flight open in the panel, heard by no receiver now - an ocean, ADS-C by satellite: the code it was last
+    // heard with since it took off (the panel's trail says when; with none, the last two hours), in FR24's own record of
+    // it - the panel's squawk is read from there. Asked of the userscript once if not here (the monitor, else the
+    // aircraft's public ADS-B record of the day)
+    function lastSqFor(id, hex, cs, reg, gnd) {
+      if (gnd || !followSt || followSt.id !== id) return 0;
+      var from = followSt.t0 > 0 ? followSt.t0 * 1000 - 600000 : Date.now() - 2 * 3600e3;
+      var sq = sqSince(['F' + id, /^[0-9a-f]{6}$/.test(hex || '') ? 'H' + hex : '', cs ? 'C' + String(cs).toUpperCase() : '', reg ? 'R' + reg : ''], from);
+      if (!(sq > 0)) wantSq(hex);
+      return sq > 0 ? sq : 0;
+    }
     function onLastSq(d) { if (d && /^[0-9a-f]{6}$/.test(d.hex || '') && /^[0-7]{4}$/.test(String(d.sq || ''))) noteSq(['H' + d.hex], parseInt(d.sq, 8), Number(d.at) || 0); }
     // (FR24's playback: the altitudes of the moments played, apart from the live ones - started afresh on a jump)
     function altHistFor(pbTs) { if (!pbTs) return altHist; if (Math.abs(pbTs - pbAltTs) > 300) pbAltHist.clear(); pbAltTs = pbTs; return pbAltHist; }
@@ -337,6 +348,7 @@
       var air = tl0 && tl0.air ? tl0.air : '', airId = air ? tl0.airId || '' : '';
       if (!air) { var ac0 = airFor(id, lat, lon, gnd ? 0 : alt); if (ac0) { air = ac0.name; airId = ac0.code; } else wantAir(id, lat, lon, gnd ? 0 : alt); }
       var sq = tl0 && tl0.sq > 0 && !has(ex, 5) ? tl0.sq : 0, ems = tl0 ? emsBytes(tl0) : null;
+      if (!sq && !has(ex, 5) && !pbTs) sq = lastSqFor(id, hexS, cs, reg, gnd);
       var vsFlag = !fin(vr) && !has(ex, 6), exU = [], k0;
       for (k0 = 0; k0 < ex.length; k0++) { var fu = ex[k0].fn; if (fu === 13 || fu === 16 || fu === 18 || (fu === 17 && !vsFlag) || (fin(vr) && fu === 6) || (ems && fu === 12) || (sq && fu === 5) || (air && (fu === 11 || fu === 19))) continue; exU.push(ex[k0].raw); }
       if (fin(vr)) exU.push(fInt(6, Math.round(vr)));
@@ -390,6 +402,8 @@
       var airL = tlL && tlL.air || '', airIdL = airL ? tlL.airId || '' : '';
       if (!airL) { var acL = airFor(id, lat1, lon1, gnd1 ? 0 : alt1); if (acL) { airL = acL.name; airIdL = acL.code; } else wantAir(id, lat1, lon1, gnd1 ? 0 : alt1); }
       var sqL = (tlL && tlL.sq > 0 ? tlL.sq : rec.squawk) || 0; if (has(ex, 5)) sqL = 0;
+      // (1.2.7: heard by nobody now - the code it was last heard with since it took off)
+      if (!(sqL > 0) && !has(ex, 5) && !pbTs) sqL = lastSqFor(id, rec.hex || '', label, rec.reg || '', gnd1);
       for (i = 0; i < ex.length; i++) { var f = ex[i]; if ((f.fn === 2 && !f.val.length) || (f.fn === 14 && !f.val)) continue; if (f.fn === 13 || f.fn === 16 || f.fn === 18 || (f.fn === 17 && !vsFlagL) || (fin(vrL) && f.fn === 6) || (emsL && f.fn === 12)) continue; if (airL && (f.fn === 11 || f.fn === 19)) continue; exKeep.push(f.raw); }
       if (fin(vrL)) exKeep.push(fInt(6, Math.round(vrL)));
       if (emsL) exKeep.push(fLen(12, emsL));
@@ -2532,7 +2546,10 @@
     var MX_OPTS = ['map.layer.weather', 'map.layer.weather.radar', 'map.layer.weather.radar.global', 'map.layer.weather.satellite', 'map.layer.weather.naradar', 'map.layer.weather.auradar', 'map.layer.weather.wind', 'map.layer.weather.lightning', 'map.layer.weather.airmet', 'map.layer.weather.highlevel', 'map.layer.weather.icing', 'map.layer.weather.ict',
       'map.layer.atc', 'map.layer.tracks.oceanic', 'map.layer.ndb', 'map.layer.ndb.alt.low', 'map.layer.ndb.alt.high', 'map.widgets.last_clicked_flights',
       // (1.2.1: the aircraft labels - the flag, the logo's text row)
-      'map.labels.flag', 'map.labels.logo_text_row'];
+      'map.labels.flag', 'map.labels.logo_text_row',
+      // (1.2.7: the squawk - FR24 padlocks it for a free account whatever the flight sends, its value or "N/A" shown instead;
+      // the code filled from public ADS-B where FR24 has none, the last one heard over an ocean)
+      'map.info.flight.squawk'];
     function mxFail(e) { mx.fails++; mx.lastError = String(e && e.message || e).slice(0, 160); }
     var mxNs = null, mxWrap = null;
     // (FR24's map wrapper - in its core module, usable once the map is made: its Google map, its picture layers)
@@ -3887,7 +3904,7 @@
     function mxPbFlags(on) {
       if (!mxPlans) return;
       MX_PB_FLAGS.forEach(function (k) {
-        var a = mxPlans[k]; if (!Array.isArray(a)) return;
+        var a = mxPlans[k]; if (!Array.isArray(a) || MX_OPTS.indexOf(k) >= 0) return;
         if (on) { ['basic', 'Basic', 'BASIC', 'guest', 'Guest', 'GUEST'].forEach(function (p) { if (a.indexOf(p) < 0) { a.push(p); (mxPbAdded[k] = mxPbAdded[k] || []).push(p); } }); }
         else { (mxPbAdded[k] || []).forEach(function (p) { var i = a.indexOf(p); if (i >= 0) a.splice(i, 1); }); mxPbAdded[k] = []; }
       });

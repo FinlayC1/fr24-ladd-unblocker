@@ -277,6 +277,26 @@ check('ordinary aircraft: FR24 data kept (registration, callsign, photos)', str(
   const e3 = one(H.patchFlightMsg(cat([H.fLen(1, ai3), H.fLen(5, efi3), tp(t0, 0), tp(now - 60, 37000)]), st3, H.FOLLOW), 5).val;
   check('... one heard before this flight took off (an earlier flight\'s code): not used', !one(e3, 15), num(e3, 15));
 }
+// 4d) (1.2.7) DAL126 over the Atlantic, open in the panel, no receiver hearing it: FR24's panel reads the squawk from the
+//     map's own record of the flight (LiveFeed), not the followed stream - the code last heard since take-off goes there too
+{
+  const fF = (fn, v) => { const b = new Uint8Array(5); b[0] = (fn << 3) | 5; new DataView(b.buffer).setFloat32(1, v, true); return b; };
+  const now = Math.floor(Date.now() / 1000), fid = 0x3c2c0001;
+  const rec = (id, hex, ext) => cat([H.fVar(1, id), fF(2, 48.0), fF(3, -35.0), H.fVar(4, 80), H.fVar(5, 37000), H.fVar(6, 480), H.fVar(9, now), H.fVar(10, 0), H.fStr(11, 'DAL126'),
+    H.fLen(13, cat([H.fStr(2, 'N172DZ'), H.fStr(4, 'B763'), H.fVar(14, hex)].concat(ext || [])))]);
+  const sqOf = out => { const f = H.parse(out).find(x => x.fn === 1); const e = f && one(f.val, 13); return e ? num(e.val, 5) : undefined; };
+  H.setFollowSt({ id: fid, t0: now - 4 * 3600 }); posted.length = 0;
+  const o1 = H.patchLiveFeed(cat([H.fLen(1, rec(fid, 0xa1b2c3))]), false, 0);
+  check('the followed flight out of coverage, no squawk in FR24\'s map record: the last one heard asked for', !sqOf(o1) && posted.some(d => d && d.__tweeksLadd === 'wantSq' && d.hex === 'a1b2c3'), sqOf(o1));
+  w.dispatchEvent(new w.MessageEvent('message', { data: { __tweeksLadd: 'lastSq', hex: 'a1b2c3', sq: '1063', at: (now - 3 * 3600) * 1000 }, source: w }));
+  const o2 = H.patchLiveFeed(cat([H.fLen(1, rec(fid, 0xa1b2c3))]), false, 0);
+  check('... answered (heard since take-off): in FR24\'s map record, which the panel reads', sqOf(o2) === 0x1063, sqOf(o2));
+  const o3 = H.patchLiveFeed(cat([H.fLen(1, rec(fid, 0xa1b2c3, [H.fVar(5, 0x2200)]))]), false, 0);
+  check('... FR24\'s own squawk when it has one: kept as it came', sqOf(o3) === 0x2200, sqOf(o3));
+  const o4 = H.patchLiveFeed(cat([H.fLen(1, rec(fid + 7, 0xa1b2c3))]), false, 0);
+  check('... a flight not open in the panel: left as FR24 sent it', !sqOf(o4), sqOf(o4));
+  H.setFollowSt(null);
+}
 // 5) pictures and a route arriving while the panel is open go into FR24's stream at once, as a frame of our own: FR24
 //    reads it when told the response has grown (tried on the live site: its store took it 7 ms later) - not at FR24's
 //    next update, and never only after reopening the panel
