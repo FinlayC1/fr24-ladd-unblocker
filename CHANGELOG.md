@@ -4,6 +4,16 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 
 1.0.0 is the first release. The versions before it are the betas, labelled B: B22.31.12 is version 22.31.12.
 
+## [1.2.11] - 2026-11-06
+
+### In short
+- The runway in use follows what the traffic is doing, not the wind. JFK, landing on 22L and taking off from 22R minutes before, was shown "31L, predicted" because the wind put a 5 kt tailwind on 22. The wind now only takes over when it blows more than 10 kt behind the runway in use.
+- The airport panel opens with its departures and arrivals runway tiles in, built as FR24 draws the panel, instead of appearing a moment later.
+
+### Fixed
+- **The runway tiles came in after the airport panel had opened.** They were added on the page's regular look at the panel, up to 0.4 s after FR24 had drawn it, and read "N/A" until the airport's runways were in. They are now built the moment FR24 draws the panel's weather, before the browser paints, so the panel opens with them. While the airport's runways are still on their way, the tiles stand empty rather than showing "N/A", and they are filled the moment the answer arrives. The answer is asked for as FR24 asks for the airport, and what this browser kept of it from last time is shown at once.
+- **The wind overrode the traffic.** An airport's latest movements only counted while the wind put no more than 5 kt of tailwind on their runway; past that, the panel went by the wind alone. At JFK on 6 November, with the wind at 340° 8 kt (5 kt behind 22L and 22R), landings on 22L and take-offs from 22R from the last few minutes gave way to "31L, predicted". The traffic of the last 90 minutes now decides with up to 10 kt of tailwind, as airports do run, and is confirmed while it is from the last half hour. With more than 10 kt behind it, beyond what airports accept, only traffic of the last 10 minutes beats the wind: older than that, the airport has likely turned round.
+
 ## [1.2.10] - 2026-11-06
 
 ### In short
