@@ -78,6 +78,7 @@ flowchart TB
 | `monitor/owners.cjs` | Owners and operators, looked up once and kept |
 | `monitor/acdb.cjs` | (1.1.1) Every aircraft in the world: the open aircraft databases and registers merged once a week, in a worker thread |
 | `monitor/airport.cjs` | Runways in full, frequencies, and which runway each tracked flight used |
+| `monitor/rwylog.cjs` | The runway of every take-off and landing FR24 draws, logged live from FR24's own tracks and kept by day and airport |
 | `monitor/mkdata.cjs` | Builds the runway and frequency data from OurAirports |
 
 ## 3. The userscript
@@ -201,6 +202,8 @@ Each report is appended to the aircraft's position rows. Every 2 minutes the row
 Flights are written as one file per day (`legs-YYYY-MM-DD.json`). Blocked aircraft's flights are kept **for good**: a day's file is only ever added to, and the last 90 days are also held in memory. Other aircraft's flights are kept for 4 days. A board asked for older days reads them from disk.
 
 Each take-off and landing at an airport also gets the **runway** used (`airport.cjs`). That is the runway end whose extended centreline the aircraft was on, going that way: down the final approach, or climbing out from the threshold. Positions are weighed by closeness to the centreline and agreement of track, and the answer is one clear runway or none.
+
+Since 1.2.7 the monitor logs the runway of **every** flight FR24 draws, worldwide, as it happens (`rwylog.cjs`). Each scan of FR24's whole map (every two minutes) keeps FR24's own positions of each flight near an airport and low (`fr24apt`: within 15 km, below 4,000 ft, or rolling on the ground; 14 days). From them, the take-off runway is logged the moment the flight is seen climbing out along a runway, and the landing runway the moment it is seen on the final approach, and again lower down. A flight's whole trail from FR24, where the monitor has one, gives both ends over the scans' guess. A blocked flight's runways come from its ADS-B track. An airport's runways are given all at once (`/rwyap`), so a board opens with them in, and its last day's movements by runway (`/rwyuse`) give the runway in use: predicted from the wind, confirmed by the traffic.
 
 ### 4.3 Day logs (`/hist`)
 

@@ -57,8 +57,8 @@ function createIdent(env) {
 
   // ---- the candidates: every aircraft heard lately, newest report per address -----------------------------------------
   // (one aircraft as a candidate, from what this side heard of it: live list, kept positions, the area lookups)
-  const fromLive = (hex, l) => { const a = l.a, fl = a.dbFlags | 0; return { hex, lat: a.lat, lon: a.lon, alt: a.alt_baro === 'ground' ? 0 : a.alt_baro, gnd: a.alt_baro === 'ground', gs: a.gs, trk: a.track, t: l.t, reg: String(a.r || '').toUpperCase(), type: String(a.t || '').toUpperCase(), ladd: !!(fl & 8) || !!(env.blocked.get(hex) || {}).faa, pia: !!(fl & 4), mil: !!(fl & 1), nonIcao: String(a.hex || '').startsWith('~'), cs: String(a.flight || '').trim() }; };
-  const fromKept = (hex, x) => { const p = x.meta && x.meta.lastPos; return p ? { hex, lat: p.lat, lon: p.lon, alt: p.alt === 'ground' ? 0 : p.alt, gnd: p.alt === 'ground', gs: p.gs, trk: p.trk, t: p.t, reg: String(x.meta.reg || '').toUpperCase(), type: String(x.meta.type || '').toUpperCase(), ladd: !!(env.blocked.get(hex) || {}).faa, pia: !!x.meta.pia, mil: !!x.meta.mil, cs: x.meta.cs || '' } : null; };
+  const fromLive = (hex, l) => { const a = l.a, fl = a.dbFlags | 0; return { hex, lat: a.lat, lon: a.lon, alt: a.alt_baro === 'ground' ? 0 : a.alt_baro, gnd: a.alt_baro === 'ground', gs: a.gs, trk: a.track, t: l.t, reg: String(a.r || '').toUpperCase(), type: String(a.t || '').toUpperCase(), ladd: !!(fl & 8) || !!(env.blocked.get(hex) || {}).faa, pia: !!(fl & 4), mil: !!(fl & 1), nonIcao: String(a.hex || '').startsWith('~'), cs: String(a.flight || '').trim(), cat: String(a.category || '').toUpperCase() }; };
+  const fromKept = (hex, x) => { const p = x.meta && x.meta.lastPos; return p ? { hex, lat: p.lat, lon: p.lon, alt: p.alt === 'ground' ? 0 : p.alt, gnd: p.alt === 'ground', gs: p.gs, trk: p.trk, t: p.t, reg: String(x.meta.reg || '').toUpperCase(), type: String(x.meta.type || '').toUpperCase(), ladd: !!(env.blocked.get(hex) || {}).faa, pia: !!x.meta.pia, mil: !!x.meta.mil, cs: x.meta.cs || '', cat: String(x.meta.cat || '').toUpperCase() } : null; };
   const usable = (c, nowS) => !!c && fin(c.lat) && fin(c.lon) && c.t > 0 && nowS - c.t <= 600;
   function candidates(nowS) {
     const out = new Map();
@@ -84,6 +84,9 @@ function createIdent(env) {
   // (1.2.3) two business jets the databases name differently: the one aircraft only where it fits as one aircraft does -
   // in the air, within 4 km, 800 ft, 20 degrees and 50 kt - and behind any of FR24's own type nearby (N999YX: GLEX to
   // ADS-B, GLF6 to FR24, never named over Europe)
+  // (1.2.7) a candidate's type as believed: none where its own transponder contradicts the database (engine typeDoubt -
+  // N99MB, a Challenger filed as a Cessna 210)
+  const typeOfCand = c => !c ? '' : E.typeDoubt && E.typeDoubt(c.type, c.cat, c.gs, c.alt) ? '' : (c.type || '');
   const kinFits = (F, c, d) => !F.gnd && !c.gnd && d <= 4 && (!fin(F.alt) || !fin(c.alt) || Math.abs(F.alt - c.alt) <= 800) && (!fin(F.trk) || !fin(c.trk) || E.angDiff(F.trk, c.trk) <= 20) && (!fin(F.spd) || !fin(c.gs) || Math.abs(F.spd - c.gs) <= 50);
   function project(lat, lon, gsKt, trk, seconds) {
     if (!seconds || !(gsKt > 0) || !fin(trk)) return [lat, lon];
@@ -92,7 +95,7 @@ function createIdent(env) {
   }
   function score(F, c) {
     const dt = F.ts - c.t; if (Math.abs(dt) > C.maxCandAge) return null;
-    const rel = typeRelation(F.type, c.type); if (rel === 'different') return null;
+    const cType = typeOfCand(c), rel = typeRelation(F.type, cType); if (rel === 'different') return null;
     if (F.gnd && F.type && rel === 'unknown' && !(c.ladd || c.pia)) return null;
     const [clat, clon] = project(c.lat, c.lon, c.gs, c.trk, dt), d = E.dist(F.lat, F.lon, clat, clon);
     if (d > 15) return null;
@@ -102,7 +105,7 @@ function createIdent(env) {
     if (!!F.gnd !== !!c.gnd && F.alt > 1500) return null;
     if (!F.gnd && fin(F.trk) && fin(c.trk) && F.spd > 60 && c.gs > 60) { const dtk = E.angDiff(F.trk, c.trk); if (dtk > 50) return null; s += dtk / 8; }
     if (fin(F.spd) && fin(c.gs) && F.spd > 60) { const ds = Math.abs(F.spd - c.gs); if (ds > 140) return null; s += ds / 25; }
-    if (rel === 'same') s -= 2; else if (rel === 'family') s += 1; else if (rel === 'kin') s += 3; else if (F.type && !c.type) s += 0.5;
+    if (rel === 'same') s -= 2; else if (rel === 'family') s += 1; else if (rel === 'kin') s += 3; else if (F.type && !cType) s += 0.5;
     if (c.ladd || c.pia) s -= 0.75;
     if (c.nonIcao) s += 2;
     return { c, d, s, rel };
@@ -143,10 +146,14 @@ function createIdent(env) {
   function verify(F, R, c, nowMs) {
     if (F.src === 4 || F.src === 5 || Math.abs(F.ts - c.t) > 60) return;
     const [clat, clon] = project(c.lat, c.lon, c.gs, c.trk, F.ts - c.t), d = E.dist(F.lat, F.lon, clat, clon);
-    const bad = d > (F.gnd ? 5 : 25) || (!F.gnd && fin(F.alt) && fin(c.alt) && Math.abs(F.alt - c.alt) > 8000);
+    // (1.2.7) heard standing on the ground while FR24 has the flight in the air, 1,500 ft and more up, 3 km and more away:
+    // not it - N676BA parked at Teterboro, its name on the Challenger FR24 drew climbing out to LaGuardia
+    const clash = !!c.gnd && !F.gnd && fin(F.alt) && F.alt > 1500 && d > 3;
+    const bad = clash || d > (F.gnd ? 5 : 25) || (!F.gnd && fin(F.alt) && fin(c.alt) && Math.abs(F.alt - c.alt) > 8000);
     if (!bad) { if (d <= (F.gnd ? 2 : 8)) { R.ver = Math.round(nowMs / 1000); R.strikes = null; } return; }
     const s = R.strikes || (R.strikes = { n: 0, first: nowMs }); s.n++;
-    if (s.n >= 4 && nowMs - s.first >= 180000) unassign(F.id, nowMs, 'diverged');
+    if (clash) { s.clash = (s.clash || 0) + 1; if (!s.clashAt) s.clashAt = nowMs; }
+    if ((s.n >= 4 && nowMs - s.first >= 180000) || (s.clash >= 2 && nowMs - s.clashAt >= 30000)) unassign(F.id, nowMs, 'diverged');
   }
 
   // ---- out of coverage --------------------------------------------------------------------------------------------
@@ -184,7 +191,8 @@ function createIdent(env) {
       const rel = typeRelation(x.meta.type, F.type); if (rel === 'different') continue;
       const pts = []; for (const r of x.rows) if (fin(r[1]) && fin(r[2])) pts.push({ t: r[0], lat: r[1], lon: r[2] });
       const a = E.trackAgree(trk, pts);
-      if (a.n >= 6 && a.span >= 180 && a.bad <= Math.max(1, a.n * 0.05)) fits.push({ hex, x, s: a.medKm, span: a.span });
+      // (1.2.7: a business jet of another make - kin - only where the two tracks are one beyond doubt: ten minutes, within 1 km)
+      if (rel === 'kin' ? a.n >= 12 && a.span >= 600 && a.bad === 0 && a.medKm <= 1 : a.n >= 6 && a.span >= 180 && a.bad <= Math.max(1, a.n * 0.05)) fits.push({ hex, x, s: a.medKm, span: a.span });
     }
     if (!fits.length) return null;
     fits.sort((a, b) => a.s - b.s);
@@ -226,11 +234,22 @@ function createIdent(env) {
     for (const [id, R, G] of lost) {
       if (id === F.id || byHex.get(R.hex) !== id || !ids.has(id)) continue;
       const gap = F.ts - G.ts; if (gap < 120 || gap > 1800) continue;
-      if (typeRelation(G.type, F.type) === 'different') continue;
+      // (1.2.7) both FR24's own types - FR24 gives one aircraft one type: another type is another aircraft. N676BA, FR24's
+      // G600, lost on its final approach to Teterboro, handed its name to N99MB, FR24's Challenger, taking off there
+      // two minutes later (business jets of two makes are only "kin" where two databases name one aircraft)
+      const rel = typeRelation(G.type, F.type); if (rel !== 'same' && rel !== 'unknown') continue;
+      // (lost low - below 3,000 ft: landing, or below the receivers at an airport - is not a hole in the coverage en route)
+      if (fin(G.alt) && G.alt < 3000) continue;
       const [la, lo] = project(G.lat, G.lon, G.spd, G.trk, gap), d = E.dist(F.lat, F.lon, la, lo);
       if (d > Math.max(20, gap / 60 * 2.5)) continue;
       if (fin(G.alt) && Math.abs(F.alt - G.alt) > 3000 + gap / 60 * 1500) continue;
-      const c = candOf(R.hex, nowS); if (c && nowS - c.t < 180 && E.dist(c.lat, c.lon, F.lat, F.lon) > 20) continue;
+      // (heard by ADS-B since FR24 lost it: in coverage - the one where FR24 has this flight, or not it: on the ground, 5 km
+      // and more away, 1,500 ft off)
+      const c = candOf(R.hex, nowS);
+      if (c && c.t > G.ts + 30) {
+        const [ca, co] = project(c.lat, c.lon, c.gs, c.trk, F.ts - c.t);
+        if (c.gnd || E.dist(F.lat, F.lon, ca, co) > 5 || (fin(c.alt) && Math.abs(F.alt - c.alt) > 1500)) continue;
+      }
       found.push({ hex: R.hex, R, d });
     }
     return found.length === 1 ? found[0] : null;
@@ -252,6 +271,12 @@ function createIdent(env) {
           const b = best(F, near(g, F.lat, F.lon), nowMs);
           if (b && b.c.hex !== R.hex) { assign(F, b.c.hex, infoOf(b.c.hex, env.ac.get(b.c.hex), b.c), cache.has(b.c.hex) ? 'lookup' : 'list', nowMs); continue; }
           if (b) { R.air = 1; R.ver = Math.round(nowMs / 1000); R.chg = nowMs; }
+        }
+        // (1.2.7) a name carried over a hole (handover), the aircraft then heard standing on the ground 5 km and more from
+        // where FR24 has the flight: not it - N676BA parked at Teterboro, its name on FR24's Challenger at LaGuardia
+        if (R.how === 'handover') {
+          const x = env.ac.get(R.hex), p = x && x.meta && x.meta.lastPos;
+          if (p && p.alt === 'ground' && p.t > (R.at || 0) + 30 && fin(p.lat) && fin(p.lon) && E.dist(p.lat, p.lon, F.lat, F.lon) > 5) { unassign(F.id, nowMs, 'diverged'); unmatched.push(F); continue; }
         }
         const c = cands.get(R.hex); if (c) verify(F, R, c, nowMs); if (!ids.has(F.id)) { unmatched.push(F); } else {
           // (what the aircraft is, learned later - the LADD flag from a list it turned up on: added to its name, never taken off)
@@ -297,7 +322,7 @@ function createIdent(env) {
       if (!a || !a.hex || !fin(+a.lat) || !fin(+a.lon)) continue;
       const hex = String(a.hex).toLowerCase().replace(/^~/, ''), fl = a.dbFlags | 0, t = Math.round(nowS - (a.seen_pos != null ? a.seen_pos : a.seen || 0));
       const p = cache.get(hex); if (p && p.t >= t) continue;
-      cache.set(hex, { hex, lat: +a.lat, lon: +a.lon, alt: a.alt_baro === 'ground' ? 0 : a.alt_baro, gnd: a.alt_baro === 'ground', gs: a.gs, trk: a.track, t, reg: String(a.r || '').toUpperCase(), type: String(a.t || '').toUpperCase(), ladd: !!(fl & 8), pia: !!(fl & 4), mil: !!(fl & 1), nonIcao: String(a.hex).startsWith('~'), cs: String(a.flight || '').trim() });
+      cache.set(hex, { hex, lat: +a.lat, lon: +a.lon, alt: a.alt_baro === 'ground' ? 0 : a.alt_baro, gnd: a.alt_baro === 'ground', gs: a.gs, trk: a.track, t, reg: String(a.r || '').toUpperCase(), type: String(a.t || '').toUpperCase(), ladd: !!(fl & 8), pia: !!(fl & 4), mil: !!(fl & 1), nonIcao: String(a.hex).startsWith('~'), cs: String(a.flight || '').trim(), cat: String(a.category || '').toUpperCase() });
       n++;
     }
     stats.lookups++;
@@ -319,6 +344,14 @@ function createIdent(env) {
   function clientId(id, hex, how, nowMs, reporter, need) {
     hex = String(hex || '').toLowerCase(); if (!/^[0-9a-f]{6}$/.test(hex) || ids.has(id) || taken(hex, id, nowMs)) return false;
     const F = flights.get(id); if (!F) return false;
+    // (1.2.7) never another type than FR24's for the flight; a business jet of another make (kin), where this side heard it
+    // within the last five minutes, only if it fits as one aircraft with FR24's - in the air, within 4 km, 800 ft, 20
+    // degrees and 50 kt (N676BA heard parked at Teterboro, given by a browser to FR24's Challenger climbing out)
+    { const c0 = candOf(hex, nowMs / 1000), m0 = (env.ac.get(hex) || {}).meta || {}, b0 = env.blocked.get(hex) || {};
+      const rel = typeRelation(F.type, c0 ? typeOfCand(c0) : String(m0.type || b0.type || '').toUpperCase());
+      let ok = rel !== 'different';
+      if (ok && rel === 'kin' && c0 && Math.abs((F.ts || 0) - c0.t) < 300) { const [la, lo] = project(c0.lat, c0.lon, c0.gs, c0.trk, (F.ts || 0) - c0.t); ok = kinFits(F, c0, E.dist(F.lat, F.lon, la, lo)); }
+      if (!ok) { stats.crowdRefused = (stats.crowdRefused || 0) + 1; return false; } }
     if (reporter && (need || 2) > 1) {
       const c = candOf(hex, nowMs / 1000);
       if (c && Math.abs((F.ts || 0) - c.t) < 300) {

@@ -59,11 +59,12 @@ function open(opts, answer, fetchImpl) {
   check('page-world hook: the map options', !!(H() && H().mxPatchCore && H().mxAuth));
   // ---- FR24's plan table and filter limits
   const plans = ['silver', 'gold', 'business', 'contributor'];
-  const table = { 'map.layer.weather.wind': ['business', 'contributor'], 'map.layer.atc': ['gold', 'business', 'contributor'], 'map.layer.tracks.oceanic': plans.slice(1), 'map.view.3d': plans.slice(), 'history.flight.kml': { silver: 10, gold: 25 }, 'map.layer.weather.lightning': ['business', 'contributor'] };
+  const table = { 'map.layer.weather.wind': ['business', 'contributor'], 'map.layer.atc': ['gold', 'business', 'contributor'], 'map.layer.tracks.oceanic': plans.slice(1), 'map.view.3d': plans.slice(), 'history.flight.kml': { silver: 10, gold: 25 }, 'map.layer.weather.lightning': ['business', 'contributor'], 'map.info.flight.squawk': plans.slice() };
   const limits = { silver: 10, gold: 25, business: 60, contributor: 60 };
   const ns = { ch: table, k2: limits, ii: new Proxy({}, { get() { throw new Error('Cannot use the map wrapper before initialization!'); } }), x: 5, y: [1, 2] };
   H().mxPatchCore(ns);
   check('the options supplied here: "basic" (as FR24\'s page writes it too, "Basic") added to their plans', table['map.layer.weather.wind'].includes('basic') && table['map.layer.weather.wind'].includes('Basic') && table['map.layer.atc'].includes('basic') && table['map.layer.weather.lightning'].includes('basic'), table['map.layer.atc']);
+  check('(1.2.7) the squawk: no padlock for a Basic account - its code, or N/A, shown (DAL126)', table['map.info.flight.squawk'].includes('basic') && table['map.info.flight.squawk'].includes('Basic'), table['map.info.flight.squawk']);
   check('... nothing else: 3D view stays premium; a flight\'s KML and CSV (1.2.4: made here) a Basic account\'s too', !table['map.view.3d'].includes('basic') && table['history.flight.kml'].basic === 60 && table['history.flight.kml'].silver === 10, table['history.flight.kml']);
   check('custom filters a Basic account may keep: 60, as Business', limits.basic === 60 && limits.Basic === 60 && limits.silver === 10, limits);
   check('an export that throws when looked into (FR24\'s map wrapper before the map is made): left alone, no error', H().mx.fails === 0, H().mx);

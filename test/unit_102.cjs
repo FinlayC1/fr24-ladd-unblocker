@@ -124,6 +124,73 @@ function dayLegs(hex, type, day, j) {
     check('... of another type: not named', !R4, R4);
   }
 
+  // ================= (1.2.7) N676BA / N99MB at Teterboro, 6 Nov 02:28-02:32Z (adsb.lol's tracks of both) =================
+  // FR24 drew N676BA (its G600, named) on final to Teterboro and lost it at 1,600 ft; two minutes later N99MB (its
+  // Challenger, a Cessna 210 in adsb.lol's database, transponder category A2) took off there under a new number - and was
+  // handed the G600's name. FR24's two types differ; N676BA was lost low; it was heard after, landing.
+  { const env = () => ({ E, live: new Map(), ac: new Map(), blocked: new Map(), legs: new Map() });
+    const T0 = 1793932080, ms = t => t * 1000;   // 02:28:00Z
+    const heard = (e, hex, t, lat, lon, alt, gs, trk, o) => e.live.set(hex, { a: Object.assign({ hex, lat, lon, alt_baro: alt, gs, track: trk, dbFlags: 8 }, o), t });
+    const G6 = { r: 'N676BA', t: 'GA6C', category: 'A3' };
+    const run = (o) => {
+      const e = env(), I = createIdent(e);
+      heard(e, 'a8f21c', T0, 40.9444, -74.0527, o.yAlt, 161, 183, G6);
+      I.observe([{ id: 101, lat: 40.9444, lon: -74.0527, alt: o.yAlt, trk: 183, spd: 161, ts: T0, gnd: false, src: 0, type: o.yType }], ms(T0), 'scan'); I.match(ms(T0));
+      const named = I.ids.get(101); e.live.clear();
+      if (o.heardAfter) heard(e, 'a8f21c', T0 + 190, 40.8447, -74.0599, 'ground', 23, 183, G6);
+      if (o.n99mb) heard(e, 'add15f', T0 + 240, 40.807, -74.18, 2100, 200, 250, { r: 'N99MB', t: 'C210', category: o.n99mb });
+      const t1 = T0 + 240;
+      I.observe([{ id: 102, lat: 40.807, lon: -74.18, alt: 2100, trk: 250, spd: 200, ts: t1, gnd: false, src: 0, type: 'CL60' }], ms(t1), 'scan'); I.match(ms(t1));
+      return { first: named && named.hex, R: I.ids.get(102), I };
+    };
+    const real = run({ yType: 'GA6C', yAlt: 1600, heardAfter: true });
+    check('N676BA lost on final at Teterboro, N99MB taking off there under a new FR24 number: the G600\'s name not handed to FR24\'s Challenger', real.first === 'a8f21c' && !real.R, real.R);
+    const ctl = run({ yType: 'CL60', yAlt: 3500 });
+    check('... (the same FR24 type, lost at 3,500 ft, not heard since: handed over as before)', ctl.R && ctl.R.hex === 'a8f21c' && ctl.R.how === 'handover', ctl.R);
+    const ty = run({ yType: 'GA6C', yAlt: 3500 });
+    check('... FR24\'s G600 and FR24\'s Challenger: two aircraft - not handed over', !ty.R, ty.R);
+    const low = run({ yType: 'CL60', yAlt: 1600 });
+    check('... lost at 1,600 ft by an airport (landing): not handed over', !low.R, low.R);
+    const after = run({ yType: 'CL60', yAlt: 3500, heardAfter: true });
+    check('... heard since FR24 lost it - on the ground, landed, 10 km off: not handed over', !after.R, after.R);
+    const doubt = run({ yType: 'GA6C', yAlt: 1600, heardAfter: true, n99mb: 'A2' });
+    check('N99MB heard where FR24 has the Challenger, "C210" in its database but sending category A2: named by position', doubt.R && doubt.R.hex === 'add15f' && doubt.R.how === 'list', doubt.R);
+    const light = run({ yType: 'GA6C', yAlt: 1600, heardAfter: true, n99mb: 'A1' });
+    check('... a Cessna 210 that says it is light (A1): another type, not named', !light.R, light.R);
+    check('engine: a light piston type the transponder contradicts is doubted (category A2+, 488 kt, FL330); a light one flying as one, a jet type, not', E.typeDoubt('C210', 'A2') && E.typeDoubt('C210', '', 488) && E.typeDoubt('C210', '', 200, 33000) && !E.typeDoubt('C210', 'A1', 150, 9000) && !E.typeDoubt('CL60', 'A2') && !E.typeDoubt('PC12', 'A2'));
+    // (a name given wrongly, the aircraft then heard standing at Teterboro while FR24 has the flight climbing 10 km away:
+    // withdrawn on the second such check 30 s and more after the first)
+    { const e = env(), I = createIdent(e), t1 = T0 + 240;
+      I.observe([{ id: 103, lat: 40.807, lon: -74.18, alt: 2100, trk: 250, spd: 200, ts: t1, gnd: false, src: 0, type: 'CL60' }], ms(t1), 'scan');
+      I.assign(I.flights.get(103), 'a8f21c', { reg: 'N676BA', type: 'GA6C', ladd: true }, 'handover', ms(t1));
+      heard(e, 'a8f21c', t1, 40.8517, -74.067, 'ground', 0, 330, G6); I.match(ms(t1));
+      const kept = !!I.ids.get(103);
+      I.observe([{ id: 103, lat: 40.79, lon: -74.22, alt: 3200, trk: 200, spd: 205, ts: t1 + 40, gnd: false, src: 0, type: 'CL60' }], ms(t1 + 40), 'scan');
+      heard(e, 'a8f21c', t1 + 40, 40.8517, -74.067, 'ground', 0, 330, G6); I.match(ms(t1 + 40));
+      check('... a wrong name: heard parked at Teterboro while FR24 has the flight climbing away - withdrawn on the second check', kept && !I.ids.get(103), { kept, now: I.ids.get(103) && I.ids.get(103).hex }); }
+    // (the name already given before 1.2.7 - held across the monitor's restart: N676BA heard standing at Teterboro after
+    // it was carried over, FR24's flight on the ground at LaGuardia - withdrawn; heard standing where FR24 has it - kept)
+    { const e = env(), I = createIdent(e), t1 = T0 + 240, t2 = T0 + 1200;
+      I.observe([{ id: 105, lat: 40.807, lon: -74.18, alt: 2100, trk: 250, spd: 200, ts: t1, gnd: false, src: 0, type: 'CL60' }], ms(t1), 'scan');
+      I.assign(I.flights.get(105), 'a8f21c', { reg: 'N676BA', type: 'GA6C', ladd: true }, 'handover', ms(t1));
+      I.observe([{ id: 105, lat: 40.7757, lon: -73.8812, alt: 0, trk: 33, spd: 10, ts: t2, gnd: true, src: 0, type: 'CL60' }], ms(t2), 'scan');
+      e.ac.set('a8f21c', { meta: { type: 'GA6C', reg: 'N676BA', lastPos: { t: T0 + 780, lat: 40.8518, lon: -74.067, alt: 'ground', gs: 0, trk: 331 } }, rows: [] });
+      I.match(ms(t2));
+      const gone = !I.ids.get(105);
+      I.assign(I.flights.get(105), 'a8f21c', { reg: 'N676BA', type: 'GA6C', ladd: true }, 'handover', ms(t1));
+      e.ac.get('a8f21c').meta.lastPos = { t: T0 + 1100, lat: 40.7760, lon: -73.8815, alt: 'ground', gs: 0, trk: 30 };
+      I.match(ms(t2));
+      check('... a name carried over before: the aircraft heard standing 16 km from FR24\'s flight - withdrawn; standing where FR24 has it - kept', gone && !!I.ids.get(105), { gone, kept: !!I.ids.get(105) }); }
+    // (a browser's name: another type than FR24's refused; another make of business jet only as one aircraft, heard now)
+    { const e = env(), I = createIdent(e), t1 = T0 + 240;
+      I.observe([{ id: 104, lat: 40.807, lon: -74.18, alt: 2100, trk: 250, spd: 200, ts: t1, gnd: false, src: 0, type: 'CL60' }], ms(t1), 'scan');
+      heard(e, 'a8f21c', t1, 40.8447, -74.0599, 'ground', 20, 183, G6);
+      heard(e, 'a00777', t1, 40.80, -74.18, 2100, 120, 250, { r: 'N777X', t: 'C172', category: 'A1' });
+      heard(e, 'a00888', t1, 40.807, -74.181, 2150, 205, 251, { r: 'N888X', t: 'GLF6', category: 'A3' });
+      const kin = I.clientId(104, 'a8f21c', 'track', ms(t1), '', 1), diff = I.clientId(104, 'a00777', 'track', ms(t1), '', 1), fits = I.clientId(104, 'a00888', 'track', ms(t1), '', 1);
+      check('a browser\'s name for FR24\'s Challenger: the G600 parked 10 km off refused, a Cessna 172 refused; a Gulfstream flying as one aircraft with it taken', !kin && !diff && fits && I.ids.get(104).hex === 'a00888', { kin, diff, fits }); }
+  }
+
   // ================= the monitor: FR24's track first, the day built from it; /hist blk, fr =================
   { const M = require('../monitor/monitor.cjs'); M.loadEngine();
     // (the fixture day moved to yesterday - the track store keeps 90 days)

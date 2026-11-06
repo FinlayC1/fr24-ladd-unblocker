@@ -32,6 +32,9 @@
 //  /last                         where each blocked jet was last heard in the last 14 h (to recognise it over an ocean)
 //  /seed?hex=a,b[&front=1]       blocked aircraft the userscript knows: tracked from now on, their last days rebuilt
 //  /parked?ap=&type=             aircraft of a type whose last flight ended at that airport (14 days): parked there since
+//  /rwyap?ap=&from=&to=          (1.2.7) the runway of every take-off and landing at an airport in a window, logged live
+//                                from FR24's tracks (rwylog.cjs) - a board's all at once - and blocked flights' by address
+//  /rwyuse?ap=                   (1.2.7) an airport's runways and its last 24 hours' movements by runway: the runway in use
 //  /area?lat=&lon=               a place the userscript is looking at: its traffic polled too, for three days
 //  POST /hello                   an install saying it is there - counted anonymously (installs.cjs); the newest version,
 //                                the owner's notice and minimum version back. /badge: the people counted, for shields.io
@@ -87,6 +90,9 @@ const tracks = createTracks({ store: STORE, keepDays: CFG.trackDays, log: (...a)
 // (1.2.4: every position from FR24 as it came - its trails, its scans, the trails the browsers send - kept as long as
 // the tracks: fr24raw.cjs)
 const fr24raw = require('./fr24raw.cjs').createFr24Raw({ store: STORE, keepDays: CFG.trackDays, log: (...a) => log('fr24raw', ...a) });
+// (1.2.7: FR24's own positions of every flight where it meets an airport - climbing out, on final, rolling on a runway -
+// from the scans of the whole map: the runways of every take-off and landing worked out from them, rwylog.cjs. 14 days)
+const fr24apt = require('./fr24raw.cjs').createFr24Raw({ store: STORE, dir: 'fr24apt', keepDays: +CFG.rwyRawDays || 14, holdS: 3 * 3600, log: (...a) => log('fr24apt', ...a) });
 // (what public ADS-B lacks where no radar asks for it - airspeeds, Mach, wind, temperature - from a weather model: wx.cjs)
 const { createWx } = require('./wx.cjs');
 const wx = createWx(Object.assign({ fetch: (u, o) => global.fetch(u, o) }, CFG.wx || {}));
@@ -597,7 +603,7 @@ const central = createCentral({ E, onAnswer: (F, r) => SC.note(F, r), fleetOf: h
   // (1.1.0) a destination a browser's user confirmed for a flight the monitor named (ident.crowdRoute): in its answer for
   // every browser - "confirmed in another browser"
   confirmedOf: (id, hex) => { const R = ident.ids.get(id), c = R && R.hex === hex ? R.crowd : null; return c && c.d && c.dc === 'confirmed' ? { d: c.d, p: c.p, eta: c.eta || 0, at: c.at || 0 } : null; },
-  boardPlan: (id, originId, destId) => boardPlan(id, originId, destId), rawPut: (id, meta, pts) => fr24raw.put(id, meta, pts) });
+  boardPlan: (id, originId, destId) => boardPlan(id, originId, destId), rawPut: (id, meta, pts) => { fr24raw.put(id, meta, pts); try { RL.fromTrack(Number(id).toString(16), pts, 'trail'); } catch (e) { /* none */ } } });
 // (1.2.4) The runway of a landing or take-off of an FR24 flight - FR24's airport flight history shows it a Business
 // account only: worked out from the flight's own track near the airport, as the movement counts are (airport.cjs
 // runwayOf), and kept for every browser by the flight's id. POST /rwyfit { ap, fid, landing, pts: [{ t, lat, lon, alt,
@@ -611,7 +617,8 @@ function rwyFit(d) {
     .filter(p => p && p.t != null && p.lat != null && p.lon != null && Math.abs(p.lat) <= 90 && Math.abs(p.lon) <= 180).sort((a, b) => a.t - b.t);
   let rwy = ''; try { rwy = APT.runwayOf(ap, pts, landing) || ''; } catch (e) { rwy = ''; }
   rwy = String(rwy).slice(0, 8);
-  if (/^[0-9a-f]{1,12}$/.test(fid) && rwy) { rwyKnown.set(fid + ':' + (landing ? 1 : 0), rwy); rwyDirty = true; if (rwyKnown.size > 100000) rwyKnown.delete(rwyKnown.keys().next().value); }
+  // (1.2.7: kept in the runway log, by airport and time - its boards given it with the rest)
+  if (/^[0-9a-f]{1,12}$/.test(fid) && rwy) { const air = pts.filter(p => !p.gnd && p.alt != null), pa = landing ? air[air.length - 1] : air[0]; RL.put(fid, landing ? 1 : 0, rwy, ap.id, (pa || pts[landing ? pts.length - 1 : 0] || {}).t || 0, 'fit'); RL.stats.fit++; }
   return { v: 1, rwy };
 }
 // GET /rwy?f=<fid>:<1 landing|0 take-off>,...[&ap=<FR24 airport id>&ts=<each one's time>,...] -> { "<key>": runway }: the
@@ -621,12 +628,13 @@ function rwyAnswer(keys, apId, times) {
   const o = {}, ap = apId > 0 ? E.byId(apId) : null; let tried = 0;
   keys.slice(0, 50).forEach((k, i) => {
     if (!/^[0-9a-f]{1,12}:[01]$/.test(k)) return;
-    if (rwyKnown.has(k)) { o[k] = rwyKnown.get(k); return; }
+    const t = times[i] > 1e9 ? times[i] : 0, known = RL.get(k, t); if (known) { o[k] = known; return; }
     if (!ap || tried >= 6) return;
     tried++;
-    const [fid, l] = k.split(':'), t = times[i] > 1e9 ? times[i] : 0, raw = fr24raw.of(fid, t || undefined); if (!raw) return;
-    const C = raw.cols, at = name => C.indexOf(name), pts = [];
-    for (const r of raw.p) {
+    // (FR24's positions of the flight kept: its whole trail, the scans' - and those near airports, fr24apt)
+    const fid = k.split(':')[0], l = k.split(':')[1], raws = [fr24raw.of(fid, t || undefined), fr24apt.of(fid, t || undefined)].filter(Boolean); if (!raws.length) return;
+    const C = raws[0].cols, at = name => C.indexOf(name), pts = [];
+    for (const r of [].concat(...raws.map(x => x.p)).sort((a, b) => a[0] - b[0])) {
       const lat = r[1], lon = r[2]; if (E.dist(lat, lon, ap.lat, ap.lon) > 30) continue;
       // (around the moment asked, when it is given: the same flight's other visits to the airport left out)
       if (t && Math.abs(r[0] - t) > 3 * 3600) continue;
@@ -645,6 +653,21 @@ let rwyDirty = false;
 function rwyLoad() { try { const o = JSON.parse(fs.readFileSync(RWY_FILE, 'utf8')); for (const [k, v] of Object.entries(o || {})) if (/^[0-9a-f]{1,12}:[01]$/.test(k) && typeof v === 'string' && v) rwyKnown.set(k, v.slice(0, 8)); } catch (e) { /* none kept yet */ } }
 function rwySave() { if (!rwyDirty) return; rwyDirty = false; try { const tmp = RWY_FILE + '.tmp'; fs.writeFileSync(tmp, JSON.stringify(Object.fromEntries(rwyKnown))); fs.renameSync(tmp, RWY_FILE); } catch (e) { log('runways', String(e && e.message || e)); } }
 rwyLoad();
+// (1.2.7) every take-off's and landing's runway, logged as it happens from FR24's tracks (rwylog.cjs) - the runways worked
+// out before kept with it
+const { createRwyLog } = require('./rwylog.cjs');
+const RL = createRwyLog({ E, APT, store: STORE, legacy: rwyKnown, keepDays: +CFG.rwyDays || 30, log: (...a) => log('runways', ...a) });
+try { RL.load(); } catch (e) { log('runways', String(e && e.message || e)); }
+// (a blocked flight's take-offs and landings, from its ADS-B track - its legs: [hex, 0 | 1, runway, time] at an airport)
+function laddRwys(apId, from, to) {
+  const out = [];
+  for (const [hex, m] of legs) for (const l of m.values()) {
+    const tO = l.tOff || l.tStart, tL = l.tOn || l.tEnd;
+    if (l.rwyOff && l.from && l.from.id === apId && tO >= from && tO <= to) out.push([hex, 0, l.rwyOff, Math.round(tO)]);
+    if (l.rwyOn && l.to && l.to.id === apId && !l.open && tL >= from && tL <= to) out.push([hex, 1, l.rwyOn, Math.round(tL)]);
+  }
+  return out;
+}
 // (1.2.4) A blocked flight's filed plan from FR24's own boards kept here (boards.cjs). FR24 lists a blocked flight on its
 // origin's departures and its destination's arrivals - "N/A", but with its flight id and both airports: the FAA's own
 // flow data keeps a blocked flight's line with its identity masked (N300CR White Plains -> East Midlands, 3 Nov). Looked up
@@ -1658,7 +1681,7 @@ function fr24Track(nowMs) {
 function fr24RawRound() {
   for (const [id, F] of ident.flights) {
     const R = ident.ids.get(id), meta = R ? { hex: R.hex, reg: R.reg, cs: R.cs, type: R.type || F.type } : { type: F.type };
-    if (F.trail && F.trail.length && (F.trailAt || 0) > (F.rawTrailAt || 0)) { fr24raw.put(id, meta, F.trail); F.rawTrailAt = F.trailAt; }
+    if (F.trail && F.trail.length && (F.trailAt || 0) > (F.rawTrailAt || 0)) { fr24raw.put(id, meta, F.trail); F.rawTrailAt = F.trailAt; try { RL.fromTrack(Number(id).toString(16), F.trail, 'trail'); } catch (e) { /* none */ } }
     const from = F.rawPut || 0, ps = F.pts || [];
     if (ps.length && ps[ps.length - 1].t > from) { const nw = ps.filter(p => p.t > from); fr24raw.put(id, meta, nw); F.rawPut = nw[nw.length - 1].t; }
   }
@@ -1701,6 +1724,8 @@ async function fr24Round() {
     else if (res.flights.length >= 50) { const withRoute = res.flights.filter(f => f.from || f.to).length; F24.routeOk = mask.includes('route') && withRoute >= res.flights.length * 0.05; F24.hexOk = mask.includes('icao_address') && res.flights.filter(f => f.hex).length >= res.flights.length * 0.5; }
     ident.observe(res.flights, Date.now(), 'scan');
     naTrack(res.flights, Date.now());
+    // (1.2.7: each flight near an airport - its positions there kept, its runway logged as it climbs out or comes in)
+    try { RL.observe(res.flights, Date.now() / 1000, (f, p) => fr24apt.put(f.id, { hex: f.hex || '', reg: f.reg || '', cs: f.cs || '', type: f.type || '' }, [p])); } catch (e) { log('runways', String(e && e.stack || e)); }
   }
   await identRound();
 }
@@ -1862,11 +1887,16 @@ function work(final) {
   // world log's margin; the runways worked out, with them)
   if (final || nowS - rawSaved >= 900) {
     rawSaved = nowS;
-    if (!worldRoom()) fr24raw.drop(); else fr24raw.flush(nowS);
+    if (!worldRoom()) { fr24raw.drop(); fr24apt.drop(); } else { fr24raw.flush(nowS); fr24apt.flush(nowS); }
     rwySave();
   }
+  // (1.2.7: the runway log - each day's file written every five minutes and on stop)
+  if (final || nowS - (RL.savedAt || 0) >= 300) {
+    RL.savedAt = nowS;
+    try { RL.save(nowS); } catch (e) { log('runways', String(e && e.message || e)); }
+  }
   try { BD.save(nowS); } catch (e) { log('boards', String(e && e.message || e)); }
-  if (tracksPruned !== dayOf(nowS)) { tracksPruned = dayOf(nowS); tracks.prune(nowS); fr24raw.prune(nowS); }
+  if (tracksPruned !== dayOf(nowS)) { tracksPruned = dayOf(nowS); tracks.prune(nowS); fr24raw.prune(nowS); fr24apt.prune(nowS); }
   // (the installs counted: written at most once a minute when changed - its own timer too - and on stop)
   try { installs.save(final); } catch (e) { log('installs', String(e && e.message || e)); }
   if (!final) learnedDue(nowS);
@@ -2433,6 +2463,17 @@ function answer(u, nowS, ctx) {
   if (p === '/atrace') return archTrace(q('hex'), q('day'));
   // (1.2.4: the runways of FR24 flights' landings and take-offs worked out here - "<FR24 id>:<1 landing | 0 take-off>", 50 at most)
   if (p === '/rwy') return { v: 1, list: rwyAnswer(String(q('f') || '').split(','), +q('ap') || 0, String(q('ts') || '').split(',').map(Number)) };
+  // (1.2.7) an airport's runways of every take-off and landing of a window - its boards opened with them in: by FR24's id
+  // of the flight (f), and a blocked flight's by its address and time (h: [hex, 0 | 1, runway, time])
+  if (p === '/rwyap') { const ap = +q('ap') || 0, to = Math.min(nowS + 3600, +q('to') || nowS), from = Math.max(to - 9 * 86400, +q('from') || nowS - 86400); return ap > 0 ? { v: 1, ap, f: RL.airport(ap, from, to), h: laddRwys(ap, from, to) } : null; }
+  // (1.2.7) an airport's runways and the take-offs and landings of its last 24 hours with theirs - which runways are in use
+  // (the map's airport panel works it out with the wind): ends [name, true heading], runways [end, end, length ft, closed],
+  // mv [runway, 0 take-off | 1 landing, time]
+  if (p === '/rwyuse') {
+    const a = E.byId(+q('ap') || 0); if (!a || !a.icao) return null;
+    const from = nowS - 86400, mv = RL.movements(a.id, from, nowS).concat(laddRwys(a.id, from, nowS).map(x => [x[2], x[1], x[3]])).sort((x, y) => x[2] - y[2]);
+    return { v: 1, ap: a.id, at: Math.round(nowS), ends: APT.endsOf(a.icao).map(e => [e.id, Math.round(e.hdg)]), runways: APT.runwaysOf(a.icao).map(r => [r[0], r[1], r[2] || 0, r[7] ? 1 : 0]), mv };
+  }
   // (1.2.4) a flight's FR24 positions as they came (fr24raw.cjs) - for its KML and CSV, and its playback
   if (p === '/fr24raw') { const r = fr24raw.of(String(q('f') || ''), +q('t') || 0); return r ? Object.assign({ v: 1 }, r) : { v: 1, p: [] }; }
   // (the routes these registrations sent or were sent over their datalinks, the last 36 hours)
@@ -2591,5 +2632,5 @@ if (require.main === module) {
   // (airports' schedules read from FR24 here, for the boards browsers open)
   setInterval(() => { BD.pump().catch(e => log('boards', String(e))); }, 5000);
 }
-module.exports = { boardPlan, rwyFit, rwyKnown, rwyAnswer, rwySave, fr24raw, fr24RawRound, wxmap, AGES, agesLearn, withAge, AC, acdbSweep, central, centralStart, centralRound, CR, SC, fleetOf, FL, naF, naTrack, selfEvidence, F24ref2: () => F24, WORLD, WS, AS, BD, boardRows, airportAnswer, apLegs, fr24Track, F24T, worldDay, worldWants, worldRoom, worldStatus, worldRecheck: () => { freeAt = 0; }, pollTat, TAT, TAT_HOST, carriesOn, liveExtra, logOf, heardPts, archBreath, memAvail, archTrace, archiveJob, indexDay, idxLookup, idxHave, archIdx, idxFile, ARC, setArcRange: f => { arcRange = f; }, surgeNow, datalink, datalinkRound, dlSeen, classifyTrace, traceGet, netSt, archiveDay, archiveState, archiveNext, archMark, archTried, archDays, archRunning, traceOf, AR, apliveTrace, HIST_V, HIST_RESET, resetHistLogs, histResetMark, get histResetN() { return histResetN; }, adminAnswer, ctl, logRing, log, MON_VER, learnCheck, learnFromCrowd, crowdLearnSave, crowdRows, LC, tracks, waiting, waitRound, waitLive, waitNamed, waitClaims, WAIT, saveWaiting, loadWaiting, pbMatch, learnedBuild, learnedDue, learnedLoad, learnedRef: () => learnedOut, liveBusy, backWaits, E, CFG, loadEngine, ingest, buildLegs, fr24Legs, fr24Leg, F24ref: () => F24, owners, ownersLoop, APT, legRunways, names, nearAnswer, telAnswer, tel, wx, pbNames, get PUBLIC() { return PUBLIC; }, get RATE() { return RATE; }, limited, tokenOk, installs, opts, optionsSet, optionsLoad, latestCheck, latestVer, helloAnswer, badge, wakeQuiet, parkedAt, boardLegs, flightsOfCs, lastHeard, legs, ac, backfillOne, backQ, blocked, markBlocked, seed, gapFill, addArea, userAreas,
+module.exports = { boardPlan, rwyFit, rwyKnown, rwyAnswer, rwySave, RL, fr24raw, fr24RawRound, wxmap, AGES, agesLearn, withAge, AC, acdbSweep, central, centralStart, centralRound, CR, SC, fleetOf, FL, naF, naTrack, selfEvidence, F24ref2: () => F24, WORLD, WS, AS, BD, boardRows, airportAnswer, apLegs, fr24Track, F24T, worldDay, worldWants, worldRoom, worldStatus, worldRecheck: () => { freeAt = 0; }, pollTat, TAT, TAT_HOST, carriesOn, liveExtra, logOf, heardPts, archBreath, memAvail, archTrace, archiveJob, indexDay, idxLookup, idxHave, archIdx, idxFile, ARC, setArcRange: f => { arcRange = f; }, surgeNow, datalink, datalinkRound, dlSeen, classifyTrace, traceGet, netSt, archiveDay, archiveState, archiveNext, archMark, archTried, archDays, archRunning, traceOf, AR, apliveTrace, HIST_V, HIST_RESET, resetHistLogs, histResetMark, get histResetN() { return histResetN; }, adminAnswer, ctl, logRing, log, MON_VER, learnCheck, learnFromCrowd, crowdLearnSave, crowdRows, LC, tracks, waiting, waitRound, waitLive, waitNamed, waitClaims, WAIT, saveWaiting, loadWaiting, pbMatch, learnedBuild, learnedDue, learnedLoad, learnedRef: () => learnedOut, liveBusy, backWaits, E, CFG, loadEngine, ingest, buildLegs, fr24Legs, fr24Leg, F24ref: () => F24, owners, ownersLoop, APT, legRunways, names, nearAnswer, telAnswer, tel, wx, pbNames, get PUBLIC() { return PUBLIC; }, get RATE() { return RATE; }, limited, tokenOk, installs, opts, optionsSet, optionsLoad, latestCheck, latestVer, helloAnswer, badge, wakeQuiet, parkedAt, boardLegs, flightsOfCs, lastHeard, legs, ac, backfillOne, backQ, blocked, markBlocked, seed, gapFill, addArea, userAreas,
   serve, fr24, ident, dest, F24, report, identRound, fr24Round, saveIdent, loadIdent, histUnknown, learnSince, learnWrite, diskLegs, KEEP_LADD, save, loadStore, dirtyDays, pollOpenSky, adsbxUse, live, liveList, answer, step, P, piaState, apiGet, gate, stats, lastOk, noteWatch, watch, watchedAll, flew, closeDays, histQ, histPend, histOne, histDay, histOf, histRead, histWrite, histFile, fillHist, fillAsked, queueHist, photos, nextHist, saveState, loadState, lastW, get closed() { return closed; }, set closed(v) { closed = v; }, pause };

@@ -42,13 +42,18 @@ const LOCKED = () => ({ arrival: { name: null, upsell: true }, departure: { name
   // ================= a board card's runways =================
   { const P = open(); await sleep(200); const H = P.H();
     H.mxRwy.set('3d1f0009:0', '27R'); H.mxRwy.set('3d1f0009:1', '09');
-    const j1 = await (await H.cardRwy(card('3d1f0009', LOCKED(), { atd: now - 5000, ata: now - 1000 }), 200, 'arrivals', false)).json();
-    check('card: both runways known - put in, FR24\'s padlock off; nothing asked', j1.data.runways.departure.name === '27R' && j1.data.runways.arrival.name === '09' && j1.data.runways.departure.upsell === false && j1.data.runways.arrival.upsell === false && !P.posts.some(p => p.__tweeksLadd === 'rwyWant'), j1.data.runways);
+    // (each end's airport's runways as logged asked for first - 1.2.7 - answered with none here)
+    const ansAp = () => P.posts.filter(p => p.__tweeksLadd === 'rwyAp' && !p.done).forEach(a => { a.done = 1; P.send({ __tweeksLadd: 'rwyApGot', rid: a.rid, ap: a.ap, ok: true, f: {}, h: [] }); });
+    const pr1 = H.cardRwy(card('3d1f0009', LOCKED(), { atd: now - 5000, ata: now - 1000 }), 200, 'arrivals', false); await sleep(20); ansAp();
+    const j1 = await (await pr1).json();
+    check('card: both runways known - put in, FR24\'s padlock off; no flight of it asked', j1.data.runways.departure.name === '27R' && j1.data.runways.arrival.name === '09' && j1.data.runways.departure.upsell === false && j1.data.runways.arrival.upsell === false && !P.posts.some(p => p.__tweeksLadd === 'rwyWant'), j1.data.runways);
     // (not known: asked for at each end's own airport - the take-off at the origin, the landing here - and done as soon as the
     // monitor's answer has them, not at the 2.5 s limit)
     P.posts.length = 0;
     const t0 = Date.now(), pr = H.cardRwy(card('3d1f000a', LOCKED(), { atd: now - 5000, ata: now - 1000 }), 200, 'arrivals', false);
-    await sleep(50);
+    await sleep(30);
+    // (1.2.7: the airports' runways as logged kept a minute - none of this flight's there - so it is asked for at once)
+    ansAp(); await sleep(50);
     const asks = P.posts.filter(p => p.__tweeksLadd === 'rwyWant');
     asks.forEach(a => P.send({ __tweeksLadd: 'rwyGot', rid: a.rid, list: a.items.map(x => ({ k: x.fid + ':' + (x.landing ? 1 : 0), rwy: x.landing ? '27' : '05' })), done: false }));
     const j2 = await (await pr).json(), ms = Date.now() - t0;
@@ -181,6 +186,30 @@ const LOCKED = () => ({ arrival: { name: null, upsell: true }, departure: { name
     L.verifyAll([heard('3c4a8e')], Date.now());
     const rec3 = L.live.get(fid);
     check('... the same aircraft heard there: confirmed - no longer provisional', !!rec3 && rec3.hex === '3c4a8e' && !rec3.prov && !L.isProv(fid), rec3 && { hex: rec3.hex, prov: rec3.prov, src: (rec3.sources || []).slice(-1) });
+    // ================= (1.2.7) N99MB: a Challenger adsb.lol's database files as a Cessna 210 =================
+    { const fid2 = 0x3e5a0002, ts2 = Math.floor(Date.now() / 1000), [la2, lo2] = E.destPoint(bwe.lat, bwe.lon, 90, 40);
+      const cl = o => Object.assign({ id: fid2, lat: la2, lon: lo2, alt: 2100, spd: 200, trk: 250, gnd: false, type: 'CL60', src: 0, ts: ts2 }, o);
+      const n99 = cat => ({ hex: 'add15f', nonIcao: false, cs: 'LRT99', reg: 'N99MB', type: 'C210', desc: 'CESSNA 201 Centurion', owner: '', year: 2013, lat: la2, lon: lo2, alt: 2100, gnd: false, gs: 200, trk: 250, ageS: 0, receivedAt: Date.now(), dbFlags: 8, ladd: true, pia: false, mil: false, src: 'adsb.lol', cat });
+      const listOf = (...xs) => { L.globalList.items = xs; L.globalList.byHex = new Map(xs.map(x => [x.hex, x])); L.globalList.at = Date.now(); };
+      send({ __tweeksLadd: 'feed', flights: [cl()], serverTime: Date.now(), total: 1, at: Date.now() }); await sleep(100);
+      listOf(n99('A1')); L.live.delete(fid2); L.matchAgainstList(L.pending.get(fid2));
+      const lightOne = L.live.get(fid2);
+      listOf(n99('A2')); L.live.delete(fid2); L.matchAgainstList(L.pending.get(fid2));
+      const r = L.live.get(fid2);
+      check('userscript: FR24\'s Challenger and an aircraft heard right there filed as a Cessna 210 - saying "light" (A1): not it; sending A2 (a jet\'s weight): it, N99MB', !lightOne && !!r && r.hex === 'add15f', { light: lightOne && lightOne.hex, r: r && r.hex });
+      // (a wrong name - N676BA - and the aircraft heard standing on the ground 10 km off while FR24 has the flight at
+      // 3,000 ft: withdrawn on the second such check 30 s after the first)
+      L.live.delete(fid2); listOf();
+      send({ __tweeksLadd: 'feed', flights: [cl({ alt: 3000 })], serverTime: Date.now(), total: 1, at: Date.now() }); await sleep(100);
+      const pk2 = L.pending.get(fid2), [pa, po] = E.destPoint(la2, lo2, 0, 10);
+      const g6 = () => ({ hex: 'a8f21c', nonIcao: false, cs: '', reg: 'N676BA', type: 'GA6C', desc: '', owner: '', year: 2023, lat: pa, lon: po, alt: 0, gnd: true, gs: 0, trk: 330, ageS: 0, receivedAt: Date.now(), dbFlags: 8, ladd: true, pia: false, mil: false, src: 'adsb.lol', cat: 'A3' });
+      L.adopt(L.recordFromMatch(pk2, { c: Object.assign(g6(), { lat: pk2.lat, lon: pk2.lon, alt: 3000, gnd: false }), rel: 'kin', d: 0, s: 0 }, ['test']));
+      L.verifyAll([g6()], Date.now());
+      const kept = !!L.live.get(fid2), dn = win.Date.now, real = dn.call(win.Date);
+      win.Date.now = () => real + 35000;
+      try { L.verifyAll([g6()], win.Date.now()); } finally { win.Date.now = dn; }
+      check('... a wrong name (N676BA): heard parked 10 km off while FR24 has the flight at 3,000 ft - withdrawn on the second check', kept && !L.live.get(fid2), { kept, now: L.live.get(fid2) && L.live.get(fid2).hex });
+    }
     // ================= the log page's header: age as the map's panel works it out; no padlock =================
     { let ageQ = '';
       // (the monitor's /age: one answer per key asked, in order - only the PC-24 dated here)

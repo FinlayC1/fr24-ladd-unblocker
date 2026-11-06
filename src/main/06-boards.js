@@ -351,6 +351,8 @@
   // FR24's positions of the flight first (fr24raw, 730 days), else FR24's playback of it (its week) - where that track
   // begins (an arrival) or ends (a departure that has landed) on the ground or low over an airfield. Each asked for once.
   const endsDone = new Map();   // "fid:0|1" -> airport id (0: none found)
+  // (an airport as FR24's data pages give the other end of a flight)
+  const apBrief = id => { const o = apById(id); return o ? { id: o.id, name: o.name || '', city: o.city || o.name || '', iata: o.iata || null, icao: o.icao || null, countryId: o.countryId || 0, countryName: o.country || '' } : null; };
   async function onNeedEnds(d) {
     const list = (Array.isArray(d && d.list) ? d.list : []).filter(x => x && /^[0-9a-f]{5,8}$/.test(x.fid || '') && (x.end === 0 || x.end === 1)).slice(0, 15);
     if (!list.length) return;
@@ -358,7 +360,7 @@
     const out = [];
     for (const x of list) {
       const k = x.fid + ':' + x.end;
-      if (endsDone.has(k)) { out.push({ k, ap: endsDone.get(k), fin: 1 }); continue; }
+      if (endsDone.has(k)) { const a0 = endsDone.get(k); out.push({ k, ap: a0, fin: 1, a: a0 ? apBrief(a0) : null }); continue; }
       let pts = [];
       try {
         const j = await monGet('/fr24raw?f=' + x.fid + (fin(x.t) && x.t > 1e9 ? '&t=' + Math.round(x.t) : ''), { timeout: 8000 }), C = (j && j.cols) || [], at = c => C.indexOf(c);
@@ -385,7 +387,7 @@
       // air, asked again later)
       const fin1 = !!ap || (!!e && !(x.end === 1 && nowS() - e.t < 600));
       if (fin1) { endsDone.set(k, ap); if (endsDone.size > 5000) endsDone.delete(endsDone.keys().next().value); }
-      out.push({ k, ap, fin: fin1 ? 1 : 0 });
+      out.push({ k, ap, fin: fin1 ? 1 : 0, a: ap ? apBrief(ap) : null });
       await sleep(250);
     }
     postToPage('endsGot', { list: out });
@@ -687,7 +689,7 @@
       endpoint: o ? { name: o.name, city: o.city || o.name, iata: o.iata || null, icao: o.icao || null, countryId: o.countryId || 0, countryName: o.country || '' } : null,
       // (always an object: FR24's board reads airline.name / .id unguarded - null there takes the whole page down)
       airline: al ? { id: al.id, name: al.name, url: airlineUrl(al), iata: al.iata || null } : { id: null, name: r.al && !/^private owner$/i.test(r.al) ? r.al : null, url: null, iata: null },
-      aircraft: { type: r.ty || null, registration: r.reg || null, typeUrl: r.ty ? r.ty.toLowerCase() : null }, gate: null, runway: null, locked: { runway: false }, codeshares: [], __tl: true, __tlPred: !!r.pred };
+      aircraft: { type: r.ty || null, registration: r.reg || null, typeUrl: r.ty ? r.ty.toLowerCase() : null }, gate: null, runway: null, locked: { runway: false }, codeshares: [], __tl: true, __tlPred: !!r.pred, __tlHex: /^[0-9a-f]{6}$/.test(r.hex || '') ? r.hex : '' };
   }
   // ---- runways (OurAirports runways.csv, public domain): every end of every open runway of FR24's airports - name, length,
   // the end's elevation, the surface as FR24's codes have it. Read once and kept (three months).

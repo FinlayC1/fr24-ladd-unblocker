@@ -17,6 +17,7 @@ process.env.MON_PORT = String(42000 + Math.floor(Math.random() * 6000));
 global.fetch = async () => ({ status: 404, text: async () => '' });
 const B = require('../monitor/boards.cjs');
 const M = require('../monitor/monitor.cjs');
+const { createRwyLog } = require('../monitor/rwylog.cjs');
 M.loadEngine();
 const E = M.E;
 let fails = 0;
@@ -108,7 +109,7 @@ const ltn = E.byIcao('EGGW'), lpl = E.byIcao('EGGP');
   // ---- (1.2.4) the runway of an FR24 flight's landing from its own track (FR24's airport history padlocks it): named and
   // kept by the flight's id for every browser
   { const a = E.byIcao('EGNX'), pts = [];
-    for (let i = 0; i < 40; i++) { const d = 10 - i * 0.3, [la, lo] = E.destPoint(a.lat, a.lon, 93, Math.max(-1.5, d)); pts.push({ t: 1e9 + i * 8, lat: la, lon: lo, alt: d > 0.3 ? a.alt + d * 320 : null, gnd: d <= 0.3, trk: 273, gs: d > 0.3 ? 130 : 60 }); }
+    for (let i = 0; i < 40; i++) { const d = 10 - i * 0.3, [la, lo] = E.destPoint(a.lat, a.lon, 93, Math.max(-1.5, d)); pts.push({ t: nowS - 3600 + i * 8, lat: la, lon: lo, alt: d > 0.3 ? a.alt + d * 320 : null, gnd: d <= 0.3, trk: 273, gs: d > 0.3 ? 130 : 60 }); }
     const r = M.rwyFit({ ap: a.id, fid: '3c1a2b4f', landing: true, pts }), bad = M.rwyFit({ ap: 999999999, fid: '1', landing: true, pts }), g = M.answer(new URL('http://x/rwy?f=3c1a2b4f:1,3c1a2b4f:0,zz'), Date.now() / 1000);
     check('runways: a landing at East Midlands from the east named 27, kept for others by its FR24 id; an unknown airport none', r.rwy === '27' && bad.rwy === '' && g.list['3c1a2b4f:1'] === '27' && !('3c1a2b4f:0' in g.list), { r, g });
     // (1.2.4) a flight no browser has worked out - older than FR24's week of tracks: from the FR24 positions the monitor kept
@@ -117,8 +118,10 @@ const ltn = E.byIcao('EGGW'), lpl = E.byIcao('EGGP');
     M.fr24raw.put(0x3c1a2b50, { cs: 'N300CR' }, kept); M.fr24raw.flush(t0 + 400);
     const old = M.answer(new URL(`http://x/rwy?f=3c1a2b50:1,3c1a2b51:1&ap=${a.id}&ts=${t0 + 300},${t0}`), Date.now() / 1000), noAp = M.answer(new URL('http://x/rwy?f=3c1a2b52:1'), Date.now() / 1000);
     check('... a flight of 20 days ago from the FR24 positions kept: 27; one not kept none; without the airport only those known', old.list['3c1a2b50:1'] === '27' && !('3c1a2b51:1' in old.list) && Object.keys(noAp.list).length === 0, { old, noAp });
-    M.rwySave(); const saved = JSON.parse(fs.readFileSync(path.join(process.env.MON_STORE, 'runways-known.json'), 'utf8'));
-    check('... the runways known written for a restart', saved['3c1a2b4f:1'] === '27' && saved['3c1a2b50:1'] === '27', saved); }
+    // (1.2.7: kept in the runway log, by day - read back by a monitor started afresh)
+    M.RL.save(nowS); const RL2 = createRwyLog({ E: M.E, APT: M.APT, store: process.env.MON_STORE }); RL2.load(nowS);
+    const saved = { a: RL2.get('3c1a2b4f:1', nowS - 3600), b: RL2.get('3c1a2b50:1', t0 + 300) };
+    check('... the runways known written for a restart', saved.a === '27' && saved.b === '27', saved); }
   // ---- (1.2.4) every FR24 position the monitor gets kept as it came: an unnamed flight's scan positions and its trail (with
   // its name once known), and the positions of FR24's flights shown without a route
   { const id = 0x3c1a2c00, F = { id, pts: [{ t: nowS - 240, lat: 53, lon: -1, alt: 9000, gs: 250, trk: 90, gnd: false }, { t: nowS - 120, lat: 53, lon: -0.9, alt: 9500, gs: 252, trk: 91, gnd: false }], tries: 0, triedAt: 0, first: Date.now(), type: 'FA7X',

@@ -123,6 +123,8 @@ function createAirportInfo(env) {
     }
     return { ap: apId, icao, known: true, days, runways: info[icao] || [], freqs: freqs[icao] || [], usage: [...use].map(([r, u]) => [r, u[0], u[1]]).sort((x, y) => (y[1] + y[2]) - (x[1] + x[2]) || x[0].localeCompare(y[0])), moves, withRunway: withRwy, daily, allDays: counted.size };
   }
-  return { load, endsOf, runwayOf, answer, get size() { return Object.keys(info).length; } };
+  // (an airport's runways as kept: [end, end, length ft, width ft, surface, lighted, ..., closed (7), ...] - its rows)
+  const runwaysOf = icao => info[String(icao || '').toUpperCase()] || [];
+  return { load, endsOf, runwayOf, answer, runwaysOf, get size() { return Object.keys(info).length; } };
 }
 module.exports = { createAirportInfo };

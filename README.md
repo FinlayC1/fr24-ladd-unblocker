@@ -8,7 +8,7 @@
 
 <br><br>
 
-<a href="CHANGELOG.md"><img alt="Version 1.2.6" src="https://img.shields.io/badge/version-1.2.6-1f6feb?style=flat&labelColor=23272e"></a>
+<a href="CHANGELOG.md"><img alt="Version 1.2.7" src="https://img.shields.io/badge/version-1.2.7-1f6feb?style=flat&labelColor=23272e"></a>
 <a href="PRIVACY.md#counting-installs"><img alt="Users" src="https://img.shields.io/endpoint?url=https%3A%2F%2F143-47-224-210.sslip.io%2Fbadge&style=flat&labelColor=23272e"></a>
 <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/actions/workflows/tests.yml"><img alt="Tests" src="https://github.com/FinlayC1/fr24-ladd-unblocker/actions/workflows/tests.yml/badge.svg"></a>
 <a href="LICENCE"><img alt="Licence: personal use" src="https://img.shields.io/badge/licence-personal%20use-1f6feb?style=flat&labelColor=23272e"></a>
@@ -39,7 +39,7 @@ Beyond naming a flight and predicting where it is going:
 - **Playback.** Press Play on any flight of a log, blocked or older than FR24's 7 days, and it plays at the top of that page in **FR24's own player**: map, slider, figures and speed and altitude graph. KML and CSV sit beside Play, as on FR24's own rows. Every Playback button (the map panel, boards, search, recent flights) opens that page at the flight. The track is rebuilt from the positions the monitor kept from FR24 (exactly as sent, for 730 days) and the public ADS-B record.
 - **Padlocks, filled in.** Vertical speed, squawk, GPS altitude, true and indicated airspeed, Mach, wind, temperature and airspace, live and in playback, for any aircraft. Where no receiver reports a figure it is worked out from the ones that are.
 - **FR24's locked map options, rebuilt and unlocked natively.** The weather layers (cloud, total and intense precipitation, North American and Australian radar, winds, lightning, AIRMETs and SIGMETs, high-level significant weather, icing, turbulence, current weather), aeronautical charts, ATC boundaries, oceanic tracks, aircraft category filters and up to 60 custom filters, the Flag and logo aircraft labels, the Last clicked flights widget, Misc's trail tooltip and photo switch, and unlimited bookmarks of every kind. They are built from free public sources, mostly on the monitor so they load at once, and shown in FR24's own windows and tables with the same switches and sliders. Settings stay as you left them.
-- **Airports.** Blocked flights on arrival and departure boards worldwide, the runway of every flown row, and the panel's padlocked parts: movements per day, runway usage, every runway in full and the radio frequencies.
+- **Airports.** Blocked flights on arrival and departure boards worldwide, the runway of every flown row and flight card (logged on the monitor from FR24's own tracks the moment a flight climbs out or is on final), the runway in use for departures and arrivals (predicted from the wind, confirmed by the traffic), and the panel's padlocked parts: movements per day, runway usage, every runway in full and the radio frequencies. The same on FR24's airport data pages.
 - **Owners, ages and pictures.** Owners and operators from public registers (FAA, UK G-INFO, Isle of Man, Switzerland), names only, never addresses. An age for every aircraft. Photos from JetPhotos and Planespotters, credited.
 - **One settings window,** with a switch for every feature, updates and data sources (see [The LADD Unblock window](#the-ladd-unblock-window)).
 - FR24's adverts removed, with background work kept to idle moments so the map never stutters. FR24's own routes and airports always win: the script only fills what FR24 leaves empty.
@@ -224,6 +224,7 @@ Test conventions, fixtures and the release checklist: [docs/development.md](docs
 │   ├── owners.cjs           owners and operators
 │   ├── acdb.cjs             every aircraft in the world (open databases and registers, weekly)
 │   ├── airport.cjs          runways, frequencies, runway used by each flight
+│   ├── rwylog.cjs           the runway of every take-off and landing, logged live from FR24's tracks
 │   ├── mkdata.cjs           builds the runway and frequency data from OurAirports
 │   ├── dash.html            its dashboard
 │   ├── deploy.sh, vm-setup.sh, merge-store.cjs
