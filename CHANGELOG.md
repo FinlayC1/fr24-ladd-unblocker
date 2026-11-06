@@ -4,6 +4,33 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 
 1.0.0 is the first release. The versions before it are the betas, labelled B: B22.31.12 is version 22.31.12.
 
+## [1.2.10] - 2026-11-06
+
+### In short
+- Runways are now in for every airport before anyone opens it. The monitor logs the runway of every take-off and landing in the world, airliners included, every 30 seconds. Before, an airliner's runway was only logged at an airport someone was looking at, so a board opened with most of its runways missing and filled in slowly.
+- Take-off runways are right at airports with staggered parallel runways. At Paris CDG every take-off from 26R was shown as 26L, and 27L as 27R.
+- Parallel runways are no longer guessed. Los Angeles's landings on 24R were shown as 24L.
+- Training circuits and touch-and-goes no longer give a runway the aircraft only pointed at.
+- The monitor reads FR24's whole map every minute instead of every two, so fewer flights are missed.
+
+### Changed
+- **The low scan** (monitor). Every 30 seconds the monitor asks FR24's feed for the flights in the air low over the world: all of FR24's services, airliners and freighters too, using FR24's own altitude filter. The height is set per region for its airports: 6,000 ft, and up to 17,000 ft where airports stand high (Denver, Mexico City, Bogota, La Paz, Nairobi, Addis Ababa, Lhasa). That is about 5,000 flights in eight requests. Each take-off's and landing's runway goes into the runway log, so `/rwyap` has every airport's flights, and the runway in use is confirmed by real traffic everywhere. Blocked flights among them are also seen every 30 seconds as they take off and come in. In a test on real traffic it logged some 2,700 take-offs and landings in nine minutes, at about 1,000 airports.
+- **The world scan every minute** (every two minutes before).
+- **Backing off.** When FR24 pushes back, every scan runs at half speed for six hours after the pause, and at a quarter after a second pushback within them.
+- **`/status` `runways`:** runways logged (take-offs, landings), the low scan's last round (requests, flights, time) and the current pace.
+- `monitor.json`: `fr24Every` (now `60`), `rwyLow`, `rwyLowEvery` (`30`), `rwyHotEvery` (`40`).
+
+### Fixed
+- **Take-offs from Paris CDG's 26R shown as 26L, and 27L as 27R.** A take-off only counted where it was seen within 4 km of its runway's start. CDG's 26R is 4.2 km long and starts 600 m before 26L, so its first position in the air was already 4.4 km from its start. 26R never qualified, and every take-off went to 26L, 380 m off to the side. Checked against CDG's own rule (landings on the outer runways, take-offs on the inner), 43 of 51 take-off runways from full tracks were wrong. "Close" is now measured from the runway's far end: within 4 km past it.
+- **Parallel runways told apart properly.** Each position is measured from both centrelines, and both are judged on the same positions. Before, each runway was judged on its own first 3 km, which at staggered runways meant different positions. When the two still can't be told apart, there is no answer until a closer position settles it. Before, the longer of two runways under 300 m apart was taken, which is wrong at Los Angeles, whose landings are on 24R, the shorter.
+- **Circuits and turns.** Only the straight part of a take-off or landing counts: from the roll to the first turn, or from the last turn to touchdown. A Cessna's straight-in towards Daytona's 34, which it turned off to land on 25, had been logged as 34.
+- **Take-offs logged as landings.** A take-off first seen just off the runway, heading across a big airport, was taken for a landing, for example a T-6 off Atlanta's 26L with no destination. A take-off now needs a climb since the scan before, and a landing a descent, or FR24's route to the airport and no climb.
+- **Taxiing logged as a take-off.** A slow aircraft level with the field, which FR24 marks as in the air, is now taken as taxiing.
+- **The last answer on short final.** It was dropped when the way to the airport's middle pointed more than 45° off the aircraft's track: a United 200 m short of Los Angeles's 24R stayed 24L. Within 5 km of the field each new position now counts.
+- **The runway log's earlier files** (1.2.7 to 1.2.9) are read for their landings only. Their take-offs came from the old rule.
+- **The runway log is compressed and written in the background.** A day's file is now some 20 MB of text, and writing it no longer freezes the monitor.
+- **Tested** on 610 real take-offs and landings from public ADS-B tracks (CDG and 18 other aircraft), sampled every 30 seconds as the low scan sees them: 96% of take-offs and 99% of landings found, none wrong. Before: 72% of take-offs found and 10% of those wrong. Nine minutes of the low scan itself, replayed, put CDG, Heathrow, Atlanta, Los Angeles, Chicago, Dallas, JFK, San Francisco, Frankfurt, Madrid, Amsterdam and Mexico City on their real runway patterns.
+
 ## [1.2.9] - 2026-11-06
 
 ### In short

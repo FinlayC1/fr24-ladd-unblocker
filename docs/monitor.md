@@ -3,7 +3,7 @@
 `monitor/monitor.cjs` is the always-on half of the project. It does the work that has to be continuous and worldwide, so that a browser opening FR24 anywhere has it all at once:
 
 - **Public ADS-B, worldwide.** It polls the LADD, military and PIA lists and every known blocked aircraft by address, and turns positions into flights with the route engine.
-- **FR24 itself.** It scans FR24's whole map every two minutes and names every flight FR24 draws without a callsign or registration (`ident.cjs`), over oceans and deserts too. Each named flight gets a rough destination (`dest.cjs`).
+- **FR24 itself.** It scans FR24's whole map every minute and names every flight FR24 draws without a callsign or registration (`ident.cjs`), over oceans and deserts too. Each named flight gets a rough destination (`dest.cjs`).
 - **A permanent log.** Every blocked aircraft's take-offs and landings are kept for good, including flights only FR24 sees. The log feeds airport boards anywhere in the world and the browsers' destination engine (`/learn`).
 - **Owners and operators.** Each blocked aircraft's owner is looked up once and kept (`owners.cjs`).
 - **Every aircraft in the world.** (1.1.1) The open aircraft databases and registers merged once a week: about 760,000 aircraft's registration, type, model, serial number, build year, owner and operator, on disk, for any aircraft a browser opens (`acdb.cjs`). Aircraft they leave something out of are looked up in turn, one at a time, by the owners' lookups.
@@ -92,7 +92,9 @@ Any of these can be overridden in a `monitor.json` next to `monitor.cjs` (the fi
 | `fullGap` | `200` | Longest silence (s) of a list for a day to count as watched throughout |
 | `backWorkers` | `3` | Parallel workers reading adsb.lol's day traces |
 | `fr24Scan` | `true` | Scan FR24's map from the server. Set to `false` to leave the world scan to the browsers. |
-| `fr24Every` / `fr24Gap` | `120` / `400` | Seconds between FR24 world scans; milliseconds between the requests of one scan |
+| `fr24Every` / `fr24Gap` | `60` / `400` | Seconds between FR24 world scans (`120` before 1.2.10); milliseconds between the requests of one scan |
+| `rwyLow` / `rwyLowEvery` | `true` / `30` | (1.2.10) The low scan: every flight in the air low over the world, all services, FR24's altitude filter - into the runway log. Seconds between rounds. Shown in `/status` as `runways.low` |
+| `rwyHotEvery` | `40` | (1.2.9) Seconds between scans of the airports looked at (every flight within ~40 km, on the ground too) |
 | `tatEvery` | `60` | (1.0.1) Seconds between reads of TheAirTraffic's whole-world file (`globe.theairtraffic.com/data/aircraft.json`, about 1 MB compressed): its LADD, military, PIA and blocked aircraft are taken in as the lists' are, and every aircraft in it is a candidate for naming FR24's blocked flights and for `/near` / `/tel`. A refusal or verification page: ten minutes' pause, an hour after three in a row. `0`: not read. Shown in `/status` as `tat`. |
 | `lookupRadius` | `220` | Nautical miles of each adsb.fi area lookup around unnamed FR24 flights |
 | `owners` | `{}` | Owner lookups: `every` (ms between aircraft, `4000`), `refreshDays` (`60`), `retryMin` (`60`) |

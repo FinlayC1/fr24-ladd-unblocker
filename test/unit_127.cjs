@@ -73,7 +73,7 @@ function open(url) {
     check('... an airport\'s all at once', apA['3e000001:0'] === e1.id && apA['3e000002:1'] === e2.id && !('3e0000aa:1' in apA) && RL.airport(man.id, T - 86400, now)['3e0000aa:1'] === me.id, apA);
     const mv = RL.movements(lpl.id, T - 86400, now);
     check('... its movements by runway (for the runway in use), each once', mv.length === 3 && mv.some(m => m[0] === e1.id && m[1] === 0) && mv.some(m => m[0] === e2.id && m[1] === 1), mv);
-    RL.save(now);
+    RL.save(now, true);
     const RL2 = createRwyLog({ E, APT, store }); RL2.load(now);
     check('... kept on disk, read back after a restart', RL2.get('3e000001:0') === e1.id && RL2.get('3e0000aa:1') === me.id, { a: RL2.get('3e000001:0'), b: RL2.get('3e0000aa:1') });
     fs.rmSync(store, { recursive: true, force: true });
