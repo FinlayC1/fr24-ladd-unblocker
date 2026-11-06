@@ -157,8 +157,39 @@ const ap = icao => E.byIcao(icao);
     check('... Liverpool switched to 27 (a landing on 27 a moment ago): landings 27 confirmed, take-offs 27 predicted - not 09', r4.arr.rwys.join() === '27' && r4.arr.tag === 'conf' && r4.dep.rwys.join() === '27' && r4.dep.tag === 'pred', r4);
     const r5 = H.rwyInUse(Object.assign({ mv: [['27', 1, now - 300]] }, lpl), { deg: 90, kts: 12 }, 'Rain', now);
     check('... no take-off in the last 90 minutes, landings on 27: take-offs 27 - the traffic, not the wind (an easterly 12 kt says 09)', r5.dep.rwys.join() === '27' && r5.dep.tag === 'pred', r5.dep);
+    // (1.2.11) (JFK, 6 Nov 20:45Z: landings on 22L, take-offs from 22R, minutes ago - the wind 340 degrees 8 kt, 5 kt behind them)
+    const jfk = { ends: [['13R', 121], ['31L', 301], ['04L', 31], ['22R', 211], ['13L', 121], ['31R', 301], ['04R', 31], ['22L', 211]], runways: [['04L', '22R', 12079, 0], ['04R', '22L', 8400, 0], ['13L', '31R', 10000, 0], ['13R', '31L', 14511, 0]] };
+    const mvJ = [['22L', 1, now - 2460], ['22R', 0, now - 420], ['22L', 1, now - 419], ['22R', 0, now - 380], ['22L', 1, now - 360], ['22R', 0, now - 255], ['22R', 0, now - 170], ['22L', 1, now - 169], ['22R', 0, now - 110], ['22L', 1, now - 40]];
+    const r6 = H.rwyInUse(Object.assign({ mv: mvJ }, jfk), { deg: 340, kts: 8 }, 'Overcast', now);
+    check('... JFK landing on 22L and taking off from 22R minutes ago, the wind 340 degrees 8 kt (5 kt behind them): 22L and 22R confirmed - not "31L, predicted" by the wind', r6.arr.rwys.join() === '22L' && r6.arr.tag === 'conf' && r6.dep.rwys.join() === '22R' && r6.dep.tag === 'conf', r6);
+    const r7 = H.rwyInUse(Object.assign({ mv: mvJ.map(m => [m[0], m[1], m[2] - 3000]) }, jfk), { deg: 40, kts: 18 }, 'Overcast', now);
+    check('... the same traffic an hour old and the wind now 18 kt from the north-east, behind 22 by 14 kt: the wind says 04', r7.arr.rwys[0].startsWith('04') && r7.arr.tag === 'pred', r7.arr);
     check('... the page asks every 30 s', /c\.asked > 30000/.test(SRC) && /c\.done && Date\.now\(\) - c\.at > 30000/.test(SRC));
-    w.close(); }
+    w.close();
+    // (1.2.11) the panel opens with its runway in use: built as FR24 draws its weather - before the browser paints - and
+    // filled the moment the airport's answer comes, never "N/A" while it comes
+    { const dom2 = new JSDOM('<!doctype html><html><body></body></html>', { url: 'https://www.flightradar24.com/airport/1257/lpl', runScripts: 'dangerously', pretendToBeVisual: true });
+      const w2 = dom2.window, posts = []; let H2 = null;
+      w2.__tlTestHook = h => { H2 = h; }; w2.Response = Response; w2.Headers = Headers; w2.Blob = Blob; w2.DecompressionStream = DecompressionStream;
+      w2.unsafeWindow = w2; w2.GM_xmlhttpRequest = () => {}; w2.indexedDB = undefined; w2.fetch = () => Promise.reject(new Error('offline'));
+      w2.postMessage = d => { if (d && d.__tweeksLadd) posts.push(d); };
+      w2.eval('(' + m[0] + ')()');
+      await sleep(100);
+      const doc = w2.document, panel = doc.createElement('div'); panel.setAttribute('data-testid', 'airport-panel'); doc.body.appendChild(panel);
+      await sleep(0);
+      // (FR24 draws its weather into the open panel)
+      panel.innerHTML = '<section><dl class="grid grid-cols-3"><div data-testid="airport-panel__weather__conditions"><dd>Rain</dd></div><div data-testid="airport-panel__weather__temperature"><dd>9 °C</dd></div><div data-testid="airport-panel__weather__wind"><dd>140° 2 kts</dd></div></dl></section>';
+      await Promise.resolve(); await Promise.resolve();
+      const tiles = () => [...panel.querySelectorAll('.tl-rwyuse > div')].map(d => d.textContent.replace(/\s+/g, ' ').trim());
+      const t0 = tiles(), ask = posts.filter(p => p.__tweeksLadd === 'rwyAp' && p.ap === 1257);
+      check('panel: the runway in use built in as FR24 draws the weather - in the same turn, before the browser paints, not at the next 0.4 s look; the airport asked for', t0.length === 2 && ask.length === 1, { t0, asks: ask.length });
+      check('... while the answer comes: the tiles there, empty - not "N/A"', t0.every(x => !/N\/A/.test(x)) && /Departures runway/i.test(t0[0] || ''), t0);
+      const send = data => w2.dispatchEvent(new w2.MessageEvent('message', { data, source: w2, origin: 'https://www.flightradar24.com' }));
+      send({ __tweeksLadd: 'rwyApGot', rid: ask[0] && ask[0].rid, ap: 1257, ok: true, f: {}, h: [], use: { ends: [['09', 87], ['27', 267]], runways: [['09', '27', 7500, 0]], mv: [['27', 1, Math.floor(Date.now() / 1000) - 60], ['27', 0, Math.floor(Date.now() / 1000) - 30]], at: Math.floor(Date.now() / 1000) } });
+      const t1 = tiles();
+      check('... the answer in: written into the panel at once - departures 27, arrivals 27, confirmed', /Departures runway\s*27\s*Confirmed/i.test(t1[0] || '') && /Arrivals runway\s*27\s*Confirmed/i.test(t1[1] || ''), t1);
+      void H2; w2.close(); }
+  }
 
   console.log(fails ? `\n${fails} failed` : '\nall passed');
   process.exit(fails ? 1 : 0);

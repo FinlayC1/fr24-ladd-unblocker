@@ -48,7 +48,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
 // ==UserScript==
 // @name         Flightradar24 LADD / N-A Unblocker (feed-level)
 // @namespace    tweeks.io
-// @version      1.2.10
+// @version      1.2.11
 // @description  Identifies every LADD / N/A / blocked military aircraft on Flightradar24 from public ADS-B, and injects callsign, registration, operator, age, country, MSN, squawk, vertical speed, GPS altitude, airspeeds, wind, photos, a reasoned origin/destination with a wind-corrected ETA (also for ordinary flights FR24 shows as N/A - military, private, GA, helicopters, with private landing sites; learned from 63 days of every aircraft worldwide, with live weather and closures), airport-board entries and a rebuilt 7-month flight log straight into FR24's own data - so it all renders like normal FR24 traffic.
 // @author       Finlay Clarke
 // @updateURL    https://raw.githubusercontent.com/FinlayC1/fr24-ladd-unblocker/main/dist/fr24-ladd-unblocker.user.js
@@ -145,7 +145,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "1.2.10";
+    var BRIDGE_V = "1.2.11";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed
@@ -2374,10 +2374,12 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       if (hideMo || typeof MutationObserver !== 'function' || !document.documentElement) return;
       var SEL_AP = '[data-testid="airport-panel"]';
       hideMo = new MutationObserver(function (recs) {
+        var apSeen = null;
         for (var i = 0; i < recs.length; i++) {
           var r = recs[i], t = r.type === 'characterData' ? r.target.parentElement : r.target; if (!t || t.nodeType !== 1) continue;
           try {
             var panel = t.closest(SEL_AP);
+            if (panel) apSeen = panel;
             if (panel) {
               if (r.type === 'characterData') { if (!t.closest('li[id^="airport_schedule_"]')) panelHide(panel, t); }
               // (1.1.2: not inside a flight's row of a board - none of what is hidden is ever in one, and a board of a fortnight
@@ -2397,12 +2399,15 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
                 // (1.1.5: the panel put in is an element that is it or holds it - a text put in never is: an empty text node
                 // Vue puts in high up the page, under a box that holds the panel, had the whole panel - and its board of a
                 // fortnight - looked through three times for each one, half a minute of a frozen page)
-                var p = n.nodeType === 1 ? (n.matches(SEL_AP) ? n : n.querySelector(SEL_AP)) : null; if (p) panelHide(p);
+                var p = n.nodeType === 1 ? (n.matches(SEL_AP) ? n : n.querySelector(SEL_AP)) : null; if (p) { panelHide(p); apSeen = p; }
                 if (/remove ads/i.test(n.nodeType === 3 ? n.data || '' : n.textContent || '')) saying(ne, ADS_RE).forEach(function (e) { if (!e.closest(SEL_AP)) hideAd(e, null); });
               }
             } else if (ADS_RE.test(textOf(t))) hideAd(t, null);
           } catch (e) { stats.errors++; stats.lastError = String(e); }
         }
+        // (1.2.11: the runway in use built into the panel as FR24 draws its weather - before the browser paints, so the
+        // panel opens with it, not a moment after)
+        if (apSeen) { try { rwyUseInline(apSeen); } catch (e) { stats.errors++; stats.lastError = String(e); } }
       });
       hideMo.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
     }
@@ -3790,6 +3795,9 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
         if (Date.now() - c.at > 1500 && curBoard && curBoard.apId === apId) refreshBoardSoon();
         c.done = true; c.at = Date.now(); c.res(!!d.ok);
       }
+      // (1.2.11: written into the open panel the moment it is in - not at its next look, up to 0.4 s on)
+      var ap0 = document.querySelector('[data-testid="airport-panel"]');
+      if (ap0 && rwyUseApId() === apId && ap0.querySelector('[data-testid="airport-panel__weather__wind"]')) { try { rwyUsePanel(ap0, apId); } catch (e) { stats.errors++; stats.lastError = String(e); } }
     }
     // (a blocked flight's runway at an airport by its address: the take-off or landing nearest the time given, within half an hour)
     function mxRwyByHex(apId, hex, end, t) {
@@ -3889,8 +3897,12 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
           if (oLast && oLast[2] > recent[recent.length - 1][2] && rwyAng(hdg[oLast[0]], hdg[lastR]) >= 150) {
             return { rwys: thatWay(byCount(cnt).slice(0, 2)), tag: 'pred', why: oWord + ' have turned round onto ' + oLast[0] + ' (' + oAge + ' min ago); ' + word + ' follow - the last ' + word.replace(/s$/, '') + ', ' + ageMin + ' min ago, was the other way, on ' + lastR + '; wind ' + windWord };
           }
-          if (calm || hw >= -5) {
-            var sure = nDir >= 2 || ageMin <= 30;
+          // (1.2.11: the traffic over the wind. JFK landing on 22L and taking off from 22R minutes before, with a 5 kt
+          // tailwind (340 degrees 8 kt), was shown "31L, predicted" by the wind: 1.2.7 to 1.2.10 let the traffic count only
+          // up to 5 kt of tailwind. Now up to 10 kt, as airports do run; beyond what they accept, more than 10 kt behind
+          // it, only traffic of the last 10 minutes - older than that, the airport has likely turned round)
+          if (calm || hw >= -10 || ageMin <= 10) {
+            var sure = ageMin <= 30 || (nDir >= 2 && (calm || hw >= -5));
             return { rwys: byCount(cnt).slice(0, 2), tag: sure ? 'conf' : 'pred', why: nDir + ' ' + (nDir === 1 ? word.replace(/s$/, '') : word) + ' that way in the last 90 minutes (the last ' + ageMin + ' min ago); wind ' + windWord + (calm ? '' : ', ' + (hw >= 0 ? Math.round(hw) + ' kt headwind' : Math.round(-hw) + ' kt tailwind')) };
           }
           turned = '; the wind has turned against the ' + lastR + ' the traffic used';
@@ -3911,8 +3923,9 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     }
     // (FR24's wind as its panel writes it: "50° 5 kts"; "Calm")
     function windOfText(t) { t = String(t || ''); var d = /(\d{1,3})\s*°/.exec(t), k = /(\d{1,3})\s*(?:kts?|kt)\b/i.exec(t) || /°\s*(\d{1,3})\b/.exec(t); return d && k ? { deg: +d[1], kts: +k[1] } : /calm/i.test(t) ? { deg: 0, kts: 0 } : null; }
-    function rwyUseHtml(r, tile) {
+    function rwyUseHtml(r, tile, wait) {
       var cell = function (label, x, kind) {
+        if (wait) return tile(label, '<span class="tl-rwyuse-val" style="font-size:1.25rem;line-height:1.6rem">&nbsp;</span>', 'Being worked out', kind);
         // (the tag as the destination's: blue "Predicted", green "Confirmed" - styled here, for pages without the script's sheet)
         var val = x && x.rwys && x.rwys.length ? x.rwys.join(' / ') : 'N/A', tag = x ? '<span class="tl-tag tl-tag-' + (x.tag === 'conf' ? 'conf' : 'pred') + '" style="display:inline-block;margin:0;padding:0 5px;border-radius:3px;font:700 10px/15px \'Open Sans\',Roboto,Arial,sans-serif;letter-spacing:.3px;text-transform:uppercase;white-space:nowrap;color:#fff;background:' + (x.tag === 'conf' ? '#2e8540">Confirmed' : '#327db6">Predicted') + '</span>' : '';
         return tile(label, '<span class="tl-rwyuse-val" style="font-size:1.25rem;line-height:1.6rem">' + rwyEsc(val) + '</span>' + tag, x ? x.why : 'Not known yet', kind);
@@ -3922,14 +3935,26 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       return cell(lab('Departures', r && r.dep), r && r.dep, 'departures') + cell(lab('Arrivals', r && r.arr), r && r.arr, 'arrivals');
     }
     var rwyEsc = function (s0) { return String(s0 == null ? '' : s0).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
+    // (1.2.11) the panel's airport by its address (as panelTick reads it); the tiles put in where FR24's weather is drawn and
+    // they are not yet - once per batch of FR24's changes to the panel
+    function rwyUseApId() { var code = panelCode(), d = code ? (panelData[code] || panelFromKept(code)) : null; return (d && d.apId) || Number((location.pathname.match(/^\/airport\/(\d+)\//) || [])[1]) || 0; }
+    function rwyUseInline(panel) {
+      if (!panel || !panel.isConnected || !panel.querySelector('[data-testid="airport-panel__weather__wind"]')) return;
+      var box = panel.querySelector('.tl-rwyuse'), pid = rwyUseApId(); if (!pid) return;
+      if (!box || box.__tlAp !== pid) rwyUsePanel(panel, pid);
+    }
     // the map's airport panel: under its Conditions / Temperature / Wind
     function rwyUsePanel(panel, apId) {
       var w = panel.querySelector('[data-testid="airport-panel__weather__wind"]'), dl = w && w.closest('dl'); if (!dl || !dl.parentElement) return;
       var u = rwyUseWant(apId), cond = textOf(panel.querySelector('[data-testid="airport-panel__weather__conditions"] dd'));
       var r = u ? rwyInUse(u, windOfText(textOf(w.querySelector('dd'))), cond, Math.floor(Date.now() / 1000)) : null;
       var tile = function (label, inner, why, kind) { return '<div class="rounded border border-gray-500 px-1.5 pb-1 pt-1.5 bg-gray-200" data-testid="airport-panel__weather__runway-' + kind + '" title="' + rwyEsc(why + ' (LADD unblocker)') + '"><div class="flex size-full items-center space-x-3"><div class="flex size-full flex-col"><dt class="text-xs font-semibold uppercase text-gray-900"><span class="inline-flex w-fit"><span>' + rwyEsc(label) + '</span></span></dt><dd class="h-full text-md font-semibold text-gray-1300"><div class="flex flex-col items-center gap-0.5">' + inner + '</div></dd></div></div></div>'; };
-      var html = rwyUseHtml(r, tile), box = dl.parentElement.querySelector(':scope > .tl-rwyuse');
+      // (1.2.11: the airport's answer still on its way - nothing kept of it in this browser: the tiles there, empty, not
+      // "N/A" for a moment)
+      var c0 = mxRwyAp.get(apId), wait = !r && !!c0 && !c0.done;
+      var html = rwyUseHtml(r, tile, wait), box = dl.parentElement.querySelector(':scope > .tl-rwyuse');
       if (!box) { box = document.createElement('dl'); box.className = 'grid grid-cols-2 gap-1 text-center tl-rwyuse'; dl.insertAdjacentElement('afterend', box); }
+      box.__tlAp = apId;
       if (box.__tl !== html) { box.innerHTML = html; box.__tl = html; }
     }
     // an airport's data page (/data/airports/<code>): a card of its own under FR24's weather card, in its markup
@@ -7793,7 +7818,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '1.2.10';
+  const VERSION = '1.2.11';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
@@ -16802,7 +16827,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // (the version whose "what's new" was put away, and the one whose dot on the button the window was opened for)
   const UB_SEEN_KEY = 'tweeks.fr24.ladd.seenver', UB_DOT_KEY = 'tweeks.fr24.ladd.dotver';
   // (the newest CHANGELOG section's headlines, written in by build.mjs: { v, items })
-  const UB_WHATS_NEW = {"v":"1.2.10","items":["Runways are now in for every airport before anyone opens it. The monitor logs the runway of every take-off and landing in the world, airliners included, every 30 seconds. Before, an airliner's runway was only logged at an airport someone was looking at, so a board opened with most of its runways missing and filled in slowly.","Take-off runways are right at airports with staggered parallel runways. At Paris CDG every take-off from 26R was shown as 26L, and 27L as 27R.","Parallel runways are no longer guessed. Los Angeles's landings on 24R were shown as 24L.","Training circuits and touch-and-goes no longer give a runway the aircraft only pointed at.","The runway in use follows an airport turning round. Manchester went from 05 to 23 at 19:37 and kept showing landings on \"05R, confirmed\"; Liverpool's first landing on 27 left take-offs on 09. The side that hasn't turned yet is now shown the new way, as predicted, and the panel asks for news every 30 seconds.","The Most tracked widget shows blocked and identified flights as their panel does. N291VK, Bengaluru to Riyadh, was \"N/A, GLF4, N/A - N/A\"; it now shows its name, where it took off and where it is going."]};
+  const UB_WHATS_NEW = {"v":"1.2.11","items":["The runway in use follows what the traffic is doing, not the wind. JFK, landing on 22L and taking off from 22R minutes before, was shown \"31L, predicted\" because the wind put a 5 kt tailwind on 22. The wind now only takes over when it blows more than 10 kt behind the runway in use."]};
   // (an aircraft with an open padlock: FR24's outline style - 24 grid, 1.5 stroke in the text colour)
   const UB_ICON = '<svg data-tl-ub-icon="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
   const UB_X = '<svg viewBox="0 0 14 14" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5l11 11M12.5 1.5l-11 11"/></svg>';

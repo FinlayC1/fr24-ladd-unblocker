@@ -1,4 +1,4 @@
-// FR24 LADD Unblocker 1.2.10 - the page-world part (see src/page.js)
+// FR24 LADD Unblocker 1.2.11 - the page-world part (see src/page.js)
 (function () {
   'use strict';
   // ------------------------------------------------------------------------------------------------------------
@@ -7,7 +7,7 @@
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "1.2.10";
+    var BRIDGE_V = "1.2.11";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed
@@ -2236,10 +2236,12 @@
       if (hideMo || typeof MutationObserver !== 'function' || !document.documentElement) return;
       var SEL_AP = '[data-testid="airport-panel"]';
       hideMo = new MutationObserver(function (recs) {
+        var apSeen = null;
         for (var i = 0; i < recs.length; i++) {
           var r = recs[i], t = r.type === 'characterData' ? r.target.parentElement : r.target; if (!t || t.nodeType !== 1) continue;
           try {
             var panel = t.closest(SEL_AP);
+            if (panel) apSeen = panel;
             if (panel) {
               if (r.type === 'characterData') { if (!t.closest('li[id^="airport_schedule_"]')) panelHide(panel, t); }
               // (1.1.2: not inside a flight's row of a board - none of what is hidden is ever in one, and a board of a fortnight
@@ -2259,12 +2261,15 @@
                 // (1.1.5: the panel put in is an element that is it or holds it - a text put in never is: an empty text node
                 // Vue puts in high up the page, under a box that holds the panel, had the whole panel - and its board of a
                 // fortnight - looked through three times for each one, half a minute of a frozen page)
-                var p = n.nodeType === 1 ? (n.matches(SEL_AP) ? n : n.querySelector(SEL_AP)) : null; if (p) panelHide(p);
+                var p = n.nodeType === 1 ? (n.matches(SEL_AP) ? n : n.querySelector(SEL_AP)) : null; if (p) { panelHide(p); apSeen = p; }
                 if (/remove ads/i.test(n.nodeType === 3 ? n.data || '' : n.textContent || '')) saying(ne, ADS_RE).forEach(function (e) { if (!e.closest(SEL_AP)) hideAd(e, null); });
               }
             } else if (ADS_RE.test(textOf(t))) hideAd(t, null);
           } catch (e) { stats.errors++; stats.lastError = String(e); }
         }
+        // (1.2.11: the runway in use built into the panel as FR24 draws its weather - before the browser paints, so the
+        // panel opens with it, not a moment after)
+        if (apSeen) { try { rwyUseInline(apSeen); } catch (e) { stats.errors++; stats.lastError = String(e); } }
       });
       hideMo.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
     }
@@ -3652,6 +3657,9 @@
         if (Date.now() - c.at > 1500 && curBoard && curBoard.apId === apId) refreshBoardSoon();
         c.done = true; c.at = Date.now(); c.res(!!d.ok);
       }
+      // (1.2.11: written into the open panel the moment it is in - not at its next look, up to 0.4 s on)
+      var ap0 = document.querySelector('[data-testid="airport-panel"]');
+      if (ap0 && rwyUseApId() === apId && ap0.querySelector('[data-testid="airport-panel__weather__wind"]')) { try { rwyUsePanel(ap0, apId); } catch (e) { stats.errors++; stats.lastError = String(e); } }
     }
     // (a blocked flight's runway at an airport by its address: the take-off or landing nearest the time given, within half an hour)
     function mxRwyByHex(apId, hex, end, t) {
@@ -3751,8 +3759,12 @@
           if (oLast && oLast[2] > recent[recent.length - 1][2] && rwyAng(hdg[oLast[0]], hdg[lastR]) >= 150) {
             return { rwys: thatWay(byCount(cnt).slice(0, 2)), tag: 'pred', why: oWord + ' have turned round onto ' + oLast[0] + ' (' + oAge + ' min ago); ' + word + ' follow - the last ' + word.replace(/s$/, '') + ', ' + ageMin + ' min ago, was the other way, on ' + lastR + '; wind ' + windWord };
           }
-          if (calm || hw >= -5) {
-            var sure = nDir >= 2 || ageMin <= 30;
+          // (1.2.11: the traffic over the wind. JFK landing on 22L and taking off from 22R minutes before, with a 5 kt
+          // tailwind (340 degrees 8 kt), was shown "31L, predicted" by the wind: 1.2.7 to 1.2.10 let the traffic count only
+          // up to 5 kt of tailwind. Now up to 10 kt, as airports do run; beyond what they accept, more than 10 kt behind
+          // it, only traffic of the last 10 minutes - older than that, the airport has likely turned round)
+          if (calm || hw >= -10 || ageMin <= 10) {
+            var sure = ageMin <= 30 || (nDir >= 2 && (calm || hw >= -5));
             return { rwys: byCount(cnt).slice(0, 2), tag: sure ? 'conf' : 'pred', why: nDir + ' ' + (nDir === 1 ? word.replace(/s$/, '') : word) + ' that way in the last 90 minutes (the last ' + ageMin + ' min ago); wind ' + windWord + (calm ? '' : ', ' + (hw >= 0 ? Math.round(hw) + ' kt headwind' : Math.round(-hw) + ' kt tailwind')) };
           }
           turned = '; the wind has turned against the ' + lastR + ' the traffic used';
@@ -3773,8 +3785,9 @@
     }
     // (FR24's wind as its panel writes it: "50° 5 kts"; "Calm")
     function windOfText(t) { t = String(t || ''); var d = /(\d{1,3})\s*°/.exec(t), k = /(\d{1,3})\s*(?:kts?|kt)\b/i.exec(t) || /°\s*(\d{1,3})\b/.exec(t); return d && k ? { deg: +d[1], kts: +k[1] } : /calm/i.test(t) ? { deg: 0, kts: 0 } : null; }
-    function rwyUseHtml(r, tile) {
+    function rwyUseHtml(r, tile, wait) {
       var cell = function (label, x, kind) {
+        if (wait) return tile(label, '<span class="tl-rwyuse-val" style="font-size:1.25rem;line-height:1.6rem">&nbsp;</span>', 'Being worked out', kind);
         // (the tag as the destination's: blue "Predicted", green "Confirmed" - styled here, for pages without the script's sheet)
         var val = x && x.rwys && x.rwys.length ? x.rwys.join(' / ') : 'N/A', tag = x ? '<span class="tl-tag tl-tag-' + (x.tag === 'conf' ? 'conf' : 'pred') + '" style="display:inline-block;margin:0;padding:0 5px;border-radius:3px;font:700 10px/15px \'Open Sans\',Roboto,Arial,sans-serif;letter-spacing:.3px;text-transform:uppercase;white-space:nowrap;color:#fff;background:' + (x.tag === 'conf' ? '#2e8540">Confirmed' : '#327db6">Predicted') + '</span>' : '';
         return tile(label, '<span class="tl-rwyuse-val" style="font-size:1.25rem;line-height:1.6rem">' + rwyEsc(val) + '</span>' + tag, x ? x.why : 'Not known yet', kind);
@@ -3784,14 +3797,26 @@
       return cell(lab('Departures', r && r.dep), r && r.dep, 'departures') + cell(lab('Arrivals', r && r.arr), r && r.arr, 'arrivals');
     }
     var rwyEsc = function (s0) { return String(s0 == null ? '' : s0).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
+    // (1.2.11) the panel's airport by its address (as panelTick reads it); the tiles put in where FR24's weather is drawn and
+    // they are not yet - once per batch of FR24's changes to the panel
+    function rwyUseApId() { var code = panelCode(), d = code ? (panelData[code] || panelFromKept(code)) : null; return (d && d.apId) || Number((location.pathname.match(/^\/airport\/(\d+)\//) || [])[1]) || 0; }
+    function rwyUseInline(panel) {
+      if (!panel || !panel.isConnected || !panel.querySelector('[data-testid="airport-panel__weather__wind"]')) return;
+      var box = panel.querySelector('.tl-rwyuse'), pid = rwyUseApId(); if (!pid) return;
+      if (!box || box.__tlAp !== pid) rwyUsePanel(panel, pid);
+    }
     // the map's airport panel: under its Conditions / Temperature / Wind
     function rwyUsePanel(panel, apId) {
       var w = panel.querySelector('[data-testid="airport-panel__weather__wind"]'), dl = w && w.closest('dl'); if (!dl || !dl.parentElement) return;
       var u = rwyUseWant(apId), cond = textOf(panel.querySelector('[data-testid="airport-panel__weather__conditions"] dd'));
       var r = u ? rwyInUse(u, windOfText(textOf(w.querySelector('dd'))), cond, Math.floor(Date.now() / 1000)) : null;
       var tile = function (label, inner, why, kind) { return '<div class="rounded border border-gray-500 px-1.5 pb-1 pt-1.5 bg-gray-200" data-testid="airport-panel__weather__runway-' + kind + '" title="' + rwyEsc(why + ' (LADD unblocker)') + '"><div class="flex size-full items-center space-x-3"><div class="flex size-full flex-col"><dt class="text-xs font-semibold uppercase text-gray-900"><span class="inline-flex w-fit"><span>' + rwyEsc(label) + '</span></span></dt><dd class="h-full text-md font-semibold text-gray-1300"><div class="flex flex-col items-center gap-0.5">' + inner + '</div></dd></div></div></div>'; };
-      var html = rwyUseHtml(r, tile), box = dl.parentElement.querySelector(':scope > .tl-rwyuse');
+      // (1.2.11: the airport's answer still on its way - nothing kept of it in this browser: the tiles there, empty, not
+      // "N/A" for a moment)
+      var c0 = mxRwyAp.get(apId), wait = !r && !!c0 && !c0.done;
+      var html = rwyUseHtml(r, tile, wait), box = dl.parentElement.querySelector(':scope > .tl-rwyuse');
       if (!box) { box = document.createElement('dl'); box.className = 'grid grid-cols-2 gap-1 text-center tl-rwyuse'; dl.insertAdjacentElement('afterend', box); }
+      box.__tlAp = apId;
       if (box.__tl !== html) { box.innerHTML = html; box.__tl = html; }
     }
     // an airport's data page (/data/airports/<code>): a card of its own under FR24's weather card, in its markup
