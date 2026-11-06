@@ -125,8 +125,9 @@ function open(url) {
     panel.innerHTML = '<section><dl class="grid grid-cols-3"><div data-testid="airport-panel__weather__conditions"><dd>Overcast</dd></div><div data-testid="airport-panel__weather__temperature"><dd>9 °C</dd></div><div data-testid="airport-panel__weather__wind"><dt>Wind</dt><dd><span>270°</span><span>12</span><span>kts</span></dd></div></dl><details>More weather &amp; METAR</details></section>';
     doc.body.appendChild(panel);
     H.rwyUsePanel(panel, 2002);
-    const askU = P.posts.find(p => p.__tweeksLadd === 'rwyUse');
-    P.send({ __tweeksLadd: 'rwyUseGot', rid: askU && askU.rid, ap: 2002, ok: true, ends: [['09', 87], ['27', 267]], runways: [['09', '27', 7500, 0]], mv: [['27', 0, now - 600], ['27', 0, now - 300]], at: now });
+    // (1.2.8: asked with the airport's runways, in one answer)
+    const askU = P.posts.find(p => p.__tweeksLadd === 'rwyAp' && p.ap === 2002);
+    P.send({ __tweeksLadd: 'rwyApGot', rid: askU && askU.rid, ap: 2002, ok: true, f: {}, h: [], use: { ends: [['09', 87], ['27', 267]], runways: [['09', '27', 7500, 0]], mv: [['27', 0, now - 600], ['27', 0, now - 300]], at: now } });
     H.rwyUsePanel(panel, 2002);
     const tiles = [...panel.querySelectorAll('.tl-rwyuse > div')].map(d => d.textContent.replace(/\s+/g, ' ').trim());
     check('airport panel: departures and arrivals runway under the weather - 27 confirmed, 27 predicted', tiles.length === 2 && /Departures runway\s*27\s*Confirmed/i.test(tiles[0]) && /Arrivals runway\s*27\s*Predicted/i.test(tiles[1]) && panel.querySelector('section > dl + .tl-rwyuse + details') !== null, tiles);
@@ -146,8 +147,8 @@ function open(url) {
     doc.body.appendChild(wrap);
     const p = { airport: { id: 2002 }, weather: { windDirection: 270, windSpeedKts: 12, condition: 'overcast' } };
     H.rwyUseData(p, 2002);
-    const askU = P.posts.find(x => x.__tweeksLadd === 'rwyUse');
-    P.send({ __tweeksLadd: 'rwyUseGot', rid: askU && askU.rid, ap: 2002, ok: true, ends: [['09', 87], ['27', 267]], runways: [['09', '27', 7500, 0]], mv: [], at: now });
+    const askU = P.posts.find(x => x.__tweeksLadd === 'rwyAp' && x.ap === 2002);
+    P.send({ __tweeksLadd: 'rwyApGot', rid: askU && askU.rid, ap: 2002, ok: true, f: {}, h: [], use: { ends: [['09', 87], ['27', 267]], runways: [['09', '27', 7500, 0]], mv: [], at: now } });
     H.rwyUseData(p, 2002);
     const card = wrap.querySelector('.wxcard + .tl-rwyuse'), cells = card ? [...card.querySelectorAll('dl > div')].map(d => d.textContent.replace(/\s+/g, ' ').trim()) : [];
     check('data page: the runway in use, a card under FR24\'s weather card in its markup - 27 predicted both ways', !!card && /\bwxcard\b/.test(card.className) && cells.length === 2 && /Departures runway\s*27\s*Predicted/i.test(cells[0]) && /Arrivals runway\s*27\s*Predicted/i.test(cells[1]), cells);

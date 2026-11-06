@@ -4,6 +4,33 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 
 1.0.0 is the first release. The versions before it are the betas, labelled B: B22.31.12 is version 22.31.12.
 
+## [1.2.8] - 2026-11-06
+
+### In short
+- Runways load at once. One request per airport now brings everything: every flight's runways for the board and its cards, and the runway in use. The monitor answers it from memory, ready-made for airports looked at lately.
+- The runway in use shows the moment an airport panel opens, from what your browser kept of that airport last time, and is then brought up to date.
+- "Departures runways" / "Arrivals runways" when two runways are in use.
+- A runway that comes in after a flight card is open is now written into the card, instead of the card staying "N/A".
+- G-RVNX is no longer shown as G-AWTL, the registration it had until 2021. The registration an aircraft sends as its callsign now wins over a public database's out-of-date one.
+- Playback on a board card of a flight known only to this script no longer opens FR24's list of aircraft types.
+
+### Changed
+- **Runways at once** (monitor `/rwyap`, page).
+  - `/rwyap?use=1` gives an airport's runways, the runway ends and the last day's take-offs and landings by runway in one answer. Before, the panel's runway in use was a second request (`/rwyuse`, still answered for older scripts).
+  - The answer comes from the runway log's days held in memory: today's and yesterday's, for every airport in the world, kept as flights take off and land. A window further back than that is read from disk only when asked for (`old=1`). Before, every board's answer read the day before yesterday's file from disk, all airports' worth.
+  - Each airport's answer is made once for everyone asking within 20 seconds. The airports asked for in the last half hour are made afresh every minute, before anyone asks again.
+  - Blocked flights' runways (from their ADS-B tracks) are gathered for every airport once a minute. Before, every answer went through every leg of every blocked aircraft.
+  - The page asks the moment an airport's panel or board opens, and every minute while it is open. The panel's tiles, the board's rows and the cards all share that one answer.
+  - Your browser keeps each airport's runways and its last three hours' movements (80 airports at most, in the page's own storage). The runway in use is shown from them at once: PREDICTED by the wind FR24 shows, and CONFIRMED only while that traffic is still recent.
+- **Labels:** "Departures runways" and "Arrivals runways" when two runways are in use (parallels, or one each way).
+
+### Fixed
+- **A flight card's runways stayed "N/A" when they came in after the card was drawn** (U22162 at Manchester). A card waits up to 2.7 seconds for them, but a flight's own track can take longer to work out. Each runway is now written into FR24's own cell the moment it arrives.
+- **G-RVNX shown as G-AWTL.** The aircraft was re-registered G-RVNX in 2021 and kept its Mode S address (4017CD). It sends "GRVNX" as its callsign, but adsb.lol's database still names it G-AWTL. Now, when a callsign is in its own country's registration form (the nationality mark and three or four letters, with no figures, as an airline's flight number would have), it is taken over the database's registration. This applies on the monitor (its aircraft, its identifications, its flight logs) and in the browser.
+  - Once learned, it is kept when the aircraft later flies under another callsign. It is given up when the database itself agrees.
+  - Never for American aircraft, whose address comes from their N-number.
+- **Playback on a board card of a flight known only to this script opened FR24's list of aircraft types** (`/data/aircraft/#ff4017cd…`). Such a row's made-up flight id was set aside before it was checked, so for an aircraft that isn't blocked (G-RVNX) the click went back to FR24. FR24's card has no registration, so its Playback opened its type list. The id is now read first, and a row of this script's own is always played here.
+
 ## [1.2.7] - 2026-11-06
 
 ### In short

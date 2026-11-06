@@ -129,11 +129,15 @@
   // happened from FR24's tracks (monitor/rwylog.cjs), and the blocked flights' from their ADS-B tracks - for its board
   async function onRwyAp(d) {
     const ap = Number(d && d.ap) || 0, rid = d && d.rid; if (!(ap > 0) || !monUp()) { postToPage('rwyApGot', { rid, ap, f: {}, h: [] }); return; }
-    const to = nowS() + 3600, from = Math.max(to - 9 * 86400, Number(d.from) || to - 86400 * 2);
-    let j = null; try { j = await monGet(`/rwyap?ap=${ap}&from=${Math.round(from)}&to=${Math.round(to)}`, { timeout: 8000 }); } catch (e) { j = null; }
+    // (1.2.8: the boards' window - yesterday and today, the monitor's days in memory - and, in the same answer, the
+    // airport's runways and its last day's movements by runway: the runway in use; one request for all of it)
+    const to = nowS() + 3600, from = Math.max(to - 9 * 86400, Number(d.from) || to - 36 * 3600), old = from < to - 2 * 86400 ? '&old=1' : '';
+    let j = null; try { j = await monGet(`/rwyap?ap=${ap}&from=${Math.round(from)}&to=${Math.round(to)}&use=1${old}`, { timeout: 8000 }); } catch (e) { j = null; }
     const f = {}; for (const [k, v] of Object.entries((j && j.f) || {})) if (/^[0-9a-f]{1,12}:[01]$/.test(k) && typeof v === 'string' && v) f[k] = v.slice(0, 8);
     const h = ((j && Array.isArray(j.h)) ? j.h : []).filter(x => Array.isArray(x) && /^[0-9a-f]{6}$/.test(x[0]) && (x[1] === 0 || x[1] === 1) && typeof x[2] === 'string' && x[2] && fin(x[3])).map(x => [x[0], x[1], x[2].slice(0, 8), x[3]]);
-    postToPage('rwyApGot', { rid, ap, f, h, ok: !!j });
+    const use = j && Array.isArray(j.ends) ? { ends: j.ends.filter(e => Array.isArray(e) && typeof e[0] === 'string' && fin(e[1])), runways: Array.isArray(j.runways) ? j.runways.filter(Array.isArray) : [],
+      mv: Array.isArray(j.mv) ? j.mv.filter(m => Array.isArray(m) && typeof m[0] === 'string' && (m[1] === 0 || m[1] === 1) && fin(m[2])) : [], at: j.at || nowS() } : null;
+    postToPage('rwyApGot', { rid, ap, f, h, ok: !!j, use });
   }
   // (1.2.7) An airport's runways and its last day's take-offs and landings by runway: which are in use (the page works it
   // out with the wind it shows)

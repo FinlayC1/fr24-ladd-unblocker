@@ -57,7 +57,9 @@ function createIdent(env) {
 
   // ---- the candidates: every aircraft heard lately, newest report per address -----------------------------------------
   // (one aircraft as a candidate, from what this side heard of it: live list, kept positions, the area lookups)
-  const fromLive = (hex, l) => { const a = l.a, fl = a.dbFlags | 0; return { hex, lat: a.lat, lon: a.lon, alt: a.alt_baro === 'ground' ? 0 : a.alt_baro, gnd: a.alt_baro === 'ground', gs: a.gs, trk: a.track, t: l.t, reg: String(a.r || '').toUpperCase(), type: String(a.t || '').toUpperCase(), ladd: !!(fl & 8) || !!(env.blocked.get(hex) || {}).faa, pia: !!(fl & 4), mil: !!(fl & 1), nonIcao: String(a.hex || '').startsWith('~'), cs: String(a.flight || '').trim(), cat: String(a.category || '').toUpperCase() }; };
+  // (1.2.8) the registration it sends as its callsign over a database's stale one (engine regOfCs: G-RVNX, ex G-AWTL)
+  const regOf = (a, hex) => { const r = String(a.r || '').toUpperCase(); return E.regOfCs ? E.regOfCs(r, String(a.flight || '').trim().toUpperCase(), hex) : r; };
+  const fromLive = (hex, l) => { const a = l.a, fl = a.dbFlags | 0; return { hex, lat: a.lat, lon: a.lon, alt: a.alt_baro === 'ground' ? 0 : a.alt_baro, gnd: a.alt_baro === 'ground', gs: a.gs, trk: a.track, t: l.t, reg: regOf(a, hex), type: String(a.t || '').toUpperCase(), ladd: !!(fl & 8) || !!(env.blocked.get(hex) || {}).faa, pia: !!(fl & 4), mil: !!(fl & 1), nonIcao: String(a.hex || '').startsWith('~'), cs: String(a.flight || '').trim(), cat: String(a.category || '').toUpperCase() }; };
   const fromKept = (hex, x) => { const p = x.meta && x.meta.lastPos; return p ? { hex, lat: p.lat, lon: p.lon, alt: p.alt === 'ground' ? 0 : p.alt, gnd: p.alt === 'ground', gs: p.gs, trk: p.trk, t: p.t, reg: String(x.meta.reg || '').toUpperCase(), type: String(x.meta.type || '').toUpperCase(), ladd: !!(env.blocked.get(hex) || {}).faa, pia: !!x.meta.pia, mil: !!x.meta.mil, cs: x.meta.cs || '', cat: String(x.meta.cat || '').toUpperCase() } : null; };
   const usable = (c, nowS) => !!c && fin(c.lat) && fin(c.lon) && c.t > 0 && nowS - c.t <= 600;
   function candidates(nowS) {
@@ -322,7 +324,7 @@ function createIdent(env) {
       if (!a || !a.hex || !fin(+a.lat) || !fin(+a.lon)) continue;
       const hex = String(a.hex).toLowerCase().replace(/^~/, ''), fl = a.dbFlags | 0, t = Math.round(nowS - (a.seen_pos != null ? a.seen_pos : a.seen || 0));
       const p = cache.get(hex); if (p && p.t >= t) continue;
-      cache.set(hex, { hex, lat: +a.lat, lon: +a.lon, alt: a.alt_baro === 'ground' ? 0 : a.alt_baro, gnd: a.alt_baro === 'ground', gs: a.gs, trk: a.track, t, reg: String(a.r || '').toUpperCase(), type: String(a.t || '').toUpperCase(), ladd: !!(fl & 8), pia: !!(fl & 4), mil: !!(fl & 1), nonIcao: String(a.hex).startsWith('~'), cs: String(a.flight || '').trim(), cat: String(a.category || '').toUpperCase() });
+      cache.set(hex, { hex, lat: +a.lat, lon: +a.lon, alt: a.alt_baro === 'ground' ? 0 : a.alt_baro, gnd: a.alt_baro === 'ground', gs: a.gs, trk: a.track, t, reg: regOf(a, hex), type: String(a.t || '').toUpperCase(), ladd: !!(fl & 8), pia: !!(fl & 4), mil: !!(fl & 1), nonIcao: String(a.hex).startsWith('~'), cs: String(a.flight || '').trim(), cat: String(a.category || '').toUpperCase() });
       n++;
     }
     stats.lookups++;
