@@ -10,6 +10,8 @@
 //     FR24's own rows of ordinary flights untouched
 //   - search results: a live blocked flight, its aircraft, a blocked aircraft not flying now (the userscript finds its
 //     flight), an ordinary aircraft untouched; no flight known anywhere: FR24's own after all
+//   - (1.3) a blocked flight's Playback opens its aircraft's page and player in a new tab, the map left as it was (a
+//     pop-up blocker: this tab)
 //   - a rebuilt log row: its leg; a middle / Ctrl click: the page in a new tab
 //   - the page's address: FR24's id of the flight, or "ff" + address + take-off; opened by its address (a new tab, a
 //     reload): FR24's own page of a flight it locks or has no page for given the track, its own words kept
@@ -44,7 +46,8 @@ const syn = (hex, t) => 'ff' + hex + ('00000000' + Math.round(t).toString(16)).s
   w.eval('(' + m[0] + ')()');
   check('page-world test hook', !!(H && H.pbFind && H.mxPbOpen && H.mxPbProps));
   const B = w.__tweeksLaddBridge;
-  const opened = []; w.open = u => { opened.push(u); return null; };
+  // (1.3: a Playback opens its tab; `tabs` false - a pop-up blocker that will not: in this tab after all, as before 1.3)
+  const opened = []; let tabs = false; w.open = u => { if (!tabs) return null; opened.push(u); return {}; };
   const nowS = Math.floor(Date.now() / 1000);
   // what FR24 does with a Playback it is left: its own handler (here: counted)
   const fr24 = []; doc.addEventListener('click', ev => { const a = ev.target.closest && ev.target.closest('[data-fr24]'); if (a) fr24.push(a.getAttribute('data-fr24')); });
@@ -97,6 +100,12 @@ const syn = (hex, t) => 'ff' + hex + ('00000000' + Math.round(t).toString(16)).s
   check('the panel\'s Playback (FR24\'s flight-actions) of a blocked flight: taken - its aircraft\'s page opened at the flight (its address and take-off), where FR24 plays it in place; nothing asked, no playback page', pTaken && navs.length === 1 && navs[0] === logUrl('M-ARNZ', syn('424c60', T)) && !ask() && !visits.length && !opened.length && !fr24.length, navs);
   reset2(); clk(doc.querySelector('[data-fr24="panel-menu"] span'));
   check('... the aircraft__playback button the same', navs[0] === logUrl('M-ARNZ', syn('424c60', T)), navs);
+  // (1.3: JDI01's Playback in the panel's Recent SP-NEW flights: the log page and its player in a new tab, the map left)
+  tabs = true; reset2(); const pTab = clk(doc.querySelector('[data-fr24="panel-actions"]'));
+  check('1.3: the panel\'s Playback of a blocked flight, tabs allowed: its aircraft\'s page at the flight in a new tab - this one left on the map', pTab && opened.length === 1 && opened[0] === logUrl('M-ARNZ', syn('424c60', T)) && !navs.length && !ask(), { opened, navs });
+  reset2(); clk(doc.querySelector('[data-fr24="panel-menu"] span'));
+  check('... the aircraft__playback button the same', opened.length === 1 && opened[0] === logUrl('M-ARNZ', syn('424c60', T)) && !navs.length, { opened, navs });
+  tabs = false;
   // (a panel showing another aircraft, with the blocked flight followed earlier still the last one followed)
   doc.querySelector('#panel [data-testid="aircraft-panel__header__callsign"]').textContent = 'BAW123'; reset2();
   const pOther = clk(doc.querySelector('[data-fr24="panel-actions"]'));
@@ -156,12 +165,13 @@ const syn = (hex, t) => 'ff' + hex + ('00000000' + Math.round(t).toString(16)).s
   reset2(); const plain = clk(row(plainRow));
   check('FR24\'s own row of an ordinary aircraft: FR24\'s', !plain && !ask() && !navs.length && fr24.join() === 'row-' + plainRow);
   // middle and Ctrl clicks: that page in a new tab
-  reset2(); clk(row(ids[0]), { type: 'auxclick', button: 1 });
+  tabs = true; reset2(); clk(row(ids[0]), { type: 'auxclick', button: 1 });
   check('a middle click: the flight\'s aircraft page in a new tab', opened.length === 1 && opened[0] === logUrl('N600EB', syn('a80b2e', t0)) && !navs.length && !ask(), opened);
   reset2(); clk(row(ids[0]), { ctrlKey: true });
   check('a Ctrl click: a new tab too', opened.length === 1 && opened[0] === logUrl('N600EB', syn('a80b2e', t0)));
   reset2(); clk(row(ids[0]), { type: 'auxclick', button: 2 });
   check('a right click: nothing', !opened.length && !ask() && !navs.length);
+  tabs = false;
 
   // ---- search results
   doc.body.insertAdjacentHTML('beforeend', `<div data-testid="search__results">${[['live:' + PID, 'VSB82'], ['aircraft:m-arnz', 'M-ARNZ'], ['aircraft:n600eb', 'N600EB'], ['schedule:EJA777', 'EJA777'], ['aircraft:g-ezbx', 'G-EZBX']].map(([k, l], i) => `<div data-testid="search__result-row"><a data-search-result="${k}">${l}</a>${btn('sr' + i)}</div>`).join('')}</div>`);

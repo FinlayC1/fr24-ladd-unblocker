@@ -396,7 +396,7 @@
   }
   // (the landing places learned before OpenStreetMap was asked for each, or while it was too busy to answer: one a
   // minute, renamed as it answers - Aintree Racecourse for 'Private site near Liverpool')
-  setInterval(() => { const bk = siteBk(); if (!bk || !sites.grid || document.hidden) return; const s = bk.list.find(x => genericSite(x) && !(nowS() - (x.osmTry || 0) < 86400)); if (!s) return; s.osmTry = nowS(); privatePlace(s.lat, s.lon, { onNew: () => learnSite(s.lat, s.lon) }); }, 60000);
+  setInterval(() => { if (!opt.on) return; const bk = siteBk(); if (!bk || !sites.grid || document.hidden) return; const s = bk.list.find(x => genericSite(x) && !(nowS() - (x.osmTry || 0) < 86400)); if (!s) return; s.osmTry = nowS(); privatePlace(s.lat, s.lon, { onNew: () => learnSite(s.lat, s.lon) }); }, 60000);
   // (as FR24's own airport list has its airports)
   // (a landing place's name as shown: "Private site near Rotherham", not "... near Rotherham, South Yorkshire" - those
   // kept before the names were cut at the comma too - unless two different places would read the same)

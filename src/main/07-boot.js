@@ -104,8 +104,30 @@
   // the page's own events is the page's window object rather than the script's - compared with both; Tweeks gives the
   // window itself)
   const fromThisPage = src => !!src && (src === window || src === pageWindow() || (() => { try { return src.self === pageWindow().self; } catch (_) { return false; } })());
+  // (1.3) LADD Unblock switched off: what FR24's own feed and boards show here (the page's part reads them on their way
+  // past, changing nothing), kept only to go to the monitor with the next report - nothing asked of it, nothing named,
+  // nothing put on the page (N500EU's panel was still filled with it switched off)
+  function onReportOnly(d) {
+    switch (d.__tweeksLadd) {
+      case 'feed': {
+        const t = now(), at = d.at || t;
+        for (const f of d.flights || []) {
+          if (!f || !fin(f.lat) || !fin(f.lon) || !(Number(f.id) > 0)) continue;
+          const prev = pending.get(f.id);
+          pending.set(f.id, Object.assign({}, f, { receivedAt: at, serverTime: d.serverTime || 0, type: f.type || (prev && prev.type) || '', reg: '', bg: false }));
+        }
+        for (const [id, f] of pending) if (t - f.receivedAt > PENDING_TTL_MS) pending.delete(id);
+        break;
+      }
+      case 'feedReady': noteFeedHdr(d.hdr); break;
+      case 'ready': bridgeReady = true; noteFeedHdr(d.hdr); break;
+      case 'boardRows': onBoardRows(d); break;
+      default: break;
+    }
+  }
   window.addEventListener('message', ev => {
     if (!fromThisPage(ev.source) || !ev.data || typeof ev.data !== 'object') return;
+    if (!opt.on) { onReportOnly(ev.data); return; }
     const d = ev.data;
     if (typeof d.__tweeksLadd === 'string') msgCount[d.__tweeksLadd] = (msgCount[d.__tweeksLadd] || 0) + 1;
     switch (d.__tweeksLadd) {
@@ -122,6 +144,7 @@
       case 'needRoutes': onNeedRoutes(d).catch(e => log('routes page', e)); break;
       case 'needAirportData': onNeedAirportData(d).catch(e => log('airport page', e)); break;
       case 'needAirportPanel': onNeedAirportPanel(d).catch(e => log('airport panel', e)); break;
+      case 'needApWx': onNeedApWx(d).catch(e => { log('airport weather', String(e && e.message || e)); postToPage('apWxGot', { ap: d.ap, wx: null }); }); break;
       case 'mxGet': onMxGet(d); break;
       case 'pbFeed': onPbFeed(d); break;
       case 'pbFollow': onPbFollow(d); break;
@@ -280,8 +303,10 @@
   }
 
   // ---- boot -----------------------------------------------------------------------------------------------------
-  // (LADD Unblock switched off in its window: only its button and window, to switch it back on - nothing else runs)
-  if (opt.on) bootAll(); else log('switched off in the LADD Unblock window');
+  // (LADD Unblock switched off in its window: only its button and window, to switch it back on, and the report of what
+  // FR24 itself shows to the monitor - nothing else runs)
+  // (1.3: switched off - the page's part only reads FR24's own answers for the monitor; see onReportOnly)
+  if (opt.on) bootAll(); else { log('switched off in the LADD Unblock window: FR24 left as it is, what it shows reported to the monitor'); installBridge(); }
   startUnblockWindow();
   function bootAll() {
   mxHidePrivacyAds();

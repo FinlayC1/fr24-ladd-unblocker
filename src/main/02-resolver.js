@@ -370,12 +370,12 @@
     parkedBusy = 1;
     matchParked(g).catch(e => log('parked match', e)).finally(() => { parkedBusy = 0; });
   }
-  setInterval(parkedTick, 3000);
+  setInterval(() => { if (opt.on) parkedTick(); }, 3000);
   // Out of public coverage - an ocean, a desert: FR24's satellite (ADS-C) or estimated positions, or no airport within 150
   // km - every unnamed flight there goes through the lookup above, one at a time, the one opened first (each again after
   // ten minutes at most). Whether the page or the monitor ever heard it makes no difference: adsb.lol's history did.
   const remoteAt = (lat, lon) => { let hit = false; ENGINE.nearby(lat, lon, 150, () => { hit = true; }); return !hit; };
-  setInterval(() => {
+  setInterval(() => { if (!opt.on) return;
     if (traceBusy || ENGINE.airports.length < 1000) return;              // (no airports yet: everywhere would look remote)
     const t = now(), sel = currentId();
     const list = [...pending.values()].filter(f => !live.has(f.id) && !f.gnd && f.alt > 10000 && t - f.receivedAt < 120000 && f.type !== 'GRND' && f.icon !== 25 && fin(f.lat) && t - (traceAsked.get(f.id) || 0) >= 10 * 60000 && (f.src === 4 || f.src === 5 || remoteAt(f.lat, f.lon)));
@@ -387,7 +387,7 @@
   function monLastSeen() {
     monGet('/last').then(j => { monSeed(); for (const x of (j && j.list) || []) noteLastSeen({ hex: x.hex, cs: x.cs || '', reg: x.reg || '', type: clean(x.type).toUpperCase(), ladd: x.ladd !== false, lat: x.lat, lon: x.lon, alt: x.alt, gs: x.gs, trk: x.trk, gnd: false, ageS: 0, receivedAt: x.t * 1000, src: 'monitor' }); }).catch(() => {});
   }
-  setTimeout(monLastSeen, 3000); setTimeout(monLastSeen, 9000); setInterval(monLastSeen, 120000);
+  setTimeout(() => { if (opt.on) monLastSeen(); }, 3000); setTimeout(() => { if (opt.on) monLastSeen(); }, 9000); setInterval(() => { if (opt.on) monLastSeen(); }, 120000);
   // (every LADD aircraft identified here before, most recently seen first: the monitor rebuilds their last three days -
   // one parked with its transponder off since before the monitor started is never heard by it: M-ARNZ at Barrow)
   // (and every one identified since - the world scan's, a search's - two minutes later: the monitor follows it worldwide)
@@ -400,7 +400,7 @@
   }
   // (kept across reloads, compactly: a page opened after the aircraft left coverage still knows where it went)
   store.kvReady.then(() => { const o = store.kvGet('lastSeen1'); if (o && Array.isArray(o.list)) for (const c of o.list) noteLastSeen(c); }).catch(() => {});
-  setInterval(() => {
+  setInterval(() => { if (!opt.on) return;
     idleSlice().then(() => {
       const cut = now() - 5 * 3600e3, list = [];
       for (const m of lastSeenByType.values()) for (const { c, t } of m.values()) if (t > cut) list.push({ hex: c.hex, cs: c.cs || '', reg: c.reg || '', type: c.type, ladd: !!c.ladd, pia: !!c.pia, mil: !!c.mil, lat: c.lat, lon: c.lon, alt: c.alt, gs: c.gs, trk: c.trk, gnd: false, ageS: 0, receivedAt: t, src: c.src || '' });
@@ -479,7 +479,7 @@
   // list round is not needed: the list counts as fresh)
   // (all of it in idle moments, a couple of hundred aircraft at a time - never while the map is dragged)
   let liveBusy = false;
-  setInterval(() => {
+  setInterval(() => { if (!opt.on) return;
     if (!monUp() || globalList.loading || liveBusy) return;
     liveBusy = true;
     takeLive({ idle: true }, true).then(async lv => {
@@ -618,8 +618,8 @@
     const rows = o.rows.filter(r => Array.isArray(r) && !srvIds.rows.has(r[0])); for (const r of rows) srvIds.rows.set(r[0], r);
     if (bridgeReady) srvPush(rows);
   }).catch(() => {});
-  setTimeout(() => { pullSrvIds().catch(() => {}); }, 300);
-  setInterval(() => { if (!document.hidden || now() - srvIds.at > 120000) pullSrvIds().catch(() => {}); }, 20000);
+  setTimeout(() => { if (!opt.on) return; pullSrvIds().catch(() => {}); }, 300);
+  setInterval(() => { if (!opt.on) return; if (!document.hidden || now() - srvIds.at > 120000) pullSrvIds().catch(() => {}); }, 20000);
   // This browser's report to the monitor, every minute: FR24's feed headers as its page sends them (once - the monitor's
   // own FR24 scans use them; never an authorization), the callsign-less flights it sees, and the ones it named itself
   // that the monitor has no name for (it has ways the server has not: heatmaps, ADS-B Exchange with the user's key)
@@ -649,7 +649,8 @@
     routesOut.set(id, [id, hex, 0, '', destId, 0, 'withdrawn', 0, 0]);
   }
   async function reportToMonitor() {
-    if (!monUp()) return;
+    // (the monitor's address looked up first when nothing else has - switched off, nothing else asks for it)
+    if (!monUp()) { monCheck(); return; }
     const t = now(), flights = [], ids = [];
     for (const f of pending.values()) {
       if (t - f.receivedAt > 180000 || !fin(f.lat) || !fin(f.lon) || flights.length >= 5000) continue;
@@ -674,6 +675,7 @@
       if (typeof j.learned === 'number' && j.learnSeq > 0) learnSentMark(learn, j.learnNot, j.learnSeq);
     } else learnOutBack(learn);
   }
+  // (1.3: switched off too - what FR24 itself shows this page goes to the monitor whatever the switch says)
   setInterval(() => { idleSlice().then(reportToMonitor).catch(() => {}); }, 60000);
   // What this browser's own polls of adsb.lol / adsb.fi found around its map, to the monitor every 30 s: every other
   // browser has it from there at once (each one's requests to the networks shared by all). The newest of each aircraft

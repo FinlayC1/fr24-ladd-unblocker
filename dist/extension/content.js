@@ -148,10 +148,10 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     var BRIDGE_V = "1.2.12";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
-    // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed
+    // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed but the
+    // reading of FR24's own answers for the monitor (1.3: reportOnly, below)
     var opts = (function () { try { var o = JSON.parse(localStorage.getItem('tweeks.fr24.ladd.opts1') || 'null'); return o && typeof o === 'object' ? o : {}; } catch (e) { return {}; } })();
     var optOn = function (k) { return opts[k] !== false; };
-    if (!optOn('on')) return;
 
     var resolved = new Map();     // fr24 flight id -> identity record (incl. photos)
     // The callsign shown: the one the transponder sends; when none is known yet, the registration the way a transponder
@@ -273,6 +273,86 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
         s += B64C[a >> 2] + B64C[((a & 3) << 4) | (b >> 4)] + (i + 1 < n ? B64C[((b & 15) << 2) | (c >> 6)] : '=') + (i + 2 < n ? B64C[c & 63] : '=');
       }
       return s;
+    }
+
+    // (1.3) LADD Unblock switched off in its window: FR24 exactly as it is - nothing patched, nothing added, nothing asked
+    // of the monitor. Only what FR24's own feed and boards show this page is read on its way past, to go to the monitor as
+    // every browser's does (the flights on the map with no callsign, FR24's rows of a board): reportOnly
+    if (!optOn('on')) { reportOnly(); return; }
+    function reportOnly() {
+      var LF = /fr24\.feed\.api\.v1\.Feed\/LiveFeed(?:$|\?)/, BOARD = /\/api\/v1\/airports\/(\d+)\/(departures|arrivals)(?:[?#]|$)/;
+      var hdr = null;
+      var hdrOf = function (h) { var o = {}; for (var k in h) if (Object.prototype.hasOwnProperty.call(h, k) && /^(fr24-[a-z0-9-]+|x-grpc-web|x-user-agent|content-type)$/i.test(k)) o[k] = String(h[k]); return o; };
+      // (one LiveFeed answer: its flights with neither callsign nor registration - what the whole part reports of it)
+      function feedMsg(body, at) {
+        var fs = parse(body), out = [], serverTime = 0, total = 0;
+        for (var i = 0; i < fs.length; i++) {
+          var f = fs[i];
+          if (f.wt === 2 && (f.fn === 1 || f.fn === 3)) {
+            total++;
+            var ff = parse(f.val), idF = find(ff, 1); if (!idF || idF.wt !== 0) continue;
+            var exF = find(ff, 13), ex = exF && exF.wt === 2 ? parse(exF.val) : [];
+            if (strOf(ff, 11) || strOf(ex, 2)) continue;
+            out.push({ id: idF.val, lat: fltOf(ff, 2), lon: fltOf(ff, 3), trk: numOf(ff, 4), alt: numOf(ff, 5), spd: numOf(ff, 6), icon: numOf(ff, 7),
+              ts: numOf(ff, 9), gnd: !!numOf(ff, 10), src: numOf(ff, 12), type: strOf(ex, 4), reg: '', sel: f.fn === 3 });
+          } else if (f.fn === 4 && f.wt === 0) serverTime = f.val;
+        }
+        post('feed', { flights: out, na: [], named: [], serverTime: serverTime, total: total, at: at, bg: false, observe: true });
+      }
+      function frames(b, at) {
+        var p = 0;
+        while (p + 5 <= b.length) {
+          var len = ((b[p + 1] << 24) | (b[p + 2] << 16) | (b[p + 3] << 8) | b[p + 4]) >>> 0, e = p + 5 + len;
+          if (e > b.length) break;
+          if (b[p] === 0) feedMsg(b.subarray(p + 5, e), at);
+          p = e;
+        }
+      }
+      function readFeed(x) {
+        if (x.status !== 200) return;
+        var at = Date.now(), rt = x.responseType;
+        if (rt === 'arraybuffer') { if (x.response instanceof ArrayBuffer) frames(new Uint8Array(x.response), at); return; }
+        if (rt && rt !== 'text') return;
+        var t = String(x.responseText || ''), out = []; b64DecodeInto(t.slice(0, t.length - t.length % 4), out); frames(Uint8Array.from(out), at);
+      }
+      // (FR24's XMLHttpRequest and fetch wrapped, never changed: each request sent as FR24 made it, each answer FR24's own)
+      var XP = window.XMLHttpRequest && window.XMLHttpRequest.prototype;
+      if (XP) {
+        var oOpen0 = XP.open, oSet0 = XP.setRequestHeader, oSend0 = XP.send;
+        XP.open = function (method, url) { try { this.__tlObs = LF.test(String(url)) ? {} : null; } catch (e) { /* ignore */ } return oOpen0.apply(this, arguments); };
+        XP.setRequestHeader = function (k, v) { try { if (this.__tlObs) this.__tlObs[k] = v; } catch (e) { /* ignore */ } return oSet0.apply(this, arguments); };
+        XP.send = function () {
+          var x = this;
+          try {
+            if (x.__tlObs) {
+              if (!hdr && x.__tlObs['fr24-device-id']) { hdr = hdrOf(x.__tlObs); post('feedReady', { hdr: hdr }); }
+              x.addEventListener('load', function () { try { readFeed(x); } catch (e) { /* not one to read */ } });
+            }
+          } catch (e) { /* ignore */ }
+          return oSend0.apply(this, arguments);
+        };
+      }
+      if (typeof oFetch === 'function') {
+        window.fetch = function (input) {
+          var p = oFetch.apply(this, arguments);
+          try {
+            var url = typeof input === 'string' ? input : String((input && (input.url || input.href)) || ''), m = url.match(BOARD), pg = (url.match(/[?&]page=(-?\d+)/) || [])[1];
+            if (m && (!pg || pg === '1' || pg === '-1')) {
+              p.then(function (res) {
+                if (!res || !res.ok) return;
+                res.clone().json().then(function (j) {
+                  var rows = j && Array.isArray(j.data) ? j.data.filter(function (e) { return e && e.flight && e.flight.id; }) : [];
+                  if (rows.length) post('boardRows', { apId: Number(m[1]), kind: m[2], rows: rows });
+                }, function () { /* not JSON */ });
+              }, function () { /* FR24's to handle */ });
+            }
+          } catch (e) { /* ignore */ }
+          return p;
+        };
+      }
+      window[NS] = { observe: true, hello: function () { post('ready', { feedReady: !!hdr, hdr: hdr || {}, v: BRIDGE_V, observe: true }); } };
+      window.addEventListener('message', function (ev) { if (ev.source === window && ev.data && ev.data.__tweeksLadd === 'hello') window[NS].hello(); });
+      window[NS].hello();
     }
 
     // ---- LiveFeed request: make sure the field mask asks for type + reg ---------------------------------------
@@ -1171,6 +1251,9 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     P.open = function (method, url) { try { this.__tlUrl = String(url); this.__tlHeaders = {}; noteReq('xhr', method, url); } catch (e) { /* ignore */ } return oOpen.apply(this, arguments); };
     P.setRequestHeader = function (k, v) { try { if (this.__tlHeaders) this.__tlHeaders[k] = v; } catch (e) { /* ignore */ } return oSetHeader.apply(this, arguments); };
     P.send = function (body) {
+      // (1.3: LADD Unblock switched off in its window while FR24 is open: FR24's own requests and answers left as they are
+      // from that moment - nothing patched, nothing asked for - until the reload that takes this part away)
+      if (!optOn('on') && !this.__tlOwn) return oSend.apply(this, arguments);
       var url = this.__tlUrl || '', sendBody = body;
       try {
         if (!this.__tlOwn && mxPbStandReq(this, url, body)) return;
@@ -2146,7 +2229,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     var apData = new Map(), servedMem = {};
     function inertiaPage() { try { var el = document.getElementById('app'), va = el && el.__vue_app__, pg = va && va.config.globalProperties.$page; return pg && pg.props && pg.props.airport ? pg : null; } catch (e) { return null; } }
     function apDataOf(apId) { var d = apData.get(apId); if (!d) { try { d = JSON.parse(lsGet('tl.ap.' + apId) || 'null'); } catch (e) { d = null; } d = d || {}; apData.set(apId, d); if (d.routes && !routesAdd.has(apId)) routesAdd.set(apId, d.routes); } return d; }
-    function keepApData(apId) { var d = apDataOf(apId), r = routesAdd.get(apId); lsSet('tl.ap.' + apId, JSON.stringify({ runways: d.runways || null, routes: r || null, at: Date.now() })); }
+    function keepApData(apId) { var d = apDataOf(apId), r = routesAdd.get(apId); lsSet('tl.ap.' + apId, JSON.stringify({ runways: d.runways || null, routes: r || null, stats: d.stats || null, at: Date.now() })); }
     // (the airports and countries FR24 itself counts as served: the ends of its own routes of the week, read once)
     function servedOf(pg) {
       var ap = pg.props.airport, code = String(ap.iata || ap.icao || '').toLowerCase(); if (servedMem[code]) return servedMem[code].ids ? servedMem[code] : null;
@@ -2408,11 +2491,38 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
         // (1.2.11: the runway in use built into the panel as FR24 draws its weather - before the browser paints, so the
         // panel opens with it, not a moment after)
         if (apSeen) { try { rwyUseInline(apSeen); } catch (e) { stats.errors++; stats.lastError = String(e); } }
+        // (1.3: the aircraft panel's vertical speed never a padlock - before the browser paints it)
+        try { var acp = document.querySelector('[data-testid="aircraft-panel"]'); if (acp) vsNoLock(acp); } catch (e) { stats.errors++; stats.lastError = String(e); }
       });
       hideMo.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
     }
     hideWatch();
     if (!hideMo) document.addEventListener('DOMContentLoaded', hideWatch, { once: true });
+    // (1.3) The aircraft panel's vertical speed: FR24 draws its padlock wherever it is given no figure - a free account's
+    // panel always, a figure being something only a value can say (protobuf has no "none"). The figure worked out here
+    // (public ADS-B, else FR24's own altitudes: vrF in the panel's stream) is put in FR24's own answer; where there is none
+    // - low coverage, the flight's first seconds - its padlock is never seen: "N/A" in its place, put in as FR24 draws it,
+    // before the browser paints. A figure in the cell after all (FR24's, or the userscript's own) and it goes.
+    var VS_TITLE = /ascending or descending/i;
+    function vsNoLock(panel) {
+      var labels = panel.querySelectorAll('div[title] > p:first-child');
+      for (var i = 0; i < labels.length; i++) {
+        var lab = labels[i]; if (!/^vertical speed$/i.test(textOf(lab))) continue;
+        var cell = lab.parentElement, lock = null, mine = cell.querySelector(':scope > .tl-vsna');
+        for (var c = cell.firstElementChild; c; c = c.nextElementSibling) if (c !== lab && c.tagName !== 'P' && c.querySelector('svg') && !c.querySelector('p') && !textOf(c)) { lock = c; break; }
+        var filled = cell.querySelector(':scope > .tl-filled');
+        if (lock && !filled) {
+          if (!lock.hasAttribute('data-tl-vsna')) { lock.setAttribute('data-tl-vsna', ''); lock.style.setProperty('display', 'none', 'important'); }
+          if (!mine) { mine = document.createElement('p'); mine.className = 'text-md leading-tight text-gray-1300 tl-vsna'; mine.textContent = 'N/A'; mine.title = 'No vertical speed: no receiver reports it now, and none can be worked out from the altitudes yet (LADD unblocker)'; lock.insertAdjacentElement('afterend', mine); }
+        } else {
+          if (mine) mine.remove();
+          // (the userscript's own figure beside FR24's padlock: the padlock stays put away)
+          if (lock && filled) continue;
+          if (lock && lock.hasAttribute('data-tl-vsna')) { lock.removeAttribute('data-tl-vsna'); lock.style.removeProperty('display'); }
+        }
+        if (VS_TITLE.test(cell.getAttribute('title') || '')) break;
+      }
+    }
     // (FR24's locked pictures: by their name, else by the title they sit under)
     function kindNear(el, panel) {
       var img = el.matches('img') ? el : el.querySelector('img[alt]'), alt = img ? String(img.getAttribute('alt') || '') : '';
@@ -2606,10 +2716,39 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       (routesAdd.get(ap.id) || []).forEach(function (m) { if (m.from.id === ap.id) (m.offs || []).forEach(function (t) { inc(t, 'off'); }); if (m.to.id === ap.id) (m.ons || []).forEach(function (t) { inc(t, 'on'); }); });
       return keys.map(function (d) { var x = days[d], e = add[d] || { off: 0, on: 0 }, to = x.takeoffs + e.off, la = x.landings + e.on; return { timestamp: x.ts, total: to + la, takeoffs: to, landings: la }; });
     }
+    // (1.3) the statistics page's two tables from the monitor: "Runway usage" - each runway's take-offs and landings of the
+    // last week, as the monitor logs every flight's runway from FR24's own tracks (rwylog.cjs: 1.2.10-1.2.12's rules), over
+    // what its daily counts and the ADS-B legs give - and the movements of each day it counted, beside FR24's own
+    // schedule's. FR24's props: runways [{ name, total, takeoffs, landings }], movements [{ timestamp, total, takeoffs,
+    // landings }] (its padlock - locked.runways / locked.movements - off once filled; a subscriber's own tables stand)
+    function statsUsage(p, apId) {
+      var st = apDataOf(apId).stats, use = st && Array.isArray(st.usage) ? st.usage : null;
+      if (!use || !use.length || !p.locked || (!p.locked.runways && !(p.runways && p.runways.__tl))) return;
+      var rows = use.filter(function (u) { return u && u[0] && (u[1] > 0 || u[2] > 0); }).map(function (u) { return { name: String(u[0]), total: (u[1] || 0) + (u[2] || 0), takeoffs: u[1] || 0, landings: u[2] || 0 }; })
+        .sort(function (a, b) { return b.total - a.total || a.name.localeCompare(b.name); });
+      if (!rows.length) return;
+      var sig = JSON.stringify(rows); if (p.runways && p.runways.__tl === sig) return;
+      rows.__tl = sig; p.runways = rows; if (p.locked.runways) p.locked = Object.assign({}, p.locked, { runways: false });
+    }
+    // (FR24's schedule's count of a day and the monitor's, side by side: the larger of each - the monitor's days are UTC
+    // days, given the airport's own date at noon)
+    function statsMoves(p, apId, mine) {
+      var st = apDataOf(apId).stats, daily = st && Array.isArray(st.daily) ? st.daily : [], tz = p.airport.timezone, by = {};
+      (mine || []).forEach(function (m) { by[dayOf(m.timestamp, tz)] = { timestamp: m.timestamp, takeoffs: m.takeoffs, landings: m.landings }; });
+      daily.forEach(function (x) {
+        if (!Array.isArray(x) || !/^\d{4}-\d\d-\d\d$/.test(String(x[0]))) return;
+        var o = by[x[0]], to = Number(x[1]) || 0, la = Number(x[2]) || 0;
+        if (!o) by[x[0]] = { timestamp: Math.floor(Date.parse(x[0] + 'T12:00:00Z') / 1000), takeoffs: to, landings: la };
+        else { o.takeoffs = Math.max(o.takeoffs, to); o.landings = Math.max(o.landings, la); }
+      });
+      var keys = Object.keys(by).sort().reverse().slice(0, 7);
+      return keys.map(function (k) { var o = by[k]; return { timestamp: o.timestamp, total: o.takeoffs + o.landings, takeoffs: o.takeoffs, landings: o.landings }; }).filter(function (r) { return r.total > 0; });
+    }
     function applyStats(pg) {
       var p = pg.props, apId = p.airport.id, w = weekAdds(pg), sig = w.ready + ':' + w.land + ':' + w.off + ':' + Object.keys(w.aps).length + ':' + Object.keys(w.cs).length;
-      unlockRunways(p, apId);
-      var mv = mvRows(p), msig = mv ? JSON.stringify(mv) : '';
+      // (1.3: never the runway details' table here - its runways, "17/35", all "N/A": this one is the usage)
+      statsUsage(p, apId);
+      var mv = statsMoves(p, apId, mvRows(p)), msig = mv ? JSON.stringify(mv) : '';
       if (mv && mv.length && p.locked && (p.locked.movements || (p.movements && p.movements.__tl)) && !(p.movements && p.movements.__tl === msig)) { mv.__tl = msig; p.movements = mv; if (p.locked.movements) p.locked = Object.assign({}, p.locked, { movements: false }); }
       if (!p.summary || p.summary.__tl === sig || !(w.land || w.off)) return;
       var b = p.summary.__tlBase || p.summary;
@@ -2668,7 +2807,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       if (!/^\/data\/airports\/[^/]+/.test(location.pathname)) return;
       var pg = inertiaPage(); if (!pg) return;
       var c = pg.component, apId = pg.props.airport.id;
-      var kinds = c === 'Data/AirportRoutes' ? ['routes'] : c === 'Data/AirportStatistics' ? ['routes', 'runways'] : c === 'Data/Airport' ? ['board', 'routes', 'runways'] : c === 'Data/AirportBoard' ? ['board'] : [];
+      var kinds = c === 'Data/AirportRoutes' ? ['routes'] : c === 'Data/AirportStatistics' ? ['routes', 'stats'] : c === 'Data/Airport' ? ['board', 'routes', 'runways'] : c === 'Data/AirportBoard' ? ['board'] : [];
       if (!kinds.length) return;
       apDataOf(apId);
       var key = apId + ':' + kinds.join(','); if (!dataAsked[key] || Date.now() - dataAsked[key] > 60000) { dataAsked[key] = Date.now(); post('needAirportData', { apId: apId, kinds: kinds }); }
@@ -3355,6 +3494,32 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
         return out.slice(0, 1500);
       });
     }
+    // (1.3) the airports whose weather the monitor gave here (no METAR of their own: FR24's panel had none) as stations of
+    // the current-weather layer - in view, none within 12 km of a station already drawn
+    var AP_WX_KIND = { clear: 'clear', cloudy: 'part', overcast: 'cloud', fog: 'fog', drizzle: 'rain', rain: 'rain', snow: 'snow', thunderstorm: 'ts' };
+    function mxApWxAdd(r, url) {
+      var ids = Object.keys(apWx).filter(function (k) { var w = apWxOf(k); return w && w.src === 'model' && fin(w.lat) && fin(w.lon); });
+      if (!ids.length || !r || !r.ok) return r;
+      var bb = (url.match(/[?&]bbox=([^&]*)/) || [])[1]; bb = bb ? decodeURIComponent(bb).split(',').map(Number) : [];
+      var w0 = bb[0], n = bb[1], e = bb[2], s0 = bb[3];
+      return r.clone().json().then(function (list) {
+        if (!Array.isArray(list)) return r;
+        var near = function (w) { return list.some(function (x) { var la = parseFloat(x.lat), lo = parseFloat(x.lon); return fin(la) && fin(lo) && Math.abs(la - w.lat) < 0.11 && Math.abs(lo - w.lon) * Math.cos(w.lat * Math.PI / 180) < 0.11; }); };
+        var add = [], now = Date.now();
+        ids.forEach(function (k) {
+          var w = apWxOf(k);
+          if (isFinite(n) && (w.lat > n || w.lat < s0)) return;
+          if (isFinite(w0) && (w0 <= e ? (w.lon < w0 || w.lon > e) : (w.lon < w0 && w.lon > e))) return;
+          if (near(w)) return;
+          var code = w.icao || w.code || String(k), temp = fin(w.tempC) ? String(Math.round(w.tempC)) : '';
+          add.push({ id: code, name: w.name || code, lat: String(w.lat), lon: String(w.lon), temperature_value: temp, weather_code: 'tl' + (AP_WX_KIND[w.cond] || 'part') + (mxOp('current') < 100 ? mxOp('current') : ''), daylight: mxDaylight(w.lat, w.lon, now),
+            weather_text: (AP_WX_WORD[w.cond] || 'Unknown') + (fin(w.wkts) ? ', wind ' + (w.wkts === 0 ? 'calm' : (fin(w.wdir) ? w.wdir + '° ' : 'variable ') + w.wkts + ' kt') : '') + ' - live weather at the airport (no METAR sent from it)', raw_text: w.metar || '' });
+        });
+        if (!add.length) return r;
+        mx.data++;
+        return jsonResponse(r, list.concat(add));
+      }, function () { return r; });
+    }
     // (the symbols: FR24 asks for /assets/images/weather/velocity/<code><d|n>.png - for the codes given here, drawn here)
     function mxWxIcon(url) {
       var m = url.match(/\/assets\/images\/weather\/velocity\/tl([a-z]+?)(\d*)([dn])\.png/); if (!m) return null;
@@ -3955,21 +4120,110 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     function rwyUseInline(panel) {
       if (!panel || !panel.isConnected || !panel.querySelector('[data-testid="airport-panel__weather__wind"]')) return;
       var box = panel.querySelector('.tl-rwyuse'), pid = rwyUseApId(); if (!pid) return;
-      if (!box || box.__tlAp !== pid) rwyUsePanel(panel, pid);
+      // (1.3: and the monitor's weather where FR24 has none - again should FR24 have drawn its own weather anew)
+      var wxb = panel.querySelector('.tl-wx'), wxRedo = wxb ? !(wxb.previousElementSibling && wxb.previousElementSibling.hasAttribute('data-tl-wxhid')) : !!apWxOf(pid) && apWxNone(panel);
+      if (!box || box.__tlAp !== pid || wxRedo) rwyUsePanel(panel, pid);
+    }
+    // ---- (1.3) An airport's weather where FR24 has none - no METAR from it (Barrow/Walney: "N/A" under Conditions,
+    // Temperature and Wind): the monitor's (apwx.cjs) - the live weather at the airport itself and a METAR made from it -
+    // in FR24's own tiles and its "More weather & METAR", on its data page, on the current-weather layer, and into the
+    // runway in use
+    var apWx = {};      // airport id -> { at, wx, asked }
+    function apWxOf(apId) { var x = apWx[apId]; return x && x.wx && Date.now() - x.at < 30 * 60000 ? x.wx : null; }
+    function apWxWant(apId) {
+      apId = Number(apId) || 0; if (!(apId > 0)) return;
+      var x = apWx[apId] || (apWx[apId] = { at: 0, wx: null, asked: 0 });
+      if ((x.wx && Date.now() - x.at < 10 * 60000) || Date.now() - x.asked < 60000) return;
+      x.asked = Date.now(); post('needApWx', { ap: apId });
+    }
+    function onApWxGot(d) {
+      var id = Number(d.ap) || 0; if (!(id > 0)) return;
+      var x = apWx[id] || (apWx[id] = { asked: Date.now() }), w = d.wx;
+      if (w && !w.none && typeof w.cond === 'string' && (fin(w.tempC) || fin(w.wkts))) { x.wx = w; x.at = Date.now(); }
+      var ap0 = document.querySelector('[data-testid="airport-panel"]');
+      if (ap0 && rwyUseApId() === id && ap0.querySelector('[data-testid="airport-panel__weather__wind"]')) { try { rwyUsePanel(ap0, id); } catch (e) { stats.errors++; stats.lastError = String(e); } }
+    }
+    // (the wind as the runway in use reads it: variable - no direction - is no wind to choose a runway by)
+    var apWxWind = function (w) { return w && fin(w.wkts) ? (fin(w.wdir) ? { deg: w.wdir, kts: w.wkts } : { deg: 0, kts: 0 }) : null; };
+    var AP_WX_WORD = { clear: 'Clear', cloudy: 'Cloudy', overcast: 'Overcast', fog: 'Fog', drizzle: 'Drizzle', rain: 'Rain', snow: 'Snow', thunderstorm: 'Thunderstorm' };
+    // (FR24's units as its settings say - Celsius or Fahrenheit, knots, km/h, mph or m/s)
+    function apWxUnits() { try { var p = mxPinia(), st = p && p._s.get('settings'), u = st && st.units; return { t: u && u.temperature === 'f' ? 'f' : 'c', w: u && /^(kmh|mph|ms)$/.test(u.windSpeed) ? u.windSpeed : 'kt' }; } catch (e) { return { t: 'c', w: 'kt' }; } }
+    var apWxTemp = function (c, un) { return fin(c) ? (un.t === 'f' ? Math.round(c * 9 / 5 + 32) + ' °F' : Math.round(c) + ' °C') : 'N/A'; };
+    var apWxSpeed = function (k, un) { return un.w === 'kmh' ? [Math.round(k * 1.852), 'km/h'] : un.w === 'mph' ? [Math.round(k * 1.15078), 'mph'] : un.w === 'ms' ? [Math.round(k * 0.514444), 'm/s'] : [Math.round(k), 'kts']; };
+    // (a small picture for each word - FR24 draws one over its own)
+    var AP_WX_ICON = {
+      clear: '<circle cx="12" cy="12" r="4.5"/><path d="M12 1.5v3M12 19.5v3M1.5 12h3M19.5 12h3M4.6 4.6l2.1 2.1M17.3 17.3l2.1 2.1M4.6 19.4l2.1-2.1M17.3 6.7l2.1-2.1" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none"/>',
+      cloudy: '<circle cx="8" cy="8" r="3.2"/><path d="M8 1.5v1.6M2.5 8H1M3.6 3.6l1.1 1.1M12.4 3.6l-1.1 1.1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" fill="none"/><path d="M7.5 20.5h11a4 4 0 0 0 .5-8 5.5 5.5 0 0 0-10.4-1.4A4.3 4.3 0 0 0 7.5 20.5z"/>',
+      overcast: '<path d="M6.5 19.5h12a4.5 4.5 0 0 0 .6-9 6.5 6.5 0 0 0-12.4-1.6A5.3 5.3 0 0 0 6.5 19.5z"/>',
+      fog: '<path d="M3 7h18M2 11.5h20M3 16h18M5 20.5h14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/>',
+      drizzle: '<path d="M6.5 14.5h12a4.2 4.2 0 0 0 .5-8.4 6 6 0 0 0-11.5-1.5A5 5 0 0 0 6.5 14.5z"/><path d="M8 18v1.5M12 18v1.5M16 18v1.5M10 21.5v1M14 21.5v1" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none"/>',
+      rain: '<path d="M6.5 14.5h12a4.2 4.2 0 0 0 .5-8.4 6 6 0 0 0-11.5-1.5A5 5 0 0 0 6.5 14.5z"/><path d="M8 17l-1.2 3.5M12.5 17l-1.2 3.5M17 17l-1.2 3.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/>',
+      snow: '<path d="M6.5 14.5h12a4.2 4.2 0 0 0 .5-8.4 6 6 0 0 0-11.5-1.5A5 5 0 0 0 6.5 14.5z"/><circle cx="8" cy="18.5" r="1.2"/><circle cx="12.5" cy="20.5" r="1.2"/><circle cx="17" cy="18.5" r="1.2"/>',
+      thunderstorm: '<path d="M6.5 13.5h12a4.2 4.2 0 0 0 .5-8.4 6 6 0 0 0-11.5-1.5A5 5 0 0 0 6.5 13.5z"/><path d="M12.5 13.5l-3 5h3l-1.5 4.5 4.5-6.5h-3l2-3z"/>'
+    };
+    // (FR24's three say nothing: no weather of its own for the airport)
+    function apWxNone(panel) {
+      var ids = ['conditions', 'temperature', 'wind'];
+      for (var i = 0; i < ids.length; i++) { var dd = panel.querySelector('[data-testid="airport-panel__weather__' + ids[i] + '"] dd'); if (!dd || !/^(n\/a|-|—|)$/i.test(textOf(dd))) return false; }
+      return true;
+    }
+    var apWxAgo = function (t) { var m = Math.max(0, Math.round((Date.now() / 1000 - t) / 60)); return m < 60 ? m + ' m ago' : Math.floor(m / 60) + ' h ' + (m % 60) + ' m ago'; };
+    function apWxHtml(w) {
+      var un = apWxUnits(), sp = fin(w.wkts) ? apWxSpeed(w.wkts, un) : null, word = AP_WX_WORD[w.cond] || 'Unknown';
+      var tip = rwyEsc('No METAR is sent from this airport: its live weather (the weather model at the airport, Open-Meteo), ' + apWxAgo(w.t) + ' (LADD unblocker)');
+      var tile = function (id, label, dd) { return '<div class="rounded border border-gray-500 px-1.5 pb-1 pt-1.5 bg-gray-200" data-tl-wx="' + id + '" title="' + tip + '"><div class="flex size-full items-center space-x-3"><div class="flex size-full flex-col"><dt class="text-xs font-semibold uppercase text-gray-900"><span class="inline-flex w-fit"><span>' + label + '</span></span></dt><dd class="h-full text-md font-semibold text-gray-1300">' + dd + '</dd></div></div></div>'; };
+      var more = function (label, dd, wide) { return '<div class="rounded border border-gray-500 bg-gray-100 px-1.5 pb-1 pt-1.5' + (wide ? ' col-span-3' : '') + '"><div class="flex size-full items-center space-x-3"><div class="flex size-full flex-col"><dt class="text-xs font-semibold uppercase text-gray-900"><span class="inline-flex w-fit"><span>' + label + '</span></span></dt><dd class="h-full text-md font-semibold text-gray-1300">' + dd + '</dd></div></div></div>'; };
+      var cond = '<div class="flex flex-col items-center"><svg xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 24 24" class="fill-current my-0.5 size-8 text-gray-1300">' + (AP_WX_ICON[w.cond] || AP_WX_ICON.cloudy) + '</svg><div class="whitespace-nowrap text-sm font-semibold">' + word + '</div></div>';
+      var wind = !sp ? 'N/A' : sp[0] === 0 ? '<span class="flex h-full items-center justify-center text-3xl font-normal">Calm</span>'
+        : '<div class="flex flex-col items-center">' + (fin(w.wdir) ? '<svg xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 22 28" class="fill-current size-8 text-gray-1300 my-0.5" style="transform: rotate(' + ((w.wdir + 180) % 360) + 'deg);"><path d="M20.917 10.043 10.566 0 .224 10.014a.72.72 0 0 0-.015 1.031.72.72 0 0 0 1.031.015l8.617-8.339v24.548a.731.731 0 0 0 1.463 0V2.765L19.9 11.1a.73.73 0 0 0 .512.2.728.728 0 0 0 .5-1.258"></path></svg>' : '') +
+          '<div class="space-x-1 text-sm font-semibold"><span class="text-sm">' + (fin(w.wdir) ? w.wdir + '°' : 'Variable') + '</span><span>' + sp[0] + (fin(w.gust) ? 'G' + apWxSpeed(w.gust, un)[0] : '') + '</span><span class="text-xs">' + sp[1] + '</span></div></div>';
+      // (the report made from it on the monitor, as a METAR is written - AUTO, RMK MODEL: no station's own)
+      var last = more('<div class="flex justify-between"><span>Latest metar</span><span class="text-sm font-normal normal-case text-gray-1300">' + apWxAgo(w.t) + '</span></div>', ' ' + rwyEsc(w.metar || '') + ' <p class="pt-2 text-md font-normal text-gray-900">No METAR is sent from this airport: this one is made from its live weather (the weather model at the airport, Open-Meteo) - not an official report.</p>', true);
+      return '<dl class="grid grid-cols-3 gap-1 text-center">' + tile('conditions', 'Conditions', cond) + tile('temperature', 'Temperature', '<span class="flex h-full items-center justify-center text-3xl font-normal">' + apWxTemp(w.tempC, un) + '</span>') + tile('wind', 'Wind', wind) + '</dl>' +
+        '<details class="space-y-1 rounded-lg border border-gray-400 p-1 align-top text-gray-1300 bg-white"><summary class="group flex cursor-pointer list-none items-center gap-x-2 px-1 py-0.5 font-semibold pl-8 text-blue-500 normal-case text-md">More weather &amp; METAR</summary><section class="relative overflow-hidden rounded-lg"><dl class="mt-1 grid grid-cols-3 gap-1">' +
+        more('Air pressure', fin(w.hpa) ? w.hpa.toLocaleString('en-GB') + ' hPa' : 'N/A') + more('Dew point', apWxTemp(w.dewC, un)) + more('Humidity', fin(w.rh) ? w.rh + '%' : 'N/A') + last + '</dl></section></details>';
+    }
+    // (FR24's own weather and its "More weather" put away while it has none; back - ours gone - the moment it has)
+    var apWxHide = function (el) { if (el && !el.hasAttribute('data-tl-wxhid')) { el.setAttribute('data-tl-wxhid', ''); el.style.setProperty('display', 'none', 'important'); } };
+    var apWxShow = function (el) { if (el && el.hasAttribute('data-tl-wxhid')) { el.removeAttribute('data-tl-wxhid'); el.style.removeProperty('display'); } };
+    function apWxPanel(panel, apId, dl) {
+      var box = dl.parentElement.querySelector(':scope > .tl-wx'), fr24More = null;
+      for (var sib = dl.nextElementSibling; sib; sib = sib.nextElementSibling) if (sib.tagName === 'DETAILS' && /more weather/i.test(textOf(sib.querySelector('summary')))) { fr24More = sib; break; }
+      var w = apWxNone(panel) ? (apWxWant(apId), apWxOf(apId)) : null;
+      if (!w) { if (box) box.remove(); apWxShow(dl); apWxShow(fr24More); return null; }
+      var html = apWxHtml(w);
+      if (!box) { box = document.createElement('div'); box.className = 'space-y-1 tl-wx'; dl.insertAdjacentElement('afterend', box); }
+      if (box.__tl !== html) { var open = !!(box.querySelector('details') || {}).open; box.innerHTML = html; box.__tl = html; if (open) box.querySelector('details').open = true; }
+      box.__tlAp = apId; apWxHide(dl); apWxHide(fr24More);
+      return w;
     }
     // the map's airport panel: under its Conditions / Temperature / Wind
     function rwyUsePanel(panel, apId) {
       var w = panel.querySelector('[data-testid="airport-panel__weather__wind"]'), dl = w && w.closest('dl'); if (!dl || !dl.parentElement) return;
-      var u = rwyUseWant(apId), cond = textOf(panel.querySelector('[data-testid="airport-panel__weather__conditions"] dd'));
-      var r = u ? rwyInUse(u, windOfText(textOf(w.querySelector('dd'))), cond, Math.floor(Date.now() / 1000)) : null;
+      // (1.3: FR24 with no weather for it: the monitor's in its place, and its wind and weather for the runway in use)
+      var aw = apWxPanel(panel, apId, dl), anchor = aw ? dl.parentElement.querySelector(':scope > .tl-wx') || dl : dl;
+      var u = rwyUseWant(apId), cond = aw ? AP_WX_WORD[aw.cond] || '' : textOf(panel.querySelector('[data-testid="airport-panel__weather__conditions"] dd'));
+      var r = u ? rwyInUse(u, aw ? apWxWind(aw) : windOfText(textOf(w.querySelector('dd'))), cond, Math.floor(Date.now() / 1000)) : null;
       var tile = function (label, inner, why, kind) { return '<div class="rounded border border-gray-500 px-1.5 pb-1 pt-1.5 bg-gray-200" data-testid="airport-panel__weather__runway-' + kind + '" title="' + rwyEsc(why + ' (LADD unblocker)') + '"><div class="flex size-full items-center space-x-3"><div class="flex size-full flex-col"><dt class="text-xs font-semibold uppercase text-gray-900"><span class="inline-flex w-fit"><span>' + rwyEsc(label) + '</span></span></dt><dd class="h-full text-md font-semibold text-gray-1300"><div class="flex flex-col items-center gap-0.5">' + inner + '</div></dd></div></div></div>'; };
       // (1.2.11: the airport's answer still on its way - nothing kept of it in this browser: the tiles there, empty, not
       // "N/A" for a moment)
       var c0 = mxRwyAp.get(apId), wait = !r && !!c0 && !c0.done;
       var html = rwyUseHtml(r, tile, wait), box = dl.parentElement.querySelector(':scope > .tl-rwyuse');
-      if (!box) { box = document.createElement('dl'); box.className = 'grid grid-cols-2 gap-1 text-center tl-rwyuse'; dl.insertAdjacentElement('afterend', box); }
+      if (!box) { box = document.createElement('dl'); box.className = 'grid grid-cols-2 gap-1 text-center tl-rwyuse'; anchor.insertAdjacentElement('afterend', box); }
+      else if (anchor !== dl && box.previousElementSibling !== anchor) anchor.insertAdjacentElement('afterend', box);   // (under the weather put in)
       box.__tlAp = apId;
       if (box.__tl !== html) { box.innerHTML = html; box.__tl = html; }
+    }
+    // (1.3) an airport's data page with no weather from FR24 (none, or nothing in it): the monitor's, in FR24's own form -
+    // its weather card drawn by FR24 itself - and FR24's again the moment it has its own
+    function apWxData(p, apId) {
+      var fw = p.weather;
+      if (fw && !fw.__tl && (fin(fw.temperatureC) || fin(fw.windSpeedKts) || (fw.condition && fw.condition !== 'unknown'))) return;
+      apWxWant(apId);
+      var w = apWxOf(apId); if (!w) return;
+      var kts = fin(w.wkts) ? Math.round(w.wkts) : null, nw = { timestamp: w.t, condition: w.cond, temperatureC: fin(w.tempC) ? Math.round(w.tempC) : null, windDirection: fin(w.wdir) ? w.wdir : 0, windSpeedKts: fin(w.wdir) ? kts : (kts === null ? null : 0) };
+      var sig = JSON.stringify(nw); if (fw && fw.__tl === sig) return;
+      nw.__tl = sig; p.weather = nw;
     }
     // an airport's data page (/data/airports/<code>): a card of its own under FR24's weather card, in its markup
     function rwyUseData(p, apId) {
@@ -4127,7 +4381,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
         if ((c === 'Data/AirportBoard' || c === 'Data/Airport') && apI) mxRwyAirport(apI);
         if (c === 'Data/AirportBoard' && apI) { mxBoardRwy(p.flights, p.board, apI); if (p.board !== 'on-ground') mxDataEnds(p.flights, p.board, apI); }
         if (c === 'Data/Airport' && apI && p.boards) ['departures', 'arrivals', 'onGround'].forEach(function (k) { if (p.boards[k]) { mxBoardRwy(p.boards[k].flights, k, apI); if (k !== 'onGround') mxDataEnds(p.boards[k].flights, k, apI); } });
-        if (c === 'Data/Airport' && apI) rwyUseData(p, apI);
+        if (c === 'Data/Airport' && apI) { apWxData(p, apI); rwyUseData(p, apI); }
         var pm = location.pathname.match(/^\/data\/playback\/([0-9a-f]{1,16})\/?$/i);
         // (a flight known only here: its aircraft's page, where it plays in place; FR24's own page of a flight it locks or
         // shows empty: given the track)
@@ -4235,9 +4489,12 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     // script plays it in place, in its own player)
     var mxNav = function (u, replace) { if (replace) location.replace(u); else location.assign(u); };
     var mxPbLogUrl = function (reg, id) { return '/data/aircraft/' + encodeURIComponent(String(reg).toLowerCase()) + '#' + id; };
+    // (1.3: the flight's log page and its player in a tab of their own, however it was clicked - the map, its panel and
+    // board left as they were. A browser that will not open one - a pop-up blocker: in this tab after all)
+    var mxTab = function (u) { var wn = null; try { wn = window.open(u, '_blank'); } catch (e) { wn = null; } if (wn) { try { wn.opener = null; } catch (e) { /* ignore */ } } else mxNav(u); };
     function mxPbOpen(w, t, newTab) {
       var id = isHex(w.hex) && w.dep > 0 ? mxPbSynId(w.hex, w.dep) : w.id > 0 ? Number(w.id).toString(16) : isHex(w.hex) ? mxPbSynId(w.hex, 0) : '';
-      var go = function (u) { if (newTab) window.open(u, '_blank', 'noopener'); else mxNav(u); };
+      var go = function (u) { mxTab(u); };
       if (w.reg && id) { go(mxPbLogUrl(w.reg, id)); return; }
       var root = document.documentElement; root.style.cursor = 'progress';
       mxPbAsk({ id: id, hex: w.hex || '', reg: w.reg || '', cs: w.cs || '', dep: w.dep || 0, at: w.at || 0, apId: w.apId || 0, kind: w.kind || '' }).then(function (d) {
@@ -4418,13 +4675,15 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       if (/\/api\/v1\/weather\/auth\b/.test(url)) return mxAuth().then(function (o) { return jsonResponse(null, o); }, function (e) { mxFail(e); return jsonResponse(null, { data: null }); });
       if (/adn\.velocityweather\.com\/v1\/[^/]+\/reports\/lightning\/region\.json/.test(url)) return mxLightning(url);
       if (/\/assets\/images\/weather\/velocity\/tl[a-z]+\d*[dn]\.png/.test(url)) return mxWxIcon(url);
-      if (/\/weather\/stations\?bbox=/.test(url)) return mxOwnOr(input, init, function (j) { return Array.isArray(j) && j.length > 0; }, function () { return mxStations(url); });
+      // (1.3: and the airports with no METAR of their own whose weather the monitor gave - Barrow/Walney's - among them)
+      if (/\/weather\/stations\?bbox=/.test(url)) return mxOwnOr(input, init, function (j) { return Array.isArray(j) && j.length > 0; }, function () { return mxStations(url); }).then(function (r) { return mxApWxAdd(r, url); });
       if (/\/weather\/airsigmetsbbox\?/.test(url)) return mxOwnOr(input, init, function (j) { return Array.isArray(j) && j.length > 0; }, mxAirsigList);
       if (/\/json\/tracks(?:[?#]|$)/.test(url)) return mxOwnOr(input, init, mxTrackOk, mxTracks);
       return null;
     }
 
     window.fetch = function (input, init) {
+      if (!optOn('on')) return oFetch.apply(window, arguments);   // (1.3: switched off - FR24's own, untouched)
       var url = urlOf(input), m;
       noteReq('fetch', (init && init.method) || (input && input.method), url);
       // the userscript's own lookups (boards for filed plans, registration searches): passed through untouched
@@ -5051,6 +5310,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       else if (d.__tweeksLadd === 'endsGot') onEndsGot(d);
       else if (d.__tweeksLadd === 'rwyApGot') onRwyApGot(d);
       else if (d.__tweeksLadd === 'rwyUseGot') onRwyUseGot(d);
+      else if (d.__tweeksLadd === 'apWxGot') onApWxGot(d);
       else if (d.__tweeksLadd === 'trackFileGot') onTrackFileGot(d);
       else if (d.__tweeksLadd === 'pbPageGot') onPbPageGot(d);
       else if (d.__tweeksLadd === 'ctyTable') onCtyTable(d);
@@ -5077,7 +5337,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       else if (d.__tweeksLadd === 'routesAdd') { if (d.apId) { routesAdd.set(Number(d.apId), d.list || []); keepApData(Number(d.apId)); routesTick(); } }
       else if (d.__tweeksLadd === 'airportPanel') acceptAirportPanel(d);
       else if (d.__tweeksLadd === 'searchAdd') onSearchAdd(d);
-      else if (d.__tweeksLadd === 'airportData') { if (d.apId) { var ad = apDataOf(Number(d.apId)); if (d.runways) ad.runways = d.runways; if (d.board) ad.board = d.board; keepApData(Number(d.apId)); routesTick(); } }
+      else if (d.__tweeksLadd === 'airportData') { if (d.apId) { var ad = apDataOf(Number(d.apId)); if (d.runways) ad.runways = d.runways; if (d.board) ad.board = d.board; if (d.stats && typeof d.stats === 'object') ad.stats = Object.assign({ at: Date.now() }, d.stats); keepApData(Number(d.apId)); routesTick(); } }
       else if (d.__tweeksLadd === 'hist') {
         var reg = String(d.reg || '').toUpperCase(); if (!reg) return;
         if (d.data) hist.set(reg, { data: d.data, at: Date.now(), partial: !!d.partial });
@@ -5103,7 +5363,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       else if (d.__tweeksLadd === 'hello') post('ready', { stats: stats, feedReady: !!feedHeaders, hdr: feedHdrPublic(), v: BRIDGE_V });
     });
     window[NS] = { resolved: resolved, routes: routes, naRecs: naRecs, naRoutes: naRoutes, telem: telem, hist: hist, lastPos: lastPos, photoCache: photoCache, psCache: psCache, stats: stats, fetchPhotos: fetchPhotos, hello: function () { post('ready', { stats: stats, feedReady: !!feedHeaders, v: BRIDGE_V }); }, v: BRIDGE_V };
-    if (window.__tlTestHook) try { window.__tlTestHook({ csOf: csOf, patchTopFlights: patchTopFlights, onTopGot: onTopGot, topNames: topNames, fillFlightList: fillFlightList, routeRows: routeRows, liveDestFix: liveDestFix, hist: hist, preloaded: function () { return preloaded; }, parse: parse, photoFits: photoFits, makerOf: makerOf, patchFollow: patchFollow, patchFlightMsg: patchFlightMsg, pushFollow: pushFollow, followSt: function () { return followSt; }, setFollowSt: function (s) { followSt = s; }, shownPhotos: shownPhotos, photoCache: photoCache, FOLLOW: FOLLOW, DETAILS: DETAILS, fLen: fLen, fStr: fStr, fVar: fVar, patchFlight: patchFlight, patchLiveFeed: patchLiveFeed, fr24Named: fr24Named, psState: function () { return { q: psQ.length, busy: psBusy, last: psLast, blockedFor: Math.max(0, psBlockedUntil - Date.now()), pri: Array.from(psPri), jobs: photoJobs.size, head: psQ.slice(0, 3).map(function (j) { return j.hex; }) }; }, acceptPubTel: acceptPubTel, pubTelFor: pubTelFor, fillNativeCard: fillNativeCard, regsOfCallsign: regsOfCallsign, categoryOf: categoryOf, placeShort: placeShort, nativeFill: nativeFill, natInfo: natInfo, addArch: addArch, acceptBoardArch: acceptBoardArch, telem: telem, b64Encode: b64Encode, b64DecodeInto: b64DecodeInto, frameHeader: frameHeader, concat: concat, varintInt32: varintInt32, PLAYBACK: PLAYBACK, patchPlayback: patchPlayback, patchPlaybackRequest: patchPlaybackRequest, pbRoutes: pbRoutes, pbTelAt: pbTelAt, setPbTrace: function (t) { pbTrace = t; }, patchList: patchList, acceptSites: acceptSites, listSig: listSig, mergeRoutes: mergeRoutes, applyRoutes: applyRoutes, routesAdd: routesAdd, applyAirport: applyAirport, applyBoardPage: applyBoardPage, applyStats: applyStats, mergeFlights: mergeFlights, apData: apData, telAt: telAt, noteTelem: noteTelem, pbTraceOf: function () { return pbTrace; }, logoOf: logoOf, archDetail: archDetail, tsOf: tsOf, noteAirportJson: noteAirportJson, rwyOf: rwyOf, rwyPanel: rwyPanel, panelTick: panelTick, panelData: panelData, promoSlots: promoSlots, acceptAirportPanel: acceptAirportPanel, unlockRunways: unlockRunways, mvRows: mvRows, mvKept: mvKept, dayOf: dayOf, pbPanelTick: pbPanelTick, logoFix: logoFix, liveEntries: liveEntries, pbPos: pbPos, unlockFeed: unlockFeed, derivedVs: derivedVs, altHist: altHist, acceptAir: acceptAir, airCache: airCache, flushAir: flushAir, airWant: function () { return airWant; }, lastPos: lastPos, resolved: resolved, stats: stats, pbFind: pbFind, inBar: inBar, pbBlk: pbBlk, cardInfo: cardInfo, boardRowsSeen: boardRowsSeen, archById: archById, placeBoard: placeBoard, stopBoardHold: stopBoardHold, needBoardArch: needBoardArch, mx: mx, mxPatchCore: mxPatchCore, mxAuth: mxAuth, mxNatList: mxNatList, mxTrackOk: mxTrackOk, stripRestriction: stripRestriction, mxBmMerge: mxBmMerge, mxBmItem: mxBmItem, mxMonTile: mxMonTile, mxMonOr: mxMonOr, mxPinVer: mxPinVer, mxAirportHistory: mxAirportHistory, mxHistItems: mxHistItems, mxTrackFile: mxTrackFile, mxDataTick: mxDataTick, mxPbProps: mxPbProps, mxPbShow: mxPbShow, mxPbStandIn: mxPbStandIn, mxPbReadAt: mxPbReadAt, mxPbStand: mxPbStand, mxBoardRwy: mxBoardRwy, reqIdOf: reqIdOf, mxPbOpen: mxPbOpen, mxPbTake: mxPbTake, setNav: function (f) { mxNav = f; }, mxPbAway: mxPbAway, mxLegacyPbJson: mxLegacyPbJson, mxLegacyPb: mxLegacyPb, mxPbFlags: mxPbFlags, mxPbSynId: mxPbSynId, mxPbParam: mxPbParam, setPbWanted: function (v) { mxPbWanted = v; }, mxPlans: function () { return mxPlans; }, mxLiveRunways: mxLiveRunways, mxRwy: mxRwy, mxSetApply: mxSetApply, mxSetNote: mxSetNote, mxSetKept: mxSetKept, mxLastClicked: mxLastClicked, mxLcList: mxLcList, onLcClick: onLcClick, mxLcFill: mxLcFill, cardRwy: cardRwy, naEndsFill: naEndsFill, onEndsGot: onEndsGot, naEnds: naEnds, boardWant: boardWant, mxLegacyImages: mxLegacyImages, rwyInUse: rwyInUse, windOfText: windOfText, mxRwyAirport: mxRwyAirport, mxRwyByHex: mxRwyByHex, mxRowHex: mxRowHex, mxDataEnds: mxDataEnds, rwyUsePanel: rwyUsePanel, rwyUseData: rwyUseData, rwyUseWant: rwyUseWant, cardRwyFill: cardRwyFill, rwyUseKept: rwyUseKept, mxLcTick: mxLcTick, mxBmMax: mxBmMax, mxNatParse: mxNatParse, mxAirsigList: mxAirsigList, mxStations: mxStations, mxLightning: mxLightning, mxLx: mxLx, mxFetch: mxFetch, mxWxText: mxWxText, mxWxKind: mxWxKind, mxCsv: mxCsv, patchLiveFeedRequest: patchLiveFeedRequest, mxCats: mxCats, mxOp: mxOp, mxLevels: mxLevels, mxNearest: mxNearest, MX_ICE: MX_ICE, MX_TURB: MX_TURB, mxWafsUrl: mxWafsUrl, routes: routes, setCurFollow: function (id) { curFollowId = id; } }); } catch (e) { /* ignore */ }
+    if (window.__tlTestHook) try { window.__tlTestHook({ csOf: csOf, patchTopFlights: patchTopFlights, onTopGot: onTopGot, topNames: topNames, fillFlightList: fillFlightList, routeRows: routeRows, liveDestFix: liveDestFix, hist: hist, preloaded: function () { return preloaded; }, parse: parse, photoFits: photoFits, makerOf: makerOf, patchFollow: patchFollow, patchFlightMsg: patchFlightMsg, pushFollow: pushFollow, followSt: function () { return followSt; }, setFollowSt: function (s) { followSt = s; }, shownPhotos: shownPhotos, photoCache: photoCache, FOLLOW: FOLLOW, DETAILS: DETAILS, fLen: fLen, fStr: fStr, fVar: fVar, patchFlight: patchFlight, patchLiveFeed: patchLiveFeed, fr24Named: fr24Named, psState: function () { return { q: psQ.length, busy: psBusy, last: psLast, blockedFor: Math.max(0, psBlockedUntil - Date.now()), pri: Array.from(psPri), jobs: photoJobs.size, head: psQ.slice(0, 3).map(function (j) { return j.hex; }) }; }, acceptPubTel: acceptPubTel, pubTelFor: pubTelFor, fillNativeCard: fillNativeCard, regsOfCallsign: regsOfCallsign, categoryOf: categoryOf, placeShort: placeShort, nativeFill: nativeFill, natInfo: natInfo, addArch: addArch, acceptBoardArch: acceptBoardArch, telem: telem, b64Encode: b64Encode, b64DecodeInto: b64DecodeInto, frameHeader: frameHeader, concat: concat, varintInt32: varintInt32, PLAYBACK: PLAYBACK, patchPlayback: patchPlayback, patchPlaybackRequest: patchPlaybackRequest, pbRoutes: pbRoutes, pbTelAt: pbTelAt, setPbTrace: function (t) { pbTrace = t; }, patchList: patchList, acceptSites: acceptSites, listSig: listSig, mergeRoutes: mergeRoutes, applyRoutes: applyRoutes, routesAdd: routesAdd, applyAirport: applyAirport, applyBoardPage: applyBoardPage, applyStats: applyStats, mergeFlights: mergeFlights, apData: apData, telAt: telAt, noteTelem: noteTelem, pbTraceOf: function () { return pbTrace; }, logoOf: logoOf, archDetail: archDetail, tsOf: tsOf, noteAirportJson: noteAirportJson, rwyOf: rwyOf, rwyPanel: rwyPanel, panelTick: panelTick, panelData: panelData, promoSlots: promoSlots, acceptAirportPanel: acceptAirportPanel, unlockRunways: unlockRunways, mvRows: mvRows, mvKept: mvKept, dayOf: dayOf, pbPanelTick: pbPanelTick, logoFix: logoFix, liveEntries: liveEntries, pbPos: pbPos, unlockFeed: unlockFeed, derivedVs: derivedVs, altHist: altHist, acceptAir: acceptAir, airCache: airCache, flushAir: flushAir, airWant: function () { return airWant; }, lastPos: lastPos, resolved: resolved, stats: stats, pbFind: pbFind, inBar: inBar, pbBlk: pbBlk, cardInfo: cardInfo, boardRowsSeen: boardRowsSeen, archById: archById, placeBoard: placeBoard, stopBoardHold: stopBoardHold, needBoardArch: needBoardArch, mx: mx, mxPatchCore: mxPatchCore, mxAuth: mxAuth, mxNatList: mxNatList, mxTrackOk: mxTrackOk, stripRestriction: stripRestriction, mxBmMerge: mxBmMerge, mxBmItem: mxBmItem, mxMonTile: mxMonTile, mxMonOr: mxMonOr, mxPinVer: mxPinVer, mxAirportHistory: mxAirportHistory, mxHistItems: mxHistItems, mxTrackFile: mxTrackFile, mxDataTick: mxDataTick, mxPbProps: mxPbProps, mxPbShow: mxPbShow, mxPbStandIn: mxPbStandIn, mxPbReadAt: mxPbReadAt, mxPbStand: mxPbStand, mxBoardRwy: mxBoardRwy, reqIdOf: reqIdOf, mxPbOpen: mxPbOpen, mxPbTake: mxPbTake, setNav: function (f) { mxNav = f; }, mxPbAway: mxPbAway, mxLegacyPbJson: mxLegacyPbJson, mxLegacyPb: mxLegacyPb, mxPbFlags: mxPbFlags, mxPbSynId: mxPbSynId, mxPbParam: mxPbParam, setPbWanted: function (v) { mxPbWanted = v; }, mxPlans: function () { return mxPlans; }, mxLiveRunways: mxLiveRunways, mxRwy: mxRwy, mxSetApply: mxSetApply, mxSetNote: mxSetNote, mxSetKept: mxSetKept, mxLastClicked: mxLastClicked, mxLcList: mxLcList, onLcClick: onLcClick, mxLcFill: mxLcFill, cardRwy: cardRwy, naEndsFill: naEndsFill, onEndsGot: onEndsGot, naEnds: naEnds, boardWant: boardWant, mxLegacyImages: mxLegacyImages, rwyInUse: rwyInUse, windOfText: windOfText, mxRwyAirport: mxRwyAirport, mxRwyByHex: mxRwyByHex, mxRowHex: mxRowHex, mxDataEnds: mxDataEnds, rwyUsePanel: rwyUsePanel, apWxPanel: apWxPanel, apWxData: apWxData, apWxOf: apWxOf, mxApWxAdd: mxApWxAdd, vsNoLock: vsNoLock, statsUsage: statsUsage, statsMoves: statsMoves, apDataOf: apDataOf, rwyUseData: rwyUseData, rwyUseWant: rwyUseWant, cardRwyFill: cardRwyFill, rwyUseKept: rwyUseKept, mxLcTick: mxLcTick, mxBmMax: mxBmMax, mxNatParse: mxNatParse, mxAirsigList: mxAirsigList, mxStations: mxStations, mxLightning: mxLightning, mxLx: mxLx, mxFetch: mxFetch, mxWxText: mxWxText, mxWxKind: mxWxKind, mxCsv: mxCsv, patchLiveFeedRequest: patchLiveFeedRequest, mxCats: mxCats, mxOp: mxOp, mxLevels: mxLevels, mxNearest: mxNearest, MX_ICE: MX_ICE, MX_TURB: MX_TURB, mxWafsUrl: mxWafsUrl, routes: routes, setCurFollow: function (id) { curFollowId = id; } }); } catch (e) { /* ignore */ }
     post('ready', { stats: stats, feedReady: false, v: BRIDGE_V });
   }
 
@@ -8816,12 +9076,12 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     parkedBusy = 1;
     matchParked(g).catch(e => log('parked match', e)).finally(() => { parkedBusy = 0; });
   }
-  setInterval(parkedTick, 3000);
+  setInterval(() => { if (opt.on) parkedTick(); }, 3000);
   // Out of public coverage - an ocean, a desert: FR24's satellite (ADS-C) or estimated positions, or no airport within 150
   // km - every unnamed flight there goes through the lookup above, one at a time, the one opened first (each again after
   // ten minutes at most). Whether the page or the monitor ever heard it makes no difference: adsb.lol's history did.
   const remoteAt = (lat, lon) => { let hit = false; ENGINE.nearby(lat, lon, 150, () => { hit = true; }); return !hit; };
-  setInterval(() => {
+  setInterval(() => { if (!opt.on) return;
     if (traceBusy || ENGINE.airports.length < 1000) return;              // (no airports yet: everywhere would look remote)
     const t = now(), sel = currentId();
     const list = [...pending.values()].filter(f => !live.has(f.id) && !f.gnd && f.alt > 10000 && t - f.receivedAt < 120000 && f.type !== 'GRND' && f.icon !== 25 && fin(f.lat) && t - (traceAsked.get(f.id) || 0) >= 10 * 60000 && (f.src === 4 || f.src === 5 || remoteAt(f.lat, f.lon)));
@@ -8833,7 +9093,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   function monLastSeen() {
     monGet('/last').then(j => { monSeed(); for (const x of (j && j.list) || []) noteLastSeen({ hex: x.hex, cs: x.cs || '', reg: x.reg || '', type: clean(x.type).toUpperCase(), ladd: x.ladd !== false, lat: x.lat, lon: x.lon, alt: x.alt, gs: x.gs, trk: x.trk, gnd: false, ageS: 0, receivedAt: x.t * 1000, src: 'monitor' }); }).catch(() => {});
   }
-  setTimeout(monLastSeen, 3000); setTimeout(monLastSeen, 9000); setInterval(monLastSeen, 120000);
+  setTimeout(() => { if (opt.on) monLastSeen(); }, 3000); setTimeout(() => { if (opt.on) monLastSeen(); }, 9000); setInterval(() => { if (opt.on) monLastSeen(); }, 120000);
   // (every LADD aircraft identified here before, most recently seen first: the monitor rebuilds their last three days -
   // one parked with its transponder off since before the monitor started is never heard by it: M-ARNZ at Barrow)
   // (and every one identified since - the world scan's, a search's - two minutes later: the monitor follows it worldwide)
@@ -8846,7 +9106,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   }
   // (kept across reloads, compactly: a page opened after the aircraft left coverage still knows where it went)
   store.kvReady.then(() => { const o = store.kvGet('lastSeen1'); if (o && Array.isArray(o.list)) for (const c of o.list) noteLastSeen(c); }).catch(() => {});
-  setInterval(() => {
+  setInterval(() => { if (!opt.on) return;
     idleSlice().then(() => {
       const cut = now() - 5 * 3600e3, list = [];
       for (const m of lastSeenByType.values()) for (const { c, t } of m.values()) if (t > cut) list.push({ hex: c.hex, cs: c.cs || '', reg: c.reg || '', type: c.type, ladd: !!c.ladd, pia: !!c.pia, mil: !!c.mil, lat: c.lat, lon: c.lon, alt: c.alt, gs: c.gs, trk: c.trk, gnd: false, ageS: 0, receivedAt: t, src: c.src || '' });
@@ -8925,7 +9185,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   // list round is not needed: the list counts as fresh)
   // (all of it in idle moments, a couple of hundred aircraft at a time - never while the map is dragged)
   let liveBusy = false;
-  setInterval(() => {
+  setInterval(() => { if (!opt.on) return;
     if (!monUp() || globalList.loading || liveBusy) return;
     liveBusy = true;
     takeLive({ idle: true }, true).then(async lv => {
@@ -9064,8 +9324,8 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     const rows = o.rows.filter(r => Array.isArray(r) && !srvIds.rows.has(r[0])); for (const r of rows) srvIds.rows.set(r[0], r);
     if (bridgeReady) srvPush(rows);
   }).catch(() => {});
-  setTimeout(() => { pullSrvIds().catch(() => {}); }, 300);
-  setInterval(() => { if (!document.hidden || now() - srvIds.at > 120000) pullSrvIds().catch(() => {}); }, 20000);
+  setTimeout(() => { if (!opt.on) return; pullSrvIds().catch(() => {}); }, 300);
+  setInterval(() => { if (!opt.on) return; if (!document.hidden || now() - srvIds.at > 120000) pullSrvIds().catch(() => {}); }, 20000);
   // This browser's report to the monitor, every minute: FR24's feed headers as its page sends them (once - the monitor's
   // own FR24 scans use them; never an authorization), the callsign-less flights it sees, and the ones it named itself
   // that the monitor has no name for (it has ways the server has not: heatmaps, ADS-B Exchange with the user's key)
@@ -9095,7 +9355,8 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     routesOut.set(id, [id, hex, 0, '', destId, 0, 'withdrawn', 0, 0]);
   }
   async function reportToMonitor() {
-    if (!monUp()) return;
+    // (the monitor's address looked up first when nothing else has - switched off, nothing else asks for it)
+    if (!monUp()) { monCheck(); return; }
     const t = now(), flights = [], ids = [];
     for (const f of pending.values()) {
       if (t - f.receivedAt > 180000 || !fin(f.lat) || !fin(f.lon) || flights.length >= 5000) continue;
@@ -9120,6 +9381,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       if (typeof j.learned === 'number' && j.learnSeq > 0) learnSentMark(learn, j.learnNot, j.learnSeq);
     } else learnOutBack(learn);
   }
+  // (1.3: switched off too - what FR24 itself shows this page goes to the monitor whatever the switch says)
   setInterval(() => { idleSlice().then(reportToMonitor).catch(() => {}); }, 60000);
   // What this browser's own polls of adsb.lol / adsb.fi found around its map, to the monitor every 30 s: every other
   // browser has it from there at once (each one's requests to the networks shared by all). The newest of each aircraft
@@ -10075,7 +10337,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   }
   // (the landing places learned before OpenStreetMap was asked for each, or while it was too busy to answer: one a
   // minute, renamed as it answers - Aintree Racecourse for 'Private site near Liverpool')
-  setInterval(() => { const bk = siteBk(); if (!bk || !sites.grid || document.hidden) return; const s = bk.list.find(x => genericSite(x) && !(nowS() - (x.osmTry || 0) < 86400)); if (!s) return; s.osmTry = nowS(); privatePlace(s.lat, s.lon, { onNew: () => learnSite(s.lat, s.lon) }); }, 60000);
+  setInterval(() => { if (!opt.on) return; const bk = siteBk(); if (!bk || !sites.grid || document.hidden) return; const s = bk.list.find(x => genericSite(x) && !(nowS() - (x.osmTry || 0) < 86400)); if (!s) return; s.osmTry = nowS(); privatePlace(s.lat, s.lon, { onNew: () => learnSite(s.lat, s.lon) }); }, 60000);
   // (as FR24's own airport list has its airports)
   // (a landing place's name as shown: "Private site near Rotherham", not "... near Rotherham, South Yorkshire" - those
   // kept before the names were cut at the comma too - unless two different places would read the same)
@@ -12655,7 +12917,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       if (list.length || drop.length) postToPage('naBoard', { list, drop });
     } finally { naBusy = false; }
   }
-  setInterval(() => { naTick().catch(e => log('na boards', e)); }, 20000);
+  setInterval(() => { if (!opt.on) return; naTick().catch(e => log('na boards', e)); }, 20000);
   let naSoonT = 0;
   const naSoon = () => { if (!naSoonT) naSoonT = setTimeout(() => { naSoonT = 0; naTick().catch(e => log('na boards', e)); }, 50); };
   // ---- a flight FR24 lists elsewhere with no destination (its Most tracked widget), anywhere in the world -----------------
@@ -12681,7 +12943,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       if (!asked && now() - w.trailAt > 30000) { w.trailAt = now(); asked = true; postToPage('needTrail', { id }); }
     }
   }
-  setInterval(naWantedTick, 10000);
+  setInterval(() => { if (opt.on) naWantedTick(); }, 10000);
   function naFromTrail(id, w, ft) {
     const trail = [];
     for (const p of ft.pts) { if (!fin(p.lat) || !fin(p.lon) || !fin(p.t)) continue; const last = trail[trail.length - 1]; if (!last || p.t - last.t >= 20) trail.push({ t: p.t, lat: p.lat, lon: p.lon, alt: p.alt, gs: p.gs, trk: p.trk, gnd: false }); }
@@ -12784,7 +13046,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       warmHist(live.get(id) || pubRouted(id));
     } finally { st.working = false; }
   }
-  setInterval(() => {
+  setInterval(() => { if (!opt.on) return;
     const id = shownId != null && pubRouted(shownId) ? shownId : currentId(), rec = id != null && (live.get(id) || pubRouted(id));
     if (rec && rec.hex && routeState.get(id) && !routeState.get(id).working) {
       (live.has(id) ? refreshPlan(id) : Promise.resolve()).then(() => publishRoute(id, composeRoute(id, rec.hex))).catch(() => publishRoute(id, composeRoute(id, rec.hex)));
@@ -13041,7 +13303,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   // (OK-FLN, in at Luton at 15:26, was "Estimated arrival 16:26" and live in search half an hour later). One flight per
   // pass, every 2 minutes, each at most every 5 minutes.
   const quietAsked = new Map();
-  setInterval(() => {
+  setInterval(() => { if (!opt.on) return;
     const t = now();
     for (const [id, rec] of live) {
       const st = routeState.get(id), r = st && st.route; if (!rec || !rec.hex || !r || r.landed || t - (quietAsked.get(id) || 0) < 5 * 60000) continue;
@@ -14839,6 +15101,8 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   const boardOk = id => fin(id) && id > 0 && id < SITE_BASE;   // (FR24's own airports have boards; a strip or landing place has none)
   function boardPut(apId, kind, row) {
     if (!boardOk(apId) || !row || !fin(row.t) || Math.abs(row.t - nowS()) > Math.max(BOARD_BACK, BOARD_AHEAD)) return;
+    // (1.3: switched off - FR24's own rows only sent on to the monitor; nothing kept or drawn here)
+    if (!opt.on) { if (!row.fromMon && (row.src === 'fr24' || row.src === 'sched')) boardUp(apId, kind, row); return; }
     // (1.1.0) FR24's own rows read here - its map board's, its schedule's, its flight numbers' lists - go to the monitor for
     // every other browser; those that came from it do not go back
     if (row.fromMon) { row = Object.assign({}, row); delete row.fromMon; delete row.u; }
@@ -15567,12 +15831,30 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     else out.ends = await runwaysOf(ap).catch(() => []);
     postToPage('airportPanel', out);
   }
+  // (1.3) an airport's weather now from the monitor, for one FR24 has none for (no METAR there): the page asks once a
+  // minute at most an airport; the monitor's answer kept here ten minutes (a panel opened again asks nothing)
+  const apWxKept = new Map();
+  async function onNeedApWx(d) {
+    const ap = Number(d && d.ap) || 0; if (!(ap > 0) || ap >= SITE_BASE) return;
+    const k = apWxKept.get(ap);
+    if (k && now() - k.at < 10 * 60000) { postToPage('apWxGot', { ap, wx: k.wx }); return; }
+    const wx = await monGet(`/apwx?ap=${ap}`, { timeout: 20000 }).catch(() => null);
+    if (wx && !wx.none && typeof wx.cond === 'string') { apWxKept.set(ap, { at: now(), wx }); if (apWxKept.size > 300) apWxKept.delete(apWxKept.keys().next().value); }
+    postToPage('apWxGot', { ap, wx: wx && !wx.none ? wx : null });
+  }
   async function onNeedAirportData(d) {
     const apId = Number(d.apId); if (!boardOk(apId)) return;
     await loadAirports();
     const ap = apById(apId), kinds = d.kinds || [];
     if (kinds.includes('runways')) runwaysOf(ap).then(rw => postToPage('airportData', { apId, runways: rw })).catch(() => {});
     if (kinds.includes('routes')) routesOf(apId).then(list => postToPage('routesAdd', { apId, list })).catch(e => log('routes', e));
+    // (1.3) the statistics page: the monitor's week of runway usage (its runway log of FR24's own tracks) and its counts of
+    // each of the last two weeks' take-offs and landings
+    if (kinds.includes('stats')) {
+      monGet(`/airport?ap=${apId}&days=7&hist=14`, { timeout: 15000 }).then(j => {
+        if (j && j.known) postToPage('airportData', { apId, stats: { usage: Array.isArray(j.usage) ? j.usage : [], daily: Array.isArray(j.daily) ? j.daily : [], days: j.days || 7 } });
+      }).catch(e => log('airport statistics', String(e && e.message || e)));
+    }
     if (!kinds.includes('board')) return;
     // the airport's kept rows (three days each way), then the flights the map tab follows now
     if (!fr24.airlines) await fr24.loadAirlines().catch(() => {});
@@ -16042,7 +16324,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   const PB_HOW = { track: 'monitor (its track)', reckon: 'monitor (its track, carried across a gap)', path: 'monitor (worked out from its path)', live: 'monitor (named live)' };
   // (a playback left open, paused or not: the monitor asked again about the flights still unnamed - adsb.lol's heatmap
   // not again, it has nothing new for them)
-  setInterval(() => { if (pb.ts && now() - pb.at < 15 * 60000 && !document.hidden && pbMode()) pbFromMonitor(pb.ts).catch(e => log('playback names', e)); }, PB_REASK_MS);
+  setInterval(() => { if (!opt.on) return; if (pb.ts && now() - pb.at < 15 * 60000 && !document.hidden && pbMode()) pbFromMonitor(pb.ts).catch(e => log('playback names', e)); }, PB_REASK_MS);
   function pbOutSet(id, rec, ts) { pbOut.set(id, [id, rec.hex, rec.reg, rec.type, rec.cs, (rec.ladd ? 1 : 0) | (rec.mil ? 2 : 0) | (rec.pia ? 4 : 0), Math.round(ts)]); if (pbOut.size > 2000) pbOut.delete(pbOut.keys().next().value); }
   // the monitor and the heatmap side by side: whichever answers first names a flight
   async function pbMatch() {
@@ -16845,9 +17127,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // (an aircraft with an open padlock: FR24's outline style - 24 grid, 1.5 stroke in the text colour)
   const UB_ICON = '<svg data-tl-ub-icon="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
   const UB_X = '<svg viewBox="0 0 14 14" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5l11 11M12.5 1.5l-11 11"/></svg>';
-  // (the size of the window's text: M is FR24's own - the 14 px of its windows' lists - and the others scale it)
-  const UB_SIZE_KEY = 'tweeks.fr24.ladd.textsize', UB_SIZES = [['S', 0.9], ['M', 1], ['L', 1.15], ['XL', 1.3]];
-  const ubSize = () => { const v = parseInt(lsGet(UB_SIZE_KEY), 10); return v >= 0 && v < UB_SIZES.length ? v : 1; };
+  // (1.3: the window's text at FR24's own size - the 14 px of its windows' lists, what "M" was; no choice of sizes)
   // The content (.tl-ub-c) in FR24's measures: 14 px text on 20 px lines, its section titles bold capitals, 12 px notes, its
   // grey #393939 and yellow #f8c023, 8 px in from the edges. In FR24's window (.tl-ub-in) it scrolls under FR24's title
   // bar; the stand-in window (.tl-ub) is drawn like FR24's: 336 px wide, a 40 px grey title bar.
@@ -16902,9 +17182,6 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
 .tl-ub-c .tl-ub-alert{margin-top:6px;padding:6px 8px;background:#fff4d1;border-left:3px solid #f8c023;border-radius:3px;font-size:calc(var(--tl-f)*13px);line-height:1.4}
 .tl-ub-c .tl-ub-grid .tl-ub-kv span:last-child{text-align:right}
 .tl-ub-c .tl-ub-log{margin:6px 0 0;max-height:180px;overflow:auto;padding:6px;background:#fff;border:1px solid #dcdcdc;border-radius:4px;font:11px/1.35 ui-monospace,Consolas,monospace;white-space:pre-wrap;word-break:break-word;color:#393939}
-.tl-ub-c .tl-ub-seg{display:flex;gap:4px}
-.tl-ub-c .tl-ub-seg button{min-width:34px;margin:0;padding:4px 8px;border:0;border-radius:4px;background:#e2e2e2;color:#393939;font:inherit;font-size:calc(var(--tl-f)*13px);line-height:1.4;font-weight:700;cursor:pointer}
-.tl-ub-c .tl-ub-seg button[aria-pressed="true"]{background:#f8c023;color:#1b1b1b}
 .tl-ub-gone,.tl-ub-hid{display:none!important}
 html.tl-no-strip .tl-strip{display:none!important}`;
   // the switches, in the order shown; 'reload': takes effect when FR24 is loaded again
@@ -16934,6 +17211,9 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     if (k === 'on' || UB_FEATURES.some(f => f[0] === k && f[3] === 'reload')) ubNeedReload = true;
     if (opt.on) applyOptsLive();
     renderUnblockWindow(); ubBanners();
+    // (1.3: the main switch takes effect at once - FR24 reloaded with it, its switch seen moving first: switched off, what
+    // was already drawn and running goes with the page, and nothing of this script is loaded after; switched on, it is)
+    if (k === 'on') setTimeout(() => { try { pageWindow().location.reload(); } catch (e) { log('reload', e); } }, 600);
     if (k === 'count' && opt.count) sayHello();
   }
 
@@ -17157,8 +17437,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     const info = '<svg width="12" height="12" viewBox="0 0 10 10" fill="none" stroke="currentColor"><circle cx="5" cy="5" r="4.4"/><path d="M5 4.4v3M5 2.6v.2" stroke-linecap="round"/></svg>';
     return `<div class="tl-ub-reload"${ubNeedReload ? '' : ' hidden'}><span>Reload FR24 to apply</span><button type="button" class="tl-ub-b" data-ub-act="reload">Reload</button></div>${whatsNewHtml()}
       <div class="tl-ub-row tl-ub-top"><span class="tl-ub-t">Enable LADD Unblock</span>${tgHtml('on', 'Enable LADD Unblock')}</div>
-      <div class="tl-ub-info">${info}<span>Names blocked (LADD) and N/A aircraft from public ADS-B, with routes, predicted destinations and flight history.${opt.on ? '' : ' Switched off: FR24 is left as it is.'}</span></div>
-      <div class="tl-ub-item"><div class="tl-ub-row"><span class="tl-ub-t">Text size</span><div class="tl-ub-seg">${UB_SIZES.map(([n], i) => `<button type="button" data-ub-size="${i}" aria-pressed="${i === ubSize() ? 'true' : 'false'}" title="Text size ${n}">${n}</button>`).join('')}</div></div></div>
+      <div class="tl-ub-info">${info}<span>Names blocked (LADD) and N/A aircraft from public ADS-B, with routes, predicted destinations and flight history.${opt.on ? '' : ' Switched off: FR24 is left as it is - only what it shows is still shared with the monitor.'}</span></div>
       ${UB_FEATURES.map(([k, t, d]) => `<div class="tl-ub-item tl-ub-feat"><div class="tl-ub-row"><span class="tl-ub-t">${esc(t)}</span>${tgHtml(k, t)}</div><p>${esc(d)}</p>${k === 'count' && opt.count && ffConsent === false ? '<div class="tl-ub-note">Firefox has not allowed this add-on to send technical data, so nothing is sent. <button type="button" class="tl-ub-b tl-ub-b2" data-ub-act="ffConsent">Allow in Firefox</button></div>' : ''}</div>`).join('')}
       <div class="tl-ub-item"><span class="tl-ub-t">Updates</span><div id="tl-ub-upd">${updatesHtml()}</div></div>
       <div class="tl-ub-item"><span class="tl-ub-t">Monitor</span><div id="tl-ub-mon">${opt.on ? monHtml() : '<p>Switched off.</p>'}</div></div>
@@ -17172,7 +17451,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     if (!ubBody || !ubBody.isConnected) return;
     const top = ubBody.scrollTop;
     ubBody.classList.toggle('tl-ub-off', !opt.on);
-    ubBody.style.setProperty('--tl-f', String(UB_SIZES[ubSize()][1]));
+    ubBody.style.setProperty('--tl-f', '1');
     const L = ubSwitchLook(); if (L) { ubBody.style.setProperty('--tl-tg-d', L.d); ubBody.style.setProperty('--tl-tg-e', L.e); }
     morphHtml(ubBody, ubBodyHtml()); ubBody.scrollTop = top;
   }
@@ -17196,9 +17475,8 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   // (the data sources' own buttons - monitor, keys - are handled with the strip's tools, which redraw this part)
   function refreshSources() { const el = ubBody && ubBody.isConnected ? ubBody.querySelector('#tl-ub-sources') : null; if (el && opt.on) el.innerHTML = sourcesHtml(); }
   function onUbClick(ev) {
-    const t = ev.target && ev.target.closest ? ev.target.closest('[data-ub-opt],[data-ub-act],[data-ub-size]') : null; if (!t) return;
+    const t = ev.target && ev.target.closest ? ev.target.closest('[data-ub-opt],[data-ub-act]') : null; if (!t) return;
     ev.preventDefault(); ev.stopPropagation();
-    if (t.dataset.ubSize) { lsSet(UB_SIZE_KEY, t.dataset.ubSize); return renderUnblockWindow(); }
     if (t.dataset.ubOpt) return setOpt(t.dataset.ubOpt, !opt[t.dataset.ubOpt]);
     const act = t.dataset.ubAct;
     if (act === 'close') closeUnblockWindow();
@@ -18109,8 +18387,30 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   // the page's own events is the page's window object rather than the script's - compared with both; Tweeks gives the
   // window itself)
   const fromThisPage = src => !!src && (src === window || src === pageWindow() || (() => { try { return src.self === pageWindow().self; } catch (_) { return false; } })());
+  // (1.3) LADD Unblock switched off: what FR24's own feed and boards show here (the page's part reads them on their way
+  // past, changing nothing), kept only to go to the monitor with the next report - nothing asked of it, nothing named,
+  // nothing put on the page (N500EU's panel was still filled with it switched off)
+  function onReportOnly(d) {
+    switch (d.__tweeksLadd) {
+      case 'feed': {
+        const t = now(), at = d.at || t;
+        for (const f of d.flights || []) {
+          if (!f || !fin(f.lat) || !fin(f.lon) || !(Number(f.id) > 0)) continue;
+          const prev = pending.get(f.id);
+          pending.set(f.id, Object.assign({}, f, { receivedAt: at, serverTime: d.serverTime || 0, type: f.type || (prev && prev.type) || '', reg: '', bg: false }));
+        }
+        for (const [id, f] of pending) if (t - f.receivedAt > PENDING_TTL_MS) pending.delete(id);
+        break;
+      }
+      case 'feedReady': noteFeedHdr(d.hdr); break;
+      case 'ready': bridgeReady = true; noteFeedHdr(d.hdr); break;
+      case 'boardRows': onBoardRows(d); break;
+      default: break;
+    }
+  }
   window.addEventListener('message', ev => {
     if (!fromThisPage(ev.source) || !ev.data || typeof ev.data !== 'object') return;
+    if (!opt.on) { onReportOnly(ev.data); return; }
     const d = ev.data;
     if (typeof d.__tweeksLadd === 'string') msgCount[d.__tweeksLadd] = (msgCount[d.__tweeksLadd] || 0) + 1;
     switch (d.__tweeksLadd) {
@@ -18127,6 +18427,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
       case 'needRoutes': onNeedRoutes(d).catch(e => log('routes page', e)); break;
       case 'needAirportData': onNeedAirportData(d).catch(e => log('airport page', e)); break;
       case 'needAirportPanel': onNeedAirportPanel(d).catch(e => log('airport panel', e)); break;
+      case 'needApWx': onNeedApWx(d).catch(e => { log('airport weather', String(e && e.message || e)); postToPage('apWxGot', { ap: d.ap, wx: null }); }); break;
       case 'mxGet': onMxGet(d); break;
       case 'pbFeed': onPbFeed(d); break;
       case 'pbFollow': onPbFollow(d); break;
@@ -18285,8 +18586,10 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   }
 
   // ---- boot -----------------------------------------------------------------------------------------------------
-  // (LADD Unblock switched off in its window: only its button and window, to switch it back on - nothing else runs)
-  if (opt.on) bootAll(); else log('switched off in the LADD Unblock window');
+  // (LADD Unblock switched off in its window: only its button and window, to switch it back on, and the report of what
+  // FR24 itself shows to the monitor - nothing else runs)
+  // (1.3: switched off - the page's part only reads FR24's own answers for the monitor; see onReportOnly)
+  if (opt.on) bootAll(); else { log('switched off in the LADD Unblock window: FR24 left as it is, what it shows reported to the monitor'); installBridge(); }
   startUnblockWindow();
   function bootAll() {
   mxHidePrivacyAds();

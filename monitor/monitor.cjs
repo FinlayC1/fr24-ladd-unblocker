@@ -33,6 +33,8 @@
 //  /seed?hex=a,b[&front=1]       blocked aircraft the userscript knows: tracked from now on, their last days rebuilt
 //  /parked?ap=&type=             aircraft of a type whose last flight ended at that airport (14 days): parked there since
 //  /rwyap?ap=&from=&to=          (1.2.7) the runway of every take-off and landing at an airport in a window, logged live
+//  /apwx?ap=                     (1.3) an airport's weather now, for one FR24 has none for: the live weather at the
+//                                 airport and a METAR made from it (apwx.cjs)
 //                                (1.2.8: &use=1 - with the runway in use's ends, runways and last day's movements, one answer;
 //                                from the days in memory unless &old=1; made once per 20 s, the airports asked lately ahead)
 //                                from FR24's tracks (rwylog.cjs) - a board's all at once - and blocked flights' by address
@@ -682,6 +684,10 @@ rwyLoad();
 // out before kept with it
 const { createRwyLog } = require('./rwylog.cjs');
 const RL = createRwyLog({ E, APT, store: STORE, legacy: rwyKnown, keepDays: +CFG.rwyDays || 30, log: (...a) => log('runways', ...a) });
+// (1.3) an airport's weather now where FR24 has none for it (no METAR sent from there): the live weather at the airport
+// itself, and a METAR made from it - apwx.cjs
+const { createApWx } = require('./apwx.cjs');
+const APWX = createApWx(Object.assign({ E, fetch: (u, o) => global.fetch(u, o) }, CFG.apwx || {}));
 try { RL.load(); } catch (e) { log('runways', String(e && e.message || e)); }
 // (a blocked flight's take-offs and landings, from its ADS-B track - its legs: [hex, 0 | 1, runway, time] at an airport.
 // 1.2.8: by airport, gathered once a minute for every airport at once - not every leg of every aircraft read per answer)
@@ -2208,6 +2214,18 @@ function airportAnswer(apId, nowS, days, hist) {
   const key = apId + ':' + days + ':' + hist, c = apAnswers.get(key);
   if (c && Date.now() - c.at < 60000) return c.v;
   const v = APT.answer(apId, apLegs(apId), nowS, days, AS, hist);
+  // (1.3) the runways of the window as the runway log has them - every flight's, from FR24's own tracks (1.2.10-1.2.12's
+  // rules) - over what the day files and the ADS-B legs counted: each runway's take-offs and landings, the larger of the two
+  if (v && v.known && Array.isArray(v.usage)) {
+    const rl = RL.movements(apId, nowS - days * 86400, nowS);
+    if (rl.length) {
+      const m = new Map(v.usage.map(u => [u[0], [u[1] || 0, u[2] || 0]])), c = new Map();
+      for (const x of rl) { const u = c.get(x[0]) || c.set(x[0], [0, 0]).get(x[0]); u[x[1] ? 1 : 0]++; }
+      for (const [r, u] of c) { const o = m.get(r) || [0, 0]; m.set(r, [Math.max(o[0], u[0]), Math.max(o[1], u[1])]); }
+      v.usage = [...m].map(([r, u]) => [r, u[0], u[1]]).sort((x, y) => (y[1] + y[2]) - (x[1] + x[2]) || x[0].localeCompare(y[0]));
+      v.withRunway = v.usage.reduce((n, u) => n + u[1] + u[2], 0); v.rwyLog = rl.length;
+    }
+  }
   if (v && v.known && Array.isArray(v.daily)) {
     // (FR24's own count of a day: its rows, and the blocked aircraft's take-offs and landings there it does not show -
     // seen here)
@@ -2381,6 +2399,7 @@ function monStatus() {
       archive: { names: names.size, added: names.stats.added, withdrawn: names.stats.dropped, servedToPlayback: names.stats.served }, crowd: { public: PUBLIC, refused: ident.stats.crowdRefused || 0, waiting: ident.stats.crowdPending || 0 } },
     wx: { cells: wx.stats.cells, requests: wx.stats.requests, today: wx.stats.used, fails: wx.stats.fails, lastErr: wx.stats.lastErr, estimated: wx.stats.estimated, waiting: wx.want.size },
     wxmap: WXMAP_ON ? wxmap.status() : { off: true },
+    apwx: APWX.stats,
     tel: { aircraft: tel.size, added: tel.stats.added, fromBrowsers: tel.stats.crowd || 0, refused: tel.stats.crowdBad || 0, served: tel.stats.served, asked: tel.stats.asked, missed: tel.stats.missed },
     owners: owners.status(), acdb: Object.assign(AC.status(), { sweptDay: ACS.day, sweptQueued: ACS.queued }), ages: Object.assign(AGES.status(), { learnedFrom: AGS.n }), loop: Object.assign(lagStats(), heapStats()),
     areas: CFG.areas.concat(userAreas).map(a => a.slice(0, 2)), paused: Object.fromEntries(Object.entries(pause).filter(([, t]) => t > now).map(([h, t]) => [h, Math.round((t - now) / 1000)])) };
@@ -2576,6 +2595,8 @@ function answer(u, nowS, ctx) {
     const hs = hexList(q('hex'), 50), one = h => { const m = legs.get(h); return { hex: h, legs: m ? chained(m) : [] }; };
     return hs.length > 1 ? { list: hs.map(one) } : one(hs[0] || String(q('hex') || '').toLowerCase());
   }
+  // (1.3) an airport's weather now, for one FR24 shows none for
+  if (p === '/apwx') { const ap = +q('ap') || 0; return ap > 0 ? APWX.answer(ap).then(v => v || { v: 1, ap, none: true }) : null; }
   if (p === '/airport') return airportAnswer(+q('ap'), nowS, Math.min(14, Math.max(1, +(q('days') || 7))), Math.min(31, Math.max(0, +(q('hist') || 0))));
   if (p === '/owners') {
     const hx = hexList(q('hex'), 500), list = owners.rows(hx, { public: !admin && PUBLIC }).map(withAge), got = new Map(list.map(r => [r[0], r]));
