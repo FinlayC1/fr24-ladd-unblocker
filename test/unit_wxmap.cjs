@@ -55,7 +55,7 @@ function gribField(number, pa, value) {
 }
 const NAT = [{ location_code: 'EGGX', start_datetime: 'a', part_no: 1, condition_message: 'NAT-1/2 TRACKS FLS 310/390\r\nOCT 31/1130Z TO OCT 31/1900Z\r\nA ETIKI 58/20 59/30 59/40 58/50 PRAWN\r\nEAST LVLS NIL\r\nWEST LVLS 310 320' },
   { location_code: 'CZQX', start_datetime: 'b', part_no: 1, condition_message: 'NAT-1/1 TRACKS\r\nOCT 31/0100Z TO OCT 31/0800Z\r\nU ALLRY 51/50 53/40 54/30 55/20 RESNO\r\nEAST LVLS 340 350\r\nWEST LVLS NIL' }];
-const fakeFetch = async (url) => {
+const fakeFetch = async (url, opts) => {
   asked.push(url);
   const ok = body => ({ ok: true, status: 200, arrayBuffer: async () => body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength) });
   if (/GetCapabilities/.test(url)) return ok(Buffer.from('<Dimension name="time" default="2026-10-31T03:00:00Z" units="ISO8601">'));
@@ -69,6 +69,8 @@ const fakeFetch = async (url) => {
   if (/metars\.cache/.test(url)) return ok(zlib.gzipSync('raw_text,station_id\nEGLL 311150Z,EGLL\n'));
   if (/airsigmet|isigmet/.test(url)) return ok(Buffer.from('[]'));
   if (/nms\.aim\.faa/.test(url)) return ok(Buffer.from(JSON.stringify(NAT)));
+  // (1.3: NOTAM Search - Oakland's Pacific track of the day among its NOTAMs; the others none)
+  if (/notamSearch\/search/.test(url)) return ok(Buffer.from(JSON.stringify(/KZAK/.test(String(opts && opts.body)) ? { totalNotamCount: 2, notamList: [{ icaoMessage: 'A3700/26 (TDM TRK A 261031050001\n2610310500 2610311900\nOGDEN 4130N15000W 43N160W 44N170W 45N180E 45N170E SMOLT\nRTS/KSFO OGDEN\nRMK/0)' }, { icaoMessage: 'A3701/26 RWY 08L CLSD' }] } : { totalNotamCount: 0, notamList: [] })));
   return { ok: false, status: 404, arrayBuffer: async () => new ArrayBuffer(0) };
 };
 (async () => {
@@ -77,6 +79,8 @@ const fakeFetch = async (url) => {
   for (let i = 0; i < 7; i++) await W.pump();
   const st = W.status(), meta = W.meta();
   check('every job ran once: cloud, precipitation, radar, North American radar, WAFS, winds, the plain files', !!(meta.cloud.ver && meta.precip.ver && meta.radar.ver && meta.naradar.ver && meta.wafs.run && meta.wind.run) && st.fails === 0, { meta, err: st.lastErr });
+  const pac = await W.handle('/wx/pacots', false), pj = pac.status === 200 ? JSON.parse(pac.body.toString()) : null;
+  check('1.3: the Pacific\'s tracks from NOTAM Search - Oakland\'s track A in FR24\'s form, continuous across 180°', !!pj && !!pj['PAC-A'] && pj['PAC-A'].d === 'WEST' && Object.keys(pj['PAC-A'].p).length === 5 && pj['PAC-A'].p[4].lon === -190 && asked.filter(u => /notamSearch/.test(u)).length === 3, pj);
   check('cloud: 16 blocks of EUMETSAT\'s own grid asked for, at the picture\'s time (one picture, not half of two)', asked.filter(u => /eumetsat.*GetMap/.test(u)).length === 16 && asked.filter(u => /GetMap/.test(u) && /eumetsat/.test(u)).every(u => /time=2026-10-31T03/.test(u)));
   check('cloud: tiles to zoom 5, none kept where it is all clear', st.cloud.tiles > 0 && st.cloud.tiles <= 1365, st.cloud);
   const ct = await W.handle('/wx/t/cloud/' + meta.cloud.ver + '/2/1/1.png'), cd = PNG.decode(ct.body);

@@ -6,7 +6,8 @@
 //   - the bar's Playback with a LADD flight open in the panel: FR24's playback window, nothing else
 //   - the panel's Playback, a board card's (a flight followed here, N600EB's kept row from two days back), a search
 //     result's of a blocked flight: the aircraft's own page at that flight (/data/aircraft/<reg>#<flight>) - where FR24
-//     plays a flight, in place, in its own player (1.2.4) - in this tab; nothing on airplanes.live, no playback page
+//     plays a flight, in place, in its own player (1.2.4) - in a new tab, the map left as it was (1.3); nothing on
+//     airplanes.live, no playback page
 //   - a board card's and a search result's of an ordinary flight: FR24's own (the log page)
 //   - a middle click: the aircraft's page at that flight in a new tab
 // Needs Playwright and Vue 3's browser build (skipped without): PLAYWRIGHT_PATH=<its module dir> CHROMIUM=<binary>
@@ -102,9 +103,10 @@ function trace(hex, dayStart, t, from, to) {
   // a click, and - once the userscript has answered - FR24's router's pages, where the tab is, any other tab opened
   async function clickPb(sel, opts) {
     tabs.length = 0;
-    const popP = ctx.waitForEvent('page', { timeout: 4000 }).catch(() => null);
+    let popped = false;
+    const popP = ctx.waitForEvent('page', { timeout: 4000 }).then(x => { popped = true; return x; }).catch(() => null);
     await page.click(sel, opts);
-    let v = []; for (let i = 0; i < 40; i++) { await sleep(250); if (page.url() !== MAP) break; v = await visits().catch(() => []); if (v.length || (await went().catch(() => [])).length) break; }
+    let v = []; for (let i = 0; i < 40; i++) { await sleep(250); if (page.url() !== MAP || popped) break; v = await visits().catch(() => []); if (v.length || (await went().catch(() => [])).length) break; }
     const pop = await popP.then(x => x).catch(() => null); let popUrl = ''; if (pop) { await pop.waitForLoadState().catch(() => {}); popUrl = pop.url(); await pop.close(); }
     const here = page.url();
     return { v, here, w: here === MAP ? await went() : [], pop: popUrl, apl: tabs.filter(u => /airplanes\.live/.test(u)).length };
@@ -119,14 +121,14 @@ function trace(hex, dayStart, t, from, to) {
   // ---- the panel's Playback
   ids = await fresh();
   { const r = await clickPb('#pPanel span');
-    check('the panel\'s Playback of the blocked flight: its aircraft\'s page at that flight, in this tab - where FR24 plays it in place; no playback page, nothing opened elsewhere', r.here === logAt('m-arnz', syn('424c60', T)) && !r.v.length && !r.pop && !r.apl, r); }
+    check('the panel\'s Playback of the blocked flight: its aircraft\'s page at that flight, in a new tab - where FR24 plays it in place; the map left as it was, no playback page', r.pop === logAt('m-arnz', syn('424c60', T)) && r.here === MAP && !r.v.length && !r.apl, r); }
   // ---- board cards
   ids = await fresh();
   { const r = await clickPb(`#pRow${9000000000 + pid}`);
-    check('a board card\'s Playback of the flight followed here: the same flight', r.here === logAt('m-arnz', syn('424c60', T)), r); }
+    check('a board card\'s Playback of the flight followed here: the same flight, in a new tab', r.pop === logAt('m-arnz', syn('424c60', T)) && r.here === MAP, r); }
   ids = await fresh();
   { const r = await clickPb(`#pRow${ids[0]} svg`);
-    check('N600EB\'s kept row from two days back (Aircraft info / Bookmark aircraft / Playback): that flight on its aircraft\'s page', r.here === logAt('n600eb', syn('a80b2e', t0)) && !r.apl, r); }
+    check('N600EB\'s kept row from two days back (Aircraft info / Bookmark aircraft / Playback): that flight on its aircraft\'s page, in a new tab', r.pop === logAt('n600eb', syn('a80b2e', t0)) && r.here === MAP && !r.apl, r); }
   ids = await fresh();
   { const r = await clickPb(`#pRow${ids[1]}`);
     check('an ordinary flight\'s kept row: FR24\'s own Playback (its log page), not ours', !r.v.length && r.w.join() === 'log:' + ids[1], r); }
@@ -140,7 +142,7 @@ function trace(hex, dayStart, t, from, to) {
     check('a search result of an ordinary aircraft: FR24\'s own', !r.v.length && r.w[r.w.length - 1] === 'log:aircraft:g-ezbx', r); }
   ids = await fresh();
   { const r = await clickPb('#pSr0 span');
-    check('a search result of the blocked flight: that flight', r.here === logAt('m-arnz', syn('424c60', T)), r); }
+    check('a search result of the blocked flight: that flight, in a new tab', r.pop === logAt('m-arnz', syn('424c60', T)) && r.here === MAP, r); }
   // ---- a middle click: a new tab
   ids = await fresh();
   { const r = await clickPb(`#pRow${ids[0]}`, { button: 'middle' });
