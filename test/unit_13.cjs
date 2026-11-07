@@ -14,6 +14,11 @@
 //   - the statistics page: runway usage [{ name, total, takeoffs, landings }] (never the runway details' table) and the
 //     movements of each day, from the monitor; its /airport usage from the runway log of FR24's own tracks
 //   - the aircraft panel's vertical speed: never FR24's padlock - "N/A" before the browser paints, a figure when there is one
+//   - every OurAirports airport FR24 does not list (closed ones aside): the monitor's list (oaap.cjs - the route engine's
+//     ids, codes never FR24's), in FR24's airport list with the nearest FR24 airport's country and zone, on the map in
+//     view once zoomed in, FR24's airport answer and boards for them made here - never for an airport of FR24's own
+//   - the Pacific's organised tracks (PACOTS) from the day's Track Definition Messages, beside the North Atlantic's:
+//     both ways, continuous across 180°, none past its time; put in FR24's own tracks answer
 // usage: node test/unit_13.cjs <node_modules dir> [data dir]
 const fs = require('fs'), path = require('path');
 const NM = process.argv[2] ? path.resolve(process.argv[2]) : path.join(__dirname, '..', 'node_modules'), D = process.argv[3] || path.join(__dirname, '../monitor/data');
@@ -184,6 +189,27 @@ const BOARD = { data: [{ id: 1, flight: { id: '3c4a5b70', callsign: 'EZY12AB', n
     const u23 = j && j.usage.find(u => u[0] === '23'), u17 = j && j.usage.find(u => u[0] === '17');
     check('/airport: runway usage from the runway log of FR24\'s own tracks - 23 two take-offs, 17 one landing', !!u23 && u23[1] === 2 && u23[2] === 0 && !!u17 && u17[2] === 1 && j.rwyLog === 3, j && j.usage); }
 
+  // ================= the monitor: the OurAirports airports =================
+  { const M = require('../monitor/monitor.cjs'), O = M.OAAP, rows = O.rows();
+    const codes = new Set(rows.map(r => r[1])), fr24 = new Set(); for (const a of M.E.airports) if (a.id < 1e7) { if (a.iata) fr24.add(a.iata.toUpperCase()); if (a.icao) fr24.add(a.icao.toUpperCase()); }
+    const f = rows.find(r => r[9] === 'S' && M.E.byId(r[0]) && M.E.byId(r[0]).id === r[0]);
+    check('OurAirports: tens of thousands of airports FR24 does not list - no closed one, FR24\'s own (Barrow\'s EGNL) left out', rows.length > 50000 && !rows.some(r => r[2] === 'EGNL') && rows.every(r => 'LMSHWB'.includes(r[9])), rows.length);
+    check('... each code its own, never one of FR24\'s; an airfield the route engine knows has the engine\'s own id', codes.size === rows.length && ![...codes].some(c => fr24.has(c)) && !!f, f);
+    const h = rows.find(r => r[9] === 'H'), g = h && O.get(h[0]);
+    check('... a heliport known by its id, as an airport (for the monitor\'s weather)', !!g && g.lat === h[6] && g.name === h[3]);
+    const z = require('zlib'), back = JSON.parse(z.gunzipSync(O.body()).toString());
+    check('... GET /oaap: the list gzipped', back.n === rows.length && back.rows.length === rows.length); }
+
+  // ================= the monitor: the Pacific's tracks =================
+  { const { pacParse, pacFromSearch } = require('../monitor/wxmap.cjs'), at = Date.UTC(2026, 10, 7, 12, 0);
+    const tdm = '(TDM TRK A 261107050001\n2611071900 2611080800\nOGDEN 4130N15000W 43N160W 44N170W 45N180E 45N170E 44N160E SMOLT\nRTS/KSFO OGDEN\nRJAA SMOLT\nRMK/0)\n' +
+      '(TDM TRK 1 261106220001\n2611062200 2611071300\nOMOTO 40N150E 42N160E 44N170E 46N180E 47N170W 47N160W\nRTS/RJAA OMOTO\nRMK/0)\n(TDM TRK B 261107050002\n2611070100 2611070600\n40N150W 42N160W\nRMK/0)';
+    const o = pacParse('<PRE>' + tdm + '</PRE>', {}, at), a = o['PAC-A'], one = o['PAC-1'];
+    check('PACOTS: a westbound (letter) and an eastbound (number) track, their latitude/longitude points - the named fixes left out', !!a && a.d === 'WEST' && Object.keys(a.p).length === 6 && a.p[0].lat === 41.5 && a.p[0].lon === -150 && !!one && one.d === 'EAST' && one.p[0].lon === 150, o);
+    check('... continuous across 180° (170W after 180 as 190; 170E after 180W as -190), and one past its time left out', one.p[4].lon === 190 && a.p[4].lon === -190 && !o['PAC-B'] && a.until === '2026-11-08T08:00:00.000Z');
+    const o2 = pacFromSearch({ notamList: [{ icaoMessage: 'A3700/26 ' + tdm }, { icaoMessage: 'RWY 05/23 CLSD' }] }, {}, at);
+    check('... from NOTAM Search\'s NOTAMs the same', Object.keys(o2).sort().join() === 'PAC-1,PAC-A'); }
+
   // ================= the page: weather, statistics, vertical speed =================
   { const dom = new JSDOM('<!doctype html><html><body><div id="app"></div></body></html>', { url: 'https://www.flightradar24.com/airport/530/bwf', runScripts: 'dangerously', pretendToBeVisual: true });
     const w = dom.window, posts = []; let H = null;
@@ -252,6 +278,35 @@ const BOARD = { data: [{ id: 1, flight: { id: '3c4a5b70', callsign: 'EZY12AB', n
     ac2.innerHTML = '<div class="grid"><div title="How quickly an aircraft is ascending or descending" class="col-span-1"><p class="text-xs uppercase">Vertical speed</p><div class="inline-flex"><svg viewBox="0 0 24 24"><path d="M1 1"/></svg></div></div></div>';
     await Promise.resolve(); await sleep(0);
     check('... drawn by FR24: swapped by the page\'s own watch, before it is painted', txt(ac2.querySelector('.tl-vsna')) === 'N/A');
+    // (the OurAirports airports in FR24's list, map, airport answer and boards)
+    const ref = { id: 530, iata: 'BWF', icao: 'EGNL', name: 'Barrow', city: 'Barrow', country: 'United Kingdom', countryId: 235, lat: 54.13, lon: -3.26, timezone: { abbr: 'GMT', abbrName: 'Greenwich Mean Time', isDst: false, name: 'Europe/London', offset: 0, offsetHours: '0:00' } };
+    const oaRows = [[17000001, 'EGXX', 'EGXX', 'Walney Strip', 'Barrow-in-Furness', 530, 54.2, -3.2, 50, 'S'], [17000002, 'GB-0999', 'GB-0999', 'Some Heliport', 'Ulverston', 530, 54.19, -3.09, 30, 'H'], [17000003, 'XYZQ', 'XYZQ', 'Far Field', '', 530, -30, 140, 0, 'S']];
+    H.acceptOa({ rows: oaRows, sig: '3.1' });
+    const list = { rows: [ref].concat(Array.from({ length: 120 }, (_, i) => ({ id: 1000 + i, iata: 'A' + i, icao: '', name: 'X', lat: 0, lon: 0 }))) };
+    H.patchList('airports', list);
+    const got = list.rows.filter(r => r.id >= 1e7), wa = got.find(r => r.id === 17000001);
+    check('FR24\'s airport list: every OurAirports airport put in, in FR24\'s form - Barrow\'s country and time zone', got.length === 3 && wa.iata === 'EGXX' && wa.icao === 'EGXX' && wa.name === 'Walney Strip' && wa.country === 'United Kingdom' && wa.timezone.name === 'Europe/London' && wa.city === 'Barrow-in-Furness', wa);
+    const aj = H.oaAirportJson('https://api.flightradar24.com/common/v1/airport.json?code=egxx&plugin[]=details&plugin[]=runways');
+    const det = aj && aj.result.response.airport.pluginData.details;
+    check('... FR24\'s airport answer for one made here: its name, code, place and zone', !!det && det.name === 'Walney Strip' && det.code.iata === 'EGXX' && det.position.latitude === 54.2 && det.timezone.name === 'Europe/London' && Array.isArray(aj.result.response.airport.pluginData.runways));
+    check('... never for a code of FR24\'s own (BWF, EGNL)', H.oaAirportJson('https://api.flightradar24.com/common/v1/airport.json?code=bwf&plugin[]=details') === null && H.oaAirportJson('https://api.flightradar24.com/common/v1/airport.json?code=egnl') === null);
+    const bres = await w.fetch('https://www.flightradar24.com/api/v1/airports/17000001/departures?page=1&limit=100').catch(e => ({ err: String(e) }));
+    const bj = bres && bres.json ? await bres.json() : bres;
+    check('... its board: answered here in FR24\'s form - FR24 never asked', bj && Array.isArray(bj.data) && bj.meta && bj.meta.currentPage === 1, bj);
+    // (on the map: those in view once zoomed in)
+    const app = doc.getElementById('app'), store = { airports: list.rows.filter(r => r.id < 1e7) };
+    app.__vue_app__ = { config: { globalProperties: { $pinia: { _s: new Map([['airports', store]]) } } } };
+    H.setOaBase(store.airports.slice());
+    w.history.replaceState(null, '', '/54.15,-3.20/10'); H.oaMap();
+    const onMap = store.airports.filter(r => r.id >= 1e7).map(r => r.id).sort();
+    check('map, zoomed in at Barrow: the two OurAirports airports in view on it, not the far one', onMap.join() === '17000001,17000002' && store.airports.some(r => r.id === 530), onMap);
+    w.history.replaceState(null, '', '/54.15,-3.20/6'); H.oaMap();
+    check('... zoomed out: none of them - FR24\'s own all there', !store.airports.some(r => r.id >= 1e7) && store.airports.length === 121);
+    // (the Pacific's tracks in FR24's own answer of its tracks)
+    H.setPac({ 'PAC-A': { n: 'A', d: 'WEST', p: { 0: { lat: 43, lon: -160 }, 1: { lat: 44, lon: -170 } }, until: new Date(Date.now() + 3600e3).toISOString() } });
+    const trR = await H.mxTracksPac(new Response(JSON.stringify({ A: { n: 'A', d: 'EAST', p: { 0: { lat: 55, lon: -30 }, 1: { lat: 55, lon: -20 } } } }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    const tr = await trR.json();
+    check('oceanic tracks: the Pacific\'s put in beside FR24\'s North Atlantic ones - NAT track A and PACOTS track A both there', !!tr.A && !!tr['PAC-A'] && tr['PAC-A'].d === 'WEST', Object.keys(tr));
     w.close(); }
 
   console.log(fails ? `\n${fails} failed` : '\nall passed');

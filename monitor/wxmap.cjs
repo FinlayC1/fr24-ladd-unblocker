@@ -96,6 +96,49 @@ function natTracks(list) {
   return out;
 }
 
+// ---- (1.3) the Pacific's organised tracks (PACOTS): the day's Track Definition Messages (TDM) of Oakland (KZAK), Fukuoka
+// (RJJJ) and Anchorage (PAZA) -> FR24's own form, beside the NAT's. A TDM:
+//   (TDM TRK A 261107050001
+//    2611071900 2611080800
+//    OGDEN 4130N15000W 43N160W 44N170W 45N180E 45N170E ... SMOLT
+//    RTS/KSFO OGDEN ...
+//    RMK/...)
+// - its track (letters westbound, numbers eastbound), its validity (YYMMDDHHMM from / until), the route: each position as
+// latitude/longitude (40N150W, 4130N15000W); its named fixes at either end are left out, as the NAT's are
+function pacPoint(w) {
+  const c = String(w).match(/^(\d{2})(\d{2})?([NS])(\d{3})(\d{2})?([EW])$/); if (!c) return null;
+  const lat = (+c[1] + (+c[2] || 0) / 60) * (c[3] === 'S' ? -1 : 1), lon = (+c[4] + (+c[5] || 0) / 60) * (c[6] === 'W' ? -1 : 1);
+  return lat <= 90 && Math.abs(lon) <= 180 ? { lat, lon, name: w } : null;
+}
+const pacTime = s => { const m = String(s).match(/^(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})$/); return m ? Date.UTC(2000 + +m[1], +m[2] - 1, +m[3], +m[4], +m[5]) : NaN; };
+function pacParse(text, out, nowMs) {
+  out = out || {}; nowMs = nowMs || Date.now();
+  const t = String(text || '').replace(/<[^>]+>/g, '\n').replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/\r/g, '');
+  const re = /TDM\s+TRK\s+([A-Z0-9]{1,2})\s+(\d{12})?([\s\S]*?)(?=TDM\s+TRK\s|$)/g;
+  let m;
+  while ((m = re.exec(t))) {
+    const id = m[1], body = m[3], times = body.match(/(\d{10})\s+(\d{10})/), from = times ? pacTime(times[1]) : NaN, until = times ? pacTime(times[2]) : NaN;
+    if (Number.isFinite(until) && until < nowMs) continue;                         // (its time over)
+    // (the route: the words before RTS/ or RMK/ - the times line left out)
+    const route = body.replace(/^[\s\S]*?\d{10}\s+\d{10}/, '').split(/\b(?:RTS|RMK)\//)[0];
+    const pts = {}; let n = 0;
+    for (const w of route.split(/[\s)]+/)) { const p = pacPoint(w); if (p) pts[n++] = p; }
+    if (n < 2) continue;
+    // (across 180°: each longitude within half a world of the one before - 170E, 180, 170W as 170, 180, 190 - so the line
+    // runs over the Pacific, not round the world)
+    for (let k = 1; k < n; k++) { while (pts[k].lon - pts[k - 1].lon > 180) pts[k].lon -= 360; while (pts[k].lon - pts[k - 1].lon < -180) pts[k].lon += 360; }
+    const key = 'PAC-' + id, prev = out[key];
+    if (prev && prev.at >= (from || 0)) continue;                                  // (the newest message of a track)
+    out[key] = { n: id, d: /^\d+$/.test(id) ? 'EAST' : 'WEST', p: pts, from: Number.isFinite(from) ? new Date(from).toISOString() : '', until: Number.isFinite(until) ? new Date(until).toISOString() : '', at: from || 0, pac: 1 };
+  }
+  return out;
+}
+// (NOTAM Search's answer for a location: { notamList: [{ icaoMessage, traditionalMessage, ... }], totalNotamCount })
+function pacFromSearch(j, out, nowMs) {
+  for (const x of (j && Array.isArray(j.notamList) ? j.notamList : [])) { const msg = String(x.icaoMessage || x.traditionalMessage || ''); if (/TDM\s+TRK/.test(msg)) pacParse(msg, out, nowMs); }
+  return out;
+}
+
 function createWxMap(env) {
   env = env || {};
   const fetchFn = env.fetch || ((u, o) => fetch(u, o)), log = env.log || (() => {}), now = env.now || Date.now;
@@ -107,7 +150,7 @@ function createWxMap(env) {
     radar: { ver: '', maxZ: 7, tiles: new Map(), at: 0, base: '', asked: new Map(), ahead: '' },
     naradar: { ver: '', maxZ: 9, tiles: new Map(), at: 0, asked: new Map(), ahead: '' }
   };
-  const mirrors = { metars: null, airsigmet: null, isigmet: null, nat: null };
+  const mirrors = { metars: null, airsigmet: null, isigmet: null, nat: null, pacots: null };
   const wafs = { run: 0, files: new Map(), at: 0, asked: new Map() };
   const wind = { run: 0, fhrs: [], grids: new Map(), at: 0 };
   const due = { mirrors: 0, radar: 0, naradar: 0, wafs: 0, wind: 0, precip: 0, cloud: 0 };
@@ -356,6 +399,35 @@ function createWxMap(env) {
       ['isigmet', AWC + '/api/data/isigmet?format=json', 'application/json'],
       ['nat', NAT, 'application/json']
     ];
+    // (1.3) the Pacific's tracks: NOTAM Search's NOTAMs of the three oceanic centres, a page at a time; else the FAA's
+    // DINS page of the Pacific tracks. Neither answering: the last ones kept stand until their time is over
+    // (every 30 minutes at most - the messages come out twice a day)
+    if (!mirrors.pacots || now() - mirrors.pacots.at >= 30 * 60000) {
+      const out = {}, nowMs = now(), why = [];
+      try {
+        for (const loc of ['KZAK', 'RJJJ', 'PAZA']) {
+          for (let off = 0, total = 1; off < total && off < 600; off += 30) {
+            stats.upstream++;
+            const r = await fetchFn('https://notams.aim.faa.gov/notamSearch/search', { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' }, UA),
+              body: 'searchType=0&designatorsForLocation=' + loc + '&offset=' + off + '&notamsOnly=false', signal: AbortSignal.timeout(60000) });
+            if (!r.ok) throw new Error('HTTP ' + r.status + ' NOTAM Search');
+            const j = JSON.parse(Buffer.from(await r.arrayBuffer()).toString('utf8'));
+            total = +j.totalNotamCount || 0; pacFromSearch(j, out, nowMs);
+            await sleep(gapMs);
+          }
+        }
+      } catch (e) { why.push(String(e && e.message || e)); }
+      if (!Object.keys(out).length) {
+        try { pacParse((await get('https://www.notams.faa.gov/dinsQueryWeb/advancedNotamMapAction.do?queryType=pacificTracks&actionType=advancedNOTAMFunctions', { timeout: 60000 })).toString('utf8'), out, nowMs); }
+        catch (e) { why.push(String(e && e.message || e)); }
+      }
+      if (Object.keys(out).length) { const body = Buffer.from(JSON.stringify(out)); mirrors.pacots = { at: now(), type: 'application/json', body, gz: zlib.gzipSync(body) }; }
+      else {
+        fail('pacots', new Error(why.join('; ') || 'no Pacific tracks in the FAA\'s messages'));
+        // (kept ones past their time: gone)
+        if (mirrors.pacots) { try { const kept = JSON.parse(mirrors.pacots.body.toString('utf8')), left = {}; for (const k of Object.keys(kept)) if (!kept[k].until || Date.parse(kept[k].until) > nowMs) left[k] = kept[k]; const body = Buffer.from(JSON.stringify(left)); mirrors.pacots = Object.keys(left).length ? { at: mirrors.pacots.at, type: 'application/json', body, gz: zlib.gzipSync(body) } : null; } catch (e) { mirrors.pacots = null; } }
+      }
+    }
     for (const [k, url, type] of jobs) {
       try {
         let body = await get(url, { timeout: 60000 });
@@ -424,7 +496,7 @@ function createWxMap(env) {
       if (!g) return Promise.resolve({ status: 404, type: 'text/plain', body: Buffer.from('no such grid') });
       return Promise.resolve(acceptGzip ? { status: 200, type: 'application/octet-stream', body: g, enc: 'gzip', cache: 'public, max-age=86400, immutable' } : { status: 200, type: 'application/octet-stream', body: zlib.gunzipSync(g), cache: 'public, max-age=86400, immutable' });
     }
-    if ((m = pathname.match(/^\/wx\/(metars|airsigmet|isigmet|nat)$/))) {
+    if ((m = pathname.match(/^\/wx\/(metars|airsigmet|isigmet|nat|pacots)$/))) {
       const f = mirrors[m[1]];
       if (!f) return Promise.resolve({ status: 503, type: 'text/plain', body: Buffer.from('not ready') });
       return Promise.resolve(f.gz && acceptGzip ? { status: 200, type: f.type, body: f.gz, enc: 'gzip', cache: 'public, max-age=120' } : { status: 200, type: f.type, body: f.body, cache: 'public, max-age=120' });
@@ -438,4 +510,4 @@ function createWxMap(env) {
   return { pump, handle, meta, status, stats, P, wind, wafs, mirrors, due };
 }
 
-module.exports = { createWxMap, natTracks, natParse, LEVELS };
+module.exports = { createWxMap, natTracks, natParse, pacParse, pacFromSearch, LEVELS };

@@ -186,6 +186,7 @@
         if (bootArea.length) { pushPubTel(bootArea.filter(c => now() - seenAt(c) < 90000)); bootArea = []; }
         store.ready.then(() => { pushKnown(true); return pushAllPubIds(); }).catch(e => log('pubIds', e));
         store.kvReady.then(pushSites).catch(() => {});          // (the landing places learned, for FR24's airport list)
+        loadOa().then(pushOa).catch(() => {});                  // (1.3: every OurAirports airport FR24 does not list, for its list and map)
         break;
       }
       default: break;

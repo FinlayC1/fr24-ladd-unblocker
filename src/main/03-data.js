@@ -413,11 +413,40 @@
   function siteAp(id) { const bk = siteBk(), s = bk && bk.list.find(x => x.id === id); if (!s) return null; const r = siteRow(s); return Object.assign({}, r, { tz: r.timezone.offset, code: r.iata, site: true }); }
   function pushSites() { const bk = siteBk(); if (bk && bk.list.length) postToPage('sites', { list: bk.list.map(siteRow) }); }
   function sitesSoon() { siteLab = null; if (siteSaveT) return; siteSaveT = setTimeout(() => { siteSaveT = 0; store.kvSet('sites2', siteBk()); pushSites(); }, 3000); }
+  // ---- (1.3) every OurAirports airport FR24 does not list (closed ones aside) - the monitor's list (oaap.cjs: the route
+  // engine's own ids), kept here a week - given to the page for FR24's airport list, its map, boards and panel
+  const oa = { rows: null, ids: new Set(), byId: new Map(), byCode: new Map(), sig: '', loading: null };
+  const oaKnown = id => id >= 1e7 && oa.ids.has(id);
+  function oaSet(c) {
+    oa.rows = c.rows; oa.sig = String(c.n || c.rows.length) + '.' + (c.at || 0); oa.ids = new Set(); oa.byId = new Map(); oa.byCode = new Map();
+    for (const r of c.rows) if (Array.isArray(r) && r[0] >= 1e7) { oa.ids.add(r[0]); oa.byId.set(r[0], r); oa.byCode.set(String(r[1]).toUpperCase(), r[0]); }
+  }
+  function loadOa() {
+    if (oa.rows) return Promise.resolve(true);
+    if (oa.loading) return oa.loading;
+    oa.loading = (async () => {
+      const c = await store.getHist('b:oaap1').catch(() => null);
+      if (c && Array.isArray(c.rows) && c.rows.length > 10000) { oaSet(c); if (now() - (c.got || 0) < 7 * 864e5) return true; }
+      const j = await monGet('/oaap', { timeout: 90000, bg: true }).catch(() => null);
+      if (j && Array.isArray(j.rows) && j.rows.length > 10000) { j.got = now(); store.setHist('b:oaap1', j); oaSet(j); log('OurAirports airports', j.rows.length); }
+      return !!oa.rows;
+    })().catch(e => { log('OurAirports airports', String(e && e.message || e)); return false; }).finally(() => { oa.loading = null; });
+    return oa.loading;
+  }
+  function pushOa() { if (oa.rows) postToPage('oaRows', { rows: oa.rows, sig: oa.sig }); }
+  // (one of them as an airport: its row, the nearest FR24 airport's country and zone)
+  function oaAp(id) {
+    const r = oa.byId.get(id); if (!r) return null;
+    const ref = airports.byId.get(r[5]) || {};
+    return { id: r[0], iata: r[1], icao: /^[A-Z]{4}$/.test(r[2]) ? r[2] : '', code: r[1], name: r[3], city: ENGINE.placeShort(r[4]) || ENGINE.placeShort(r[3]), country: ref.country || '', countryId: ref.countryId || 0,
+      lat: r[6], lon: r[7], alt: r[8] || 0, size: 1, timezone: ref.timezone || null, tz: ref.timezone ? ref.timezone.offset : (ref.tz || 0), oa: true };
+  }
   // (an unlisted airfield - an id from the route engine's field list - answers too; and a learned landing place)
-  const apById = id => (id && (airports.byId.get(id) || (id >= 1e7 ? ENGINE.byId(id) : isSiteId(id) ? siteAp(id) : null))) || null;
-  // what FR24's own panel and boards can be given: its airports, and the landing places it has been given (a strip of
-  // the route engine's, by where it is)
-  const fr24Ap = id => !id ? 0 : id < 1e7 ? id : (a => a ? siteIdAt(a.lat, a.lon) : 0)(ENGINE.byId(id));
+  // (1.3: and an OurAirports airport - the engine's airfields are among them, by the same id)
+  const apById = id => (id && (airports.byId.get(id) || (id >= 1e7 ? ENGINE.byId(id) || oaAp(id) : isSiteId(id) ? siteAp(id) : null))) || null;
+  // what FR24's own panel and boards can be given: its airports, the OurAirports airports put in its list (1.3), and the
+  // landing places it has been given (a strip of the route engine's not among them, by where it is)
+  const fr24Ap = id => !id ? 0 : id < 1e7 || oaKnown(id) ? id : (a => a ? siteIdAt(a.lat, a.lon) : 0)(ENGINE.byId(id));
   const apCode = a => a ? (a.iata || a.icao || String(a.id)) : '';
   // Learning from use: every completed flight in a log this script reconstructs (the selected aircraft's, and the logs
   // it backfills for everything it identifies) - where business aviation goes from where, how the transponder's code

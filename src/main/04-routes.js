@@ -968,7 +968,7 @@
     if (id > 0) { calcExtra.set(id, () => { const x = naFeed.get(id) || e; return naEvidenceOf(id, x); }); if (calcExtra.size > 3000) calcExtra.delete(calcExtra.keys().next().value); if (centralUp()) calcWant(id); }
     const c = id > 0 ? calcGot.get(id) : null, r = c && c.r && now() <= c.until ? c.r : null;
     if (!r || !r.destId) return null;
-    const dest = apById(r.destId); if (!dest || dest.id >= 1e7) return null;
+    const dest = apById(r.destId); if (!dest || (dest.id >= 1e7 && !oaKnown(dest.id))) return null;
     const sure = !!r.landed || r.destConf === 'confirmed' || r.destConf === 'filed' || r.destConf === 'landed' || (r.destP || 0) >= 60;
     if (!sure) return null;
     // (back where it began only after a real flight - circuits, a return an hour on - as the engine's rule has it)

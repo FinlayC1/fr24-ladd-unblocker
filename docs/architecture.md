@@ -378,3 +378,12 @@ sequenceDiagram
 | FR24 refuses the monitor's scan | 10-minute pause, doubling to 2 hours. `scanOk` turns false and browsers run their own world scan. Names already given stay until their flights end. |
 | A register or database refuses the monitor | That site is left alone for 10 minutes (`429`) or an hour (`401`/`403`). Its aircraft are retried an hour later, and browsers still look them up themselves. |
 | Monitor down when FR24 opens | The browser shows the last names it kept (6 hours) and identifies on its own until the monitor answers. |
+
+## Switched off, airports with no METAR, and every OurAirports airport (1.3)
+
+**Switched off** in the LADD Unblock window, nothing of the extension changes FR24. The page part (`page.js`) is reduced to `reportOnly`: FR24's `XMLHttpRequest` and `fetch` are wrapped but never changed. Its LiveFeed answers are read for the flights with no callsign, and its board answers for their rows; both are posted to the userscript. The userscript keeps only `onReportOnly`: those flights go to the monitor's `/report` and the rows to `/boardrows`, as every browser's do. It asks nothing of the monitor but `/status`. Its other timers do nothing while off, and switching in the window reloads the page.
+
+**An airport with no METAR** (FR24's panel "N/A" under Conditions, Temperature and Wind) asks the monitor's `/apwx`. That is the weather model's current conditions at the airport itself (Open-Meteo), with a METAR written from them (`AUTO ... RMK MODEL`). The page puts it in FR24's own tiles and "More weather & METAR" before the browser paints, and FR24's own are put away until FR24 has weather of its own. It also goes on the data page as FR24's `weather` prop, on the current-weather layer as a station, and into the runway in use as the wind.
+
+**Every OurAirports airport FR24 does not list** comes from the monitor's `/oaap`, kept a week in the browser. Each has the route engine's own id for it (`engine.js fieldId`; the engine's airfields are among them) and a code that is never FR24's. It is added to FR24's airport list in FR24's form, with the nearest FR24 airport's country and time zone, so the panel, boards, routes and search find it by id. It is added to the map's `airports` store only while in view at zoom 8 or more (400 at most). Its FR24 airport answer (`common/v1/airport.json`) and boards are made in the page.
+

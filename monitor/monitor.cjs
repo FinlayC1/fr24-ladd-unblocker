@@ -33,6 +33,7 @@
 //  /seed?hex=a,b[&front=1]       blocked aircraft the userscript knows: tracked from now on, their last days rebuilt
 //  /parked?ap=&type=             aircraft of a type whose last flight ended at that airport (14 days): parked there since
 //  /rwyap?ap=&from=&to=          (1.2.7) the runway of every take-off and landing at an airport in a window, logged live
+//  /oaap                         (1.3) every OurAirports airport FR24 does not list (oaap.cjs), gzipped
 //  /apwx?ap=                     (1.3) an airport's weather now, for one FR24 has none for: the live weather at the
 //                                 airport and a METAR made from it (apwx.cjs)
 //                                (1.2.8: &use=1 - with the runway in use's ends, runways and last day's movements, one answer;
@@ -687,7 +688,10 @@ const RL = createRwyLog({ E, APT, store: STORE, legacy: rwyKnown, keepDays: +CFG
 // (1.3) an airport's weather now where FR24 has none for it (no METAR sent from there): the live weather at the airport
 // itself, and a METAR made from it - apwx.cjs
 const { createApWx } = require('./apwx.cjs');
-const APWX = createApWx(Object.assign({ E, fetch: (u, o) => global.fetch(u, o) }, CFG.apwx || {}));
+// (1.3) every OurAirports airport FR24 does not list, closed ones aside, as airports of their own - oaap.cjs
+const { createOaAirports } = require('./oaap.cjs');
+const OAAP = createOaAirports({ E, dataDir: DATA });
+const APWX = createApWx(Object.assign({ E: { byId: id => E.byId(id) || (id >= 1e7 ? OAAP.get(id) : null) }, fetch: (u, o) => global.fetch(u, o) }, CFG.apwx || {}));
 try { RL.load(); } catch (e) { log('runways', String(e && e.message || e)); }
 // (a blocked flight's take-offs and landings, from its ADS-B track - its legs: [hex, 0 | 1, runway, time] at an airport.
 // 1.2.8: by airport, gathered once a minute for every airport at once - not every leg of every aircraft read per answer)
@@ -2210,7 +2214,7 @@ function apLegs(apId) {
 // public receivers' reach, had none). Worked out at most once a minute an airport; asked for, its board is wanted here
 const apAnswers = new Map();
 function airportAnswer(apId, nowS, days, hist) {
-  BD.want(apId);
+  if (apId < 1e7) BD.want(apId);   // (FR24 keeps no board of an airport it does not list)
   const key = apId + ':' + days + ':' + hist, c = apAnswers.get(key);
   if (c && Date.now() - c.at < 60000) return c.v;
   const v = APT.answer(apId, apLegs(apId), nowS, days, AS, hist);
@@ -2585,7 +2589,7 @@ function answer(u, nowS, ctx) {
   // (1.1.0) and FR24's own rows of the airport's board kept here - those changed since `since` only, when given - with
   // when FR24's data of it last came in (fr24At). Asked for: the monitor reads its schedule from FR24 too while wanted.
   if (p === '/board') {
-    const ap = +q('ap'), from = +(q('from') || nowS - 3 * 86400), to = +(q('to') || nowS); BD.want(ap);
+    const ap = +q('ap'), from = +(q('from') || nowS - 3 * 86400), to = +(q('to') || nowS); if (ap < 1e7) BD.want(ap);
     const out = { v: 2, aircraft: boardLegs(ap, from, Math.min(to, nowS)) };
     if (q('rows') === '1') { const r = BD.rows(ap, from, to, +(q('since') || 0)); out.rows = { arrivals: r.arrivals, departures: r.departures }; out.fr24At = r.fr24At; out.now = Math.round(nowS); }
     return out;
@@ -2662,6 +2666,12 @@ function serve() {
     }
     if (!admin && (!PUBLIC || u.pathname === '/stats')) { res.writeHead(401); res.end(); return; }
     // (the weather layers' pictures and figures: many small answers a map view - their own, larger allowance)
+    // (1.3) the OurAirports airports FR24 does not list - gzipped, built once
+    if (u.pathname === '/oaap' && req.method === 'GET') {
+      try { const b = OAAP.body(); res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Encoding': 'gzip', 'Content-Length': b.length, 'Cache-Control': 'public, max-age=3600' }); res.end(b); }
+      catch (e) { res.writeHead(500); res.end(); log('oaap', String(e && e.message || e)); }
+      return;
+    }
     if (u.pathname.startsWith('/wx/') && req.method === 'GET') {
       if (!WXMAP_ON) { res.writeHead(404); res.end(); return; }
       if (!admin && limitedWx(ip)) { res.writeHead(429, { 'Retry-After': '30' }); res.end(); return; }
@@ -2791,5 +2801,5 @@ if (require.main === module) {
   // (airports' schedules read from FR24 here, for the boards browsers open)
   setInterval(() => { BD.pump().catch(e => log('boards', String(e))); }, 5000);
 }
-module.exports = { boardPlan, rwyFit, rwyKnown, rwyAnswer, rwySave, RL, rwyApAnswer, rwyApWarm, laddRwys, rwyHotRound, rwyLowRound, LOW, PACE, pace, fr24Client: () => fr24, fr24raw, fr24RawRound, wxmap, AGES, agesLearn, withAge, AC, acdbSweep, central, centralStart, centralRound, CR, SC, fleetOf, FL, naF, naTrack, selfEvidence, F24ref2: () => F24, WORLD, WS, AS, BD, boardRows, airportAnswer, apLegs, fr24Track, F24T, worldDay, worldWants, worldRoom, worldStatus, worldRecheck: () => { freeAt = 0; }, pollTat, TAT, TAT_HOST, carriesOn, liveExtra, logOf, heardPts, archBreath, memAvail, archTrace, archiveJob, indexDay, idxLookup, idxHave, archIdx, idxFile, ARC, setArcRange: f => { arcRange = f; }, surgeNow, datalink, datalinkRound, dlSeen, classifyTrace, traceGet, netSt, archiveDay, archiveState, archiveNext, archMark, archTried, archDays, archRunning, traceOf, AR, apliveTrace, HIST_V, HIST_RESET, resetHistLogs, histResetMark, get histResetN() { return histResetN; }, adminAnswer, ctl, logRing, log, MON_VER, learnCheck, learnFromCrowd, crowdLearnSave, crowdRows, LC, tracks, waiting, waitRound, waitLive, waitNamed, waitClaims, WAIT, saveWaiting, loadWaiting, pbMatch, learnedBuild, learnedDue, learnedLoad, learnedRef: () => learnedOut, liveBusy, backWaits, E, CFG, loadEngine, ingest, buildLegs, fr24Legs, fr24Leg, F24ref: () => F24, owners, ownersLoop, APT, legRunways, names, nearAnswer, telAnswer, tel, wx, pbNames, get PUBLIC() { return PUBLIC; }, get RATE() { return RATE; }, limited, tokenOk, installs, opts, optionsSet, optionsLoad, latestCheck, latestVer, helloAnswer, badge, wakeQuiet, parkedAt, boardLegs, flightsOfCs, lastHeard, legs, ac, backfillOne, backQ, blocked, markBlocked, seed, gapFill, addArea, userAreas,
+module.exports = { OAAP, APWX, boardPlan, rwyFit, rwyKnown, rwyAnswer, rwySave, RL, rwyApAnswer, rwyApWarm, laddRwys, rwyHotRound, rwyLowRound, LOW, PACE, pace, fr24Client: () => fr24, fr24raw, fr24RawRound, wxmap, AGES, agesLearn, withAge, AC, acdbSweep, central, centralStart, centralRound, CR, SC, fleetOf, FL, naF, naTrack, selfEvidence, F24ref2: () => F24, WORLD, WS, AS, BD, boardRows, airportAnswer, apLegs, fr24Track, F24T, worldDay, worldWants, worldRoom, worldStatus, worldRecheck: () => { freeAt = 0; }, pollTat, TAT, TAT_HOST, carriesOn, liveExtra, logOf, heardPts, archBreath, memAvail, archTrace, archiveJob, indexDay, idxLookup, idxHave, archIdx, idxFile, ARC, setArcRange: f => { arcRange = f; }, surgeNow, datalink, datalinkRound, dlSeen, classifyTrace, traceGet, netSt, archiveDay, archiveState, archiveNext, archMark, archTried, archDays, archRunning, traceOf, AR, apliveTrace, HIST_V, HIST_RESET, resetHistLogs, histResetMark, get histResetN() { return histResetN; }, adminAnswer, ctl, logRing, log, MON_VER, learnCheck, learnFromCrowd, crowdLearnSave, crowdRows, LC, tracks, waiting, waitRound, waitLive, waitNamed, waitClaims, WAIT, saveWaiting, loadWaiting, pbMatch, learnedBuild, learnedDue, learnedLoad, learnedRef: () => learnedOut, liveBusy, backWaits, E, CFG, loadEngine, ingest, buildLegs, fr24Legs, fr24Leg, F24ref: () => F24, owners, ownersLoop, APT, legRunways, names, nearAnswer, telAnswer, tel, wx, pbNames, get PUBLIC() { return PUBLIC; }, get RATE() { return RATE; }, limited, tokenOk, installs, opts, optionsSet, optionsLoad, latestCheck, latestVer, helloAnswer, badge, wakeQuiet, parkedAt, boardLegs, flightsOfCs, lastHeard, legs, ac, backfillOne, backQ, blocked, markBlocked, seed, gapFill, addArea, userAreas,
   serve, fr24, ident, dest, F24, report, identRound, fr24Round, saveIdent, loadIdent, histUnknown, learnSince, learnWrite, diskLegs, KEEP_LADD, save, loadStore, dirtyDays, pollOpenSky, adsbxUse, live, liveList, answer, step, P, piaState, apiGet, gate, stats, lastOk, noteWatch, watch, watchedAll, flew, closeDays, histQ, histPend, histOne, histDay, histOf, histRead, histWrite, histFile, fillHist, fillAsked, queueHist, photos, nextHist, saveState, loadState, lastW, get closed() { return closed; }, set closed(v) { closed = v; }, pause };
