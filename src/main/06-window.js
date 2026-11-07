@@ -16,9 +16,7 @@
   // (an aircraft with an open padlock: FR24's outline style - 24 grid, 1.5 stroke in the text colour)
   const UB_ICON = '<svg data-tl-ub-icon="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
   const UB_X = '<svg viewBox="0 0 14 14" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5l11 11M12.5 1.5l-11 11"/></svg>';
-  // (the size of the window's text: M is FR24's own - the 14 px of its windows' lists - and the others scale it)
-  const UB_SIZE_KEY = 'tweeks.fr24.ladd.textsize', UB_SIZES = [['S', 0.9], ['M', 1], ['L', 1.15], ['XL', 1.3]];
-  const ubSize = () => { const v = parseInt(lsGet(UB_SIZE_KEY), 10); return v >= 0 && v < UB_SIZES.length ? v : 1; };
+  // (1.3: the window's text at FR24's own size - the 14 px of its windows' lists, what "M" was; no choice of sizes)
   // The content (.tl-ub-c) in FR24's measures: 14 px text on 20 px lines, its section titles bold capitals, 12 px notes, its
   // grey #393939 and yellow #f8c023, 8 px in from the edges. In FR24's window (.tl-ub-in) it scrolls under FR24's title
   // bar; the stand-in window (.tl-ub) is drawn like FR24's: 336 px wide, a 40 px grey title bar.
@@ -73,9 +71,6 @@
 .tl-ub-c .tl-ub-alert{margin-top:6px;padding:6px 8px;background:#fff4d1;border-left:3px solid #f8c023;border-radius:3px;font-size:calc(var(--tl-f)*13px);line-height:1.4}
 .tl-ub-c .tl-ub-grid .tl-ub-kv span:last-child{text-align:right}
 .tl-ub-c .tl-ub-log{margin:6px 0 0;max-height:180px;overflow:auto;padding:6px;background:#fff;border:1px solid #dcdcdc;border-radius:4px;font:11px/1.35 ui-monospace,Consolas,monospace;white-space:pre-wrap;word-break:break-word;color:#393939}
-.tl-ub-c .tl-ub-seg{display:flex;gap:4px}
-.tl-ub-c .tl-ub-seg button{min-width:34px;margin:0;padding:4px 8px;border:0;border-radius:4px;background:#e2e2e2;color:#393939;font:inherit;font-size:calc(var(--tl-f)*13px);line-height:1.4;font-weight:700;cursor:pointer}
-.tl-ub-c .tl-ub-seg button[aria-pressed="true"]{background:#f8c023;color:#1b1b1b}
 .tl-ub-gone,.tl-ub-hid{display:none!important}
 html.tl-no-strip .tl-strip{display:none!important}`;
   // the switches, in the order shown; 'reload': takes effect when FR24 is loaded again
@@ -105,6 +100,9 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     if (k === 'on' || UB_FEATURES.some(f => f[0] === k && f[3] === 'reload')) ubNeedReload = true;
     if (opt.on) applyOptsLive();
     renderUnblockWindow(); ubBanners();
+    // (1.3: the main switch takes effect at once - FR24 reloaded with it, its switch seen moving first: switched off, what
+    // was already drawn and running goes with the page, and nothing of this script is loaded after; switched on, it is)
+    if (k === 'on') setTimeout(() => { try { pageWindow().location.reload(); } catch (e) { log('reload', e); } }, 600);
     if (k === 'count' && opt.count) sayHello();
   }
 
@@ -328,8 +326,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     const info = '<svg width="12" height="12" viewBox="0 0 10 10" fill="none" stroke="currentColor"><circle cx="5" cy="5" r="4.4"/><path d="M5 4.4v3M5 2.6v.2" stroke-linecap="round"/></svg>';
     return `<div class="tl-ub-reload"${ubNeedReload ? '' : ' hidden'}><span>Reload FR24 to apply</span><button type="button" class="tl-ub-b" data-ub-act="reload">Reload</button></div>${whatsNewHtml()}
       <div class="tl-ub-row tl-ub-top"><span class="tl-ub-t">Enable LADD Unblock</span>${tgHtml('on', 'Enable LADD Unblock')}</div>
-      <div class="tl-ub-info">${info}<span>Names blocked (LADD) and N/A aircraft from public ADS-B, with routes, predicted destinations and flight history.${opt.on ? '' : ' Switched off: FR24 is left as it is.'}</span></div>
-      <div class="tl-ub-item"><div class="tl-ub-row"><span class="tl-ub-t">Text size</span><div class="tl-ub-seg">${UB_SIZES.map(([n], i) => `<button type="button" data-ub-size="${i}" aria-pressed="${i === ubSize() ? 'true' : 'false'}" title="Text size ${n}">${n}</button>`).join('')}</div></div></div>
+      <div class="tl-ub-info">${info}<span>Names blocked (LADD) and N/A aircraft from public ADS-B, with routes, predicted destinations and flight history.${opt.on ? '' : ' Switched off: FR24 is left as it is - only what it shows is still shared with the monitor.'}</span></div>
       ${UB_FEATURES.map(([k, t, d]) => `<div class="tl-ub-item tl-ub-feat"><div class="tl-ub-row"><span class="tl-ub-t">${esc(t)}</span>${tgHtml(k, t)}</div><p>${esc(d)}</p>${k === 'count' && opt.count && ffConsent === false ? '<div class="tl-ub-note">Firefox has not allowed this add-on to send technical data, so nothing is sent. <button type="button" class="tl-ub-b tl-ub-b2" data-ub-act="ffConsent">Allow in Firefox</button></div>' : ''}</div>`).join('')}
       <div class="tl-ub-item"><span class="tl-ub-t">Updates</span><div id="tl-ub-upd">${updatesHtml()}</div></div>
       <div class="tl-ub-item"><span class="tl-ub-t">Monitor</span><div id="tl-ub-mon">${opt.on ? monHtml() : '<p>Switched off.</p>'}</div></div>
@@ -343,7 +340,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     if (!ubBody || !ubBody.isConnected) return;
     const top = ubBody.scrollTop;
     ubBody.classList.toggle('tl-ub-off', !opt.on);
-    ubBody.style.setProperty('--tl-f', String(UB_SIZES[ubSize()][1]));
+    ubBody.style.setProperty('--tl-f', '1');
     const L = ubSwitchLook(); if (L) { ubBody.style.setProperty('--tl-tg-d', L.d); ubBody.style.setProperty('--tl-tg-e', L.e); }
     morphHtml(ubBody, ubBodyHtml()); ubBody.scrollTop = top;
   }
@@ -367,9 +364,8 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   // (the data sources' own buttons - monitor, keys - are handled with the strip's tools, which redraw this part)
   function refreshSources() { const el = ubBody && ubBody.isConnected ? ubBody.querySelector('#tl-ub-sources') : null; if (el && opt.on) el.innerHTML = sourcesHtml(); }
   function onUbClick(ev) {
-    const t = ev.target && ev.target.closest ? ev.target.closest('[data-ub-opt],[data-ub-act],[data-ub-size]') : null; if (!t) return;
+    const t = ev.target && ev.target.closest ? ev.target.closest('[data-ub-opt],[data-ub-act]') : null; if (!t) return;
     ev.preventDefault(); ev.stopPropagation();
-    if (t.dataset.ubSize) { lsSet(UB_SIZE_KEY, t.dataset.ubSize); return renderUnblockWindow(); }
     if (t.dataset.ubOpt) return setOpt(t.dataset.ubOpt, !opt[t.dataset.ubOpt]);
     const act = t.dataset.ubAct;
     if (act === 'close') closeUnblockWindow();

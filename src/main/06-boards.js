@@ -21,9 +21,12 @@
   const boardPend = new Map();    // apId -> [[kind, row]] not merged yet
   const boardAsked = new Map();   // apId -> when the page last asked (its board is open)
   let boardTimer = 0, boardTimerAt = 0;
-  const boardOk = id => fin(id) && id > 0 && id < SITE_BASE;   // (FR24's own airports have boards; a strip or landing place has none)
+  // (FR24's own airports have boards, and - 1.3 - the OurAirports airports put in its list; a landing place has none)
+  const boardOk = id => fin(id) && id > 0 && (id < SITE_BASE || oaKnown(id));
   function boardPut(apId, kind, row) {
     if (!boardOk(apId) || !row || !fin(row.t) || Math.abs(row.t - nowS()) > Math.max(BOARD_BACK, BOARD_AHEAD)) return;
+    // (1.3: switched off - FR24's own rows only sent on to the monitor; nothing kept or drawn here)
+    if (!opt.on) { if (!row.fromMon && (row.src === 'fr24' || row.src === 'sched')) boardUp(apId, kind, row); return; }
     // (1.1.0) FR24's own rows read here - its map board's, its schedule's, its flight numbers' lists - go to the monitor for
     // every other browser; those that came from it do not go back
     if (row.fromMon) { row = Object.assign({}, row); delete row.fromMon; delete row.u; }
@@ -735,10 +738,11 @@
   // the page's). Without the monitor: the runway ends this browser reads from OurAirports itself.
   const panelAsked = new Map();
   async function onNeedAirportPanel(d) {
-    const code = clean(d.code).toUpperCase(); if (!/^[A-Z0-9]{3,4}$/.test(code)) return;
+    const code = clean(d.code).toUpperCase(); if (!/^[A-Z0-9]{3,4}$/.test(code) && !oa.byCode.has(code)) return;
     if (now() - (panelAsked.get(code) || 0) < 60000) return; panelAsked.set(code, now());
     await loadAirports();
-    const ap = (code.length === 4 && ENGINE.byIcao(code)) || airports.byIata.get(code); if (!ap || !boardOk(ap.id)) return;
+    // (1.3: an OurAirports airport's panel too, by its code)
+    const ap = (code.length === 4 && ENGINE.byIcao(code)) || airports.byIata.get(code) || (oa.byCode.has(code) ? apById(oa.byCode.get(code)) : null); if (!ap || !boardOk(ap.id)) return;
     const full = apById(ap.id) || ap, out = { code, apId: ap.id, tz: (full.timezone && full.timezone.name) || '', days: 7, runways: null, freqs: null, usage: null, moves: 0, withRunway: 0, monitor: false, daily: null, allDays: 0 };
     routesOf(ap.id).then(list => postToPage('routesAdd', { apId: ap.id, list })).catch(e => log('routes', e));
     // (1.0.2) and every one of the last two weeks' take-offs and landings there - every aircraft public ADS-B heard, counted
@@ -752,12 +756,30 @@
     else out.ends = await runwaysOf(ap).catch(() => []);
     postToPage('airportPanel', out);
   }
+  // (1.3) an airport's weather now from the monitor, for one FR24 has none for (no METAR there): the page asks once a
+  // minute at most an airport; the monitor's answer kept here ten minutes (a panel opened again asks nothing)
+  const apWxKept = new Map();
+  async function onNeedApWx(d) {
+    const ap = Number(d && d.ap) || 0; if (!(ap > 0) || (ap >= SITE_BASE && !oaKnown(ap))) return;
+    const k = apWxKept.get(ap);
+    if (k && now() - k.at < 10 * 60000) { postToPage('apWxGot', { ap, wx: k.wx }); return; }
+    const wx = await monGet(`/apwx?ap=${ap}`, { timeout: 20000 }).catch(() => null);
+    if (wx && !wx.none && typeof wx.cond === 'string') { apWxKept.set(ap, { at: now(), wx }); if (apWxKept.size > 300) apWxKept.delete(apWxKept.keys().next().value); }
+    postToPage('apWxGot', { ap, wx: wx && !wx.none ? wx : null });
+  }
   async function onNeedAirportData(d) {
     const apId = Number(d.apId); if (!boardOk(apId)) return;
     await loadAirports();
     const ap = apById(apId), kinds = d.kinds || [];
     if (kinds.includes('runways')) runwaysOf(ap).then(rw => postToPage('airportData', { apId, runways: rw })).catch(() => {});
     if (kinds.includes('routes')) routesOf(apId).then(list => postToPage('routesAdd', { apId, list })).catch(e => log('routes', e));
+    // (1.3) the statistics page: the monitor's week of runway usage (its runway log of FR24's own tracks) and its counts of
+    // each of the last two weeks' take-offs and landings
+    if (kinds.includes('stats')) {
+      monGet(`/airport?ap=${apId}&days=7&hist=14`, { timeout: 15000 }).then(j => {
+        if (j && j.known) postToPage('airportData', { apId, stats: { usage: Array.isArray(j.usage) ? j.usage : [], daily: Array.isArray(j.daily) ? j.daily : [], days: j.days || 7 } });
+      }).catch(e => log('airport statistics', String(e && e.message || e)));
+    }
     if (!kinds.includes('board')) return;
     // the airport's kept rows (three days each way), then the flights the map tab follows now
     if (!fr24.airlines) await fr24.loadAirlines().catch(() => {});

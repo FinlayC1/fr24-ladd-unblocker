@@ -968,7 +968,7 @@
     if (id > 0) { calcExtra.set(id, () => { const x = naFeed.get(id) || e; return naEvidenceOf(id, x); }); if (calcExtra.size > 3000) calcExtra.delete(calcExtra.keys().next().value); if (centralUp()) calcWant(id); }
     const c = id > 0 ? calcGot.get(id) : null, r = c && c.r && now() <= c.until ? c.r : null;
     if (!r || !r.destId) return null;
-    const dest = apById(r.destId); if (!dest || dest.id >= 1e7) return null;
+    const dest = apById(r.destId); if (!dest || (dest.id >= 1e7 && !oaKnown(dest.id))) return null;
     const sure = !!r.landed || r.destConf === 'confirmed' || r.destConf === 'filed' || r.destConf === 'landed' || (r.destP || 0) >= 60;
     if (!sure) return null;
     // (back where it began only after a real flight - circuits, a return an hour on - as the engine's rule has it)
@@ -1007,7 +1007,7 @@
       if (list.length || drop.length) postToPage('naBoard', { list, drop });
     } finally { naBusy = false; }
   }
-  setInterval(() => { naTick().catch(e => log('na boards', e)); }, 20000);
+  setInterval(() => { if (!opt.on) return; naTick().catch(e => log('na boards', e)); }, 20000);
   let naSoonT = 0;
   const naSoon = () => { if (!naSoonT) naSoonT = setTimeout(() => { naSoonT = 0; naTick().catch(e => log('na boards', e)); }, 50); };
   // ---- a flight FR24 lists elsewhere with no destination (its Most tracked widget), anywhere in the world -----------------
@@ -1033,7 +1033,7 @@
       if (!asked && now() - w.trailAt > 30000) { w.trailAt = now(); asked = true; postToPage('needTrail', { id }); }
     }
   }
-  setInterval(naWantedTick, 10000);
+  setInterval(() => { if (opt.on) naWantedTick(); }, 10000);
   function naFromTrail(id, w, ft) {
     const trail = [];
     for (const p of ft.pts) { if (!fin(p.lat) || !fin(p.lon) || !fin(p.t)) continue; const last = trail[trail.length - 1]; if (!last || p.t - last.t >= 20) trail.push({ t: p.t, lat: p.lat, lon: p.lon, alt: p.alt, gs: p.gs, trk: p.trk, gnd: false }); }
@@ -1136,7 +1136,7 @@
       warmHist(live.get(id) || pubRouted(id));
     } finally { st.working = false; }
   }
-  setInterval(() => {
+  setInterval(() => { if (!opt.on) return;
     const id = shownId != null && pubRouted(shownId) ? shownId : currentId(), rec = id != null && (live.get(id) || pubRouted(id));
     if (rec && rec.hex && routeState.get(id) && !routeState.get(id).working) {
       (live.has(id) ? refreshPlan(id) : Promise.resolve()).then(() => publishRoute(id, composeRoute(id, rec.hex))).catch(() => publishRoute(id, composeRoute(id, rec.hex)));
@@ -1393,7 +1393,7 @@
   // (OK-FLN, in at Luton at 15:26, was "Estimated arrival 16:26" and live in search half an hour later). One flight per
   // pass, every 2 minutes, each at most every 5 minutes.
   const quietAsked = new Map();
-  setInterval(() => {
+  setInterval(() => { if (!opt.on) return;
     const t = now();
     for (const [id, rec] of live) {
       const st = routeState.get(id), r = st && st.route; if (!rec || !rec.hex || !r || r.landed || t - (quietAsked.get(id) || 0) < 5 * 60000) continue;

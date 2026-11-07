@@ -4,6 +4,48 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 
 1.0.0 is the first release. The versions before it are the betas, labelled B: B22.31.12 is version 22.31.12.
 
+## [1.3.0] - 2026-11-07
+
+### In short
+- Switched off in the LADD Unblock window, it really is off. N500EU's panel was still filled with its names and routes. Now FR24 is left exactly as it is, and the only thing that still happens is what every browser does anyway: what FR24 itself shows (the flights on the map with no callsign, FR24's own board rows) is sent to the monitor. Nothing is taken from the monitor. Switching it on or off reloads the page.
+- An airport with no METAR of its own (Barrow/Walney, BWF: "N/A" under Conditions, Temperature and Wind) gets its live weather from the monitor, and a METAR is made from it. It shows in FR24's own tiles, its "More weather & METAR", the airport's data page and the current-weather map layer, and its wind sets the runway in use.
+- The airport statistics page (/data/airports/bwf/statistics) has its runway usage and movements tables filled from the monitor. Runway usage comes from the runway log of FR24's own tracks.
+- Every OurAirports airport FR24 does not list, closed ones aside, is now an airport in FR24: some 63,000 airfields, strips, heliports and seaplane bases. Each has its code and name, is on the map once zoomed in, and has a board and airport panel. It works in routes and the monitor's weather.
+- Pacific tracks (PACOTS) are drawn with Oceanic tracks on, beside the North Atlantic ones.
+- The vertical speed padlock is gone for good: the panel shows the worked-out vertical speed or "N/A", never the padlock.
+- Playback of a LADD flight opens its log page and player in a new tab, leaving the map as it was.
+- The window's Text size choice is gone; the window is at FR24's own size (what M was).
+
+### Added
+- **Weather for airports with no METAR.** The monitor's `/apwx` asks Open-Meteo for the current weather at the airport itself (its best model for the place, updated every 15 minutes), keeps it 15 minutes an airport, and writes a METAR from it: the airport's code, the time, AUTO, wind and gust, visibility, weather, cloud (each layer at a base worked out from the temperature and dew point), temperature and dew point, QNH rounded down, and `RMK MODEL` so it is never taken for a station's report. No other airport's METAR is borrowed. The page uses it only where FR24's Conditions, Temperature and Wind all say "N/A", and puts FR24's own back the moment it has any.
+  - **The map's airport panel:** FR24's three tiles, in its own markup and units, and its "More weather & METAR" with air pressure, dew point, humidity and the METAR made for it, said to be made from live weather.
+  - **The runway in use** takes that wind and weather.
+  - **The data page** (/data/airports/bwf) gets the same weather in FR24's own form, so FR24 draws its weather card itself.
+  - **The current-weather map layer** shows the airport among FR24's stations, with the made METAR as its report.
+- **Every OurAirports airport in FR24.** The monitor's `/oaap` lists every OurAirports airport FR24 does not list, closed ones aside: 63,207 airfields, strips, heliports and seaplane and balloon bases. The list is gzipped, built once and kept a week in the browser. An airport counts as FR24's when it has FR24's code or lies within an FR24 airport's own reach, as the route engine has it. Each one has:
+  - **the route engine's own id for it**, so a flight the engine sends to an airfield ends at that same airport in the panel, boards and logs;
+  - **its code**: IATA, else ICAO, else GPS code, else OurAirports' own ident. It is never one of FR24's own codes and never another airport's;
+  - **its country and time zone** from the nearest FR24 airport;
+  - **a place in FR24's airport list**, so its panel, boards, routes and search name it ("Walney Strip", not "Private site near ...");
+  - **pins on the map** once it is zoomed in to 8 or more: the 400 nearest the middle of the view;
+  - **FR24's airport answer and boards** made in the browser for it (FR24 has none): its boards show the flights kept for it and those followed here;
+  - **weather from the monitor** (above), heliports included.
+
+- **The Pacific's organised tracks (PACOTS)** with Settings > Oceanic tracks on, beside the North Atlantic tracks. The monitor reads the day's Track Definition Messages of Oakland (KZAK), Fukuoka (RJJJ) and Anchorage (PAZA). It tries the FAA's NOTAM Search first, then the FAA's Pacific tracks page, every 30 minutes at most (`/wx/pacots`). Westbound tracks are lettered and eastbound numbered, as the messages give them. Each track is drawn from its latitude/longitude points (its named fixes at either end left out, as the North Atlantic's are) and stays continuous across 180°. A track past its time is dropped. They go into FR24's own tracks answer, or the one made here. With no message to be had, the North Atlantic tracks show as before.
+
+### Fixed
+- **Switched off, LADD Unblock still did its work.** The extension loads its page part with the page whatever the switch says, and the userscript's timers ran either way. N500EU's panel was filled with the switch off. Switched off now:
+  - FR24's requests and answers are never changed;
+  - the page part only reads FR24's own LiveFeed and board answers on their way past;
+  - the userscript only sends those to the monitor (`/report`, `/boardrows`). It asks nothing of the monitor but where it is, and puts nothing on the page.
+  - Switching on or off in the window reloads the page, so what was running is gone at once.
+- **The statistics page's runway usage** showed the runway details' table instead: its runways, "17/35", every figure "N/A". It is now FR24's usage table: each runway's take-offs and landings of the last week, busiest first, with the padlock off. The figures come from the monitor's runway log of FR24's own tracks, over what its daily counts and the ADS-B flights give. **Movements** show FR24's schedule's count of each day beside the monitor's, the larger of each.
+- **The vertical speed padlock** in low ADS-B coverage (N500EU at FL430 over the sea). FR24 draws its padlock wherever it is given no figure, and its data can say nothing else. The worked-out vertical speed still goes into FR24's own answer. Where there is none, "N/A" takes the padlock's place before the browser paints, so it is never seen.
+- **Playback of a LADD flight** (the panel's Recent flights, boards, search) took the map's tab to the log page. It now opens in a new tab. A browser that will not open one, because of a pop-up blocker, opens it in this tab as before.
+
+### Removed
+- **The window's Text size choice.** The window is always at FR24's own size, what M was.
+
 ## [1.2.12] - 2026-11-06
 
 ### In short

@@ -84,7 +84,7 @@
   const PB_HOW = { track: 'monitor (its track)', reckon: 'monitor (its track, carried across a gap)', path: 'monitor (worked out from its path)', live: 'monitor (named live)' };
   // (a playback left open, paused or not: the monitor asked again about the flights still unnamed - adsb.lol's heatmap
   // not again, it has nothing new for them)
-  setInterval(() => { if (pb.ts && now() - pb.at < 15 * 60000 && !document.hidden && pbMode()) pbFromMonitor(pb.ts).catch(e => log('playback names', e)); }, PB_REASK_MS);
+  setInterval(() => { if (!opt.on) return; if (pb.ts && now() - pb.at < 15 * 60000 && !document.hidden && pbMode()) pbFromMonitor(pb.ts).catch(e => log('playback names', e)); }, PB_REASK_MS);
   function pbOutSet(id, rec, ts) { pbOut.set(id, [id, rec.hex, rec.reg, rec.type, rec.cs, (rec.ladd ? 1 : 0) | (rec.mil ? 2 : 0) | (rec.pia ? 4 : 0), Math.round(ts)]); if (pbOut.size > 2000) pbOut.delete(pbOut.keys().next().value); }
   // the monitor and the heatmap side by side: whichever answers first names a flight
   async function pbMatch() {
@@ -235,7 +235,7 @@
   // (a flight - its summary, the engine's or the monitor's log's - as the strip and FR24's panel show a flight flown: an end
   // away from FR24's airports, where it was seen down, is the landing place learned there)
   function pbRouteOf(hex, s, heli) {
-    const end1 = (e, la, lo, down) => { const a = e ? apById(e.id) : null; const sid = (!a || a.id >= 1e7) && down && fin(a ? a.lat : la) ? learnSite(a ? a.lat : la, a ? a.lon : lo, { heli }) : 0; const b = sid ? apById(sid) : a; return b ? { id: fr24Ap(b.id) || 0, iata: apCode(b), city: b.city || b.name || '' } : null; };
+    const end1 = (e, la, lo, down) => { const a = e ? apById(e.id) : null; const sid = (!a || (a.id >= 1e7 && !oaKnown(a.id))) && down && fin(a ? a.lat : la) ? learnSite(a ? a.lat : la, a ? a.lon : lo, { heli }) : 0; const b = sid ? apById(sid) : a; return b ? { id: fr24Ap(b.id) || 0, iata: apCode(b), city: b.city || b.name || '' } : null; };
     const o = end1(s.from, s.startLat, s.startLon, s.startedOnGround), d = end1(s.to, s.endLat, s.endLon, s.ended);
     return { hex, t0: s.tStart, t1: s.tEnd, originId: o ? o.id : 0, originIata: o ? o.iata : '', originCity: o ? o.city : '', destId: d ? d.id : 0, destIata: d ? d.iata : '', destCity: d ? d.city : '',
       atd: s.tOff || (s.startedOnGround ? s.tStart : 0), ata: s.ended && d ? (s.tOn || s.tEnd) : 0, std: 0, sta: 0, eta: 0, landed: false, destConf: 'playback', destP: 0, progress: null, groundAirportId: 0, pb: true };

@@ -137,12 +137,9 @@ function actFR24(win) {
   // (a data source's button inside the window: handled, and only this part redrawn)
   w.querySelector('#tl-adsbx-key').value = 'k123'; click(win, w.querySelector('[data-tl-act="adsbxSave"]'));
   check('data sources: a key saved from the window, the section redrawn ("remove" offered)', T().store.kvGet('adsbxKey') === 'k123' && !!doc.querySelector('.tl-ub [data-tl-act="adsbxClear"]'));
-  // ---- the text size
+  // ---- the text size: FR24's own (what M was), no choice offered (1.3)
   const body = w.querySelector('.tl-ub-c');
-  check('text size: FR24\'s own (M, 14 px) to start with, four sizes offered', body.style.getPropertyValue('--tl-f') === '1' && w.querySelectorAll('[data-ub-size]').length === 4 && w.querySelector('[data-ub-size="1"]').getAttribute('aria-pressed') === 'true');
-  click(win, w.querySelector('[data-ub-size="3"]'));
-  check('... XL scales the text up and is kept', body.style.getPropertyValue('--tl-f') === '1.3' && win.localStorage.getItem('tweeks.fr24.ladd.textsize') === '3' && w.querySelector('[data-ub-size="3"]').getAttribute('aria-pressed') === 'true');
-  click(win, w.querySelector('[data-ub-size="1"]'));
+  check('text size: FR24\'s own (14 px), no sizes to choose from', body.style.getPropertyValue('--tl-f') === '1' && !w.querySelector('[data-ub-size]') && !/Text size/.test(w.textContent));
   // ---- FR24's own buttons, Escape, the bar drawn again
   click(win, nav.querySelector('[data-testid="map-bar__filters"] span'));
   await sleep(300);
@@ -163,7 +160,9 @@ function actFR24(win) {
     const w2 = makeWin({ on: false }), d2 = w2.document;
     const b2 = await until(() => d2.querySelector('.tl-ub-btn'), 4000);
     await sleep(1500);
-    check('switched off: no page part, no ads stylesheet, nothing asked of FR24\'s feeds', !w2.__tweeksLaddBridge && !d2.getElementById('tl-noads') && !w2.__posted.some(m => m.__tweeksLadd === 'hello'), w2.__posted.map(m => m.__tweeksLadd).slice(0, 5));
+    // (1.3: the page's part only as the reader of FR24's own answers for the monitor - nothing of the rest)
+    const br2 = w2.__tweeksLaddBridge;
+    check('switched off: no ads stylesheet, the page part only reading FR24\'s answers for the monitor (no names, routes, patches), nothing but its greeting exchanged', !!br2 && br2.observe === true && !br2.resolved && !br2.stats && !d2.getElementById('tl-noads') && w2.__posted.every(m => m.__tweeksLadd === 'hello' || m.__tweeksLadd === 'ready'), w2.__posted.map(m => m.__tweeksLadd).slice(0, 5));
     check('... the button still on the bar', !!b2);
     click(w2, b2);
     const ww = await until(() => d2.querySelector('.tl-ub'), 4000);

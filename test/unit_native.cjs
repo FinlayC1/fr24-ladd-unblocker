@@ -115,11 +115,9 @@ async function run(browser, mode) {
   check('... settled, it ends where Weather\'s window ends (FR24\'s own height; nothing cut off its bottom after the movement)', Math.abs((oFin.y + oFin.h) - (wRect.y + wRect.h)) <= 1 && Math.abs((oRect.y + oRect.h) - (wRect.y + wRect.h)) <= 1, { oRect, oFin, wRect });
   check('... FR24\'s Bookmarks switched off in FR24\'s own Widgets list (as if its "On" was pressed)', (await st()).bm === false, await st());
   await shot(page, `${mode}-ours`);
-  // ---- the text size
-  await page.click('.tl-ub-c [data-ub-size="3"]');
-  const tf = await page.evaluate(() => getComputedStyle(document.querySelector('.tl-ub-c')).getPropertyValue('--tl-f').trim() + ' ' + getComputedStyle(document.querySelector('.tl-ub-c .tl-ub-t')).fontSize);
-  check('text size XL: the content scales (1.3 x 14 px titles)', tf === '1.3 18.2px', tf);
-  await page.click('.tl-ub-c [data-ub-size="1"]');
+  // ---- the text size: FR24's own 14 px titles, no choice offered (1.3)
+  const tf = await page.evaluate(() => getComputedStyle(document.querySelector('.tl-ub-c .tl-ub-t')).fontSize + ' ' + !!document.querySelector('[data-ub-size]'));
+  check('text size: FR24\'s own (14 px titles), no sizes offered', tf === '14px false', tf);
   // ---- another button: this goes back as FR24's would, the other comes up; Widgets as it was
   f = await rec(() => page.click(bar('Filters')));
   const L2 = last(f);
