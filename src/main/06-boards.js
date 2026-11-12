@@ -714,13 +714,16 @@
   function loadRunwayEnds() {
     if (rwyInfo) return Promise.resolve(rwyInfo);
     if (!rwyInfoLoading) rwyInfoLoading = (async () => {
-      const c = await store.getHist('b:rwyends1');
-      if (c && c.map && now() - (c.at || 0) < 90 * 864e5) { rwyInfo = c.map; return rwyInfo; }
-      await loadAirports();
+      // (1.3.1: the OurAirports airports' too - by OurAirports' own code, "GB-0002", for a field with no ICAO code - and read
+      // again every month)
+      const c = await store.getHist('b:rwyends2');
+      if (c && c.map && now() - (c.at || 0) < 30 * 864e5) { rwyInfo = c.map; return rwyInfo; }
+      await loadAirports(); await loadOa().catch(() => false);
       const csv = await gmRequest(RWY_URL, { timeout: 60000, json: false, accept: 'text/csv,text/plain' });
       const icaos = new Set(airports.list.map(a => String(a.icao || '').toUpperCase()).filter(Boolean));
+      for (const r of oa.rows || []) { icaos.add(String(r[1]).toUpperCase()); icaos.add(String(r[2]).toUpperCase()); }
       const map = parseRunwayEnds(csv, k => icaos.has(k));
-      if (Object.keys(map).length > 1000) { store.setHist('b:rwyends1', { at: now(), map }); rwyInfo = map; }
+      if (Object.keys(map).length > 1000) { store.setHist('b:rwyends2', { at: now(), map }); rwyInfo = map; }
       return rwyInfo || (c && c.map) || {};
     })().catch(e => { log('runway details', String(e.message || e)); rwyInfoLoading = null; return {}; });
     return rwyInfoLoading;
@@ -728,8 +731,8 @@
   // an airport's runway ends as FR24's pages list them: { name, lengthFt, elevationFt, surface } (the end's own elevation,
   // else the airport's)
   async function runwaysOf(ap) {
-    if (!ap || !ap.icao) return [];
-    const m = await loadRunwayEnds(), ends = m[String(ap.icao).toUpperCase()] || [];
+    const keys = ap ? [ap.icao, ap.code, ap.ident].filter(Boolean).map(k => String(k).toUpperCase()) : []; if (!keys.length) return [];
+    const m = await loadRunwayEnds(), ends = m[keys.find(k => m[k])] || [];
     return ends.filter(e => e[1] > 0).map(e => ({ name: e[0], lengthFt: e[1], elevationFt: e[2] != null ? e[2] : Math.round(ap.alt || 0), surface: e[3] }));
   }
   // The map's airport panel - what FR24 locks or leaves out there: from the monitor, the airport's runways in full (each

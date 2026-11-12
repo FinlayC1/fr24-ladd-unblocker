@@ -8,7 +8,7 @@
 
 <br><br>
 
-<a href="CHANGELOG.md"><img alt="Version 1.3.0" src="https://img.shields.io/badge/version-1.3.0-1f6feb?style=flat&labelColor=23272e"></a>
+<a href="CHANGELOG.md"><img alt="Version 1.3.1" src="https://img.shields.io/badge/version-1.3.1-1f6feb?style=flat&labelColor=23272e"></a>
 <a href="PRIVACY.md#counting-installs"><img alt="Users" src="https://img.shields.io/endpoint?url=https%3A%2F%2F143-47-224-210.sslip.io%2Fbadge&style=flat&labelColor=23272e"></a>
 <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/actions/workflows/tests.yml"><img alt="Tests" src="https://github.com/FinlayC1/fr24-ladd-unblocker/actions/workflows/tests.yml/badge.svg"></a>
 <a href="LICENCE"><img alt="Licence: personal use" src="https://img.shields.io/badge/licence-personal%20use-1f6feb?style=flat&labelColor=23272e"></a>
@@ -67,7 +67,7 @@ The engine scores **every plausible airport**, plus the hypothesis "a local flig
 - **Feasibility:** range, and runway length, width, surface and lighting for this aircraft type.
 - **Everyone else's habits:** stored on the monitor with more data being constantly built, calculations are ran against probabilities formed from this.
 - **Live conditions:** weather (METAR/TAF) and airport closures (NOTAMs, with an optional FAA key), and fields busier than usual with blocked aircraft these last three days (an event).
-- **The aircraft's own datalink:** many business jets send their route over ACARS (a flight plan uplinked to the FMS, position reports naming origin and destination). adsb.lol publishes what its receivers hear as open data, about an hour behind. Where a message names this flight's origin, its destination is taken as filed: on 21 Oct that was the airport landed at 362 times in 367. Only a few percent of business jets are heard this way.
+- **The aircraft's own datalink:** many business jets send their route over ACARS (a flight plan uplinked to the FMS, position reports naming origin and destination). adsb.lol publishes what its receivers hear as open data, about an hour behind. Where a message names this flight's origin, its destination is taken as filed: on 21 Oct that was the airport landed at 362 times in 367. Only a few percent of business jets are heard this way. Since 1.3.1 the destination each aircraft's VDL2 radio gives when it logs on to a ground station is read too, by its 24-bit address: on 10 Nov that covered 626 LADD aircraft, and agreed with the flight's own messages 13,367 times in 13,370 once the airport it had just left was ruled out. Airframes.io is asked live for flights with no destination.
 
 The result is a probability per airport, with the reasons in the tooltip. "Confirmed" is reserved for an aircraft established on a runway's final approach, which is right 99.8% of the time on held-out data. Full details are in [docs/architecture.md](docs/architecture.md).
 </details>

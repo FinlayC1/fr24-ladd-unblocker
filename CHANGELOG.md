@@ -4,6 +4,73 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 
 1.0.0 is the first release. The versions before it are the betas, labelled B: B22.31.12 is version 22.31.12.
 
+## [1.3.1] - 2026-11-12
+
+### In short
+- Many more LADD flights get their real destination. Three additions:
+  - The destination each aircraft's own data radio gives when it logs on to a ground station (VDL2), read by the aircraft's 24-bit address. On one whole day (10 November) that gave a destination for 626 LADD aircraft; messages gave one for 263.
+  - Many more kinds of datalink message: 187 business jets and LADD aircraft had a route read from messages before, 614 now.
+  - A second, live source of the same messages (Airframes.io, which also hears the satellite links).
+- The monitor answers evenly. Every two minutes it did all its housekeeping in one go on the thread that also answers requests, so an answer took 0.2 s one moment and several seconds the next (one request measured 51 s). That work now runs in short slices with requests answered in between.
+- The monitor says what holds it up. `/status` now names the functions its time goes on and what was running each time it stood still for a second or more.
+- FR24 itself does less. With "Hide ads" on, the adverts behind the hidden slots are no longer asked for at all: before, each panel opened still ran an advert auction and loaded the advert out of sight.
+- The statistics page shows all 7 days of movements (Asturias, OVD, showed 5) and no padlock box before the figures arrive. The same fix applies to the runways table on an airport's main page.
+- OurAirports airports work again in FR24 itself. Their pins are back on the map, their airport window opens, and their data pages (/data/airports/egow, /data/airports/egow/statistics) now exist, in FR24's own layout, including airfields with no ICAO code ("GB-0002").
+- The OurAirports list stays up to date: the monitor reads OurAirports' own file every day, and browsers pick up a new list within a day.
+- Not every flight plan in the world can be had. The sources that hold them all (the FAA's SWIM feed, Eurocontrol's) are closed or forbid showing blocked aircraft; what was checked is listed under Notes.
+
+### Added
+- **The destination the aircraft's data radio gives** (`monitor/datalink.cjs`, kind `xid`). This is not a message. Each time an aircraft's VDL2 radio logs on to a ground station, or is handed to the next, its link frame carries its 24-bit address, its position and its destination airport as its avionics hold it. adsb.lol's VDL2 files carry these frames. On 10 November 2026:
+  - **Coverage:** 99,257 frames with an airport, from 9,730 aircraft; 626 of them LADD, of which 420 had no route from any message.
+  - **Accuracy:** against the route the same flight's messages named, 13,367 frames gave the same destination and 3 another (one aircraft, which was bound where the frame said). By flight: 2,394 right, 1 not.
+  - **The one way it is wrong:** 326 frames (about one flight in forty) still named the destination of the flight before, which is the airport this flight had just left. So it is never taken for the airport a flight took off from. Where the take-off airport isn't known and the named airport is close by, it is taken only while the aircraft is descending towards it.
+  - **No registration needed:** it is kept and looked up by the aircraft's address, so a flight with no registration known gets it too. A frame placed far from where the aircraft is isn't taken.
+  - **Its limit:** the files come about an hour behind, so a flight of under an hour may land before its frames are read.
+- **More datalink messages read as routes** (`monitor/datalink.cjs`). Each new form was checked against a whole day of adsb.lol's files (10 November 2026: 800,776 messages with a registration, 14,948 aircraft):
+  - **reports with a position, origin and destination** (`ETA`, `TOC`, `TWX` and the like) and **out / off reports** (`OFF02,...,KMCO,KGGG,...`, and the `QP` / `QQ` labels' `EGGPEGJB0855`): agreed with another message of the same flight every time (19 of 19; the Q-labels 369 against 7);
+  - **departure clearances by datalink** (`.DC1/CLD ... CLRD TO GCRR`, the Australian and US forms): 72 of 72;
+  - **oceanic clearances** (`.OC1/CLA ... CLRD TO KIAD VIA`): 120 of 120;
+  - **the flight-planning services' notices** ("FLIGHT PLAN #E5106, KAUS-KPHX IS NOW AVAILABLE FOR RECALL", "PDC AVAILABLE FOR: KAUS - KMKE");
+  - **the label-10 position reports** NetJets and others send every ten minutes, which name the destination, its estimate, the fixes ahead and sometimes the origin: the last low position was at the airport named 24 times in 24;
+  - **the descent winds** the flight-management system asks for (`/DQ470,KFTW,`).
+- **Messages that name only where the aircraft is going** are taken when sent during this flight, for an airport that is not the one it left and that lies ahead. A report that says where the aircraft was is only taken when that is where it was.
+- **Arrival information (ATIS).** The arrival ATIS an aircraft asks for in flight is its destination 97 times in 100. It is shown as likely (95%), never as its plan, and anything surer wins.
+- **Airframes.io as a second datalink source** (`monitor/airframes.cjs`). adsb.lol's files come an hour behind and hold only what its own feeders heard; Airframes answers live, per aircraft, and hears Inmarsat and Iridium too, so an aircraft over an ocean or one whose plan was uplinked minutes ago has its route at once.
+  - **Asked only for aircraft that need it:** flights in the air with no destination from FR24, those a browser is showing first, then the LADD list's aircraft flying now.
+  - **Gentle:** a small look-up first and the messages only when there is something new; at most 12 requests a minute (Airframes allows 60), its own count of what is left kept to, a refusal waited out. `monitor.json` `"airframes": false` turns it off; `"airframesPerMin"` sets the rate.
+  - **Old messages sent in as new are never taken.** Some Airframes stations do this (seen: a report of 13:42 stamped 09:06 the next day). A message that says its own time of day must agree with the time given for it; the same text seen again later is not taken twice; and a station caught once has its untimed messages left out for a day. On a live check, 28 such messages of one aircraft were thrown out and its two genuine reports kept.
+- **The monitor's own account of its time** (`monitor/prof.cjs`, `/status` `loop.prof`): V8's sampling profiler, always on at a coarse rate. Each minute: the share of time busy, the functions it went on, and the jobs that started them. Each time the event loop stood still for a second or more: how long, in which job, in which functions. `"prof": false` turns it off.
+
+- **OurAirports airports' data pages** (/data/airports/<code>, /statistics, /arrivals, /departures, /routes). FR24 has no such pages, so each is made from FR24's own page of the nearest FR24 airport. That page is asked for in its place and handed to FR24's app as this airport's: its name, code, place and height set to this airport's, the country and time zone kept from the airport it was made from, and every list, number and word of that other airport removed. The page is then filled as FR24's own airport pages are: the flights kept for it, its weather, its movements and its runway usage. A direct link, which FR24's server answers "not found", goes through the same path, and nothing of the other airport is shown. Fields with no ICAO code work by OurAirports' own code ("GB-0002").
+- **The OurAirports list kept current** (`monitor/oaap.cjs`). The monitor asks for OurAirports' own `airports.csv` every day, gets only what changed (by its ETag), never puts a file that isn't one in place of the one it has, and rebuilds the list in slices. A browser checks once a day whether its list is still the monitor's (`/oaap?have=`, a few bytes) and fetches the new one only when it isn't.
+- **Runways of OurAirports airports** are kept in the browser by OurAirports' own code too, so a field with no ICAO code has its runway lengths and surfaces.
+
+### Fixed
+- **The statistics page's movements table showed 5 of 7 days** (Asturias, OVD), and the padlock box covering both tables showed until the monitor's figures arrived. FR24's table decides once, when it is first drawn, whether it has a padlock box over it, and if it has, draws itself in a frame 21rem high that cuts off whatever doesn't fit. 1.3 removed the padlock after that first draw, so the box went but the frame stayed. The tables are now unlocked in the page's own data before FR24 draws them, on a first load and on a move within FR24, showing the week this browser last saw for the airport and then the monitor's figures. A subscriber's own tables are left as they are.
+- **The same on an airport's main page:** its runways table is unlocked before it is drawn, so an airport with many runways isn't cut off and FR24's made-up example runways never show.
+- **OurAirports airports' pins were never drawn.** FR24's map places an airport by `latitude` and `longitude`; 1.3 put the list's own rows on the map, which have `lat` and `lon`. The pins now use FR24's own form of each airport.
+- **OurAirports airports' window didn't open.** FR24 asks its airport API for the window's contents by id, and its server said "not found". The details, pictures, weather (the monitor's, made for the airport) and delays are now answered in FR24's own form.
+- **Most OurAirports airports couldn't be found by their code:** FR24 looks an airport up only by a 3-letter IATA or 4-letter ICAO code, and 46,000 of the 63,000 have neither ("AE-0002", "00AL"). Its lookup now finds them by the list.
+
+### Changed
+- **The monitor's two-minute round runs a step at a time.** It rebuilt the flights of every aircraft heard since the last round, wrote every changed day and saved every table without a break. The steps and their order are the same; the server now answers between them and, inside the two long ones, every 15 ms. On stop it is still one go, so everything is written before the process ends.
+- **The day files are written from one pass over the flights held**, not one pass for every changed day (690,000 flights, and a day's name made for each, for each day). The files are the same.
+- **Big answers are compressed off the main thread** (zlib's own threads); a board of fifteen days no longer holds up every other answer while it is packed.
+- **The datalink files are read a slice at a time**, and a line with no message text is not parsed at all.
+- **FR24's adverts are not asked for while "Hide ads" is on.** FR24 asks its advert library for one slot at a time; that one call now does nothing, so no auction runs and no advert loads behind a hidden slot. The library itself, the script FR24 uses to see whether adverts are blocked, and the 3D view's rewarded advert are left as they are. With "Hide ads" off, nothing changes.
+- **The monitor's index of flights by airport** (behind every airport statistics answer and airport window) is rebuilt in slices in the background while the previous one keeps answering. It was rebuilt in one go, over every flight held, on the first request after each minute.
+- **The OurAirports list is built in slices** a minute after start, and compressed off the main thread. It was built in one go (1.2 s) the first time a browser asked.
+- Smaller savings on the monitor: a flight's track is no longer copied twice on its way into central calculation, and an airport's IATA code is looked up in a table instead of the whole airport list.
+
+### Notes
+- **What was measured in the browser.** The built script in Chromium on a saved FR24 page (11,000 elements) with a live feed of 1,500 aircraft every 8 s used about 1 s of script time a minute, 2% of one core. Idle it used 0.25 s in 30 s. The script itself was not the heavy part; the page's weight is FR24's own map, adverts and analytics.
+- **What was measured on the monitor before this release:** average event-loop lag 94 ms, 95th percentile 219 ms, 5.7 s of garbage collection a minute, and stalls of up to minutes. After deploying, `/status` `loop.prof` shows what remains.
+- **Flight-plan sources checked and not used:**
+  - FR24's own feed gives a blocked flight no route by any filter (checked on its older feed too).
+  - Route databases keyed by callsign (hexdb, adsbdb) gave one stale answer in 45 business flights.
+  - The FAA's SWIM feed holds every US flight plan, but needs an FAA account of your own and its terms forbid showing LADD aircraft; aircraft blocked at the source are not in it at all.
+  - Eurocontrol's plan data is not open to the public.
+
 ## [1.3.0] - 2026-11-07
 
 ### In short

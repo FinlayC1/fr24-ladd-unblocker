@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Flightradar24 LADD / N-A Unblocker (feed-level)
 // @namespace    tweeks.io
-// @version      1.3.0
+// @version      1.3.1
 // @description  Identifies every LADD / N/A / blocked military aircraft on Flightradar24 from public ADS-B, and injects callsign, registration, operator, age, country, MSN, squawk, vertical speed, GPS altitude, airspeeds, wind, photos, a reasoned origin/destination with a wind-corrected ETA (also for ordinary flights FR24 shows as N/A - military, private, GA, helicopters, with private landing sites; learned from 63 days of every aircraft worldwide, with live weather and closures), airport-board entries and a rebuilt 7-month flight log straight into FR24's own data - so it all renders like normal FR24 traffic.
 // @author       Finlay Clarke
 // @updateURL    https://raw.githubusercontent.com/FinlayC1/fr24-ladd-unblocker/main/dist/fr24-ladd-unblocker.user.js
@@ -98,7 +98,7 @@
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "1.3.0";
+    var BRIDGE_V = "1.3.1";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed but the
@@ -1179,6 +1179,23 @@
         return getter.call(this);
       } });
     }
+    var STATS_PAGE_RE = /\/data\/airports\/[^/?#]+(?:\/statistics)?\/?(?:[?#]|$)/i;
+    // (an answer of JSON, as text or as read: fn(object) -> the object to give instead, or null for the answer as it came)
+    function installJsonXhr(xhr, fn) {
+      var cache = { src: null, out: null };
+      var patched = function (raw) {
+        if (cache.src === raw && cache.out != null) return cache.out;
+        var out = raw;
+        try { var j = typeof raw === 'string' ? (raw ? JSON.parse(raw) : null) : raw, r = j ? fn(j) : null; if (r) out = typeof raw === 'string' ? JSON.stringify(r) : r; } catch (e) { out = raw; }
+        cache.src = raw; cache.out = out; return out;
+      };
+      Object.defineProperty(xhr, 'responseText', { configurable: true, get: function () { var raw; try { raw = textDesc.get.call(this); } catch (e) { return ''; } return this.readyState === 4 ? patched(raw) : raw; } });
+      Object.defineProperty(xhr, 'response', { configurable: true, get: function () {
+        var raw; try { raw = respDesc.get.call(this); } catch (e) { return null; }
+        if (this.readyState !== 4 || !(typeof raw === 'string' || (raw && typeof raw === 'object' && !(raw instanceof ArrayBuffer) && !(raw instanceof Blob)))) return raw;
+        return patched(raw);
+      } });
+    }
     function installListXhr(xhr, reg, url) {
       var cache = { src: null, out: null };
       var patched = function (raw) {
@@ -1201,7 +1218,7 @@
         return patched(raw);
       } });
     }
-    P.open = function (method, url) { try { this.__tlUrl = String(url); this.__tlHeaders = {}; noteReq('xhr', method, url); } catch (e) { /* ignore */ } return oOpen.apply(this, arguments); };
+    P.open = function (method, url) { try { this.__tlUrl = String(url); this.__tlMethod = String(method || 'GET'); this.__tlHeaders = {}; noteReq('xhr', method, url); } catch (e) { /* ignore */ } return oOpen.apply(this, arguments); };
     P.setRequestHeader = function (k, v) { try { if (this.__tlHeaders) this.__tlHeaders[k] = v; } catch (e) { /* ignore */ } return oSetHeader.apply(this, arguments); };
     P.send = function (body) {
       // (1.3: LADD Unblock switched off in its window while FR24 is open: FR24's own requests and answers left as they are
@@ -1242,6 +1259,17 @@
           var ppr = pst.id ? resolved.get(pst.id) : null, pphWait = !!(ppr && ppr.hex && !hasPhotos(ppr) && !((photoCache.get(String(ppr.hex).toUpperCase()) || {}).final));
           if (ppr && ppr.hex && !((photoCache.get(String(ppr.hex).toUpperCase()) || {}).final)) photosFor(ppr, true);
           if (pst.id && (!pbReady(pst.id) || pphWait)) { var xpb = this, bpb = sendBody; Promise.all([whenPbReady(pst.id, 1500), pphWait ? photosWithin(ppr, 2500) : null]).then(function () { try { oSend.call(xpb, bpb); } catch (e) { /* aborted meanwhile */ } }); return; }
+        } else if (!this.__tlOwn && this.__tlHeaders && (this.__tlHeaders['X-Inertia'] || this.__tlHeaders['x-inertia']) && oaPageReq(url)) {
+          // (1.3.1: a data page of an OurAirports airport - FR24 has none: its nearest airport's same page asked for instead,
+          // and given to FR24 as this airport's - oaPageOf)
+          var oq = oaPageReq(url), xo = this;
+          oOpen.call(xo, xo.__tlMethod || 'GET', oq.refUrl, true);
+          Object.keys(xo.__tlHeaders || {}).forEach(function (k) { try { oSetHeader.call(xo, k, xo.__tlHeaders[k]); } catch (e) { /* ignore */ } });
+          installJsonXhr(xo, function (j) { var o = j && j.component && j.props ? oaPageOf(j, oq) : null; if (o) statsUnlock(o); return o; });
+          stats.oaPages = (stats.oaPages || 0) + 1;
+        } else if (!this.__tlOwn && STATS_PAGE_RE.test(url) && this.__tlHeaders && (this.__tlHeaders['X-Inertia'] || this.__tlHeaders['x-inertia'])) {
+          // (1.3.1: a move to an airport's statistics page within FR24 - its router's answer, unlocked as the first load is)
+          installJsonXhr(this, function (j) { return j && typeof j === 'object' && statsUnlock(j) ? j : null; });
         } else if (!this.__tlOwn && REGLIST_RE.test(url) && /[?&]fetchBy=reg\b/.test(url)) {
           // (the registration list asked for with XHR: the log asked for as it goes - FR24's own list never waits for it -
           // and put in FR24's answer when that has no flights)
@@ -2136,13 +2164,118 @@
       if (/plugin\[\]=schedule/.test(decodeURIComponent(url))) pd.schedule = { arrivals: sched(), departures: sched(), ground: sched() };
       return { result: { request: { code: c }, response: { airport: { pluginData: pd } } }, _api: { version: '1.0' } };
     }
+    function oaApi(id, part) {
+      var r = oaById.get(id); if (!r) return null;
+      if (part === '/images') return Promise.resolve({ data: [] });
+      if (part === '/disruptions') return Promise.resolve({ data: {} });
+      if (part === '/weather') return apWxWait(id, 6000).then(function (w) { return { data: w ? oaWeather(w) : {} }; });
+      var a = oaStoreRow(r);
+      return Promise.resolve({ data: { info: { id: a.id, name: a.name, iata: a.iata, icao: a.icao && a.icao !== a.iata ? a.icao : null, latitude: a.latitude, longitude: a.longitude, elevation: a.altitude, timezone: a.timezoneName, countryId: a.countryId || null, faaLidCode: null, state: null, timezoneDisplay: null, sunrise: null, sunset: null, satelliteImage: null, videoStream: null },
+        images: [], weather: null, stats: { summary: { airportsServed: 0, countriesServed: 0, takeoffCount: 0, landingCount: 0, totalFlights: 0 }, flights: [], busiestRoutes: [] }, runways: [] } });
+    }
+    // (the monitor's weather of an airport in FR24's form: what its airport API gives for its window)
+    function oaWeather(w) {
+      return { timestamp: w.t, condition: w.cond, temperature: fin(w.tempC) ? w.tempC : null, wind: { direction: fin(w.wdir) ? w.wdir : 0, speed: fin(w.wkts) ? w.wkts : null }, pressure: fin(w.hpa) ? w.hpa : null,
+        dewPoint: fin(w.dewC) ? w.dewC : null, humidity: fin(w.rh) ? w.rh : null, metar: w.metar || null };
+    }
+    // (1.3.1) one of them alone - an airport data page's own, the whole list not sent there - and the FR24 airport its
+    // pages are made from
+    function acceptOaOne(d) {
+      var r = d && d.row; if (!Array.isArray(r) || !(r[0] >= 1e7) || typeof d.ref !== 'string' || !/^[a-z0-9]{3,4}$/i.test(d.ref)) return;
+      if (!oaById) oaById = new Map();
+      oaById.set(r[0], r); oaByCode.set(String(r[1]).toLowerCase(), r); oaRefs[r[5]] = d.ref.toLowerCase();
+    }
     function acceptOa(d) {
       if (!d || !Array.isArray(d.rows)) return;
+      if (d.refs && typeof d.refs === 'object') Object.keys(d.refs).forEach(function (k) { if (typeof d.refs[k] === 'string' && /^[a-z0-9]{3,4}$/i.test(d.refs[k])) oaRefs[k] = d.refs[k].toLowerCase(); });
       oaRows = d.rows; oaById = new Map(); oaByCode = new Map(); d.rows.forEach(function (r) { if (Array.isArray(r) && r[0] >= 1e7) { oaById.set(r[0], r); oaByCode.set(String(r[1]).toLowerCase(), r); } });
       if (d.sig) lsSet('tl.oa.sig', String(d.sig));
       var w = oaWait; oaWait = []; w.forEach(function (f) { try { f(); } catch (e) { /* ignore */ } });
       oaMapSoon();
     }
+    // ---- (1.3.1) The data pages of an OurAirports airport (/data/airports/egow, /statistics, /arrivals, /routes ...). FR24
+    // has none: its server says "not found", and its app, moved to one, shows an error. Made from FR24's own: the same
+    // page of the nearest FR24 airport is asked for in its place, and given to FR24's app as this airport's - its airport
+    // this one (its name, code, place; the country and time zone of the airport it was made from), every figure of that
+    // other airport taken out (its lists empty, its numbers and words none); then filled as FR24's own pages are -
+    // the flights kept for it, its weather, its movements, its runway usage. Every link and tab on it stays on it.
+    var oaRefs = {};        // FR24 airport id -> its code in FR24's addresses (from the userscript)
+    // (the OurAirports code this page is for, as its address said when it loaded - FR24's app may rewrite the address
+    // before the userscript asks: its own page's code, or the one marked on its nearest airport's page)
+    var oaWant = (function () { var m = location.pathname.match(/^\/data\/airports\/([^\/?#]+)/i); if (!m) return ''; var t = new URLSearchParams(location.search).get('tl-oa'); try { return String(t || decodeURIComponent(m[1])).toLowerCase(); } catch (e) { return ''; } })();
+    function oaPageReq(url) {
+      if (!oaByCode.size) return null;
+      var u; try { u = new URL(url, location.href); } catch (e) { return null; }
+      if (!/flightradar24\.com$/.test(u.hostname)) return null;
+      var m = u.pathname.match(/^\/data\/airports\/([^\/?#]+)(\/[^?#]*)?$/i); if (!m) return null;
+      var code = decodeURIComponent(m[1]).toLowerCase(), r = oaByCode.get(code); if (!r || !(r[0] >= 1e7)) return null;
+      var ref = oaRefs[r[5]]; if (!ref) return null;
+      var sub = (m[2] || '').replace(/\/+$/, ''), q = new URLSearchParams(u.search); q.delete('tl-oa');
+      var qs = q.toString();
+      return { row: r, code: code, sub: sub, query: qs ? '?' + qs : '', refUrl: '/data/airports/' + encodeURIComponent(ref) + sub + (qs ? '?' + qs : '') };
+    }
+    // (a value of the other airport's taken out, its shape kept: a list empty, a number or a word none)
+    function oaEmpty(v, d) {
+      if (Array.isArray(v)) return [];
+      if (v === null || typeof v !== 'object') return typeof v === 'boolean' ? v : null;
+      if (d > 8) return null;
+      var o = {}; Object.keys(v).forEach(function (k) { o[k] = oaEmpty(v[k], d + 1); }); return o;
+    }
+    var OA_PAGE_KEEP = ['errors', 'name', 'host', 'locale', 'dispatcher', 'features', 'content', 'meta', 'dateModified', 'locked', 'auth', 'flash', 'ziggy', 'translations'];
+    var OA_AP_KEEP = /^(country|countryName|countryId|countryCode|countryIso|countryIso2|countryIso3|countryFlag|countrySlug|timezone|timezoneName|timezoneAbbr|timezoneOffset|timezoneOffsetHours|tz|region|regionName|continent|continentName)$/;
+    function oaPageOf(pg, oq) {
+      var r = oq.row, a = oaStoreRow(r), p = pg.props || {}, out = {}, code = oq.code;
+      Object.keys(p).forEach(function (k) { out[k] = OA_PAGE_KEEP.indexOf(k) >= 0 ? p[k] : k === 'weather' ? null : oaEmpty(p[k], 0); });
+      if (p.airport && typeof p.airport === 'object') {
+        var ap0 = p.airport, ap = {};
+        Object.keys(ap0).forEach(function (k) { ap[k] = OA_AP_KEEP.test(k) ? ap0[k] : oaEmpty(ap0[k], 1); });
+        ap.id = r[0]; ap.name = a.name; if ('city' in ap0) ap.city = a.city || null; ap.iata = r[1]; ap.icao = a.icao && a.icao !== r[1] ? a.icao : null;   // (one code, shown once)
+        if ('elevationFt' in ap0) ap.elevationFt = r[8] || 0; if ('elevation' in ap0) ap.elevation = r[8] || 0; if ('altitude' in ap0) ap.altitude = r[8] || 0;
+        ['latitude', 'lat'].forEach(function (k) { if (k in ap0) ap[k] = r[6]; }); ['longitude', 'lon', 'lng'].forEach(function (k) { if (k in ap0) ap[k] = r[7]; });
+        if ('slug' in ap0) ap.slug = code; if ('code' in ap0) ap.code = r[1]; if ('url' in ap0) ap.url = '/data/airports/' + code;
+        out.airport = ap;
+      }
+      if (p.route && typeof p.route === 'object') out.route = Object.assign({}, p.route, { params: Object.assign({}, p.route.params || {}, { airport: code }) });
+      if ('canonicalUrl' in p) out.canonicalUrl = 'https://www.flightradar24.com/data/airports/' + code + oq.sub;
+      if ('image' in p) out.image = null;
+      var page = {}; Object.keys(pg).forEach(function (k) { page[k] = pg[k]; });
+      page.props = out; page.url = '/data/airports/' + code + oq.sub + oq.query;
+      // (props FR24 would fetch after - of the other airport: not asked for)
+      if (page.deferredProps) page.deferredProps = {};
+      return page;
+    }
+    // (an address of one typed or followed from outside: FR24's server's "not found" page. Its nearest airport's page
+    // loaded, marked, and moved from at once to this one - by FR24's own router, as above; nothing of that page shown)
+    (function () {
+      var m = location.pathname.match(/^\/data\/airports\/([^\/?#]+)(\/[^?#]*)?$/i); if (!m) return;
+      var want = new URLSearchParams(location.search).get('tl-oa');
+      if (want) {
+        try { var hide = document.createElement('style'); hide.id = 'tl-oa-hide'; hide.textContent = '#app{visibility:hidden!important}'; (document.head || document.documentElement).appendChild(hide); } catch (e) { /* none */ }
+        var shown = function () { var h = document.getElementById('tl-oa-hide'); if (h) h.remove(); };
+        oSetTimeout(shown, 10000);
+        (function go(n) {
+          var gp = mxGp(), router = gp && gp.$inertia;
+          if (!router || !oaPageReq('/data/airports/' + want + (m[2] || ''))) { if (n < 200) oSetTimeout(function () { go(n + 1); }, 50); else shown(); return; }
+          var q = new URLSearchParams(location.search); q.delete('tl-oa'); var qs = q.toString();
+          document.addEventListener('inertia:navigate', function () { oSetTimeout(shown, 30); }, { once: true });
+          try { router.visit('/data/airports/' + encodeURIComponent(want) + (m[2] || '') + (qs ? '?' + qs : ''), { replace: true, preserveScroll: false, preserveState: false }); } catch (e) { shown(); }
+        })(0);
+        return;
+      }
+      // (FR24's own page of it: nothing to do)
+      var own = function () { var el = document.getElementById('app'), raw = el && el.getAttribute('data-page'); if (!raw) return false; try { return /^Data\/Airport/.test(JSON.parse(raw).component || ''); } catch (e) { return false; } };
+      var tries = 0, check = function () {
+        if (own()) return;
+        var oq = oaPageReq(location.href);
+        if (!oq) { if (++tries < 60) oSetTimeout(check, 250); return; }
+        var k = 'tl.oa.go.' + oq.code; if (Date.now() - (Number(lsGet(k)) || 0) < 15000) return; lsSet(k, String(Date.now()));   // (never round and round)
+        var gp = mxGp(), router = gp && gp.$inertia;
+        if (router) { try { router.visit(location.pathname + location.search, { replace: true }); return; } catch (e) { /* by its nearest airport's page */ } }
+        var q = new URLSearchParams(location.search); q.set('tl-oa', oq.code);
+        location.replace('/data/airports/' + encodeURIComponent(oaRefs[oq.row[5]]) + oq.sub + '?' + q.toString());
+      };
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function () { oSetTimeout(check, 300); }, { once: true }); else oSetTimeout(check, 300);
+    })();
     var OA_SIZE = { L: 3000, M: 400, S: 12, H: 3, W: 3, B: 1 };
     var UTC_TZ = { abbr: 'UTC', abbrName: null, isDst: false, name: 'UTC', offset: 0, offsetHours: '0:00' };
     function oaFr24Row(r, ref) {
@@ -2150,6 +2283,14 @@
       var name = String(r[3] || r[1]), city = placeShort(r[4]) || placeShort(name);
       return { id: r[0], iata: r[1], icao: /^[A-Z]{4}$/.test(r[2]) ? r[2] : '', name: name, city: city, country: ref.country || '', countryId: ref.countryId || 0, lat: r[6], lon: r[7], alt: r[8] || 0,
         size: OA_SIZE[r[9]] || 1, timezone: ref.timezone || UTC_TZ, videoStream: null };
+    }
+    // (1.3.1) one as FR24's own store and map keep an airport - FR24 turns each row of its list into this (its latitude and
+    // longitude, its zone's name and offset); 1.3 put the list's rows themselves on the map, with lat / lon where FR24's
+    // map reads latitude / longitude: every pin was drawn nowhere
+    function oaStoreRow(r) {
+      var a = oaFr24Row(r, fr24Refs.get(r[5])), tz = a.timezone || UTC_TZ;
+      return { id: a.id, iata: a.iata, icao: a.icao, name: a.name, latitude: a.lat, longitude: a.lon, altitude: a.alt, city: a.city, country: a.country, countryId: a.countryId, size: a.size,
+        timezoneName: tz.name, timezoneCode: tz.abbr, timezoneDST: !!tz.isDst, timezoneOffset: tz.offset, timezoneOffsetHours: tz.offsetHours, videoStream: null };
     }
     // (FR24's own rows by id, as its list came - the OurAirports airports take their country and zone from them)
     var fr24Refs = new Map();
@@ -2200,7 +2341,9 @@
         pick.sort(function (x, y) { return x[0] - y[0]; }); pick = pick.slice(0, 400);
       } else if (oaShown === '') return;
       oaShown = key;
-      var add = pick.map(function (x) { return oaFr24Row(x[1], fr24Refs.get(x[1][5])); });
+      // (FR24's own object of the airport where its store has it - the list it was given had it - else one of that shape)
+      var byId = st.airportsById && typeof st.airportsById.get === 'function' ? st.airportsById : null;
+      var add = pick.map(function (x) { var own = byId && byId.get(x[1][0]); return own && isFinite(own.latitude) ? own : oaStoreRow(x[1]); });
       try { st.airports = add.length ? oaBase.concat(add) : oaBase; } catch (e) { stats.errors++; stats.lastError = String(e); }
     }
     setInterval(function () { if (oaRows && oaBase) oaMap(); }, 1000);
@@ -2254,6 +2397,7 @@
     // (the airports and countries FR24 itself counts as served: the ends of its own routes of the week, read once)
     function servedOf(pg) {
       var ap = pg.props.airport, code = String(ap.iata || ap.icao || '').toLowerCase(); if (servedMem[code]) return servedMem[code].ids ? servedMem[code] : null;
+      if (ap.id >= 1e7) { servedMem[code] = { ids: {}, cs: {} }; return servedMem[code]; }   // (1.3.1: an OurAirports airport - FR24 has no routes of it to read)
       servedMem[code] = {};
       oFetch.call(window, '/data/airports/' + code + '/routes', { credentials: 'same-origin', headers: { 'X-Inertia': 'true', 'X-Inertia-Version': pg.version, 'X-Inertia-Partial-Component': 'Data/AirportRoutes', 'X-Inertia-Partial-Data': 'mapRoutes', 'X-Requested-With': 'XMLHttpRequest', Accept: 'text/html, application/xhtml+xml' } })
         .then(function (r) { return r.json(); }).then(function (j) { var ids = {}, cs = {}; ((j.props && j.props.mapRoutes) || []).forEach(function (m) { [m.origin, m.destination].forEach(function (a) { if (a && a.id !== ap.id) { ids[a.id] = 1; cs[a.countryId] = 1; } }); }); servedMem[code] = { ids: ids, cs: cs }; })
@@ -2689,7 +2833,7 @@
       var ap = p.airport || {}, code = ap.iata || ap.icao, fr = rwyOf(code); if (!fr) rwyWant(code);
       var ours = apDataOf(apId).runways || [], el = {}; ours.forEach(function (r) { el[r.name] = r.elevationFt; });
       var rw = fr ? fr.map(function (r) { return { name: r.name, lengthFt: r.ft, elevationFt: fin(el[r.name]) ? el[r.name] : (ap.elevationFt || 0), surface: r.code || 'UNKN' }; }) : ours.slice();
-      if (!p.locked || !rw.length || (!p.locked.runways && !(p.runways && p.runways.__tl))) return;   // (a subscriber's own table stands)
+      if (!p.locked || !rw.length || (!p.locked.runways && !(p.runways && p.runways.__tl) && !(p.tlUnlocked && p.tlUnlocked.runways))) return;   // (a subscriber's own table stands)
       var sig = JSON.stringify(rw); if (p.runways && p.runways.__tl === sig) return;
       rw.__tl = sig; p.runways = rw; if (p.locked.runways) p.locked = Object.assign({}, p.locked, { runways: false });
     }
@@ -2738,6 +2882,71 @@
       (routesAdd.get(ap.id) || []).forEach(function (m) { if (m.from.id === ap.id) (m.offs || []).forEach(function (t) { inc(t, 'off'); }); if (m.to.id === ap.id) (m.ons || []).forEach(function (t) { inc(t, 'on'); }); });
       return keys.map(function (d) { var x = days[d], e = add[d] || { off: 0, on: 0 }, to = x.takeoffs + e.off, la = x.landings + e.on; return { timestamp: x.ts, total: to + la, takeoffs: to, landings: la }; });
     }
+    // (1.3.1) The statistics page's two tables unlocked in the page's own data, before FR24 draws it. FR24's table decides
+    // once, as it is first drawn, whether it has an upgrade box over it: with one, it is drawn in a frame 21rem high that
+    // cuts off what does not fit. 1.3 unlocked the tables only after that - the box went, the frame stayed, and the week's
+    // movements showed five days of seven (and the box showed until the monitor answered). Now the page comes to FR24
+    // unlocked - its first load (the page's data in #app) and every move to it within FR24 (its router's answers): the
+    // tables as this browser last saw them for the airport, else empty, then the monitor's. A subscriber's own tables
+    // (not locked) are left as they are.
+    var STATS_LS = 'tl.apstats.';
+    function statsCacheGet(apId) { try { var o = JSON.parse(lsGet(STATS_LS + apId) || 'null'); return o && Date.now() - o.at < 86400e3 ? o : null; } catch (e) { return null; } }
+    function statsCachePut(apId, k, rows) {
+      try {
+        var o = statsCacheGet(apId) || { at: Date.now() }; o[k] = rows.map(function (r) { var c = {}; Object.keys(r).forEach(function (f) { c[f] = r[f]; }); return c; }); o.at = Date.now();
+        lsSet(STATS_LS + apId, JSON.stringify(o));
+      } catch (e) { /* full: next time */ }
+    }
+    // (which tables of which page: the statistics page's two; the airport page's runways - the same frame, the same cut)
+    var UNLOCK_OF = { 'Data/AirportStatistics': ['movements', 'runways'], 'Data/Airport': ['runways'] };
+    function statsUnlock(pg) {
+      var keys = pg && UNLOCK_OF[pg.component], p = keys ? pg.props : null;
+      if (!p || !p.locked || !p.airport || !keys.some(function (k) { return p.locked[k]; })) return false;
+      var c = statsCacheGet(p.airport.id), un = {}, lk = {};
+      Object.keys(p.locked).forEach(function (k) { lk[k] = p.locked[k]; });
+      keys.forEach(function (k) {
+        if (!p.locked[k]) return;
+        un[k] = true; lk[k] = false;
+        var kept = c && Array.isArray(c[k]) ? c[k] : null;
+        // (the airport page's runways: those this browser has of it - FR24's own list of them, kept a month)
+        if (!kept && pg.component === 'Data/Airport' && k === 'runways') {
+          var ap = p.airport, fr = rwyOf(ap.iata || ap.icao), mine = (apDataOf(ap.id).runways || []);
+          kept = fr ? fr.map(function (r) { return { name: r.name, lengthFt: r.ft, elevationFt: ap.elevationFt || 0, surface: r.code || 'UNKN' }; }) : mine.slice();
+        }
+        p[k] = kept || [];
+      });
+      p.locked = lk; p.tlUnlocked = un; stats.statsUnlocked = (stats.statsUnlocked || 0) + 1;
+      return true;
+    }
+    // (the page as FR24's server gave it, in #app: read and put back unlocked the moment it is in the document - FR24's
+    // app reads it once the page is parsed)
+    (function () {
+      if (!/^\/data\/airports\/[^/]+(?:\/statistics)?\/?$/i.test(location.pathname)) return;
+      // (a frame of a locked table drawn by FR24's server before its app starts, should it send one: not shown - with the
+      // tables unlocked FR24's app never draws one)
+      try { var css = document.createElement('style'); css.id = 'tl-stats-frame'; css.textContent = '#app [class*="max-h-84"]{visibility:hidden!important}'; (document.head || document.documentElement).appendChild(css); } catch (e) { /* none */ }
+      var done = false;
+      // (the page's data: #app's data-page, or - Inertia's newer form - a script[data-page="app"] of JSON)
+      function fix() {
+        if (done) return true;
+        var el = document.getElementById('app'), sc = document.querySelector('script[data-page="app"][type="application/json"]');
+        if (!el && !sc) return false;
+        if (el && !el.getAttribute('data-page') && !sc && document.readyState === 'loading') return false;
+        done = true;
+        try {
+          var raw = el && el.getAttribute('data-page');
+          if (raw) { var pg = JSON.parse(raw); if (statsUnlock(pg)) el.setAttribute('data-page', JSON.stringify(pg)); }
+          else if (sc && sc.textContent) { var pg2 = JSON.parse(sc.textContent); if (statsUnlock(pg2)) sc.textContent = JSON.stringify(pg2); }
+        } catch (e) { stats.errors++; stats.lastError = String(e); }
+        return true;
+      }
+      if (fix()) return;
+      try {
+        var mo = new MutationObserver(function () { if (fix()) mo.disconnect(); });
+        mo.observe(document.documentElement || document, { childList: true, subtree: true });
+        document.addEventListener('DOMContentLoaded', function () { fix(); mo.disconnect(); }, { once: true });
+      } catch (e) { /* no observer: FR24's page as it is */ }
+    })();
     // (1.3) the statistics page's two tables from the monitor: "Runway usage" - each runway's take-offs and landings of the
     // last week, as the monitor logs every flight's runway from FR24's own tracks (rwylog.cjs: 1.2.10-1.2.12's rules), over
     // what its daily counts and the ADS-B legs give - and the movements of each day it counted, beside FR24's own
@@ -2745,12 +2954,13 @@
     // landings }] (its padlock - locked.runways / locked.movements - off once filled; a subscriber's own tables stand)
     function statsUsage(p, apId) {
       var st = apDataOf(apId).stats, use = st && Array.isArray(st.usage) ? st.usage : null;
-      if (!use || !use.length || !p.locked || (!p.locked.runways && !(p.runways && p.runways.__tl))) return;
+      if (!use || !use.length || !p.locked || (!p.locked.runways && !(p.runways && p.runways.__tl) && !(p.tlUnlocked && p.tlUnlocked.runways))) return;
       var rows = use.filter(function (u) { return u && u[0] && (u[1] > 0 || u[2] > 0); }).map(function (u) { return { name: String(u[0]), total: (u[1] || 0) + (u[2] || 0), takeoffs: u[1] || 0, landings: u[2] || 0 }; })
         .sort(function (a, b) { return b.total - a.total || a.name.localeCompare(b.name); });
       if (!rows.length) return;
       var sig = JSON.stringify(rows); if (p.runways && p.runways.__tl === sig) return;
       rows.__tl = sig; p.runways = rows; if (p.locked.runways) p.locked = Object.assign({}, p.locked, { runways: false });
+      statsCachePut(p.airport.id, 'runways', rows);
     }
     // (FR24's schedule's count of a day and the monitor's, side by side: the larger of each - the monitor's days are UTC
     // days, given the airport's own date at noon)
@@ -2771,7 +2981,7 @@
       // (1.3: never the runway details' table here - its runways, "17/35", all "N/A": this one is the usage)
       statsUsage(p, apId);
       var mv = statsMoves(p, apId, mvRows(p)), msig = mv ? JSON.stringify(mv) : '';
-      if (mv && mv.length && p.locked && (p.locked.movements || (p.movements && p.movements.__tl)) && !(p.movements && p.movements.__tl === msig)) { mv.__tl = msig; p.movements = mv; if (p.locked.movements) p.locked = Object.assign({}, p.locked, { movements: false }); }
+      if (mv && mv.length && p.locked && (p.locked.movements || (p.movements && p.movements.__tl) || (p.tlUnlocked && p.tlUnlocked.movements)) && !(p.movements && p.movements.__tl === msig)) { mv.__tl = msig; p.movements = mv; if (p.locked.movements) p.locked = Object.assign({}, p.locked, { movements: false }); statsCachePut(p.airport.id, 'movements', mv); }
       if (!p.summary || p.summary.__tl === sig || !(w.land || w.off)) return;
       var b = p.summary.__tlBase || p.summary;
       p.summary = { airportsServed: (b.airportsServed || 0) + Object.keys(w.aps).length, countriesServed: (b.countriesServed || 0) + Object.keys(w.cs).length, totalFlights: (b.totalFlights || 0) + w.land + w.off, landingCount: (b.landingCount || 0) + w.land, takeoffCount: (b.takeoffCount || 0) + w.off, __tlBase: b, __tl: sig };
@@ -2916,6 +3126,20 @@
             var kml = v['history.flight.kml'];
             if (kml && typeof kml === 'object' && !Array.isArray(kml)) { plans.forEach(function (p) { if (!(p in kml)) kml[p] = 60; }); mx.opts++; }
           } else if (v.silver === 10 && v.gold === 25 && v.business === 60 && Object.keys(v).length <= 6) { plans.forEach(function (p) { v[p] = 60; }); mx.filterMax = 60; }
+          // (1.3.1) FR24's airport lookup (its airports database: byCodeOrId, byIATA, byICAO, byId): a code finds an airport
+          // only when it is three letters (IATA) or four (ICAO) - and its pins, search and links look airports up by code.
+          // Most OurAirports codes are neither ("AE-0002", "00AL"): looked up by id from the list when FR24 finds none
+          else if (typeof v.byCodeOrId === 'function' && typeof v.byId === 'function' && typeof v.byIATA === 'function' && typeof v.byICAO === 'function' && !v.byCodeOrId.__tl) {
+            var ownLook = v.byCodeOrId, byIdF = v.byId;
+            var look = function (c) {
+              return Promise.resolve(ownLook.apply(this, arguments)).then(function (a) {
+                if (a || typeof c !== 'string' || !oaByCode.size) return a;
+                var r = oaByCode.get(c.toLowerCase()); if (!r) return a;
+                return Promise.resolve(byIdF.call(v, r[0])).then(function (b) { return b || oaStoreRow(r); }, function () { return oaStoreRow(r); });
+              });
+            };
+            look.__tl = true; v.byCodeOrId = look; mx.oaLookup = (mx.oaLookup || 0) + 1;
+          }
         } catch (e) { /* not a table */ }
       });
     }
@@ -4176,10 +4400,23 @@
       if ((x.wx && Date.now() - x.at < 10 * 60000) || Date.now() - x.asked < 60000) return;
       x.asked = Date.now(); post('needApWx', { ap: apId });
     }
+    // (1.3.1) the airport's weather from the monitor, waited for: ms at most; null - none (an airport FR24 has weather for
+    // never asks)
+    var apWxWaiting = {};
+    function apWxWait(apId, ms) {
+      var w = apWxOf(apId); if (w) return Promise.resolve(w);
+      return new Promise(function (res) {
+        var l = apWxWaiting[apId] || (apWxWaiting[apId] = []), done = false, f = function (v) { if (!done) { done = true; res(v || null); } };
+        l.push(f); oSetTimeout(function () { f(apWxOf(apId)); }, ms);
+        var x = apWx[apId]; if (x) x.asked = 0;          // (asked again now, whenever it was asked last)
+        apWxWant(apId);
+      });
+    }
     function onApWxGot(d) {
       var id = Number(d.ap) || 0; if (!(id > 0)) return;
       var x = apWx[id] || (apWx[id] = { asked: Date.now() }), w = d.wx;
       if (w && !w.none && typeof w.cond === 'string' && (fin(w.tempC) || fin(w.wkts))) { x.wx = w; x.at = Date.now(); }
+      var wl = apWxWaiting[id]; if (wl) { delete apWxWaiting[id]; wl.forEach(function (f) { try { f(apWxOf(id)); } catch (e) { /* ignore */ } }); }
       var ap0 = document.querySelector('[data-testid="airport-panel"]');
       if (ap0 && rwyUseApId() === id && ap0.querySelector('[data-testid="airport-panel__weather__wind"]')) { try { rwyUsePanel(ap0, id); } catch (e) { stats.errors++; stats.lastError = String(e); } }
     }
@@ -4726,6 +4963,11 @@
       if (!optOn('on')) return oFetch.apply(window, arguments);   // (1.3: switched off - FR24's own, untouched)
       var url = urlOf(input), m;
       noteReq('fetch', (init && init.method) || (input && input.method), url);
+      // (1.3.1: a move to an airport's statistics page within FR24, should its router ask with fetch: unlocked as the first load is)
+      if (STATS_PAGE_RE.test(url)) {
+        var ih = init && init.headers, inertia = ih && (ih['X-Inertia'] || ih['x-inertia'] || (typeof ih.get === 'function' && ih.get('X-Inertia')));
+        if (inertia) return oFetch.apply(this, arguments).then(function (res) { if (!res.ok) return res; return res.clone().json().then(function (j) { return statsUnlock(j) ? jsonResponse(res, j) : res; }, function () { return res; }); });
+      }
       // the userscript's own lookups (boards for filed plans, registration searches): passed through untouched
       try {
         var hd = init && init.headers;
@@ -4758,6 +5000,12 @@
       // (1.3: an OurAirports airport's board - FR24 has none: an empty one of FR24's form, filled below as FR24's own are -
       // the flights kept for it, those followed here)
       if (/\/common\/v1\/airport\.json\?/.test(url) && oaByCode.size) { var oaJ = oaAirportJson(url); if (oaJ) return Promise.resolve(jsonResponse(null, oaJ)); }
+      // (1.3.1) An OurAirports airport's window on the map: FR24 asks its airport API for it by id - its details, pictures,
+      // weather and delays - and for an airport it does not have, its server says "not found" and the window shuts
+      // before it opens. Answered here in FR24's own form: the details from the list; no pictures; the weather the
+      // monitor makes for it (apwx.cjs - waited for, a few seconds at most; FR24 shows "N/A" when there is none); no delays
+      var oaA = url.match(/\/api\/v1\/airports\/(\d+)(\/(?:images|weather|disruptions))?\/?(?:[?#]|$)/);
+      if (oaA && Number(oaA[1]) >= 1e7 && oaById && oaById.has(Number(oaA[1]))) { var oaAns = oaApi(Number(oaA[1]), oaA[2] || ''); if (oaAns) return oaAns.then(function (j) { return jsonResponse(null, j); }); }
       var oaB = url.match(/\/api\/v1\/airports\/(\d+)\/(?:departures|arrivals|on-grounds)\b/), oaBoard = !!oaB && Number(oaB[1]) >= 1e7;
       var p = oaBoard ? Promise.resolve(jsonResponse(null, { data: [], meta: { currentPage: Number((url.match(/[?&]page=(-?\d+)/) || [])[1]) || 1, previousPage: null, nextPage: null, hasMorePreviousData: false, hasMoreNextData: false } })) : oFetch.apply(this, arguments);
       try {
@@ -5098,6 +5346,35 @@
       return st;
     })();
     stats.adFree = adFree;
+    // (1.3.1) FR24's adverts are asked for a slot at a time: each panel that has a slot calls its advert library
+    // (window.tude - Aditude's, loaded with the page) with refreshAdsViaDivMappings([slot]), and the library then runs an
+    // auction among its bidders, loads the advert into the slot and does so again on its timer. The slots are hidden
+    // (the stylesheet) - the auctions, the adverts' own scripts and their requests ran all the same, behind every panel
+    // opened. With "no adverts" on, that one call does nothing: no advert is asked for. FR24 itself allows for the
+    // library not being there (its own check) and for a call that fills nothing. The 3D view's rewarded advert
+    // (initRewardedAd - how a free account gets a 3D session) is left as it is; so is the library itself, and the
+    // advert script FR24 loads to see whether adverts are blocked.
+    (function () {
+      var cur, noop = function () {};
+      function guard(t) {
+        if (!t || (typeof t !== 'object' && typeof t !== 'function')) return;
+        try {
+          var d = Object.getOwnPropertyDescriptor(t, 'refreshAdsViaDivMappings'); if (d && d.get && d.get.__tl) return;
+          if (d && !d.configurable) return;
+          var f = d ? d.value : undefined, has = !!d;
+          var get = function () { if (optOn('noAds')) { stats.adsHeld = (stats.adsHeld || 0) + 1; return noop; } return has ? f : Object.getPrototypeOf(t) ? Object.getPrototypeOf(t).refreshAdsViaDivMappings : undefined; };
+          get.__tl = true;
+          Object.defineProperty(t, 'refreshAdsViaDivMappings', { configurable: true, enumerable: true, get: get, set: function (v) { f = v; has = true; } });
+        } catch (e) { /* left as it is */ }
+      }
+      try {
+        var d0 = Object.getOwnPropertyDescriptor(window, 'tude');
+        if (!d0 || d0.configurable) {
+          cur = window.tude; guard(cur);
+          Object.defineProperty(window, 'tude', { configurable: true, enumerable: true, get: function () { return cur; }, set: function (v) { cur = v; guard(v); } });
+        }
+      } catch (e) { /* left as it is */ }
+    })();
     // No picture in JetPhotos' credit-bar size anywhere on the page, whichever way it got there (FR24 takes some of its
     // picture URLs verbatim): the "cb" size has "© name - JetPhotos" burnt into a band along its bottom. The same picture
     // without "cb" is the clean one.
@@ -5377,6 +5654,7 @@
       else if (d.__tweeksLadd === 'airRows') acceptAir(d.rows);
       else if (d.__tweeksLadd === 'sites') acceptSites(d.list);
       else if (d.__tweeksLadd === 'oaRows') acceptOa(d);
+      else if (d.__tweeksLadd === 'oaIs') acceptOaOne(d);
       else if (d.__tweeksLadd === 'pbRoute') { if (d.id != null) { var prId = Number(d.id); if (!d.none) { if (d.route) pbRoutes.set(prId, d.route); else pbRoutes.delete(prId); if (pbRoutes.size > 3000) pbRoutes.delete(pbRoutes.keys().next().value); } pbRouteDone.add(prId); if (pbRouteDone.size > 3000) pbRouteDone.delete(pbRouteDone.values().next().value); pbRelease(); } }
       else if (d.__tweeksLadd === 'pbTrace') { if (d.id != null && Array.isArray(d.pts)) { pbTrace = { id: Number(d.id), hex: d.hex || '', pts: d.pts }; pbRelease(); } }
       else if (d.__tweeksLadd === 'routesAdd') { if (d.apId) { routesAdd.set(Number(d.apId), d.list || []); keepApData(Number(d.apId)); routesTick(); } }
@@ -5405,11 +5683,11 @@
       // (the health check's figures - the extension's script runs in its own world and cannot read this one's objects)
       else if (d.__tweeksLadd === 'stats?') post('stats', { stats: stats });
       else if (d.__tweeksLadd === 'opts') { if (d.opts && typeof d.opts === 'object') opts = d.opts; }
-      else if (d.__tweeksLadd === 'hello') post('ready', { stats: stats, feedReady: !!feedHeaders, hdr: feedHdrPublic(), v: BRIDGE_V });
+      else if (d.__tweeksLadd === 'hello') post('ready', { oaWant: oaWant, stats: stats, feedReady: !!feedHeaders, hdr: feedHdrPublic(), v: BRIDGE_V });
     });
-    window[NS] = { resolved: resolved, routes: routes, naRecs: naRecs, naRoutes: naRoutes, telem: telem, hist: hist, lastPos: lastPos, photoCache: photoCache, psCache: psCache, stats: stats, fetchPhotos: fetchPhotos, hello: function () { post('ready', { stats: stats, feedReady: !!feedHeaders, v: BRIDGE_V }); }, v: BRIDGE_V };
-    if (window.__tlTestHook) try { window.__tlTestHook({ csOf: csOf, patchTopFlights: patchTopFlights, onTopGot: onTopGot, topNames: topNames, fillFlightList: fillFlightList, routeRows: routeRows, liveDestFix: liveDestFix, hist: hist, preloaded: function () { return preloaded; }, parse: parse, photoFits: photoFits, makerOf: makerOf, patchFollow: patchFollow, patchFlightMsg: patchFlightMsg, pushFollow: pushFollow, followSt: function () { return followSt; }, setFollowSt: function (s) { followSt = s; }, shownPhotos: shownPhotos, photoCache: photoCache, FOLLOW: FOLLOW, DETAILS: DETAILS, fLen: fLen, fStr: fStr, fVar: fVar, patchFlight: patchFlight, patchLiveFeed: patchLiveFeed, fr24Named: fr24Named, psState: function () { return { q: psQ.length, busy: psBusy, last: psLast, blockedFor: Math.max(0, psBlockedUntil - Date.now()), pri: Array.from(psPri), jobs: photoJobs.size, head: psQ.slice(0, 3).map(function (j) { return j.hex; }) }; }, acceptPubTel: acceptPubTel, pubTelFor: pubTelFor, fillNativeCard: fillNativeCard, regsOfCallsign: regsOfCallsign, categoryOf: categoryOf, placeShort: placeShort, nativeFill: nativeFill, natInfo: natInfo, addArch: addArch, acceptBoardArch: acceptBoardArch, telem: telem, b64Encode: b64Encode, b64DecodeInto: b64DecodeInto, frameHeader: frameHeader, concat: concat, varintInt32: varintInt32, PLAYBACK: PLAYBACK, patchPlayback: patchPlayback, patchPlaybackRequest: patchPlaybackRequest, pbRoutes: pbRoutes, pbTelAt: pbTelAt, setPbTrace: function (t) { pbTrace = t; }, patchList: patchList, acceptSites: acceptSites, listSig: listSig, mergeRoutes: mergeRoutes, applyRoutes: applyRoutes, routesAdd: routesAdd, applyAirport: applyAirport, applyBoardPage: applyBoardPage, applyStats: applyStats, mergeFlights: mergeFlights, apData: apData, telAt: telAt, noteTelem: noteTelem, pbTraceOf: function () { return pbTrace; }, logoOf: logoOf, archDetail: archDetail, tsOf: tsOf, noteAirportJson: noteAirportJson, rwyOf: rwyOf, rwyPanel: rwyPanel, panelTick: panelTick, panelData: panelData, promoSlots: promoSlots, acceptAirportPanel: acceptAirportPanel, unlockRunways: unlockRunways, mvRows: mvRows, mvKept: mvKept, dayOf: dayOf, pbPanelTick: pbPanelTick, logoFix: logoFix, liveEntries: liveEntries, pbPos: pbPos, unlockFeed: unlockFeed, derivedVs: derivedVs, altHist: altHist, acceptAir: acceptAir, airCache: airCache, flushAir: flushAir, airWant: function () { return airWant; }, lastPos: lastPos, resolved: resolved, stats: stats, pbFind: pbFind, inBar: inBar, pbBlk: pbBlk, cardInfo: cardInfo, boardRowsSeen: boardRowsSeen, archById: archById, placeBoard: placeBoard, stopBoardHold: stopBoardHold, needBoardArch: needBoardArch, mx: mx, mxPatchCore: mxPatchCore, mxAuth: mxAuth, mxNatList: mxNatList, mxTrackOk: mxTrackOk, stripRestriction: stripRestriction, mxBmMerge: mxBmMerge, mxBmItem: mxBmItem, mxMonTile: mxMonTile, mxMonOr: mxMonOr, mxPinVer: mxPinVer, mxAirportHistory: mxAirportHistory, mxHistItems: mxHistItems, mxTrackFile: mxTrackFile, mxDataTick: mxDataTick, mxPbProps: mxPbProps, mxPbShow: mxPbShow, mxPbStandIn: mxPbStandIn, mxPbReadAt: mxPbReadAt, mxPbStand: mxPbStand, mxBoardRwy: mxBoardRwy, reqIdOf: reqIdOf, mxPbOpen: mxPbOpen, mxPbTake: mxPbTake, setNav: function (f) { mxNav = f; }, mxPbAway: mxPbAway, mxLegacyPbJson: mxLegacyPbJson, mxLegacyPb: mxLegacyPb, mxPbFlags: mxPbFlags, mxPbSynId: mxPbSynId, mxPbParam: mxPbParam, setPbWanted: function (v) { mxPbWanted = v; }, mxPlans: function () { return mxPlans; }, mxLiveRunways: mxLiveRunways, mxRwy: mxRwy, mxSetApply: mxSetApply, mxSetNote: mxSetNote, mxSetKept: mxSetKept, mxLastClicked: mxLastClicked, mxLcList: mxLcList, onLcClick: onLcClick, mxLcFill: mxLcFill, cardRwy: cardRwy, naEndsFill: naEndsFill, onEndsGot: onEndsGot, naEnds: naEnds, boardWant: boardWant, mxLegacyImages: mxLegacyImages, rwyInUse: rwyInUse, windOfText: windOfText, mxRwyAirport: mxRwyAirport, mxRwyByHex: mxRwyByHex, mxRowHex: mxRowHex, mxDataEnds: mxDataEnds, rwyUsePanel: rwyUsePanel, apWxPanel: apWxPanel, apWxData: apWxData, apWxOf: apWxOf, mxApWxAdd: mxApWxAdd, vsNoLock: vsNoLock, statsUsage: statsUsage, statsMoves: statsMoves, apDataOf: apDataOf, acceptOa: acceptOa, oaAirportJson: oaAirportJson, oaMap: oaMap, oaRefs: fr24Refs, setOaBase: function (b) { oaBase = b; oaShown = 'x'; }, mxTracksPac: mxTracksPac, setPac: function (o) { mxPac = { at: Date.now(), o: o }; }, rwyUseData: rwyUseData, rwyUseWant: rwyUseWant, cardRwyFill: cardRwyFill, rwyUseKept: rwyUseKept, mxLcTick: mxLcTick, mxBmMax: mxBmMax, mxNatParse: mxNatParse, mxAirsigList: mxAirsigList, mxStations: mxStations, mxLightning: mxLightning, mxLx: mxLx, mxFetch: mxFetch, mxWxText: mxWxText, mxWxKind: mxWxKind, mxCsv: mxCsv, patchLiveFeedRequest: patchLiveFeedRequest, mxCats: mxCats, mxOp: mxOp, mxLevels: mxLevels, mxNearest: mxNearest, MX_ICE: MX_ICE, MX_TURB: MX_TURB, mxWafsUrl: mxWafsUrl, routes: routes, setCurFollow: function (id) { curFollowId = id; } }); } catch (e) { /* ignore */ }
-    post('ready', { stats: stats, feedReady: false, v: BRIDGE_V });
+    window[NS] = { resolved: resolved, routes: routes, naRecs: naRecs, naRoutes: naRoutes, telem: telem, hist: hist, lastPos: lastPos, photoCache: photoCache, psCache: psCache, stats: stats, fetchPhotos: fetchPhotos, hello: function () { post('ready', { oaWant: oaWant, stats: stats, feedReady: !!feedHeaders, v: BRIDGE_V }); }, v: BRIDGE_V };
+    if (window.__tlTestHook) try { window.__tlTestHook({ csOf: csOf, patchTopFlights: patchTopFlights, onTopGot: onTopGot, topNames: topNames, fillFlightList: fillFlightList, routeRows: routeRows, liveDestFix: liveDestFix, hist: hist, preloaded: function () { return preloaded; }, parse: parse, photoFits: photoFits, makerOf: makerOf, patchFollow: patchFollow, patchFlightMsg: patchFlightMsg, pushFollow: pushFollow, followSt: function () { return followSt; }, setFollowSt: function (s) { followSt = s; }, shownPhotos: shownPhotos, photoCache: photoCache, FOLLOW: FOLLOW, DETAILS: DETAILS, fLen: fLen, fStr: fStr, fVar: fVar, patchFlight: patchFlight, patchLiveFeed: patchLiveFeed, fr24Named: fr24Named, psState: function () { return { q: psQ.length, busy: psBusy, last: psLast, blockedFor: Math.max(0, psBlockedUntil - Date.now()), pri: Array.from(psPri), jobs: photoJobs.size, head: psQ.slice(0, 3).map(function (j) { return j.hex; }) }; }, acceptPubTel: acceptPubTel, pubTelFor: pubTelFor, fillNativeCard: fillNativeCard, regsOfCallsign: regsOfCallsign, categoryOf: categoryOf, placeShort: placeShort, nativeFill: nativeFill, natInfo: natInfo, addArch: addArch, acceptBoardArch: acceptBoardArch, telem: telem, b64Encode: b64Encode, b64DecodeInto: b64DecodeInto, frameHeader: frameHeader, concat: concat, varintInt32: varintInt32, PLAYBACK: PLAYBACK, patchPlayback: patchPlayback, patchPlaybackRequest: patchPlaybackRequest, pbRoutes: pbRoutes, pbTelAt: pbTelAt, setPbTrace: function (t) { pbTrace = t; }, patchList: patchList, acceptSites: acceptSites, listSig: listSig, mergeRoutes: mergeRoutes, applyRoutes: applyRoutes, routesAdd: routesAdd, applyAirport: applyAirport, applyBoardPage: applyBoardPage, applyStats: applyStats, mergeFlights: mergeFlights, apData: apData, telAt: telAt, noteTelem: noteTelem, pbTraceOf: function () { return pbTrace; }, logoOf: logoOf, archDetail: archDetail, tsOf: tsOf, noteAirportJson: noteAirportJson, rwyOf: rwyOf, rwyPanel: rwyPanel, panelTick: panelTick, panelData: panelData, promoSlots: promoSlots, acceptAirportPanel: acceptAirportPanel, unlockRunways: unlockRunways, mvRows: mvRows, mvKept: mvKept, dayOf: dayOf, pbPanelTick: pbPanelTick, logoFix: logoFix, liveEntries: liveEntries, pbPos: pbPos, unlockFeed: unlockFeed, derivedVs: derivedVs, altHist: altHist, acceptAir: acceptAir, airCache: airCache, flushAir: flushAir, airWant: function () { return airWant; }, lastPos: lastPos, resolved: resolved, stats: stats, pbFind: pbFind, inBar: inBar, pbBlk: pbBlk, cardInfo: cardInfo, boardRowsSeen: boardRowsSeen, archById: archById, placeBoard: placeBoard, stopBoardHold: stopBoardHold, needBoardArch: needBoardArch, mx: mx, mxPatchCore: mxPatchCore, mxAuth: mxAuth, mxNatList: mxNatList, mxTrackOk: mxTrackOk, stripRestriction: stripRestriction, mxBmMerge: mxBmMerge, mxBmItem: mxBmItem, mxMonTile: mxMonTile, mxMonOr: mxMonOr, mxPinVer: mxPinVer, mxAirportHistory: mxAirportHistory, mxHistItems: mxHistItems, mxTrackFile: mxTrackFile, mxDataTick: mxDataTick, mxPbProps: mxPbProps, mxPbShow: mxPbShow, mxPbStandIn: mxPbStandIn, mxPbReadAt: mxPbReadAt, mxPbStand: mxPbStand, mxBoardRwy: mxBoardRwy, reqIdOf: reqIdOf, mxPbOpen: mxPbOpen, mxPbTake: mxPbTake, setNav: function (f) { mxNav = f; }, mxPbAway: mxPbAway, mxLegacyPbJson: mxLegacyPbJson, mxLegacyPb: mxLegacyPb, mxPbFlags: mxPbFlags, mxPbSynId: mxPbSynId, mxPbParam: mxPbParam, setPbWanted: function (v) { mxPbWanted = v; }, mxPlans: function () { return mxPlans; }, mxLiveRunways: mxLiveRunways, mxRwy: mxRwy, mxSetApply: mxSetApply, mxSetNote: mxSetNote, mxSetKept: mxSetKept, mxLastClicked: mxLastClicked, mxLcList: mxLcList, onLcClick: onLcClick, mxLcFill: mxLcFill, cardRwy: cardRwy, naEndsFill: naEndsFill, onEndsGot: onEndsGot, naEnds: naEnds, boardWant: boardWant, mxLegacyImages: mxLegacyImages, rwyInUse: rwyInUse, windOfText: windOfText, mxRwyAirport: mxRwyAirport, mxRwyByHex: mxRwyByHex, mxRowHex: mxRowHex, mxDataEnds: mxDataEnds, rwyUsePanel: rwyUsePanel, apWxPanel: apWxPanel, apWxData: apWxData, apWxOf: apWxOf, mxApWxAdd: mxApWxAdd, vsNoLock: vsNoLock, statsUsage: statsUsage, statsMoves: statsMoves, apDataOf: apDataOf, acceptOa: acceptOa, oaAirportJson: oaAirportJson, oaMap: oaMap, oaRefs: fr24Refs, setOaBase: function (b) { oaBase = b; oaShown = 'x'; }, oaStoreRow: oaStoreRow, oaApi: oaApi, oaPageReq: oaPageReq, oaPageOf: oaPageOf, statsUnlock: statsUnlock, onApWxGot: onApWxGot, mxStat: function () { return mx; }, mxTracksPac: mxTracksPac, setPac: function (o) { mxPac = { at: Date.now(), o: o }; }, rwyUseData: rwyUseData, rwyUseWant: rwyUseWant, cardRwyFill: cardRwyFill, rwyUseKept: rwyUseKept, mxLcTick: mxLcTick, mxBmMax: mxBmMax, mxNatParse: mxNatParse, mxAirsigList: mxAirsigList, mxStations: mxStations, mxLightning: mxLightning, mxLx: mxLx, mxFetch: mxFetch, mxWxText: mxWxText, mxWxKind: mxWxKind, mxCsv: mxCsv, patchLiveFeedRequest: patchLiveFeedRequest, mxCats: mxCats, mxOp: mxOp, mxLevels: mxLevels, mxNearest: mxNearest, MX_ICE: MX_ICE, MX_TURB: MX_TURB, mxWafsUrl: mxWafsUrl, routes: routes, setCurFollow: function (id) { curFollowId = id; } }); } catch (e) { /* ignore */ }
+    post('ready', { oaWant: oaWant, stats: stats, feedReady: false, v: BRIDGE_V });
   }
 
 
@@ -8137,7 +8415,7 @@
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '1.3.0';
+  const VERSION = '1.3.1';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
@@ -10412,19 +10690,34 @@
     if (oa.loading) return oa.loading;
     oa.loading = (async () => {
       const c = await store.getHist('b:oaap1').catch(() => null);
-      if (c && Array.isArray(c.rows) && c.rows.length > 10000) { oaSet(c); if (now() - (c.got || 0) < 7 * 864e5) return true; }
+      if (c && Array.isArray(c.rows) && c.rows.length > 10000) {
+        oaSet(c);
+        // (1.3.1: checked with the monitor once a day - a few bytes when it is the same list - and never more than a week old)
+        if (now() - (c.got || 0) < 864e5) return true;
+        const s = await monGet('/oaap?have=' + encodeURIComponent(c.at || 0), { timeout: 20000, bg: true }).catch(() => null);
+        if (s && s.same) { c.got = now(); store.setHist('b:oaap1', c); return true; }
+        if (!s && now() - (c.got || 0) < 7 * 864e5) return true;          // (the monitor not answering: the one kept, for now)
+        if (s && Array.isArray(s.rows) && s.rows.length > 10000) { s.got = now(); store.setHist('b:oaap1', s); oaSet(s); log('OurAirports airports', s.rows.length, '(a newer list)'); return true; }
+      }
       const j = await monGet('/oaap', { timeout: 90000, bg: true }).catch(() => null);
       if (j && Array.isArray(j.rows) && j.rows.length > 10000) { j.got = now(); store.setHist('b:oaap1', j); oaSet(j); log('OurAirports airports', j.rows.length); }
       return !!oa.rows;
     })().catch(e => { log('OurAirports airports', String(e && e.message || e)); return false; }).finally(() => { oa.loading = null; });
     return oa.loading;
   }
-  function pushOa() { if (oa.rows) postToPage('oaRows', { rows: oa.rows, sig: oa.sig }); }
+  // (1.3.1: with each one's nearest FR24 airport's code - its data pages are made from that airport's)
+  async function pushOa() {
+    if (!oa.rows) return;
+    await loadAirports().catch(() => {});
+    const refs = {};
+    for (const r of oa.rows) { const id = r[5]; if (id && !(id in refs)) { const a = airports.byId.get(id); refs[id] = a ? String(a.iata || a.icao || '') : ''; } }
+    postToPage('oaRows', { rows: oa.rows, sig: oa.sig, refs });
+  }
   // (one of them as an airport: its row, the nearest FR24 airport's country and zone)
   function oaAp(id) {
     const r = oa.byId.get(id); if (!r) return null;
     const ref = airports.byId.get(r[5]) || {};
-    return { id: r[0], iata: r[1], icao: /^[A-Z]{4}$/.test(r[2]) ? r[2] : '', code: r[1], name: r[3], city: ENGINE.placeShort(r[4]) || ENGINE.placeShort(r[3]), country: ref.country || '', countryId: ref.countryId || 0,
+    return { id: r[0], iata: r[1], icao: /^[A-Z]{4}$/.test(r[2]) ? r[2] : '', code: r[1], ident: r[2], name: r[3], city: ENGINE.placeShort(r[4]) || ENGINE.placeShort(r[3]), country: ref.country || '', countryId: ref.countryId || 0,
       lat: r[6], lon: r[7], alt: r[8] || 0, size: 1, timezone: ref.timezone || null, tz: ref.timezone ? ref.timezone.offset : (ref.tz || 0), oa: true };
   }
   // (an unlisted airfield - an id from the route engine's field list - answers too; and a learned landing place)
@@ -12258,7 +12551,9 @@
     let origin = rememberOrigin(rec0, couldHave(o0) ? o0 : unseen, trail[0], !!trail.cut);
     if (!couldHave(origin)) origin = unseen;
     // (no plan from FR24: the route the aircraft itself sent or was sent over its datalink - when it is this flight's)
-    if (!plan && !pos.gnd) { const dp = datalinkPlan(id, rec, hex, pos, legStart, origin && origin.airport); if (dp) plan = dp; }
+    // (1.3.1: arrival information it asked for is no plan - kept apart, shown as likely where nothing surer says)
+    let softPlan = null;
+    if (!plan && !pos.gnd) { const dp = datalinkPlan(id, rec, hex, pos, legStart, origin && origin.airport); if (dp && dp.soft) softPlan = dp; else if (dp) plan = dp; }
     const maxAltSeen = Math.max(st.maxAlt || 0, ...trail.map(p => p.alt || 0));
     const r = { computedAt: now(), quick: !!(opts && opts.quick), onGround: !!pos.gnd, landed: false, originId: 0, destId: 0, destConf: '', destReason: '', originNote: '', originConf: '', alternatives: [], phase: '', std: 0, sta: 0, atd: 0, ata: 0, eta: 0, etd: 0, departedAt: 0, groundAirportId: 0, progress: null, legCount: hs.n, base: hs.base ? apCode(apById(hs.base)) : '' };
     const setO = (a, note, conf) => { if (!a) return; r.originId = a.id; r.originIata = apCode(a); r.originCity = a.city || a.name; r.originNote = note || ''; r.originConf = conf || ''; };
@@ -12425,6 +12720,9 @@
       setD(circ.airport, 'confirmed', circTxt + (finalAp && finalAp.id === circ.airport.id ? ', on final' : '')); r.destP = 100;
     } else if (finalAp) {
       setD(finalAp, 'confirmed', finalWhy(finalAp)); r.destP = 100;
+    } else if (softPlan && apById(softPlan.destId)) {
+      // (1.3.1) the arrival information it asked for in flight: 97 flights in 100 land there (a day of the world's messages)
+      setD(apById(softPlan.destId), 'likely', datalinkWhy(softPlan)); r.destP = 95;
     } else if (top) {
       // shown as 100% only when it is confirmed - descending into it, close, with nothing else left; otherwise at most 99%
       const sure = top.p >= 0.995 && top.dist < 80 && (r.phase === 'descent' || (fin(pos.alt) && pos.alt - top.airport.alt < 6000));
@@ -12812,23 +13110,49 @@
   // during this flight), and the aircraft where a flight between those two airports would be - near the line between
   // them, not past the destination. The newest such route.
   // ==ROUTE-DL== (to its end mark: run by the monitor too - monitor/central.cjs)
-  const DL_PRE = ['fpn', 'fpl', 'filed', 'alert', 'pdc'];
+  // (1.3.1) and the destination the aircraft's VDL2 radio gives each time it logs on to a ground station (kind 'xid', by
+  // its 24-bit address): the same as the route of the flight's own messages 13,367 times in 13,370 once the airport it
+  // took off from is ruled out - taken as its plan under the rules below for anything naming only where it is going.
+  // (1.3.1) more of what the links carry (monitor/datalink.cjs): departure clearances, out / off reports, and messages that
+  // name only where the aircraft is going - its own position reports with their estimate, an oceanic clearance, the winds
+  // its flight-management system asks for its descent - taken when sent during this flight, for an airport that is not
+  // the one it left and that lies ahead. A notice of a plan or a clearance is sent before a flight: one that comes in the
+  // air is the next flight's (N9871R's clearance Teterboro - Kenosha, four minutes before it landed at Teterboro), and
+  // counts only for a flight known to have left its origin. A report that says where the aircraft was is taken only
+  // when that is where it was. Arrival information (ATIS) asked for in flight is its destination 97 times in 100 - shown
+  // as likely, not as a plan.
+  const DL_PRE = ['fpn', 'fpl', 'filed', 'alert', 'pdc', 'dcl', 'oooi'], DL_NOTICE = ['fpl', 'filed', 'alert', 'pdc', 'dcl'];
   function datalinkPlan(id, rec, hex, pos, legStart, oAp) {
     const hx = hex ? store.getHex(hex) || {} : {}, reg = rec.reg || hx.reg;
-    const rs = reg ? datalinkRoutes(reg, () => scheduleReplan(id, 50)) : null; if (!rs || !rs.length) return null;
+    // (1.3.1: and what the aircraft's data radio gave by its 24-bit address - a registration is not needed for those)
+    const rs = reg || hex ? datalinkRoutes(reg || '', () => scheduleReplan(id, 50), hex) : null; if (!rs || !rs.length) return null;
     for (let i = rs.length - 1; i >= 0; i--) {
-      const x = rs[i], O = ENGINE.byIcao(x.o), D = ENGINE.byIcao(x.d); if (!O || !D || O.id === D.id) continue;
+      const x = rs[i], kinds = x.kinds || [], D = ENGINE.byIcao(x.d), O = x.o ? ENGINE.byIcao(x.o) : oAp || null; if (!D || (x.o && !O) || (O && O.id === D.id)) continue;
       if (x.t > pos.t + 600 || x.t < legStart - 12 * 3600) continue;
-      const inFlight = x.t >= legStart - 600, pre = (x.kinds || []).some(k => DL_PRE.includes(k));
+      const inFlight = x.t >= legStart - 600, pre = kinds.some(k => DL_PRE.includes(k)), soft = kinds.length > 0 && kinds.every(k => k === 'atis');
       if (!inFlight && !pre) continue;                                     // (a report from an earlier flight)
-      if (oAp ? ENGINE.dist(oAp.lat, oAp.lon, O.lat, O.lon) > 5 : !inFlight) continue;
-      const dOD = ENGINE.dist(O.lat, O.lon, D.lat, D.lon), dOP = ENGINE.dist(O.lat, O.lon, pos.lat, pos.lon), dPD = ENGINE.dist(pos.lat, pos.lon, D.lat, D.lon);
-      if (dOP + dPD > dOD * 1.25 + 150) continue;                          // (nowhere near the way there)
-      return { originId: O.id, destId: D.id, datalink: true, at: x.t, kinds: x.kinds || [], num: x.cs || '' };
+      // (where it said it was, said in the last twenty minutes: where it is - else another's message, or an old one)
+      if (x.at && Math.abs(pos.t - x.t) <= 1200 && ENGINE.dist(x.at[0], x.at[1], pos.lat, pos.lon) > 400) continue;
+      if (!x.o) {
+        // (only where it is going: said in this flight - arrival information a few minutes in at least - and not behind it)
+        if (x.t < legStart + (soft ? 300 : -600)) continue;
+        if (!oAp && fin(pos.trk) && ENGINE.dist(pos.lat, pos.lon, D.lat, D.lon) > 60 && ENGINE.angDiff(pos.trk, ENGINE.brg(pos.lat, pos.lon, D.lat, D.lon)) > 100) continue;
+        // (1.3.1: the destination the data radio gives is, once in forty flights, still the one of the flight before - the
+        // airport this flight left. Where it took off from is not known and the airport is right here: taken only on the way
+        // down to it)
+        if (!oAp && kinds.every(k => k === 'xid') && ENGINE.dist(pos.lat, pos.lon, D.lat, D.lon) <= 60 && !(fin(pos.vr) && pos.vr < -200)) continue;
+      } else {
+        if (oAp ? ENGINE.dist(oAp.lat, oAp.lon, O.lat, O.lon) > 5 : !inFlight) continue;
+        // (a notice or clearance that came in the air, the flight's origin not known: the next flight's)
+        if (!oAp && (x.first || x.t) > legStart + 900 && kinds.every(k => DL_NOTICE.includes(k))) continue;
+      }
+      if (O) { const dOD = ENGINE.dist(O.lat, O.lon, D.lat, D.lon), dOP = ENGINE.dist(O.lat, O.lon, pos.lat, pos.lon), dPD = ENGINE.dist(pos.lat, pos.lon, D.lat, D.lon); if (dOP + dPD > dOD * 1.25 + 150) continue; }   // (nowhere near the way there)
+      return { originId: x.o ? O.id : 0, destId: D.id, datalink: true, at: x.t, kinds, num: x.cs || '', soft };
     }
     return null;
   }
-  const DL_WHAT = { fpn: 'flight plan uplinked to it', pos: 'its position reports', fpl: 'its filed flight plan', filed: 'its filed flight plan', alert: 'its flight-plan alerts', pdc: 'its departure clearance', eta: 'its arrival estimate', rep: 'its position reports' };
+  const DL_WHAT = { fpn: 'flight plan uplinked to it', pos: 'its position reports', fpl: 'its filed flight plan', filed: 'its filed flight plan', alert: 'its flight-plan alerts', pdc: 'its departure clearance', eta: 'its arrival estimate', rep: 'its position reports',
+    rpt: 'its reports', oooi: 'its out / off report', dcl: 'its departure clearance', ocl: 'its oceanic clearance', dq: 'the descent winds it asked for', xid: 'the destination its data radio gives', atis: 'the arrival information (ATIS) it asked for' };
   const datalinkWhy = p => { const k = (p.kinds || [])[0], d = new Date((p.at || 0) * 1000); return `${DL_WHAT[k] || 'its own flight plan'} (datalink, ${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}Z)`; };
   // ==/ROUTE-DL==
   function schedPlan(id) {
@@ -15865,13 +16189,16 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   function loadRunwayEnds() {
     if (rwyInfo) return Promise.resolve(rwyInfo);
     if (!rwyInfoLoading) rwyInfoLoading = (async () => {
-      const c = await store.getHist('b:rwyends1');
-      if (c && c.map && now() - (c.at || 0) < 90 * 864e5) { rwyInfo = c.map; return rwyInfo; }
-      await loadAirports();
+      // (1.3.1: the OurAirports airports' too - by OurAirports' own code, "GB-0002", for a field with no ICAO code - and read
+      // again every month)
+      const c = await store.getHist('b:rwyends2');
+      if (c && c.map && now() - (c.at || 0) < 30 * 864e5) { rwyInfo = c.map; return rwyInfo; }
+      await loadAirports(); await loadOa().catch(() => false);
       const csv = await gmRequest(RWY_URL, { timeout: 60000, json: false, accept: 'text/csv,text/plain' });
       const icaos = new Set(airports.list.map(a => String(a.icao || '').toUpperCase()).filter(Boolean));
+      for (const r of oa.rows || []) { icaos.add(String(r[1]).toUpperCase()); icaos.add(String(r[2]).toUpperCase()); }
       const map = parseRunwayEnds(csv, k => icaos.has(k));
-      if (Object.keys(map).length > 1000) { store.setHist('b:rwyends1', { at: now(), map }); rwyInfo = map; }
+      if (Object.keys(map).length > 1000) { store.setHist('b:rwyends2', { at: now(), map }); rwyInfo = map; }
       return rwyInfo || (c && c.map) || {};
     })().catch(e => { log('runway details', String(e.message || e)); rwyInfoLoading = null; return {}; });
     return rwyInfoLoading;
@@ -15879,8 +16206,8 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // an airport's runway ends as FR24's pages list them: { name, lengthFt, elevationFt, surface } (the end's own elevation,
   // else the airport's)
   async function runwaysOf(ap) {
-    if (!ap || !ap.icao) return [];
-    const m = await loadRunwayEnds(), ends = m[String(ap.icao).toUpperCase()] || [];
+    const keys = ap ? [ap.icao, ap.code, ap.ident].filter(Boolean).map(k => String(k).toUpperCase()) : []; if (!keys.length) return [];
+    const m = await loadRunwayEnds(), ends = m[keys.find(k => m[k])] || [];
     return ends.filter(e => e[1] > 0).map(e => ({ name: e[0], lengthFt: e[1], elevationFt: e[2] != null ? e[2] : Math.round(ap.alt || 0), surface: e[3] }));
   }
   // The map's airport panel - what FR24 locks or leaves out there: from the monitor, the airport's runways in full (each
@@ -17199,7 +17526,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // (the version whose "what's new" was put away, and the one whose dot on the button the window was opened for)
   const UB_SEEN_KEY = 'tweeks.fr24.ladd.seenver', UB_DOT_KEY = 'tweeks.fr24.ladd.dotver';
   // (the newest CHANGELOG section's headlines, written in by build.mjs: { v, items })
-  const UB_WHATS_NEW = {"v":"1.3.0","items":["Switched off in the LADD Unblock window, it really is off. N500EU's panel was still filled with its names and routes. Now FR24 is left exactly as it is, and the only thing that still happens is what every browser does anyway: what FR24 itself shows (the flights on the map with no callsign, FR24's own board rows) is sent to the monitor. Nothing is taken from the monitor. Switching it on or off reloads the page.","An airport with no METAR of its own (Barrow/Walney, BWF: \"N/A\" under Conditions, Temperature and Wind) gets its live weather from the monitor, and a METAR is made from it. It shows in FR24's own tiles, its \"More weather & METAR\", the airport's data page and the current-weather map layer, and its wind sets the runway in use.","The airport statistics page (/data/airports/bwf/statistics) has its runway usage and movements tables filled from the monitor. Runway usage comes from the runway log of FR24's own tracks.","Every OurAirports airport FR24 does not list, closed ones aside, is now an airport in FR24: some 63,000 airfields, strips, heliports and seaplane bases. Each has its code and name, is on the map once zoomed in, and has a board and airport panel. It works in routes and the monitor's weather.","Pacific tracks (PACOTS) are drawn with Oceanic tracks on, beside the North Atlantic ones.","The vertical speed padlock is gone for good: the panel shows the worked-out vertical speed or \"N/A\", never the padlock."]};
+  const UB_WHATS_NEW = {"v":"1.3.1","items":["Many more LADD flights get their real destination. Three additions:","The monitor answers evenly. Every two minutes it did all its housekeeping in one go on the thread that also answers requests, so an answer took 0.2 s one moment and several seconds the next (one request measured 51 s). That work now runs in short slices with requests answered in between.","The monitor says what holds it up. /status now names the functions its time goes on and what was running each time it stood still for a second or more.","FR24 itself does less. With \"Hide ads\" on, the adverts behind the hidden slots are no longer asked for at all: before, each panel opened still ran an advert auction and loaded the advert out of sight.","The statistics page shows all 7 days of movements (Asturias, OVD, showed 5) and no padlock box before the figures arrive. The same fix applies to the runways table on an airport's main page.","OurAirports airports work again in FR24 itself. Their pins are back on the map, their airport window opens, and their data pages (/data/airports/egow, /data/airports/egow/statistics) now exist, in FR24's own layout, including airfields with no ICAO code (\"GB-0002\")."]};
   // (an aircraft with an open padlock: FR24's outline style - 24 grid, 1.5 stroke in the text colour)
   const UB_ICON = '<svg data-tl-ub-icon="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
   const UB_X = '<svg viewBox="0 0 14 14" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5l11 11M12.5 1.5l-11 11"/></svg>';
@@ -18539,6 +18866,17 @@ html.tl-no-strip .tl-strip{display:none!important}`;
         // everything known right now - the last session's snapshot included - at once, so the map, a flight opened
         // straight from the URL, boards and search are patched from FR24's very first answer; the rest of the store
         // (flight ids of the last 12 hours) once it has been read
+        // (1.3.1) an airport's data page: whether its code is one of the OurAirports airports - that one only, and the FR24
+        // airport its pages are made from (the page's part makes them: oaPageOf)
+        { const am = location.pathname.match(/^\/data\/airports\/([^/?#]+)/i), want = typeof d.oaWant === 'string' ? d.oaWant : '';
+          if (am || want) loadOa().then(async ok => {
+            if (!ok) return;
+            let code = ''; try { code = (want || decodeURIComponent(am[1])).toUpperCase(); } catch (e) { return; }
+            const id = oa.byCode.get(code), r = id && oa.byId.get(id); if (!r) return;
+            await loadAirports().catch(() => {});
+            const a = airports.byId.get(r[5]); if (!a || !(a.iata || a.icao)) return;
+            postToPage('oaIs', { row: r, ref: String(a.iata || a.icao) });
+          }).catch(e => log('OurAirports airport page', String(e && e.message || e))); }
         if (isDataPage || isAircraftPage || isFlightPage) break;
         pushKnown(false);
         if (srvIds.rows.size) srvPush([...srvIds.rows.values()]);     // (the monitor's names, before FR24's first answer)
