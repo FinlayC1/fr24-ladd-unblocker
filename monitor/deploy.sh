@@ -25,13 +25,16 @@ check() {
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 PREV="$(git rev-parse HEAD)"
 say "branch $BRANCH, now at $(git log -1 --format='%h %s' | cut -c1-80)"
+# (1.3.1's monitor wrote OurAirports' new file over the checkout's own copy - a file the monitor changed itself, not one
+# changed by hand: put back, so the update goes on. From 1.3.2 on it keeps that file in its store)
+if [ -n "$(git status --porcelain --untracked-files=no -- monitor/data/oa_airports.csv)" ]; then git checkout -q -- monitor/data/oa_airports.csv && say "monitor/data/oa_airports.csv put back as the checkout has it (the monitor now keeps its own copy in its store)"; fi
 if [ -n "$(git status --porcelain --untracked-files=no)" ]; then say "files of the checkout were changed by hand - not updating (git status shows them)"; exit 1; fi
 git fetch -q origin "$BRANCH" || { say "fetch from GitHub failed"; exit 1; }
 if ! git merge -q --ff-only "origin/$BRANCH"; then say "the server's copy has diverged from GitHub - not updating"; exit 1; fi
 NEW="$(git rev-parse HEAD)"
 if [ "$NEW" = "$PREV" ] && [ "${1:-}" != "--restart" ]; then say "already up to date"; exit 0; fi
 [ "$NEW" != "$PREV" ] && say "updated to $(git log -1 --format='%h %s' | cut -c1-80)"
-for f in monitor/monitor.cjs monitor/fr24.cjs monitor/ident.cjs monitor/dest.cjs monitor/owners.cjs monitor/airport.cjs monitor/names.cjs monitor/tel.cjs monitor/wx.cjs monitor/tracks.cjs monitor/archive.cjs monitor/world.cjs monitor/apstats.cjs monitor/boards.cjs monitor/central.cjs monitor/central-worker.cjs monitor/scores.cjs monitor/acdb.cjs monitor/console.cjs monitor/datalink.cjs monitor/waiting.cjs monitor/photos.cjs monitor/installs.cjs monitor/merge-store.cjs monitor/ages.cjs monitor/wxmap.cjs monitor/apwx.cjs monitor/oaap.cjs monitor/png.cjs monitor/grib2.cjs src/engine.js src/registry.js test/dataset.cjs; do
+for f in monitor/monitor.cjs monitor/fr24.cjs monitor/ident.cjs monitor/dest.cjs monitor/owners.cjs monitor/airport.cjs monitor/names.cjs monitor/tel.cjs monitor/wx.cjs monitor/tracks.cjs monitor/archive.cjs monitor/world.cjs monitor/apstats.cjs monitor/boards.cjs monitor/central.cjs monitor/central-worker.cjs monitor/scores.cjs monitor/acdb.cjs monitor/console.cjs monitor/datalink.cjs monitor/waiting.cjs monitor/photos.cjs monitor/installs.cjs monitor/merge-store.cjs monitor/ages.cjs monitor/wxmap.cjs monitor/apwx.cjs monitor/oaap.cjs monitor/oarwy.cjs monitor/airframes.cjs monitor/prof.cjs monitor/png.cjs monitor/grib2.cjs src/engine.js src/registry.js test/dataset.cjs; do
   node --check "$f" || { say "$f does not parse - back to $PREV"; git reset -q --hard "$PREV"; exit 1; }
 done
 # (the system log - Caddy's access log among it: addresses and requests - kept 14 days at most, as PRIVACY.md says)

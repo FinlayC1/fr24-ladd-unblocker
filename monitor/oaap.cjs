@@ -9,6 +9,7 @@
 // GET /oaap gives the list once a browser starts (kept a week there): { v, at, n, rows: [[id, code, ident, name, city,
 // ref (nearest FR24 airport id), lat, lon, ft, kind (L large, M medium, S small, H heliport, W seaplane base, B balloon)]] }
 const fs = require('fs'), path = require('path'), zlib = require('zlib');
+const { fetchFile, readMeta, writeMeta, linesOf, SRC } = require('./oarwy.cjs');
 const KIND = { large_airport: 'L', medium_airport: 'M', small_airport: 'S', heliport: 'H', seaplane_base: 'W', balloonport: 'B' };
 
 function cells(line) {
@@ -22,7 +23,12 @@ function cells(line) {
 }
 
 function createOaAirports(env) {
-  const { E } = env, file = path.join(env.dataDir, 'oa_airports.csv'), now = env.now || (() => Date.now());
+  const { E } = env, now = env.now || (() => Date.now());
+  // (1.3.2: OurAirports' file as last fetched is kept in the monitor's store - env.storeDir - and read from there; the
+  // checkout's own copy is what a new monitor starts from, and is never written: 1.3.1 wrote the new file over it, and a
+  // file of the checkout changed stops the next deploy ("files of the checkout were changed by hand"))
+  const repoFile = path.join(env.dataDir, 'oa_airports.csv'), storeFile = env.storeDir ? path.join(env.storeDir, 'oa_airports.csv') : repoFile;
+  const fileNow = () => (storeFile !== repoFile && fs.existsSync(storeFile) ? storeFile : repoFile);
   let list = null, byId = new Map(), gz = null, at = 0, building = null;
   const stats = { rows: 0, builtAt: 0, buildMs: 0, fileAt: 0, checkedAt: 0, fetched: 0, unchanged: 0, fails: 0, lastErr: '', etag: '' };
   const pause = () => new Promise(r => setImmediate(r));
@@ -31,6 +37,7 @@ function createOaAirports(env) {
   // 1.2 s in one go, the first time a browser asked)
   function prepare() {
     const c = { lines: [], out: [], ids: new Map(), taken: new Set(), fr24Iata: new Set(), fr24Code: new Set(), col: null };
+    const file = fileNow();
     if (!fs.existsSync(file) || typeof E.fieldId !== 'function') return c;
     c.lines = fs.readFileSync(file, 'utf8').split(/\r?\n/);
     const head = cells(c.lines[0] || ''), ix = k => head.indexOf(k);
@@ -86,7 +93,7 @@ function createOaAirports(env) {
   function body() { if (!gz) gz = zlib.gzipSync(Buffer.from(JSON.stringify({ v: 1, at, n: rows().length, rows: rows() }))); return gz; }
   // (1.3.1) GET /oaap?have=<at>: the browser's list is this one - a few bytes back, not the 2 MB
   function same(have) { return !!list && +have === at; }
-  // (1.3.1) OurAirports' own file, every day: asked only for what changed (its ETag), written whole when it has, and the
+  // (1.3.1) OurAirports' own file, asked for again (1.3.2: every hour): only for what changed (its ETag), written whole when it has, and the
   // list worked out again from it. A file that is not one (too short, another header) is never put in its place
   async function refresh(fetchFn, o) {
     o = o || {};
@@ -94,21 +101,17 @@ function createOaAirports(env) {
     if (!o.force && now() - stats.checkedAt < (o.everyMs || 24 * 3600e3)) return false;
     stats.checkedAt = now();
     try {
-      const h = { 'User-Agent': 'fr24-ladd-unblocker-monitor (personal use)' }; if (stats.etag) h['If-None-Match'] = stats.etag;
-      const r = await fetchFn(o.url || 'https://raw.githubusercontent.com/davidmegginson/ourairports-data/main/airports.csv', { headers: h, signal: AbortSignal.timeout(120000) });
-      if (r.status === 304) { stats.unchanged++; return false; }
-      if (r.status !== 200) throw new Error('HTTP ' + r.status);
-      const text = await r.text(), n = (text.match(/\n/g) || []).length;
-      if (n < 50000 || !/^"?id"?,"?ident"?,"?type"?,"?name"?,"?latitude_deg"?/.test(text)) throw new Error('not the airports file (' + n + ' lines)');
-      const old = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
-      stats.etag = (r.headers && typeof r.headers.get === 'function' && r.headers.get('etag')) || '';
-      if (old === text) { stats.unchanged++; return false; }
-      fs.writeFileSync(file + '.tmp', text); fs.renameSync(file + '.tmp', file);
+      // (its ETag kept with the file in the store, so a monitor started again asks only for what changed)
+      const meta = env.storeDir ? readMeta(env.storeDir) : { 'oa_airports.csv': stats.etag };
+      const text = await fetchFile(fetchFn, o.url || SRC + 'airports.csv', storeFile, meta, 'oa_airports.csv',
+        t => (linesOf(t) < 50000 || !/^"?id"?,"?ident"?,"?type"?,"?name"?,"?latitude_deg"?/.test(t) ? 'not the airports file (' + linesOf(t) + ' lines)' : ''));
+      stats.etag = meta['oa_airports.csv'] || ''; if (env.storeDir) writeMeta(env.storeDir, meta);
+      if (text === null) { stats.unchanged++; return false; }
       stats.fetched++; stats.fileAt = now();
       await rebuild();
       return true;
     } catch (e) { stats.fails++; stats.lastErr = String(e && e.message || e).slice(0, 120); return false; }
   }
-  return { rows, get, body, same, rebuild, refresh, stats, get at() { return at; }, get size() { return rows().length; } };
+  return { rows, get, body, same, rebuild, refresh, stats, get file() { return fileNow(); }, get at() { return at; }, get size() { return rows().length; } };
 }
 module.exports = { createOaAirports };

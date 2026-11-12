@@ -244,7 +244,7 @@ function createCentral(env) {
       S.popDays = (E.T2 && E.T2.days) || 0;   // (the days the population tables were learned from: said in the browsers' panels)
       const nw = Math.max(0, Math.floor(+o.workers || 0));
       if (nw) {
-        const p = createPool(nw, { engine: o.engineFile, dataDir: o.dataDir, datasetFile: o.datasetFile, srcDir: o.srcDir, mainDir: o.mainDir, sitesCsv: S.sites ? o.sitesCsv : '', learnedOps: o.learnedOps || null }, env.log);
+        const p = createPool(nw, { engine: o.engineFile, dataDir: o.dataDir, fieldsDir: o.fieldsDir || o.dataDir, datasetFile: o.datasetFile, srcDir: o.srcDir, mainDir: o.mainDir, sitesCsv: S.sites ? o.sitesCsv : '', learnedOps: o.learnedOps || null }, env.log);
         const got = await p.start();
         if (got.every(x => x.ready)) { pool = p; S.workers = nw; }
         else { S.workersWhy = (got.find(x => !x.ready) || {}).err || 'a worker did not start'; p.close(); }

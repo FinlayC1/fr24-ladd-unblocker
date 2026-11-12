@@ -421,22 +421,44 @@
     oa.rows = c.rows; oa.sig = String(c.n || c.rows.length) + '.' + (c.at || 0); oa.ids = new Set(); oa.byId = new Map(); oa.byCode = new Map();
     for (const r of c.rows) if (Array.isArray(r) && r[0] >= 1e7) { oa.ids.add(r[0]); oa.byId.set(r[0], r); oa.byCode.set(String(r[1]).toUpperCase(), r[0]); }
   }
+  // (1.3.2) The list is checked with the monitor every quarter of an hour - a few bytes when it is the same one (1.3.1:
+  // once a day, and never again while a tab stayed open - an airport added to OurAirports showed up a day late, or not
+  // until the page was loaded again). A newer one replaces it at once, in this tab's page too. Never more than a week
+  // old: without the monitor for that long, asked for whole.
+  const OA_CHECK = 15 * 60000;
+  let oaChecking = null;
+  const oaGood = j => !!j && Array.isArray(j.rows) && j.rows.length > 10000;
+  function oaKeep(j) { j.got = now(); store.setHist('b:oaap1', j); oaSet(j); oa.at = j.at || 0; oa.got = j.got; }
+  // -> true when a newer list was taken
+  function oaCheck() {
+    if (oaChecking) return oaChecking;
+    oaChecking = (async () => {
+      const s = await monGet('/oaap?have=' + encodeURIComponent(oa.at || 0), { timeout: 30000, bg: true }).catch(() => null);
+      if (s && s.same) { oa.got = now(); const c = await store.getHist('b:oaap1').catch(() => null); if (oaGood(c)) { c.got = oa.got; store.setHist('b:oaap1', c); } return false; }
+      if (oaGood(s)) { oaKeep(s); log('OurAirports airports', s.rows.length, '(a newer list)'); return true; }
+      return false;
+    })().catch(() => false).finally(() => { oaChecking = null; });
+    return oaChecking;
+  }
   function loadOa() {
-    if (oa.rows) return Promise.resolve(true);
+    if (oa.rows) {
+      // (in the background: what is here is used meanwhile)
+      if (now() - (oa.got || 0) >= OA_CHECK && !oaChecking && opt.on) oaCheck().then(ch => { if (ch) pushOa(); });
+      return Promise.resolve(true);
+    }
     if (oa.loading) return oa.loading;
     oa.loading = (async () => {
       const c = await store.getHist('b:oaap1').catch(() => null);
-      if (c && Array.isArray(c.rows) && c.rows.length > 10000) {
-        oaSet(c);
-        // (1.3.1: checked with the monitor once a day - a few bytes when it is the same list - and never more than a week old)
-        if (now() - (c.got || 0) < 864e5) return true;
-        const s = await monGet('/oaap?have=' + encodeURIComponent(c.at || 0), { timeout: 20000, bg: true }).catch(() => null);
-        if (s && s.same) { c.got = now(); store.setHist('b:oaap1', c); return true; }
-        if (!s && now() - (c.got || 0) < 7 * 864e5) return true;          // (the monitor not answering: the one kept, for now)
-        if (s && Array.isArray(s.rows) && s.rows.length > 10000) { s.got = now(); store.setHist('b:oaap1', s); oaSet(s); log('OurAirports airports', s.rows.length, '(a newer list)'); return true; }
+      if (oaGood(c)) {
+        oaSet(c); oa.at = c.at || 0; oa.got = c.got || 0;
+        // (the list kept is used at once - the pins are not kept waiting for the monitor; whether it is still the one is
+        // asked meanwhile, and a newer one put in its place when it comes)
+        if (now() - oa.got < 7 * 864e5) { if (now() - oa.got >= OA_CHECK) oaCheck().then(ch => { if (ch) pushOa(); }); return true; }
+        await oaCheck();
+        if (oa.got && now() - oa.got < 7 * 864e5) return true;
       }
       const j = await monGet('/oaap', { timeout: 90000, bg: true }).catch(() => null);
-      if (j && Array.isArray(j.rows) && j.rows.length > 10000) { j.got = now(); store.setHist('b:oaap1', j); oaSet(j); log('OurAirports airports', j.rows.length); }
+      if (oaGood(j)) { oaKeep(j); log('OurAirports airports', j.rows.length); }
       return !!oa.rows;
     })().catch(e => { log('OurAirports airports', String(e && e.message || e)); return false; }).finally(() => { oa.loading = null; });
     return oa.loading;

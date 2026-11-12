@@ -31,7 +31,7 @@ function digest(profile, startWall, stallRanges) {
     jobOf.set(id, j); return j;
   };
   const self = new Map(), jobs = new Map(), add = (m, k, v) => m.set(k, (m.get(k) || 0) + v);
-  const ranges = (stallRanges || []).map(r => ({ from: r[0], to: r[1], ms: 0, job: new Map(), hot: new Map() }));
+  const ranges = (stallRanges || []).map(r => ({ from: r[0], to: r[1], ms: 0, idle: 0, job: new Map(), hot: new Map() }));
   let t = profile.startTime, total = 0, busy = 0;
   const samples = profile.samples || [], deltas = profile.timeDeltas || [];
   for (let i = 0; i < samples.length; i++) {
@@ -40,7 +40,9 @@ function digest(profile, startWall, stallRanges) {
     const n = byId.get(samples[i]); if (!n) continue;
     total += dt;
     const fn = n.callFrame.functionName;
-    if (fn === '(idle)') continue;
+    // (1.3.2: a stall's time the thread was not running this program at all - waiting in the system, or kept off the
+    // processor: said too, so a stall with nothing in it is told from one with work in it)
+    if (fn === '(idle)') { if (ranges.length) { const wi = startWall + (t - profile.startTime) / 1000; for (const r of ranges) if (wi >= r.from - 30 && wi <= r.to + 30) r.idle += dt; } continue; }
     busy += dt;
     const lab = labelOf(n.callFrame), jb = job(n.id);
     add(self, lab, dt); add(jobs, jb, dt);
@@ -48,7 +50,7 @@ function digest(profile, startWall, stallRanges) {
   }
   const topOf = (m, k) => [...m].sort((a, b) => b[1] - a[1]).slice(0, k).map(x => [x[0], Math.round(x[1])]);
   return { ms: Math.round(total), busyMs: Math.round(busy), top: topOf(self, 15), jobs: topOf(jobs, 12),
-    stalls: ranges.map(r => ({ at: Math.round(r.to), ms: Math.round(r.to - r.from), job: (topOf(r.job, 1)[0] || [''])[0], hot: topOf(r.hot, 4) })) };
+    stalls: ranges.map(r => ({ at: Math.round(r.to), ms: Math.round(r.to - r.from), job: (topOf(r.job, 1)[0] || [''])[0], hot: topOf(r.hot, 4), busyMs: Math.round(r.ms), idleMs: Math.round(r.idle) })) };
 }
 
 function createProf(env) {

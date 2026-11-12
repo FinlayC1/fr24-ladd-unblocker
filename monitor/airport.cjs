@@ -11,13 +11,18 @@ const fin = v => typeof v === 'number' && isFinite(v);
 function createAirportInfo(env) {
   const { E } = env;
   let info = {}, freqs = {};
+  const endsMemo = new Map();
+  // (1.3.2: an airport the engine does not know - an OurAirports heliport, a seaplane base - by the monitor's list)
+  const apOf = id => E.byId(id) || (typeof env.apOf === 'function' ? env.apOf(id) : null);
   function load(dir) {
     const rd = f => { try { return JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')); } catch (e) { return null; } };
     info = rd('runway_info.json') || {}; freqs = rd('freqs.json') || {};
+    endsMemo.clear();
     return Object.keys(info).length;
   }
+  // (1.3.2) every airport's, as OurAirports has them now (oarwy.cjs) - in place of the checkout's own
+  function set(i, f) { if (i && typeof i === 'object') info = i; if (f && typeof f === 'object') freqs = f; endsMemo.clear(); return Object.keys(info).length; }
   // the ends of an airport's open runways: { id, lat, lon, hdg (true, the way an aircraft using it goes) }
-  const endsMemo = new Map();
   function endsOf(icao) {
     icao = String(icao || '').toUpperCase(); if (endsMemo.has(icao)) return endsMemo.get(icao);
     const out = [];
@@ -159,7 +164,7 @@ function createAirportInfo(env) {
   // [day, take-offs, landings, 'all' every aircraft heard | 'live' the flights tracked here]).
   const utcDay = t => new Date(t * 1000).toISOString().slice(0, 10);
   function answer(apId, legs, nowS, days, st, hist) {
-    const a = E.byId(apId); if (!a) return { ap: apId, known: false };
+    const a = apOf(apId); if (!a) return { ap: apId, known: false };
     const icao = String(a.icao || '').toUpperCase(), from = nowS - days * 86400, use = new Map(), key = String(apId);
     let moves = 0, withRwy = 0;
     const add = (r, k, n) => { let u = use.get(r); if (!u) use.set(r, u = [0, 0]); u[k] += n || 1; withRwy += n || 1; };
@@ -199,6 +204,6 @@ function createAirportInfo(env) {
   }
   // (an airport's runways as kept: [end, end, length ft, width ft, surface, lighted, ..., closed (7), ...] - its rows)
   const runwaysOf = icao => info[String(icao || '').toUpperCase()] || [];
-  return { load, endsOf, runwayOf, answer, runwaysOf, get size() { return Object.keys(info).length; } };
+  return { load, set, endsOf, runwayOf, answer, runwaysOf, get size() { return Object.keys(info).length; } };
 }
 module.exports = { createAirportInfo };

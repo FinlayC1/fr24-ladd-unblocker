@@ -19,7 +19,8 @@ const root = path.join(__dirname, '..'), work = path.join(T, 'work'), origin = p
 // (a repository with the files deploy.sh checks)
 fs.mkdirSync(work);
 git(work, 'init', '-q', '-b', 'main');
-for (const f of ['monitor/monitor.cjs', 'monitor/fr24.cjs', 'monitor/ident.cjs', 'monitor/dest.cjs', 'monitor/owners.cjs', 'monitor/airport.cjs', 'monitor/names.cjs', 'monitor/tel.cjs', 'monitor/wx.cjs', 'monitor/tracks.cjs', 'monitor/archive.cjs', 'monitor/world.cjs', 'monitor/apstats.cjs', 'monitor/boards.cjs', 'monitor/central.cjs', 'monitor/central-worker.cjs', 'monitor/scores.cjs', 'monitor/acdb.cjs', 'monitor/console.cjs', 'monitor/datalink.cjs', 'monitor/waiting.cjs', 'monitor/photos.cjs', 'monitor/installs.cjs', 'monitor/merge-store.cjs', 'monitor/ages.cjs', 'monitor/wxmap.cjs', 'monitor/apwx.cjs', 'monitor/oaap.cjs', 'monitor/png.cjs', 'monitor/grib2.cjs', 'monitor/deploy.sh', 'src/engine.js', 'src/registry.js', 'test/dataset.cjs']) { fs.mkdirSync(path.join(work, path.dirname(f)), { recursive: true }); fs.copyFileSync(path.join(root, f), path.join(work, f)); }
+for (const f of ['monitor/monitor.cjs', 'monitor/fr24.cjs', 'monitor/ident.cjs', 'monitor/dest.cjs', 'monitor/owners.cjs', 'monitor/airport.cjs', 'monitor/names.cjs', 'monitor/tel.cjs', 'monitor/wx.cjs', 'monitor/tracks.cjs', 'monitor/archive.cjs', 'monitor/world.cjs', 'monitor/apstats.cjs', 'monitor/boards.cjs', 'monitor/central.cjs', 'monitor/central-worker.cjs', 'monitor/scores.cjs', 'monitor/acdb.cjs', 'monitor/console.cjs', 'monitor/datalink.cjs', 'monitor/waiting.cjs', 'monitor/photos.cjs', 'monitor/installs.cjs', 'monitor/merge-store.cjs', 'monitor/ages.cjs', 'monitor/wxmap.cjs', 'monitor/apwx.cjs', 'monitor/oaap.cjs', 'monitor/oarwy.cjs', 'monitor/airframes.cjs', 'monitor/prof.cjs', 'monitor/png.cjs', 'monitor/grib2.cjs', 'monitor/deploy.sh', 'src/engine.js', 'src/registry.js', 'test/dataset.cjs']) { fs.mkdirSync(path.join(work, path.dirname(f)), { recursive: true }); fs.copyFileSync(path.join(root, f), path.join(work, f)); }
+fs.mkdirSync(path.join(work, 'monitor/data'), { recursive: true }); fs.writeFileSync(path.join(work, 'monitor/data/oa_airports.csv'), '"id","ident"\n1,"AAAA"\n');
 git(work, 'add', '-A'); git(work, 'commit', '-q', '-m', 'v1');
 execFileSync('git', ['clone', '-q', '--bare', work, origin]);
 execFileSync('git', ['clone', '-q', origin, vm]);
@@ -71,6 +72,18 @@ check('files changed by hand on the server: left alone, not updated', r.code ===
 git(vm, 'checkout', '--', 'monitor/monitor.cjs');
 r = run('--restart');
 check('--restart with nothing new... (v4 still broken upstream: refused, stays)', r.code === 1 && head() === v2, r.out.slice(-200));
+// (1.3.2) OurAirports' file in the checkout written over by 1.3.1's monitor: not "changed by hand" - put back, and the
+// update goes on; anything else changed still stops it
+fs.writeFileSync(okf, '1');
+git(work, 'revert', '--no-edit', 'HEAD'); git(work, 'push', '-q', 'origin', 'main');
+const v5 = git(work, 'rev-parse', 'HEAD');
+fs.writeFileSync(path.join(vm, 'monitor/data/oa_airports.csv'), '"id","ident"\n1,"AAAA"\n2,"BBBB"\n');
+r = run();
+check('OurAirports file of the checkout written by the 1.3.1 monitor: put back, updated, restarted', r.code === 0 && head() === v5 && /put back/.test(r.out) && !/changed by hand/.test(r.out) && /OK - the monitor answers/.test(r.out) && git(vm, 'status', '--porcelain', '--untracked-files=no') === '', r.out);
+fs.writeFileSync(path.join(vm, 'monitor/data/oa_airports.csv'), 'x\n'); fs.appendFileSync(path.join(vm, 'monitor/fr24.cjs'), '// by hand\n');
+r = run('--restart');
+check('... with another file changed by hand too: that still stops it', r.code === 1 && /changed by hand/.test(r.out), r.out);
+git(vm, 'checkout', '--', 'monitor/fr24.cjs');
 void v1;
 console.log(fails ? `\n${fails} failed` : '\nall passed');
 process.exit(fails ? 1 : 0);
