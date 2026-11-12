@@ -274,7 +274,9 @@
     let origin = rememberOrigin(rec0, couldHave(o0) ? o0 : unseen, trail[0], !!trail.cut);
     if (!couldHave(origin)) origin = unseen;
     // (no plan from FR24: the route the aircraft itself sent or was sent over its datalink - when it is this flight's)
-    if (!plan && !pos.gnd) { const dp = datalinkPlan(id, rec, hex, pos, legStart, origin && origin.airport); if (dp) plan = dp; }
+    // (1.3.1: arrival information it asked for is no plan - kept apart, shown as likely where nothing surer says)
+    let softPlan = null;
+    if (!plan && !pos.gnd) { const dp = datalinkPlan(id, rec, hex, pos, legStart, origin && origin.airport); if (dp && dp.soft) softPlan = dp; else if (dp) plan = dp; }
     const maxAltSeen = Math.max(st.maxAlt || 0, ...trail.map(p => p.alt || 0));
     const r = { computedAt: now(), quick: !!(opts && opts.quick), onGround: !!pos.gnd, landed: false, originId: 0, destId: 0, destConf: '', destReason: '', originNote: '', originConf: '', alternatives: [], phase: '', std: 0, sta: 0, atd: 0, ata: 0, eta: 0, etd: 0, departedAt: 0, groundAirportId: 0, progress: null, legCount: hs.n, base: hs.base ? apCode(apById(hs.base)) : '' };
     const setO = (a, note, conf) => { if (!a) return; r.originId = a.id; r.originIata = apCode(a); r.originCity = a.city || a.name; r.originNote = note || ''; r.originConf = conf || ''; };
@@ -441,6 +443,9 @@
       setD(circ.airport, 'confirmed', circTxt + (finalAp && finalAp.id === circ.airport.id ? ', on final' : '')); r.destP = 100;
     } else if (finalAp) {
       setD(finalAp, 'confirmed', finalWhy(finalAp)); r.destP = 100;
+    } else if (softPlan && apById(softPlan.destId)) {
+      // (1.3.1) the arrival information it asked for in flight: 97 flights in 100 land there (a day of the world's messages)
+      setD(apById(softPlan.destId), 'likely', datalinkWhy(softPlan)); r.destP = 95;
     } else if (top) {
       // shown as 100% only when it is confirmed - descending into it, close, with nothing else left; otherwise at most 99%
       const sure = top.p >= 0.995 && top.dist < 80 && (r.phase === 'descent' || (fin(pos.alt) && pos.alt - top.airport.alt < 6000));
@@ -828,23 +833,49 @@
   // during this flight), and the aircraft where a flight between those two airports would be - near the line between
   // them, not past the destination. The newest such route.
   // ==ROUTE-DL== (to its end mark: run by the monitor too - monitor/central.cjs)
-  const DL_PRE = ['fpn', 'fpl', 'filed', 'alert', 'pdc'];
+  // (1.3.1) and the destination the aircraft's VDL2 radio gives each time it logs on to a ground station (kind 'xid', by
+  // its 24-bit address): the same as the route of the flight's own messages 13,367 times in 13,370 once the airport it
+  // took off from is ruled out - taken as its plan under the rules below for anything naming only where it is going.
+  // (1.3.1) more of what the links carry (monitor/datalink.cjs): departure clearances, out / off reports, and messages that
+  // name only where the aircraft is going - its own position reports with their estimate, an oceanic clearance, the winds
+  // its flight-management system asks for its descent - taken when sent during this flight, for an airport that is not
+  // the one it left and that lies ahead. A notice of a plan or a clearance is sent before a flight: one that comes in the
+  // air is the next flight's (N9871R's clearance Teterboro - Kenosha, four minutes before it landed at Teterboro), and
+  // counts only for a flight known to have left its origin. A report that says where the aircraft was is taken only
+  // when that is where it was. Arrival information (ATIS) asked for in flight is its destination 97 times in 100 - shown
+  // as likely, not as a plan.
+  const DL_PRE = ['fpn', 'fpl', 'filed', 'alert', 'pdc', 'dcl', 'oooi'], DL_NOTICE = ['fpl', 'filed', 'alert', 'pdc', 'dcl'];
   function datalinkPlan(id, rec, hex, pos, legStart, oAp) {
     const hx = hex ? store.getHex(hex) || {} : {}, reg = rec.reg || hx.reg;
-    const rs = reg ? datalinkRoutes(reg, () => scheduleReplan(id, 50)) : null; if (!rs || !rs.length) return null;
+    // (1.3.1: and what the aircraft's data radio gave by its 24-bit address - a registration is not needed for those)
+    const rs = reg || hex ? datalinkRoutes(reg || '', () => scheduleReplan(id, 50), hex) : null; if (!rs || !rs.length) return null;
     for (let i = rs.length - 1; i >= 0; i--) {
-      const x = rs[i], O = ENGINE.byIcao(x.o), D = ENGINE.byIcao(x.d); if (!O || !D || O.id === D.id) continue;
+      const x = rs[i], kinds = x.kinds || [], D = ENGINE.byIcao(x.d), O = x.o ? ENGINE.byIcao(x.o) : oAp || null; if (!D || (x.o && !O) || (O && O.id === D.id)) continue;
       if (x.t > pos.t + 600 || x.t < legStart - 12 * 3600) continue;
-      const inFlight = x.t >= legStart - 600, pre = (x.kinds || []).some(k => DL_PRE.includes(k));
+      const inFlight = x.t >= legStart - 600, pre = kinds.some(k => DL_PRE.includes(k)), soft = kinds.length > 0 && kinds.every(k => k === 'atis');
       if (!inFlight && !pre) continue;                                     // (a report from an earlier flight)
-      if (oAp ? ENGINE.dist(oAp.lat, oAp.lon, O.lat, O.lon) > 5 : !inFlight) continue;
-      const dOD = ENGINE.dist(O.lat, O.lon, D.lat, D.lon), dOP = ENGINE.dist(O.lat, O.lon, pos.lat, pos.lon), dPD = ENGINE.dist(pos.lat, pos.lon, D.lat, D.lon);
-      if (dOP + dPD > dOD * 1.25 + 150) continue;                          // (nowhere near the way there)
-      return { originId: O.id, destId: D.id, datalink: true, at: x.t, kinds: x.kinds || [], num: x.cs || '' };
+      // (where it said it was, said in the last twenty minutes: where it is - else another's message, or an old one)
+      if (x.at && Math.abs(pos.t - x.t) <= 1200 && ENGINE.dist(x.at[0], x.at[1], pos.lat, pos.lon) > 400) continue;
+      if (!x.o) {
+        // (only where it is going: said in this flight - arrival information a few minutes in at least - and not behind it)
+        if (x.t < legStart + (soft ? 300 : -600)) continue;
+        if (!oAp && fin(pos.trk) && ENGINE.dist(pos.lat, pos.lon, D.lat, D.lon) > 60 && ENGINE.angDiff(pos.trk, ENGINE.brg(pos.lat, pos.lon, D.lat, D.lon)) > 100) continue;
+        // (1.3.1: the destination the data radio gives is, once in forty flights, still the one of the flight before - the
+        // airport this flight left. Where it took off from is not known and the airport is right here: taken only on the way
+        // down to it)
+        if (!oAp && kinds.every(k => k === 'xid') && ENGINE.dist(pos.lat, pos.lon, D.lat, D.lon) <= 60 && !(fin(pos.vr) && pos.vr < -200)) continue;
+      } else {
+        if (oAp ? ENGINE.dist(oAp.lat, oAp.lon, O.lat, O.lon) > 5 : !inFlight) continue;
+        // (a notice or clearance that came in the air, the flight's origin not known: the next flight's)
+        if (!oAp && (x.first || x.t) > legStart + 900 && kinds.every(k => DL_NOTICE.includes(k))) continue;
+      }
+      if (O) { const dOD = ENGINE.dist(O.lat, O.lon, D.lat, D.lon), dOP = ENGINE.dist(O.lat, O.lon, pos.lat, pos.lon), dPD = ENGINE.dist(pos.lat, pos.lon, D.lat, D.lon); if (dOP + dPD > dOD * 1.25 + 150) continue; }   // (nowhere near the way there)
+      return { originId: x.o ? O.id : 0, destId: D.id, datalink: true, at: x.t, kinds, num: x.cs || '', soft };
     }
     return null;
   }
-  const DL_WHAT = { fpn: 'flight plan uplinked to it', pos: 'its position reports', fpl: 'its filed flight plan', filed: 'its filed flight plan', alert: 'its flight-plan alerts', pdc: 'its departure clearance', eta: 'its arrival estimate', rep: 'its position reports' };
+  const DL_WHAT = { fpn: 'flight plan uplinked to it', pos: 'its position reports', fpl: 'its filed flight plan', filed: 'its filed flight plan', alert: 'its flight-plan alerts', pdc: 'its departure clearance', eta: 'its arrival estimate', rep: 'its position reports',
+    rpt: 'its reports', oooi: 'its out / off report', dcl: 'its departure clearance', ocl: 'its oceanic clearance', dq: 'the descent winds it asked for', xid: 'the destination its data radio gives', atis: 'the arrival information (ATIS) it asked for' };
   const datalinkWhy = p => { const k = (p.kinds || [])[0], d = new Date((p.at || 0) * 1000); return `${DL_WHAT[k] || 'its own flight plan'} (datalink, ${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}Z)`; };
   // ==/ROUTE-DL==
   function schedPlan(id) {

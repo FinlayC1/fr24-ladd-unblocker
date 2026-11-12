@@ -121,7 +121,7 @@ function createCalc(o) {
       sleep: ms => new Promise(r => setTimeout(r, ms)), SITES_URL: '', gmRequest: () => Promise.reject(new Error('not on the monitor')),
       store: { getHex: () => ({}), getHist: () => Promise.resolve(null), setHist() {}, kvGet: () => null },
       osmPlaceAt: () => null, wantOsmPlace() {}, scheduleReplan() {}, wantWx() {}, wantNotams() {}, onScreen: () => false,
-      datalinkRoutes: reg => (o.datalink ? o.datalink(reg) : cur && cur.dl) || null,
+      datalinkRoutes: (reg, cb, hex) => (o.datalink ? o.datalink(reg, hex) : cur && cur.dl) || null,
       acOf: rec => (rec && rec.ac) || cleanAc(null, rec && rec.hex), airportsReady: () => E.airports.length > 1000,
       apById: id => (id && E.byId(id)) || null, apCode: a => a ? (a.iata || a.icao || String(a.id)) : '',
       calibP: p => p, wxMap, closedMap, srvIds: { rows: new Map() },
@@ -342,7 +342,7 @@ function createCentral(env) {
     return { id: F.id, hex: F.hex, kind: F.kind, rec: F.rec, pos: F.pos, trail: F.trail, meta: F.meta, st: F.st, plan, lastLeg: F.lastLeg, hist: histOf(F),
       // (1.1.0: the fleet's habits the monitor's own - its owners, its logs - so the answer does not hang on which browser sent
       // the flight; a browser's where the monitor knows no fleet of it)
-      fleet: (() => { const m = env.fleetOf ? env.fleetOf(F.hex) : null; return m ? [...m] : F.fleet ? [...F.fleet] : null; })(), rested: F.rested, origin: F.origin, dl: env.datalink ? env.datalink(F.rec.reg) || null : null,
+      fleet: (() => { const m = env.fleetOf ? env.fleetOf(F.hex) : null; return m ? [...m] : F.fleet ? [...F.fleet] : null; })(), rested: F.rested, origin: F.origin, dl: env.datalink ? env.datalink(F.rec.reg, F.hex) || null : null,
       confirmed: env.confirmedOf && F.hex ? env.confirmedOf(F.id, F.hex) : null };
   }
   // (t0: when the job was taken - a mark to work it out again set since stays for the next round)

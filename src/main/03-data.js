@@ -426,19 +426,34 @@
     if (oa.loading) return oa.loading;
     oa.loading = (async () => {
       const c = await store.getHist('b:oaap1').catch(() => null);
-      if (c && Array.isArray(c.rows) && c.rows.length > 10000) { oaSet(c); if (now() - (c.got || 0) < 7 * 864e5) return true; }
+      if (c && Array.isArray(c.rows) && c.rows.length > 10000) {
+        oaSet(c);
+        // (1.3.1: checked with the monitor once a day - a few bytes when it is the same list - and never more than a week old)
+        if (now() - (c.got || 0) < 864e5) return true;
+        const s = await monGet('/oaap?have=' + encodeURIComponent(c.at || 0), { timeout: 20000, bg: true }).catch(() => null);
+        if (s && s.same) { c.got = now(); store.setHist('b:oaap1', c); return true; }
+        if (!s && now() - (c.got || 0) < 7 * 864e5) return true;          // (the monitor not answering: the one kept, for now)
+        if (s && Array.isArray(s.rows) && s.rows.length > 10000) { s.got = now(); store.setHist('b:oaap1', s); oaSet(s); log('OurAirports airports', s.rows.length, '(a newer list)'); return true; }
+      }
       const j = await monGet('/oaap', { timeout: 90000, bg: true }).catch(() => null);
       if (j && Array.isArray(j.rows) && j.rows.length > 10000) { j.got = now(); store.setHist('b:oaap1', j); oaSet(j); log('OurAirports airports', j.rows.length); }
       return !!oa.rows;
     })().catch(e => { log('OurAirports airports', String(e && e.message || e)); return false; }).finally(() => { oa.loading = null; });
     return oa.loading;
   }
-  function pushOa() { if (oa.rows) postToPage('oaRows', { rows: oa.rows, sig: oa.sig }); }
+  // (1.3.1: with each one's nearest FR24 airport's code - its data pages are made from that airport's)
+  async function pushOa() {
+    if (!oa.rows) return;
+    await loadAirports().catch(() => {});
+    const refs = {};
+    for (const r of oa.rows) { const id = r[5]; if (id && !(id in refs)) { const a = airports.byId.get(id); refs[id] = a ? String(a.iata || a.icao || '') : ''; } }
+    postToPage('oaRows', { rows: oa.rows, sig: oa.sig, refs });
+  }
   // (one of them as an airport: its row, the nearest FR24 airport's country and zone)
   function oaAp(id) {
     const r = oa.byId.get(id); if (!r) return null;
     const ref = airports.byId.get(r[5]) || {};
-    return { id: r[0], iata: r[1], icao: /^[A-Z]{4}$/.test(r[2]) ? r[2] : '', code: r[1], name: r[3], city: ENGINE.placeShort(r[4]) || ENGINE.placeShort(r[3]), country: ref.country || '', countryId: ref.countryId || 0,
+    return { id: r[0], iata: r[1], icao: /^[A-Z]{4}$/.test(r[2]) ? r[2] : '', code: r[1], ident: r[2], name: r[3], city: ENGINE.placeShort(r[4]) || ENGINE.placeShort(r[3]), country: ref.country || '', countryId: ref.countryId || 0,
       lat: r[6], lon: r[7], alt: r[8] || 0, size: 1, timezone: ref.timezone || null, tz: ref.timezone ? ref.timezone.offset : (ref.tz || 0), oa: true };
   }
   // (an unlisted airfield - an id from the route engine's field list - answers too; and a learned landing place)

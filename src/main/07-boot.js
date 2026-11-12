@@ -180,6 +180,17 @@
         // everything known right now - the last session's snapshot included - at once, so the map, a flight opened
         // straight from the URL, boards and search are patched from FR24's very first answer; the rest of the store
         // (flight ids of the last 12 hours) once it has been read
+        // (1.3.1) an airport's data page: whether its code is one of the OurAirports airports - that one only, and the FR24
+        // airport its pages are made from (the page's part makes them: oaPageOf)
+        { const am = location.pathname.match(/^\/data\/airports\/([^/?#]+)/i), want = typeof d.oaWant === 'string' ? d.oaWant : '';
+          if (am || want) loadOa().then(async ok => {
+            if (!ok) return;
+            let code = ''; try { code = (want || decodeURIComponent(am[1])).toUpperCase(); } catch (e) { return; }
+            const id = oa.byCode.get(code), r = id && oa.byId.get(id); if (!r) return;
+            await loadAirports().catch(() => {});
+            const a = airports.byId.get(r[5]); if (!a || !(a.iata || a.icao)) return;
+            postToPage('oaIs', { row: r, ref: String(a.iata || a.icao) });
+          }).catch(e => log('OurAirports airport page', String(e && e.message || e))); }
         if (isDataPage || isAircraftPage || isFlightPage) break;
         pushKnown(false);
         if (srvIds.rows.size) srvPush([...srvIds.rows.values()]);     // (the monitor's names, before FR24's first answer)

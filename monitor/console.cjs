@@ -94,7 +94,10 @@ function createConsole(env) {
     profiling = true;
     const inspector = require('inspector'), ses = new inspector.Session(); ses.connect();
     const post = (m, p) => new Promise((res, rej) => ses.post(m, p || {}, (e, r) => e ? rej(e) : res(r)));
-    return post('Profiler.enable').then(() => post('Profiler.setSamplingInterval', { interval: 1000 })).then(() => post('Profiler.start'))
+    // (1.3.1: the monitor's own coarse profile (prof.cjs) set aside meanwhile - the sampling rate cannot be changed while
+    // one is being taken - and taken up again after, whatever happens)
+    const again = () => { profiling = false; try { ses.disconnect(); } catch (e) { /* gone */ } if (env.profResume) Promise.resolve().then(env.profResume).catch(() => {}); };
+    return Promise.resolve(env.profPause ? env.profPause() : null).catch(() => {}).then(() => post('Profiler.enable')).then(() => post('Profiler.setSamplingInterval', { interval: 1000 })).then(() => post('Profiler.start'))
       .then(() => new Promise(r => setTimeout(r, sec * 1000))).then(() => post('Profiler.stop')).then(({ profile: pr }) => {
         const dir = path.join(env.store, 'profiles'); fs.mkdirSync(dir, { recursive: true });
         const name = new Date().toISOString().replace(/[:.]/g, '-') + '.cpuprofile'; fs.writeFileSync(path.join(dir, name), JSON.stringify(pr));
@@ -110,7 +113,7 @@ function createConsole(env) {
         const top = (m, n) => [...m].filter(([k]) => !/^\((root|program|idle|garbage collector)\)/.test(k)).sort((a, b) => b[1] - a[1]).slice(0, n).map(([k, t]) => `${(t / 1000).toFixed(0).padStart(7)} ms  ${(100 * t / Math.max(1, total)).toFixed(1).padStart(5)}%  ${k}`).join('\n');
         const idle = self.get('(idle) :0') || 0, gc = self.get('(garbage collector) :0') || 0;
         return `${sec} s profiled - busy ${(100 * (1 - idle / Math.max(1, total))).toFixed(0)}%, garbage collection ${(100 * gc / Math.max(1, total)).toFixed(1)}%\n\nits own time:\n${top(self, 25)}\n\nwith what it calls:\n${top(incl, 25)}\n\nthe whole profile: store/profiles/${name} (Files - download - open it in Chrome DevTools > Performance)`;
-      }).finally(() => { profiling = false; try { ses.disconnect(); } catch (e) { /* closed */ } });
+      }).finally(again);
   }
   const byName = new Map(); for (const c of CMDS) for (const n of c[0]) byName.set(n, c);
   // (a line typed: its words - "quoted words" kept together)

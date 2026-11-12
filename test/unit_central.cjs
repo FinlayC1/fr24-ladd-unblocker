@@ -198,6 +198,34 @@ const HEX = 'a15a72';
     const ident = { ids: new Map([[1, { hex: HEX }], [2, { hex: 'abcdef' }]]), flights: new Map([[1, { lat: 45, lon: -40, alt: 41000, gnd: false, seen: Date.now() }], [2, { lat: 45, lon: -40, alt: 41000, gnd: false, seen: Date.now() }]]) };
     d.round(ident, Date.now());
     check('the table of named flights browsers get as FR24 opens: central\'s answer for a flight it has worked out', ident.ids.get(1).dest === cr.dest && ident.ids.get(1).origin === cr.origin && ident.ids.get(2).dest !== cr.dest, { one: ident.ids.get(1).dest, two: ident.ids.get(2).dest }); }
+  // ---- (1.3.1) the routes of the datalinks, end to end: N1868M east over the Atlantic out of Teterboro -----------------------
+  { let dl = null; const mon = C.createCentral({ E, now: () => Date.now(), logOf: () => [], datalink: () => dl });
+    await mon.start({ free: 4e9, srcDir: SRC, mainDir: MAIN });
+    mon.take(ev({ id: 9701, trail: { full: true, pts: out(tr) } })); const F = mon.flights.get(9701), P = F.pos;
+    const r0 = mon.compute(F), LTN = E.byIcao('EGGW'), SNN = E.byIcao('EINN'), TEB = E.byIcao('KTEB');
+    const run = routes => { dl = routes; return mon.compute(F); };
+    const a = run([{ o: '', d: 'EGGW', t: P.t - 300, first: P.t - 300, kinds: ['atis'] }]);
+    check('arrival information (ATIS) the aircraft asked for in flight: its destination shown as likely, 95% - not as its plan', !!r0 && r0.destConf !== 'filed' && a.destId === LTN.id && a.destConf === 'likely' && a.destP === 95 && /ATIS/.test(a.destReason) && a.originIata === 'TEB', { r0: sig(r0), a: sig(a) });
+    const b = run([{ o: '', d: 'EGGW', t: P.t - 900, first: P.t - 900, kinds: ['atis'] }, { o: '', d: 'EINN', t: P.t - 300, first: P.t - 300, kinds: ['ocl'] }]);
+    check('... its oceanic clearance names where it is cleared to: its plan (over the arrival information of another airport)', b.destId === SNN.id && b.destConf === 'filed' && /oceanic clearance/.test(b.destReason) && b.originIata === 'TEB', sig(b));
+    const c = run([{ o: '', d: 'KTEB', t: P.t - 300, first: P.t - 300, kinds: ['dq'] }]);
+    check('... a message naming the airport it took off from: not its destination', c.destId !== TEB.id && c.destConf !== 'filed', sig(c));
+    const d = run([{ o: '', d: 'EGGW', t: P.t - 300, first: P.t - 300, kinds: ['pos'], at: [P.lat - 20, P.lon] }]);
+    check('... a position report from 2,200 km away from where it is: not its own - nothing taken from it', d.destConf !== 'filed' && d.destConf === r0.destConf && d.destId === r0.destId, sig(d));
+    // (1.3.1) the destination the aircraft's data radio gives each time it logs on (a VDL2 link frame), by its 24-bit address
+    const asked = []; let byHex = null;
+    const mon2 = C.createCentral({ E, now: () => Date.now(), logOf: () => [], datalink: (reg, hex) => { asked.push([reg, hex]); return byHex; } });
+    await mon2.start({ free: 4e9, srcDir: SRC, mainDir: MAIN });
+    mon2.take(Object.assign(ev({ id: 9711, trail: { full: true, pts: out(tr) } }), { ac: { type: 'GLF6', ladd: true } })); const F2 = mon2.flights.get(9711), P2 = F2.pos;
+    const run2 = routes => { byHex = routes; return mon2.compute(F2); };
+    const x1 = run2([{ o: '', d: 'EGGW', t: P2.t - 300, first: P2.t - 3000, kinds: ['xid'], at: [P2.lat, P2.lon] }]);
+    check('the destination the aircraft\'s data radio gives (VDL2, by its 24-bit address - a flight with no registration known): its plan', x1.destId === LTN.id && x1.destConf === 'filed' && /data radio/.test(x1.destReason) && asked.some(q => q[1] === HEX && !q[0]), { x: sig(x1), asked: asked.slice(0, 2) });
+    const x2 = run2([{ o: '', d: 'KTEB', t: P2.t - 300, first: P2.t - 3000, kinds: ['xid'] }]);
+    check('... still the destination of the flight before - the airport this flight took off from (once in forty flights): never taken', x2.destId !== TEB.id && x2.destConf !== 'filed', sig(x2));
+    const x3 = run2([{ o: '', d: 'EGGW', t: P2.t - 300, first: P2.t - 300, kinds: ['xid'], at: [P2.lat - 20, P2.lon] }]);
+    check('... a frame from 2,200 km away from where it is: another aircraft\'s address read wrong - not taken', x3.destConf !== 'filed', sig(x3));
+    const e = run([{ o: 'KTEB', d: 'EGGW', t: P.t - 600, first: P.t - 600, kinds: ['pos'], at: [P.lat, P.lon], eta: '0100' }]);
+    check('... its own position report with where from and where to: its plan', e.destId === LTN.id && e.destConf === 'filed' && /position reports/.test(e.destReason), sig(e)); }
   console.log(fails ? `\n${fails} failed` : '\nall passed');
   process.exit(fails ? 1 : 0);
 })().catch(e => { console.log('FAIL  crashed', e && e.stack || e); process.exit(1); });
