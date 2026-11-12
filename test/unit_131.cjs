@@ -25,7 +25,9 @@ const rd = d => { try { return JSON.parse(fs.readFileSync(path.join(STORE, 'legs
 
 (async () => {
   // ---- 1. the day files -------------------------------------------------------------------------------------------------
-  { const now = Math.floor(Date.now() / 1000), T0 = now - 3 * 86400, legs = M.legs, dirty = M.dirtyDays;
+  // (the flights of each day at midday: spread over the 50 minutes after it, they never cross into the next day - run late
+  // in the evening, "now less three days" did, and most of the first day's flights were the next day's)
+  { const now = Math.floor(Date.now() / 1000), T0 = Math.floor(now / 86400) * 86400 - 3 * 86400 + 12 * 3600, legs = M.legs, dirty = M.dirtyDays;
     const leg = (hex, t, extra) => Object.assign({ hex, tStart: t, tOff: t + 60, tEnd: t + 3600, from: 1, to: 2 }, extra || {});
     const put = l => { let m = legs.get(l.hex); if (!m) legs.set(l.hex, m = new Map()); m.set(String(l.tStart), l); dirty.add(dayOf(l.tOff || l.tStart)); };
     for (let i = 0; i < 3000; i++) put(leg('a' + (10000 + i).toString(16), T0 + (i % 3) * 86400 + i));
