@@ -2172,7 +2172,9 @@
         var idx = JSON.parse(lsGet('tl.oa.ones') || '[]'); if (!Array.isArray(idx)) idx = [];
         idx = idx.filter(function (c) { return c !== code; }); idx.push(code);
         while (idx.length > 60) { var old = idx.shift(); try { localStorage.removeItem(OA_ONE + old); } catch (e) { /* none */ } }
-        lsSet(OA_ONE + code, JSON.stringify({ row: r, ref: ref, near: near && near.id === r[5] ? near : null, at: Date.now() }));
+        // (of the FR24 airport its page is made from, only what the page takes from it: its country and time zone)
+        var nearKept = near && near.id === r[5] ? { id: near.id, iata: near.iata || '', icao: near.icao || '', name: near.name || '', city: near.city || '', country: near.country || '', countryId: near.countryId || 0, size: near.size || 0, timezone: near.timezone || null } : null;
+        lsSet(OA_ONE + code, JSON.stringify({ row: r, ref: ref, near: nearKept, at: Date.now() }));
         lsSet('tl.oa.ones', JSON.stringify(idx));
       } catch (e) { /* full: as before */ }
     }

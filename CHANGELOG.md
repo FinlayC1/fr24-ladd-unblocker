@@ -56,6 +56,7 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
   - **Userscript**: pages made from a big airport of the country; FR24-style names; a helicopter landing at a heliport; closest airports.
   - **Page part**: FR24's tables filled directly; country and zone from FR24's own table; the airport database by id and by code; the code line, pin labels and the field name; helipads and helipad wording; the window found from FR24's store; a page built as it loads; closest airports merged; a typed address recovered; FR24's two searches; the airport lists by country and state.
 - `test/unit_132.cjs`: updated to the new field name, runway wording and links.
+- `test/unit_13.cjs`: an OurAirports airport's place is now named as FR24 names places (Walney Strip's is Walney).
 
 ## [1.3.3] - 2026-11-13
 

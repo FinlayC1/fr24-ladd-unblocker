@@ -285,7 +285,7 @@ const BOARD = { data: [{ id: 1, flight: { id: '3c4a5b70', callsign: 'EZY12AB', n
     const list = { rows: [ref].concat(Array.from({ length: 120 }, (_, i) => ({ id: 1000 + i, iata: 'A' + i, icao: '', name: 'X', lat: 0, lon: 0 }))) };
     H.patchList('airports', list);
     const got = list.rows.filter(r => r.id >= 1e7), wa = got.find(r => r.id === 17000001);
-    check('FR24\'s airport list: every OurAirports airport put in, in FR24\'s form - Barrow\'s country and time zone', got.length === 3 && wa.iata === 'EGXX' && wa.icao === 'EGXX' && wa.name === 'Walney Strip' && wa.country === 'United Kingdom' && wa.timezone.name === 'Europe/London' && wa.city === 'Barrow-in-Furness', wa);
+    check('FR24\'s airport list: every OurAirports airport put in, in FR24\'s form - Barrow\'s country and time zone', got.length === 3 && wa.iata === 'EGXX' && wa.icao === 'EGXX' && wa.name === 'Walney Strip' && wa.country === 'United Kingdom' && wa.timezone.name === 'Europe/London' && wa.city === 'Walney', wa);
     const aj = H.oaAirportJson('https://api.flightradar24.com/common/v1/airport.json?code=egxx&plugin[]=details&plugin[]=runways');
     const det = aj && aj.result.response.airport.pluginData.details;
     check('... FR24\'s airport answer for one made here: its name, code, place and zone', !!det && det.name === 'Walney Strip' && det.code.iata === 'EGXX' && det.position.latitude === 54.2 && det.timezone.name === 'Europe/London' && Array.isArray(aj.result.response.airport.pluginData.runways));
