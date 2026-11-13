@@ -1595,23 +1595,23 @@
     }
     // (the userscript's search answer - the blocked aircraft and callsigns it keeps logs of - asked for as FR24 asks its own;
     // a moment at most, then without it)
-    var searchWait = {}, searchSeq = 0;
+    var searchWait = new Map(), searchSeq = 0;
     // (1.2.1: routes for flights the page has none of - asked of the userscript, which asks the monitor; 1.5 s at most)
-    var routeAskWait = {};
+    var routeAskWait = new Map();
     function askRoutes(ids) {
       if (!ids || !ids.length) return Promise.resolve();
       var rid = 'r' + (++searchSeq);
-      return new Promise(function (res) { routeAskWait[rid] = res; oSetTimeout(function () { if (routeAskWait[rid]) { delete routeAskWait[rid]; res(); } }, 1500); post('routesAsk', { rid: rid, ids: ids }); });
+      return new Promise(function (res) { routeAskWait.set(rid, res); oSetTimeout(function () { if (routeAskWait.has(rid)) { routeAskWait.delete(rid); res(); } }, 1500); post('routesAsk', { rid: rid, ids: ids }); });
     }
     function onRoutesGot(d) {
       Object.keys(d && d.routes || {}).forEach(function (k) { var r = d.routes[k]; if (r && !routes.has(Number(k))) routes.set(Number(k), r); });
-      var f = routeAskWait[d && d.rid]; if (f) { delete routeAskWait[d.rid]; f(); }
+      var f = d && typeof d.rid === 'string' ? routeAskWait.get(d.rid) : null; if (typeof f === 'function') { routeAskWait.delete(d.rid); f(); }
     }
-    function askSearch(q) { var rid = 's' + (++searchSeq); return new Promise(function (res) { searchWait[rid] = res; oSetTimeout(function () { if (searchWait[rid]) { delete searchWait[rid]; res({ rows: [], live: [] }); } }, 700); post('needSearch', { q: q, rid: rid }); }); }
+    function askSearch(q) { var rid = 's' + (++searchSeq); return new Promise(function (res) { searchWait.set(rid, res); oSetTimeout(function () { if (searchWait.has(rid)) { searchWait.delete(rid); res({ rows: [], live: [] }); } }, 700); post('needSearch', { q: q, rid: rid }); }); }
     function onSearchAdd(d) {
       // (each a blocked aircraft or a callsign of one: its Playback is FR24's map playback of its flight)
       (Array.isArray(d.rows) ? d.rows : []).forEach(function (r) { if (r && r.id && (r.type === 'aircraft' || r.type === 'schedule')) pbBlkNote(r.type === 'aircraft' ? 'A' : 'C', r.id, r.type === 'aircraft' && r.detail ? r.detail.hex : ''); });
-      var f = searchWait[d.rid]; if (f) { delete searchWait[d.rid]; f({ rows: Array.isArray(d.rows) ? d.rows : [], live: Array.isArray(d.live) ? d.live : [] }); }
+      var f = d && typeof d.rid === 'string' ? searchWait.get(d.rid) : null; if (typeof f === 'function') { searchWait.delete(d.rid); f({ rows: Array.isArray(d.rows) ? d.rows : [], live: Array.isArray(d.live) ? d.live : [] }); }
     }
     // (a logo FR24 has none of - BAE Systems' - on any row of its search: airline, aircraft, flight)
     function logoFix(r) { var id = r && r.detail && r.detail.operator_id; if (!id || !LOGO_ADD[id] || r.detail.logo === LOGO_ADD[id].source) return false; r.detail.logo = LOGO_ADD[id].source; return true; }
@@ -2359,7 +2359,7 @@
     // ==OA-MATCH==
     function oaMatchRows(rows, q, n, size) {
       q = String(q || '').trim().toLowerCase(); if (q.length < 2 || !rows) return [];
-      var hits = [], word = new RegExp('(^|[\\s(/-])' + q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+      var hits = [], word = { test: function (nm) { for (var k = nm.indexOf(q); k >= 0; k = nm.indexOf(q, k + 1)) { if (k === 0 || ' (/-'.indexOf(nm.charAt(k - 1)) >= 0) return true; } return false; } };
       for (var i = 0; i < rows.length; i++) {
         var r = rows[i]; if (!Array.isArray(r)) continue;
         var c1 = String(r[1]).toLowerCase(), c2 = String(r[2]).toLowerCase(), nm = String(r[3] || '').toLowerCase(), s = -1;
@@ -2370,20 +2370,20 @@
       return hits.slice(0, n || 10).map(function (h) { return h[2]; });
     }
     // ==/OA-MATCH==
-    var oaFindWait = {}, oaFindSeq = 0;
+    var oaFindWait = new Map(), oaFindSeq = 0;
     function oaSearch(q, ms) {
       q = String(q || '').trim(); if (q.length < 2) return Promise.resolve([]);
       if (oaRows) return Promise.resolve(oaMatchRows(oaRows, q, 10, function (r) { return OA_SIZE[r[9]] || 0; }));
       return new Promise(function (res) {
-        var key = 'f' + (++oaFindSeq), t = oSetTimeout(function () { delete oaFindWait[key]; res([]); }, ms || 500);
-        oaFindWait[key] = function (rows) { oClearTimeout(t); delete oaFindWait[key]; res(rows); };
+        var key = 'f' + (++oaFindSeq), t = oSetTimeout(function () { oaFindWait.delete(key); res([]); }, ms || 500);
+        oaFindWait.set(key, function (rows) { oClearTimeout(t); oaFindWait.delete(key); res(rows); });
         post('oaFind', { key: key, q: q });
       });
     }
     function acceptOaFound(d) {
       if (!d || !Array.isArray(d.list)) return;
       d.list.forEach(function (o) { acceptOaOne(o, true); });
-      var f = oaFindWait[d.key]; if (f) f(d.list.map(function (o) { return o.row; }));
+      var f = typeof d.key === 'string' && /^f\d{1,9}$/.test(d.key) ? oaFindWait.get(d.key) : null; if (typeof f === 'function') f(d.list.filter(function (o) { return o && Array.isArray(o.row); }).map(function (o) { return o.row; }));
     }
     var oaLabel = function (r) { var ic = oaIcaoOf(r); return String(r[3]) + ' (' + r[1] + (ic && ic !== String(r[1]).toUpperCase() ? ' / ' + ic : '') + ')'; };
     // (FR24's search box's answer: { results: [{ id: its code, label: "Name (CODE / ICAO)", detail: { lat, lon, size },
@@ -2419,16 +2419,16 @@
     // or of its states, each one's count - and a state's list, with theirs, in FR24's form: { id, name, iata (the code its
     // links go by), icao, total }. Asked of the userscript once a page; a country's counts kept here, so the page has
     // them at once next time. Their links go straight to their pages (oaLinkPressed).
-    var dirAsked = {}, dirGot = {};
+    var dirAsked = new Map(), dirGot = new Map();
     var US_STATES = { alabama: 'AL', alaska: 'AK', arizona: 'AZ', arkansas: 'AR', california: 'CA', colorado: 'CO', connecticut: 'CT', delaware: 'DE', 'district of columbia': 'DC', florida: 'FL', georgia: 'GA', hawaii: 'HI', idaho: 'ID', illinois: 'IL', indiana: 'IN', iowa: 'IA', kansas: 'KS', kentucky: 'KY', louisiana: 'LA', maine: 'ME', maryland: 'MD', massachusetts: 'MA', michigan: 'MI', minnesota: 'MN', mississippi: 'MS', missouri: 'MO', montana: 'MT', nebraska: 'NE', nevada: 'NV', 'new hampshire': 'NH', 'new jersey': 'NJ', 'new mexico': 'NM', 'new york': 'NY', 'north carolina': 'NC', 'north dakota': 'ND', ohio: 'OH', oklahoma: 'OK', oregon: 'OR', pennsylvania: 'PA', 'rhode island': 'RI', 'south carolina': 'SC', 'south dakota': 'SD', tennessee: 'TN', texas: 'TX', utah: 'UT', vermont: 'VT', virginia: 'VA', washington: 'WA', 'west virginia': 'WV', wisconsin: 'WI', wyoming: 'WY' };
     function dirAsk(key, msg) {
-      if (dirGot[key] || (dirAsked[key] && Date.now() - dirAsked[key] < 20000)) return dirGot[key] || null;
-      dirAsked[key] = Date.now(); msg.key = key; post('oaDir', msg); return null;
+      if (dirGot.has(key) || (dirAsked.has(key) && Date.now() - dirAsked.get(key) < 20000)) return dirGot.get(key) || null;
+      dirAsked.set(key, Date.now()); msg.key = key; post('oaDir', msg); return null;
     }
     function acceptOaDir(d) {
-      if (!d || typeof d.key !== 'string') return;
+      if (!d || typeof d.key !== 'string' || !dirAsked.has(d.key)) return;
       if (Array.isArray(d.rows)) { var refs = d.refs || {}, nears = d.nears || {}; d.rows.forEach(function (r) { if (Array.isArray(r) && refs[r[5]]) acceptOaOne({ row: r, ref: refs[r[5]], near: nears[r[5]] || null }, true); }); }
-      dirGot[d.key] = d; if (d.counts) lsSet('tl.oa.counts', JSON.stringify({ at: Date.now(), counts: d.counts }));
+      dirGot.set(d.key, d); if (d.counts) lsSet('tl.oa.counts', JSON.stringify({ at: Date.now(), counts: d.counts }));
       dirTick();
     }
     // (a list of FR24's with what is to be added: none twice, FR24's own first - its order kept, as its page sorts them)
@@ -5356,7 +5356,6 @@
       // (1.3: an OurAirports airport's board - FR24 has none: an empty one of FR24's form, filled below as FR24's own are -
       // the flights kept for it, those followed here)
       // (1.3.4: FR24's searches - with the OurAirports airports)
-      if (/\/v1\/search\/web\/find\?/.test(url)) { var sfp = searchFetch(this, arguments, url, 'find'); if (sfp) return sfp; }
       if (/\/api\/v1\/airports\/search\?/.test(url)) { var sap = searchFetch(this, arguments, url, 'airports'); if (sap) return sap; }
       // (1.3.2: by either of its addresses - api.flightradar24.com/common/v1 and, newer, www.flightradar24.com/common/v2)
       if (/\/common\/v\d+\/airport\.json\?/.test(url) && oaByCode.size) { var oaJ = oaAirportJson(url); if (oaJ) return Promise.resolve(jsonResponse(null, oaJ)); }
@@ -5613,6 +5612,28 @@
       } catch (e) { stats.errors++; stats.lastError = String(e); }
       return p;
     };
+    // (1.3.4) FR24's search box: the OurAirports airports added once all the above has made FR24's answer - its aircraft,
+    // its routes, its logos - so both are in it
+    (function () {
+      var hooked = window.fetch;
+      window.fetch = function (input, init) {
+        var url = urlOf(input);
+        if (optOn('on') && /\/v1\/search\/web\/find\?/.test(url)) {
+          var u = null; try { u = new URL(url, location.href); } catch (e) { u = null; }
+          var q = u ? (u.searchParams.get('query') || '') : '', type = u ? (u.searchParams.get('type') || '') : '';
+          if (q.trim().length >= 2 && (!type || type === 'airport')) {
+            var oaP = oaSearch(q, 500);
+            return Promise.resolve(hooked.apply(this, arguments)).then(function (res) {
+              return oaP.then(function (rows) {
+                if (!rows.length || !res || !res.ok) return res;
+                return res.clone().json().then(function (j) { var o = searchMerge(j, rows, q); if (o) stats.oaSearch = (stats.oaSearch || 0) + 1; return o ? jsonResponse(res, o) : res; }, function () { return res; });
+              });
+            });
+          }
+        }
+        return hooked.apply(this, arguments);
+      };
+    })();
 
     // ---- bridge ---------------------------------------------------------------------------------------------
     function acceptEntries(entries) {

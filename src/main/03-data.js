@@ -508,7 +508,7 @@
   // ==OA-MATCH==
   function oaMatchRows(rows, q, n, size) {
     q = String(q || '').trim().toLowerCase(); if (q.length < 2 || !rows) return [];
-    var hits = [], word = new RegExp('(^|[\\s(/-])' + q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    var hits = [], word = { test: function (nm) { for (var k = nm.indexOf(q); k >= 0; k = nm.indexOf(q, k + 1)) { if (k === 0 || ' (/-'.indexOf(nm.charAt(k - 1)) >= 0) return true; } return false; } };
     for (var i = 0; i < rows.length; i++) {
       var r = rows[i]; if (!Array.isArray(r)) continue;
       var c1 = String(r[1]).toLowerCase(), c2 = String(r[2]).toLowerCase(), nm = String(r[3] || '').toLowerCase(), s = -1;
