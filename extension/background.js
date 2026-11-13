@@ -30,9 +30,10 @@ try {
   chrome.webRequest.onBeforeRedirect.addListener(d => {
     try {
       const u = new URL(d.url), to = new URL(d.redirectUrl, d.url);
-      if (/^\/data\/airports\/[^/]+/.test(u.pathname) && /^\/data\/airports\/?$/.test(to.pathname)) { oaFrom.set(d.tabId, { path: u.pathname + u.search, at: Date.now() }); if (oaFrom.size > 50) oaFrom.delete(oaFrom.keys().next().value); }
+      // (1.3.5: and one of the aircraft directory's added families or types, wherever FR24's server sends it)
+      if ((/^\/data\/airports\/[^/]+/.test(u.pathname) && /^\/data\/airports\/?$/.test(to.pathname)) || (/^\/data\/aircraft\/[^/]+/.test(u.pathname) && to.pathname !== u.pathname && to.hostname === u.hostname)) { oaFrom.set(d.tabId, { path: u.pathname + u.search, at: Date.now() }); if (oaFrom.size > 50) oaFrom.delete(oaFrom.keys().next().value); }
     } catch (e) { /* not an address */ }
-  }, { urls: ['https://www.flightradar24.com/data/airports/*', 'https://flightradar24.com/data/airports/*'], types: ['main_frame'] });
+  }, { urls: ['https://www.flightradar24.com/data/airports/*', 'https://flightradar24.com/data/airports/*', 'https://www.flightradar24.com/data/aircraft/*', 'https://flightradar24.com/data/aircraft/*'], types: ['main_frame'] });
 } catch (e) { /* no webRequest here */ }
 chrome.runtime.onMessage.addListener((m, sender, reply) => {
   if (!m || m.tlOaFrom !== true || sender.id !== chrome.runtime.id) return;

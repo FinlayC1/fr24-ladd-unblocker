@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Flightradar24 LADD / N-A Unblocker (feed-level)
 // @namespace    tweeks.io
-// @version      1.3.4
+// @version      1.3.5
 // @description  Identifies every LADD / N/A / blocked military aircraft on Flightradar24 from public ADS-B, and injects callsign, registration, operator, age, country, MSN, squawk, vertical speed, GPS altitude, airspeeds, wind, photos, a reasoned origin/destination with a wind-corrected ETA (also for ordinary flights FR24 shows as N/A - military, private, GA, helicopters, with private landing sites; learned from 63 days of every aircraft worldwide, with live weather and closures), airport-board entries and a rebuilt 7-month flight log straight into FR24's own data - so it all renders like normal FR24 traffic.
 // @author       Finlay Clarke
 // @updateURL    https://raw.githubusercontent.com/FinlayC1/fr24-ladd-unblocker/main/dist/fr24-ladd-unblocker.user.js
@@ -98,7 +98,7 @@
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "1.3.4";
+    var BRIDGE_V = "1.3.5";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed but the
@@ -1260,6 +1260,16 @@
           var ppr = pst.id ? resolved.get(pst.id) : null, pphWait = !!(ppr && ppr.hex && !hasPhotos(ppr) && !((photoCache.get(String(ppr.hex).toUpperCase()) || {}).final));
           if (ppr && ppr.hex && !((photoCache.get(String(ppr.hex).toUpperCase()) || {}).final)) photosFor(ppr, true);
           if (pst.id && (!pbReady(pst.id) || pphWait)) { var xpb = this, bpb = sendBody; Promise.all([whenPbReady(pst.id, 1500), pphWait ? photosWithin(ppr, 2500) : null]).then(function () { try { oSend.call(xpb, bpb); } catch (e) { /* aborted meanwhile */ } }); return; }
+        } else if (!this.__tlOwn && this.__tlHeaders && (this.__tlHeaders['X-Inertia'] || this.__tlHeaders['x-inertia']) && acPageReq(url)) {
+          // (1.3.5: a page of one of the families or types FR24 does not list - its page of its list, or its pictures: the
+          // page of FR24's it is made from asked for instead, sent once the monitor's page of it is here, and given to FR24
+          // as theirs - acPageOf)
+          var aq = acPageReq(url), xa = this, ba = sendBody;
+          oOpen.call(xa, xa.__tlMethod || 'GET', aq.refUrl, true);
+          Object.keys(xa.__tlHeaders || {}).forEach(function (k) { try { oSetHeader.call(xa, k, xa.__tlHeaders[k]); } catch (e) { /* ignore */ } });
+          installJsonXhr(xa, function (j) { return j && j.component && j.props ? acPageOf(j, aq, acGot.get(aq.key) || null) : null; });
+          acAskPage(aq).then(function () { try { oSend.call(xa, ba); } catch (e) { /* aborted meanwhile */ } });
+          return;
         } else if (!this.__tlOwn && this.__tlHeaders && (this.__tlHeaders['X-Inertia'] || this.__tlHeaders['x-inertia']) && oaPageReq(url)) {
           // (1.3.1: a data page of an OurAirports airport - FR24 has none: its nearest airport's same page asked for instead,
           // and given to FR24 as this airport's - oaPageOf)
@@ -2558,6 +2568,188 @@
       } catch (e) { stats.errors++; stats.lastError = String(e); }
     }
     setInterval(dirTick, 400);
+    // ---- (1.3.5) FR24's aircraft directory (/data/aircraft): the families and types of aircraft FR24 does not list -
+    // Bombardier Global, Gulfstream and the rest the monitor's aircraft database knows - among its own, in its own form:
+    // families [{ code, name, slug, count, types: [{ code, name, slug, count }] }]. FR24's own search on the page searches
+    // that list, so it finds them too. Their pages - a family's and a type's, each with its production list - are made from
+    // a family's and a type's page FR24 really has (learned from its list), its server never asked for theirs: in FR24's
+    // own moves between pages (Inertia's XHR - its pages of the list, its pictures) and on a first load alike.
+    var AC_ADD = 'tl.ac.add', AC_REF = 'tl.ac.ref', AC_PG = 'tl.ac.pg', acAdd = null, acAsked = new Map(), acWait = new Map(), acGot = new Map();
+    function acAddGet() {
+      if (acAdd) return acAdd;
+      try { var o = JSON.parse(lsGet(AC_ADD) || 'null'); if (o && Array.isArray(o.fams)) acAdd = o; } catch (e) { acAdd = null; }
+      return acAdd;
+    }
+    function acRefGet() {
+      try { var r = JSON.parse(lsGet(AC_REF) || 'null'); return r && /^[a-z0-9-]{1,60}$/.test(r.fam) && /^[a-z0-9-]{1,40}$/.test(r.type) && /^[a-z0-9-]{1,60}$/.test(r.typeFam) ? r : null; } catch (e) { return null; }
+    }
+    // (FR24's families with theirs: a type FR24 lists itself left to FR24; a family FR24 has under the same code given the
+    // types it lacks, the rest added after its own - most aircraft first)
+    function acMerge(fr24, ours) {
+      var have = new Set(), byCode = new Map(), slugs = new Set(), add = [];
+      fr24.forEach(function (f) { if (!f) return; byCode.set(String(f.code).toUpperCase(), f); slugs.add(String(f.slug).toLowerCase()); (f.types || []).forEach(function (t) { if (t && t.code) have.add(String(t.code).toUpperCase()); }); });
+      var out = fr24.slice(), extra = [];
+      ours.forEach(function (f) {
+        if (!f || !Array.isArray(f.types) || typeof f.code !== 'string' || typeof f.slug !== 'string') return;
+        var types = f.types.filter(function (t) { return t && typeof t.code === 'string' && /^[A-Z0-9]{2,4}$/.test(t.code) && !have.has(t.code) && t.count > 0; }).map(function (t) { return { code: t.code, name: String(t.name || t.code), slug: String(t.slug || t.code.toLowerCase()), count: +t.count || 0 }; });
+        if (!types.length) return;
+        var n = types.reduce(function (s, t) { return s + t.count; }, 0), mine = byCode.get(f.code.toUpperCase());
+        if (mine) {
+          var i = out.indexOf(mine), m2 = Object.assign({}, mine, { count: (mine.count || 0) + n, types: (mine.types || []).concat(types) }); out[i] = m2; byCode.set(f.code.toUpperCase(), m2);
+          add.push({ code: mine.code, name: mine.name, slug: String(mine.slug), fr24: true, count: n, types: types });
+        } else {
+          var slug = slugs.has(f.slug) ? 'tl-' + f.slug : f.slug;
+          extra.push({ code: f.code, name: String(f.name || f.code), slug: slug, count: n, types: types, photo: null });
+          add.push({ code: f.code, name: String(f.name || f.code), slug: slug, count: n, types: types });
+        }
+      });
+      extra.sort(function (a, b) { return b.count - a.count; });
+      return { families: out.concat(extra), add: add };
+    }
+    // (an address of one of theirs - its own, /data/aircraft/bombardier-global/glex, or a page of FR24's carrying it as
+    // ?tl-ac=: what it is, and the page of FR24's it is made from)
+    function acPageReq(url) {
+      var u; try { u = new URL(url, location.href); } catch (e) { return null; }
+      if (u.origin !== location.origin || !/^\/data\/aircraft\//i.test(u.pathname)) return null;
+      var add = acAddGet(), ref = acRefGet(); if (!add || !ref) return null;
+      var want = u.searchParams.get('tl-ac'), path = want && /^\/data\/aircraft\/[a-z0-9-\/]{1,110}$/i.test(want) ? want : u.pathname;
+      var m = path.match(/^\/data\/aircraft\/([a-z0-9-]{1,60})(?:\/([a-z0-9-]{1,40}))?\/?$/i); if (!m) return null;
+      var fs = m[1].toLowerCase(), ts = m[2] ? m[2].toLowerCase() : '', f = null;
+      for (var i = 0; i < add.fams.length; i++) if (add.fams[i].slug === fs) { f = add.fams[i]; break; }
+      if (!f) return null;
+      var pg = Math.max(1, Math.min(5000, Math.floor(+u.searchParams.get('page')) || 1)), t = null;
+      if (ts) { for (var k = 0; k < f.types.length; k++) if (f.types[k].slug === ts) { t = f.types[k]; break; } if (!t) return null; }
+      else if (f.fr24) return null;   // (FR24's own family: its page is FR24's, its list of types given theirs - acTick)
+      var own = '/data/aircraft/' + f.slug + (t ? '/' + t.slug : '');
+      return { kind: t ? 'type' : 'family', fam: f, type: t, page: pg, path: own, key: (t ? 't.' + t.code : 'f.' + f.code) + '.' + pg,
+        refUrl: '/data/aircraft/' + (t ? ref.typeFam + '/' + ref.type : ref.fam) + '?tl-ac=' + encodeURIComponent(own) + (pg > 1 ? '&page=' + pg : '') };
+    }
+    // (the monitor's page of it: asked once, kept - the last 30 - so the way back, or a second look, is at once)
+    function acPgKept(key) { try { var o = JSON.parse(lsGet(AC_PG) || '{}'); var e = o && Object.prototype.hasOwnProperty.call(o, key) ? o[key] : null; return e && Date.now() - e.at < 7 * 864e5 && Array.isArray(e.d.rows) ? e.d : null; } catch (e2) { return null; } }
+    function acPgKeep(key, d) {
+      try { var o = JSON.parse(lsGet(AC_PG) || '{}'); if (!o || typeof o !== 'object' || Array.isArray(o)) o = {}; o[key] = { at: Date.now(), d: d }; var ks = Object.keys(o); ks.sort(function (a, b) { return o[a].at - o[b].at; }); while (ks.length > 30) delete o[ks.shift()]; lsSet(AC_PG, JSON.stringify(o)); } catch (e) { /* full */ }
+    }
+    function acAskPage(q) {
+      if (acGot.has(q.key)) return Promise.resolve(acGot.get(q.key));
+      var kept = acPgKept(q.key); if (kept) { acGot.set(q.key, kept); return Promise.resolve(kept); }
+      if (acWait.has(q.key)) return acWait.get(q.key).p;
+      var w = {}; w.p = new Promise(function (res) { w.res = res; }); acWait.set(q.key, w);
+      post('acPage', { key: q.key, kind: q.kind, code: q.kind === 'type' ? q.type.code : q.fam.code, page: q.page });
+      setTimeout(function () { if (acWait.get(q.key) === w) { acWait.delete(q.key); w.res(null); } }, 8000);
+      return w.p;
+    }
+    function acceptAcPage(d) {
+      if (!d || typeof d.key !== 'string') return;
+      var w = acWait.get(d.key), pg = d.page && Array.isArray(d.page.rows) ? d.page : null;
+      if (pg) { acGot.set(d.key, pg); acPgKeep(d.key, pg); }
+      if (w) { acWait.delete(d.key); w.res(pg); }
+    }
+    function acceptAcDir(d) {
+      if (!d || typeof d.key !== 'string' || !acAsked.has(d.key)) return;
+      if (Array.isArray(d.families)) { acAsked.set(d.key, { at: Date.now(), families: d.families }); acTick(); }
+    }
+    // (FR24's production list's rows - { msn, registration, airline, owner, type, age } - and Laravel's pages of them)
+    function acPaginator(q, d) {
+      var nowY = new Date().getUTCFullYear(), names = {};
+      (q.fam.types || []).forEach(function (t) { names[t.code] = t.name; });
+      var rows = d && Array.isArray(d.rows) ? d.rows : [], cur = d ? d.page : 1, last = d ? d.lastPage : 1, per = d ? d.perPage : 50, total = d ? d.total : 0;
+      var data = rows.map(function (r) {
+        var tc = String(r[5] || (q.type && q.type.code) || ''), y = +r[2] || 0;
+        return { msn: r[1] ? String(r[1]) : null, registration: String(r[0] || ''), airline: null, owner: r[3] ? String(r[3]) : null, type: Object.prototype.hasOwnProperty.call(names, tc) ? names[tc] : tc, typeCode: tc, age: y > 1900 ? Math.max(0, nowY - y) : null, testFlight: false };
+      });
+      var base = location.origin + q.path, url = function (n) { return base + '?page=' + n; }, links = [{ url: cur > 1 ? url(cur - 1) : null, label: '&laquo; Previous', active: false }];
+      for (var n = 1; n <= last; n++) {
+        if (n === 1 || n === last || Math.abs(n - cur) <= 3) links.push({ url: url(n), label: String(n), active: n === cur });
+        else if (links[links.length - 1].label !== '...') links.push({ url: null, label: '...', active: false });
+      }
+      links.push({ url: cur < last ? url(cur + 1) : null, label: 'Next &raquo;', active: false });
+      return { data: data, current_page: cur, last_page: last, per_page: per, total: total, from: data.length ? (cur - 1) * per + 1 : null, to: data.length ? (cur - 1) * per + data.length : null,
+        path: base, first_page_url: url(1), last_page_url: url(last), next_page_url: cur < last ? url(cur + 1) : null, prev_page_url: cur > 1 ? url(cur - 1) : null, links: links };
+    }
+    // (the photos FR24's list shows beside each - those this page has found for the registrations on it: { reg: { src, copyright } })
+    function acPhotos(rows) {
+      var o = {};
+      rows.forEach(function (r) {
+        try { var res = r[4] && photoCache.get(String(r[4]).toUpperCase()), ph = res && Array.isArray(res.photos) ? res.photos[0] : null, u = ph && (ph.medium || ph.thumb || ph.large); if (u) o[String(r[0])] = { src: String(u), copyright: String(ph.copyright || ph.photographer || ph.by || '') }; } catch (e) { /* none */ }
+      });
+      return o;
+    }
+    // (FR24's page of the family or type it is made from - its layout, its texts - made theirs)
+    function acPageOf(j, q, d) {
+      var o = Object.assign({}, j), p = Object.assign({}, j.props || {}), stat = q.type || q.fam;
+      o.component = q.kind === 'type' ? 'Data/AircraftType' : 'Data/AircraftFamily';
+      o.url = q.path + (q.page > 1 ? '?page=' + q.page : '');
+      p.family = Object.assign({}, p.family && typeof p.family === 'object' ? p.family : {}, { code: q.fam.code, name: q.fam.name, slug: q.fam.slug });
+      p.statistics = { total: d ? d.total : (stat.count || 0), averageAge: d ? d.averageAge : null };
+      p.aircraft = acPaginator(q, d);
+      p.photos = acPhotos(d && Array.isArray(d.rows) ? d.rows : []);
+      p.locked = false;
+      p.canonicalUrl = location.origin + q.path;
+      if (q.kind === 'type') { p.type = { code: q.type.code, name: q.type.name, model: q.type.name, slug: q.type.slug }; delete p.types; }
+      else { p.types = q.fam.types.map(function (t) { return { code: t.code, name: t.name, slug: t.slug, count: t.count, photo: null }; }); delete p.type; }
+      o.props = p;
+      Object.defineProperty(o, '__tlAc', { value: q.key, enumerable: false });
+      stats.acPages = (stats.acPages || 0) + 1;
+      return o;
+    }
+    // (the page FR24's server sent for the page theirs is made from, made theirs as it loads - the monitor's page of it
+    // when kept, else filled when it comes (acTick) - and its address theirs)
+    function acFastPage(pg) {
+      if (!pg || !pg.component || !/^Data\/Aircraft/.test(pg.component)) return pg;
+      var q = acPageReq(location.href); if (!q) return pg;
+      var o = acPageOf(pg, q, acPgKept(q.key));
+      try { history.replaceState(history.state, '', o.url); } catch (e) { /* the address as it is */ }
+      return o;
+    }
+    function acTick() {
+      if (!optOn('on') || !/^\/data\/aircraft(\/|$)/i.test(location.pathname)) return;
+      var gp = mxGp(), pg = gp && gp.$page, p = pg && pg.props; if (!p) return;
+      try {
+        if (pg.component === 'Data/Aircraft' && Array.isArray(p.families)) {
+          var base = p.families.__tlBase || p.families;
+          // (a family and a type of FR24's own, to make theirs from: the one with the most aircraft)
+          var rf = null; base.forEach(function (f) { if (f && f.slug && Array.isArray(f.types) && f.types.length && f.types[0].slug && (!rf || (f.count || 0) > (rf.count || 0))) rf = f; });
+          if (rf) { var ref = { fam: String(rf.slug).toLowerCase(), typeFam: String(rf.slug).toLowerCase(), type: String(rf.types[0].slug).toLowerCase() }; var was = acRefGet(); if (!was || was.fam !== ref.fam || was.type !== ref.type) lsSet(AC_REF, JSON.stringify(ref)); }
+          var a = acAsked.get('idx');
+          if (!a) { acAsked.set('idx', { at: Date.now() }); post('acDir', { key: 'idx' }); return; }
+          if (!a.families) { if (Date.now() - a.at > 30000) acAsked.delete('idx'); return; }
+          if (p.families.__tl === a.at) return;
+          var m = acMerge(base, a.families); m.families.__tl = a.at; m.families.__tlBase = base;
+          p.families = m.families; acAdd = { at: Date.now(), fams: m.add }; lsSet(AC_ADD, JSON.stringify(acAdd)); stats.acDir = (stats.acDir || 0) + 1;
+        } else if (pg.component === 'Data/AircraftFamily' && p.family && Array.isArray(p.types) && !p.types.__tl) {
+          // (a family of FR24's own: the types it lacks among its own)
+          var add = acAddGet(), f = add && add.fams.filter(function (x) { return x.fr24 && x.slug === String(p.family.slug || '').toLowerCase(); })[0];
+          if (f) { var tb = p.types, to = tb.concat(f.types.map(function (t) { return { code: t.code, name: t.name, slug: t.slug, count: t.count, photo: null }; })); to.__tl = 1; p.types = to; stats.acDir = (stats.acDir || 0) + 1; }
+          else { p.types.__tl = 1; }
+        }
+        // (one of theirs whose production list was not here when it loaded: filled now)
+        var q = (pg.component === 'Data/AircraftFamily' || pg.component === 'Data/AircraftType') && p.aircraft && !p.aircraft.data.length ? acPageReq(location.href) : null;
+        if (q && p.family && p.family.slug === q.fam.slug && !p.aircraft.__tlAsk) {
+          p.aircraft.__tlAsk = 1;
+          acAskPage(q).then(function (d) { if (!d) return; var g2 = mxGp(), pg2 = g2 && g2.$page; if (!pg2 || !pg2.props || pg2.props.family !== p.family) return; pg2.props.statistics = { total: d.total, averageAge: d.averageAge }; pg2.props.aircraft = acPaginator(q, d); pg2.props.photos = acPhotos(d.rows); });
+        }
+      } catch (e) { stats.errors++; stats.lastError = String(e); }
+    }
+    setInterval(acTick, 400);
+    // (one of theirs whose address FR24's server sent elsewhere - typed, or the page loaded again: the extension saw where
+    // from - made from FR24's page as it loads)
+    var acNav = function (u) { location.replace(u); };
+    function acceptAcFrom(d) {
+      if (!optOn('on') || !d || typeof d.path !== 'string' || !/^\/data\/aircraft\//i.test(d.path)) return;
+      var q = acPageReq(d.path); if (q) acNav(q.refUrl);
+    }
+    // (a link to one of theirs - FR24's search on the page, its cards, a list's next page: to the page of FR24's it is made
+    // from, so a load of it, in this tab or another, is made theirs as it loads)
+    function acLinkPressed(ev) {
+      if (!optOn('on')) return;
+      try {
+        var a = ev.target && ev.target.closest ? ev.target.closest('a[href]') : null; if (!a) return;
+        var q = acPageReq(a.href); if (!q) return;
+        var h = new URL(a.href, location.href); if (h.searchParams.get('tl-ac')) return;
+        a.setAttribute('href', q.refUrl);
+      } catch (e) { stats.errors++; stats.lastError = String(e); }
+    }
+    ['pointerdown', 'mousedown', 'touchstart', 'auxclick', 'contextmenu', 'keydown', 'focusin'].forEach(function (k) { document.addEventListener(k, function (ev) { if (k === 'keydown' && ev.key !== 'Enter') return; acLinkPressed(ev); }, true); });
     function searchFetch(self, args, url, kind) {
       var u; try { u = new URL(url, location.href); } catch (e) { return null; }
       var q = u.searchParams.get('query') || '', type = u.searchParams.get('type') || '';
@@ -3350,10 +3542,11 @@
     // (the page as FR24's server gave it, in #app: read and put back unlocked the moment it is in the document - FR24's
     // app reads it once the page is parsed)
     (function () {
-      if (!oaFast && !/^\/data\/airports\/[^/]+(?:\/statistics)?\/?$/i.test(location.pathname)) return;
+      var acHere = optOn('on') && /^\/data\/aircraft\/[^/]/i.test(location.pathname) && !!acPageReq(location.href);
+      if (!oaFast && !acHere && !/^\/data\/airports\/[^/]+(?:\/statistics)?\/?$/i.test(location.pathname)) return;
       // (a frame of a locked table drawn by FR24's server before its app starts, should it send one: not shown - with the
       // tables unlocked FR24's app never draws one)
-      try { var css = document.createElement('style'); css.id = 'tl-stats-frame'; css.textContent = '#app [class*="max-h-84"]{visibility:hidden!important}'; (document.head || document.documentElement).appendChild(css); } catch (e) { /* none */ }
+      if (!acHere) try { var css = document.createElement('style'); css.id = 'tl-stats-frame'; css.textContent = '#app [class*="max-h-84"]{visibility:hidden!important}'; (document.head || document.documentElement).appendChild(css); } catch (e) { /* none */ }
       var done = false;
       // (the page's data: #app's data-page, or - Inertia's newer form - a script[data-page="app"] of JSON)
       function fix() {
@@ -3364,7 +3557,11 @@
         done = true;
         try {
           var raw = el && el.getAttribute('data-page');
-          if (raw) { var pg = oaFastPage(JSON.parse(raw)); if (statsUnlock(pg) || pg.__tlOa) el.setAttribute('data-page', JSON.stringify(pg)); }
+          if (acHere) {
+            // (1.3.5: one of the aircraft directory's families or types FR24 does not list - made from FR24's page as it loads)
+            if (raw) { var pa = acFastPage(JSON.parse(raw)); if (pa.__tlAc) el.setAttribute('data-page', JSON.stringify(pa)); }
+            else if (sc && sc.textContent) { var pa2 = acFastPage(JSON.parse(sc.textContent)); if (pa2.__tlAc) sc.textContent = JSON.stringify(pa2); }
+          } else if (raw) { var pg = oaFastPage(JSON.parse(raw)); if (statsUnlock(pg) || pg.__tlOa) el.setAttribute('data-page', JSON.stringify(pg)); }
           else if (sc && sc.textContent) { var pg2 = oaFastPage(JSON.parse(sc.textContent)); if (statsUnlock(pg2) || pg2.__tlOa) sc.textContent = JSON.stringify(pg2); }
         } catch (e) { stats.errors++; stats.lastError = String(e); }
         return true;
@@ -5415,6 +5612,12 @@
       if (!optOn('on')) return oFetch.apply(window, arguments);   // (1.3: switched off - FR24's own, untouched)
       var url = urlOf(input), m;
       noteReq('fetch', (init && init.method) || (input && input.method), url);
+      // (1.3.5: a page of one of the aircraft directory's added families or types, should FR24's router ask with fetch: as
+      // with its XHR - FR24's page it is made from asked for, once the monitor's page of it is here, and made theirs)
+      if (/\/data\/aircraft\//i.test(url)) {
+        var aih = init && init.headers, ainer = aih && (aih['X-Inertia'] || aih['x-inertia'] || (typeof aih.get === 'function' && aih.get('X-Inertia'))), afq = ainer ? acPageReq(url) : null;
+        if (afq) { var aself = this; return acAskPage(afq).then(function (d) { return oFetch.call(aself, afq.refUrl, init).then(function (res) { if (!res.ok) return res; return res.clone().json().then(function (j) { return j && j.component && j.props ? jsonResponse(res, acPageOf(j, afq, d)) : res; }, function () { return res; }); }); }); }
+      }
       // (1.3.1: a move to an airport's statistics page within FR24, should its router ask with fetch: unlocked as the first load is)
       if (STATS_PAGE_RE.test(url)) {
         var ih = init && init.headers, inertia = ih && (ih['X-Inertia'] || ih['x-inertia'] || (typeof ih.get === 'function' && ih.get('X-Inertia')));
@@ -6135,6 +6338,9 @@
       else if (d.__tweeksLadd === 'oaFrom') acceptOaFrom(d);
       else if (d.__tweeksLadd === 'oaFound') acceptOaFound(d);
       else if (d.__tweeksLadd === 'oaDir') acceptOaDir(d);
+      else if (d.__tweeksLadd === 'acDir') acceptAcDir(d);
+      else if (d.__tweeksLadd === 'acPage') acceptAcPage(d);
+      else if (d.__tweeksLadd === 'acFrom') acceptAcFrom(d);
       else if (d.__tweeksLadd === 'pbRoute') { if (d.id != null) { var prId = Number(d.id); if (!d.none) { if (d.route) pbRoutes.set(prId, d.route); else pbRoutes.delete(prId); if (pbRoutes.size > 3000) pbRoutes.delete(pbRoutes.keys().next().value); } pbRouteDone.add(prId); if (pbRouteDone.size > 3000) pbRouteDone.delete(pbRouteDone.values().next().value); pbRelease(); } }
       else if (d.__tweeksLadd === 'pbTrace') { if (d.id != null && Array.isArray(d.pts)) { pbTrace = { id: Number(d.id), hex: d.hex || '', pts: d.pts }; pbRelease(); } }
       else if (d.__tweeksLadd === 'routesAdd') { if (d.apId) { routesAdd.set(Number(d.apId), d.list || []); keepApData(Number(d.apId)); routesTick(); } }
@@ -6166,7 +6372,7 @@
       else if (d.__tweeksLadd === 'hello') post('ready', { oaWant: oaWant, stats: stats, feedReady: !!feedHeaders, hdr: feedHdrPublic(), v: BRIDGE_V });
     });
     window[NS] = { resolved: resolved, routes: routes, naRecs: naRecs, naRoutes: naRoutes, telem: telem, hist: hist, lastPos: lastPos, photoCache: photoCache, psCache: psCache, stats: stats, fetchPhotos: fetchPhotos, hello: function () { post('ready', { oaWant: oaWant, stats: stats, feedReady: !!feedHeaders, v: BRIDGE_V }); }, v: BRIDGE_V };
-    if (window.__tlTestHook) try { window.__tlTestHook({ csOf: csOf, patchTopFlights: patchTopFlights, onTopGot: onTopGot, topNames: topNames, fillFlightList: fillFlightList, routeRows: routeRows, liveDestFix: liveDestFix, hist: hist, preloaded: function () { return preloaded; }, parse: parse, photoFits: photoFits, makerOf: makerOf, patchFollow: patchFollow, patchFlightMsg: patchFlightMsg, pushFollow: pushFollow, followSt: function () { return followSt; }, setFollowSt: function (s) { followSt = s; }, shownPhotos: shownPhotos, photoCache: photoCache, FOLLOW: FOLLOW, DETAILS: DETAILS, fLen: fLen, fStr: fStr, fVar: fVar, patchFlight: patchFlight, patchLiveFeed: patchLiveFeed, fr24Named: fr24Named, psState: function () { return { q: psQ.length, busy: psBusy, last: psLast, blockedFor: Math.max(0, psBlockedUntil - Date.now()), pri: Array.from(psPri), jobs: photoJobs.size, head: psQ.slice(0, 3).map(function (j) { return j.hex; }) }; }, acceptPubTel: acceptPubTel, pubTelFor: pubTelFor, fillNativeCard: fillNativeCard, regsOfCallsign: regsOfCallsign, categoryOf: categoryOf, placeShort: placeShort, nativeFill: nativeFill, natInfo: natInfo, addArch: addArch, acceptBoardArch: acceptBoardArch, telem: telem, b64Encode: b64Encode, b64DecodeInto: b64DecodeInto, frameHeader: frameHeader, concat: concat, varintInt32: varintInt32, PLAYBACK: PLAYBACK, patchPlayback: patchPlayback, patchPlaybackRequest: patchPlaybackRequest, pbRoutes: pbRoutes, pbTelAt: pbTelAt, setPbTrace: function (t) { pbTrace = t; }, patchList: patchList, acceptSites: acceptSites, listSig: listSig, mergeRoutes: mergeRoutes, applyRoutes: applyRoutes, routesAdd: routesAdd, applyAirport: applyAirport, applyBoardPage: applyBoardPage, applyStats: applyStats, mergeFlights: mergeFlights, apData: apData, telAt: telAt, noteTelem: noteTelem, pbTraceOf: function () { return pbTrace; }, logoOf: logoOf, archDetail: archDetail, tsOf: tsOf, noteAirportJson: noteAirportJson, rwyOf: rwyOf, rwyPanel: rwyPanel, panelTick: panelTick, panelData: panelData, promoSlots: promoSlots, acceptAirportPanel: acceptAirportPanel, unlockRunways: unlockRunways, mvRows: mvRows, mvKept: mvKept, dayOf: dayOf, pbPanelTick: pbPanelTick, logoFix: logoFix, liveEntries: liveEntries, pbPos: pbPos, unlockFeed: unlockFeed, derivedVs: derivedVs, altHist: altHist, acceptAir: acceptAir, airCache: airCache, flushAir: flushAir, airWant: function () { return airWant; }, lastPos: lastPos, resolved: resolved, stats: stats, pbFind: pbFind, inBar: inBar, pbBlk: pbBlk, cardInfo: cardInfo, boardRowsSeen: boardRowsSeen, archById: archById, placeBoard: placeBoard, stopBoardHold: stopBoardHold, needBoardArch: needBoardArch, mx: mx, mxPatchCore: mxPatchCore, mxAuth: mxAuth, mxNatList: mxNatList, mxTrackOk: mxTrackOk, stripRestriction: stripRestriction, mxBmMerge: mxBmMerge, mxBmItem: mxBmItem, mxMonTile: mxMonTile, mxMonOr: mxMonOr, mxPinVer: mxPinVer, mxAirportHistory: mxAirportHistory, mxHistItems: mxHistItems, mxTrackFile: mxTrackFile, mxDataTick: mxDataTick, mxPbProps: mxPbProps, mxPbShow: mxPbShow, mxPbStandIn: mxPbStandIn, mxPbReadAt: mxPbReadAt, mxPbStand: mxPbStand, mxBoardRwy: mxBoardRwy, reqIdOf: reqIdOf, mxPbOpen: mxPbOpen, mxPbTake: mxPbTake, setNav: function (f) { mxNav = f; }, mxPbAway: mxPbAway, mxLegacyPbJson: mxLegacyPbJson, mxLegacyPb: mxLegacyPb, mxPbFlags: mxPbFlags, mxPbSynId: mxPbSynId, mxPbParam: mxPbParam, setPbWanted: function (v) { mxPbWanted = v; }, mxPlans: function () { return mxPlans; }, mxLiveRunways: mxLiveRunways, mxRwy: mxRwy, mxSetApply: mxSetApply, mxSetNote: mxSetNote, mxSetKept: mxSetKept, mxLastClicked: mxLastClicked, mxLcList: mxLcList, onLcClick: onLcClick, mxLcFill: mxLcFill, cardRwy: cardRwy, naEndsFill: naEndsFill, onEndsGot: onEndsGot, naEnds: naEnds, boardWant: boardWant, mxLegacyImages: mxLegacyImages, rwyInUse: rwyInUse, windOfText: windOfText, mxRwyAirport: mxRwyAirport, mxRwyByHex: mxRwyByHex, mxRowHex: mxRowHex, mxDataEnds: mxDataEnds, rwyUsePanel: rwyUsePanel, apWxPanel: apWxPanel, apWxData: apWxData, apWxOf: apWxOf, mxApWxAdd: mxApWxAdd, vsNoLock: vsNoLock, statsUsage: statsUsage, statsMoves: statsMoves, apDataOf: apDataOf, acceptOa: acceptOa, oaAirportJson: oaAirportJson, oaMap: oaMap, oaRefs: fr24Refs, setOaBase: function (b) { oaBase = b; oaShown = 'x'; }, oaStoreRow: oaStoreRow, setViewBox: function (b) { viewBox = b; }, oaView: oaView, sunTimes: sunTimes, tzText: tzText, panelCodeFields: panelCodeFields, oaLinkPressed: oaLinkPressed, oaRefHref: oaRefHref, acceptOaOne: acceptOaOne, oaLost: function () { return oaLost; }, acceptOaFrom: acceptOaFrom, oaCodeLine: oaCodeLine, noteFr24Codes: noteFr24Codes, oaDupe: oaDupe, dirTick: dirTick, acceptOaDir: acceptOaDir, searchMerge: searchMerge, apSearchMerge: apSearchMerge, oaMatchRows: oaMatchRows, oaOneGet: oaOneGet, oaFillTables: oaFillTables, refOf: refOf, fieldShortName: fieldShortName, closestMerge: closestMerge, heliText: heliText, oaFast: function () { return oaFast; }, setOaNav: function (f) { oaNav = f; }, oaWantNow: function () { return oaWant; }, oaApi: oaApi, oaPageReq: oaPageReq, oaPageOf: oaPageOf, statsUnlock: statsUnlock, onApWxGot: onApWxGot, mxStat: function () { return mx; }, mxTracksPac: mxTracksPac, setPac: function (o) { mxPac = { at: Date.now(), o: o }; }, rwyUseData: rwyUseData, rwyUseWant: rwyUseWant, cardRwyFill: cardRwyFill, rwyUseKept: rwyUseKept, mxLcTick: mxLcTick, mxBmMax: mxBmMax, mxNatParse: mxNatParse, mxAirsigList: mxAirsigList, mxStations: mxStations, mxLightning: mxLightning, mxLx: mxLx, mxFetch: mxFetch, mxWxText: mxWxText, mxWxKind: mxWxKind, mxCsv: mxCsv, patchLiveFeedRequest: patchLiveFeedRequest, mxCats: mxCats, mxOp: mxOp, mxLevels: mxLevels, mxNearest: mxNearest, MX_ICE: MX_ICE, MX_TURB: MX_TURB, mxWafsUrl: mxWafsUrl, routes: routes, setCurFollow: function (id) { curFollowId = id; } }); } catch (e) { /* ignore */ }
+    if (window.__tlTestHook) try { window.__tlTestHook({ csOf: csOf, patchTopFlights: patchTopFlights, onTopGot: onTopGot, topNames: topNames, fillFlightList: fillFlightList, routeRows: routeRows, liveDestFix: liveDestFix, hist: hist, preloaded: function () { return preloaded; }, parse: parse, photoFits: photoFits, makerOf: makerOf, patchFollow: patchFollow, patchFlightMsg: patchFlightMsg, pushFollow: pushFollow, followSt: function () { return followSt; }, setFollowSt: function (s) { followSt = s; }, shownPhotos: shownPhotos, photoCache: photoCache, FOLLOW: FOLLOW, DETAILS: DETAILS, fLen: fLen, fStr: fStr, fVar: fVar, patchFlight: patchFlight, patchLiveFeed: patchLiveFeed, fr24Named: fr24Named, psState: function () { return { q: psQ.length, busy: psBusy, last: psLast, blockedFor: Math.max(0, psBlockedUntil - Date.now()), pri: Array.from(psPri), jobs: photoJobs.size, head: psQ.slice(0, 3).map(function (j) { return j.hex; }) }; }, acceptPubTel: acceptPubTel, pubTelFor: pubTelFor, fillNativeCard: fillNativeCard, regsOfCallsign: regsOfCallsign, categoryOf: categoryOf, placeShort: placeShort, nativeFill: nativeFill, natInfo: natInfo, addArch: addArch, acceptBoardArch: acceptBoardArch, telem: telem, b64Encode: b64Encode, b64DecodeInto: b64DecodeInto, frameHeader: frameHeader, concat: concat, varintInt32: varintInt32, PLAYBACK: PLAYBACK, patchPlayback: patchPlayback, patchPlaybackRequest: patchPlaybackRequest, pbRoutes: pbRoutes, pbTelAt: pbTelAt, setPbTrace: function (t) { pbTrace = t; }, patchList: patchList, acceptSites: acceptSites, listSig: listSig, mergeRoutes: mergeRoutes, applyRoutes: applyRoutes, routesAdd: routesAdd, applyAirport: applyAirport, applyBoardPage: applyBoardPage, applyStats: applyStats, mergeFlights: mergeFlights, apData: apData, telAt: telAt, noteTelem: noteTelem, pbTraceOf: function () { return pbTrace; }, logoOf: logoOf, archDetail: archDetail, tsOf: tsOf, noteAirportJson: noteAirportJson, rwyOf: rwyOf, rwyPanel: rwyPanel, panelTick: panelTick, panelData: panelData, promoSlots: promoSlots, acceptAirportPanel: acceptAirportPanel, unlockRunways: unlockRunways, mvRows: mvRows, mvKept: mvKept, dayOf: dayOf, pbPanelTick: pbPanelTick, logoFix: logoFix, liveEntries: liveEntries, pbPos: pbPos, unlockFeed: unlockFeed, derivedVs: derivedVs, altHist: altHist, acceptAir: acceptAir, airCache: airCache, flushAir: flushAir, airWant: function () { return airWant; }, lastPos: lastPos, resolved: resolved, stats: stats, pbFind: pbFind, inBar: inBar, pbBlk: pbBlk, cardInfo: cardInfo, boardRowsSeen: boardRowsSeen, archById: archById, placeBoard: placeBoard, stopBoardHold: stopBoardHold, needBoardArch: needBoardArch, mx: mx, mxPatchCore: mxPatchCore, mxAuth: mxAuth, mxNatList: mxNatList, mxTrackOk: mxTrackOk, stripRestriction: stripRestriction, mxBmMerge: mxBmMerge, mxBmItem: mxBmItem, mxMonTile: mxMonTile, mxMonOr: mxMonOr, mxPinVer: mxPinVer, mxAirportHistory: mxAirportHistory, mxHistItems: mxHistItems, mxTrackFile: mxTrackFile, mxDataTick: mxDataTick, mxPbProps: mxPbProps, mxPbShow: mxPbShow, mxPbStandIn: mxPbStandIn, mxPbReadAt: mxPbReadAt, mxPbStand: mxPbStand, mxBoardRwy: mxBoardRwy, reqIdOf: reqIdOf, mxPbOpen: mxPbOpen, mxPbTake: mxPbTake, setNav: function (f) { mxNav = f; }, mxPbAway: mxPbAway, mxLegacyPbJson: mxLegacyPbJson, mxLegacyPb: mxLegacyPb, mxPbFlags: mxPbFlags, mxPbSynId: mxPbSynId, mxPbParam: mxPbParam, setPbWanted: function (v) { mxPbWanted = v; }, mxPlans: function () { return mxPlans; }, mxLiveRunways: mxLiveRunways, mxRwy: mxRwy, mxSetApply: mxSetApply, mxSetNote: mxSetNote, mxSetKept: mxSetKept, mxLastClicked: mxLastClicked, mxLcList: mxLcList, onLcClick: onLcClick, mxLcFill: mxLcFill, cardRwy: cardRwy, naEndsFill: naEndsFill, onEndsGot: onEndsGot, naEnds: naEnds, boardWant: boardWant, mxLegacyImages: mxLegacyImages, rwyInUse: rwyInUse, windOfText: windOfText, mxRwyAirport: mxRwyAirport, mxRwyByHex: mxRwyByHex, mxRowHex: mxRowHex, mxDataEnds: mxDataEnds, rwyUsePanel: rwyUsePanel, apWxPanel: apWxPanel, apWxData: apWxData, apWxOf: apWxOf, mxApWxAdd: mxApWxAdd, vsNoLock: vsNoLock, statsUsage: statsUsage, statsMoves: statsMoves, apDataOf: apDataOf, acceptOa: acceptOa, oaAirportJson: oaAirportJson, oaMap: oaMap, oaRefs: fr24Refs, setOaBase: function (b) { oaBase = b; oaShown = 'x'; }, oaStoreRow: oaStoreRow, setViewBox: function (b) { viewBox = b; }, oaView: oaView, sunTimes: sunTimes, tzText: tzText, panelCodeFields: panelCodeFields, oaLinkPressed: oaLinkPressed, oaRefHref: oaRefHref, acceptOaOne: acceptOaOne, oaLost: function () { return oaLost; }, acceptOaFrom: acceptOaFrom, oaCodeLine: oaCodeLine, noteFr24Codes: noteFr24Codes, oaDupe: oaDupe, dirTick: dirTick, acceptOaDir: acceptOaDir, searchMerge: searchMerge, apSearchMerge: apSearchMerge, oaMatchRows: oaMatchRows, oaOneGet: oaOneGet, oaFillTables: oaFillTables, refOf: refOf, fieldShortName: fieldShortName, closestMerge: closestMerge, heliText: heliText, oaFast: function () { return oaFast; }, setOaNav: function (f) { oaNav = f; }, oaWantNow: function () { return oaWant; }, oaApi: oaApi, oaPageReq: oaPageReq, oaPageOf: oaPageOf, acMerge: acMerge, acPageReq: acPageReq, acPageOf: acPageOf, acPaginator: acPaginator, acTick: acTick, acceptAcDir: acceptAcDir, acceptAcPage: acceptAcPage, acAskPage: acAskPage, acLinkPressed: acLinkPressed, acceptAcFrom: acceptAcFrom, setAcNav: function (f) { acNav = f; }, acAddGet: acAddGet, acRefGet: acRefGet, statsUnlock: statsUnlock, onApWxGot: onApWxGot, mxStat: function () { return mx; }, mxTracksPac: mxTracksPac, setPac: function (o) { mxPac = { at: Date.now(), o: o }; }, rwyUseData: rwyUseData, rwyUseWant: rwyUseWant, cardRwyFill: cardRwyFill, rwyUseKept: rwyUseKept, mxLcTick: mxLcTick, mxBmMax: mxBmMax, mxNatParse: mxNatParse, mxAirsigList: mxAirsigList, mxStations: mxStations, mxLightning: mxLightning, mxLx: mxLx, mxFetch: mxFetch, mxWxText: mxWxText, mxWxKind: mxWxKind, mxCsv: mxCsv, patchLiveFeedRequest: patchLiveFeedRequest, mxCats: mxCats, mxOp: mxOp, mxLevels: mxLevels, mxNearest: mxNearest, MX_ICE: MX_ICE, MX_TURB: MX_TURB, mxWafsUrl: mxWafsUrl, routes: routes, setCurFollow: function (id) { curFollowId = id; } }); } catch (e) { /* ignore */ }
     post('ready', { oaWant: oaWant, stats: stats, feedReady: false, v: BRIDGE_V });
   }
 
@@ -8895,7 +9101,7 @@
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '1.3.4';
+  const VERSION = '1.3.5';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
@@ -12873,6 +13079,36 @@
     } finally { airBusy = false; }
   }
   function firLabelAt(lat, lon, alt) { const f = firInfo(lat, lon, alt); return f ? (f.name !== f.code ? `${f.name} (${f.code})` : f.code) : ''; }
+
+  // ---- (1.3.5) FR24's aircraft directory (/data/aircraft): the families and types the monitor's aircraft database knows -
+  // Bombardier Global, Gulfstream and the rest FR24 does not list - and a page of a type's or a family's aircraft. The list
+  // of families kept a day (it changes weekly); the page asks for which of them FR24 leaves out and adds only those.
+  const acx = { idx: null, got: 0, loading: null };
+  const acGood = j => !!(j && j.v === 1 && Array.isArray(j.families) && j.families.length);
+  function loadAcTypes() {
+    if (acx.idx && now() - acx.got < 864e5) return Promise.resolve(true);
+    if (acx.loading) return acx.loading;
+    acx.loading = (async () => {
+      const c = acx.idx ? null : await store.getHist('b:actypes1').catch(() => null);
+      if (acGood(c) && now() - (c.got || 0) < 864e5) { acx.idx = c; acx.got = c.got; return true; }
+      const j = await monGet('/actypes', { timeout: 30000, bg: true }).catch(() => null);
+      if (acGood(j)) { j.got = now(); acx.idx = j; acx.got = j.got; store.setHist('b:actypes1', j); return true; }
+      if (acGood(c)) { acx.idx = c; acx.got = c.got || 0; return true; }   // (an old one rather than none)
+      return !!acx.idx;
+    })().catch(e => { log('aircraft types', String(e && e.message || e)); return !!acx.idx; }).finally(() => { acx.loading = null; });
+    return acx.loading;
+  }
+  function onAcDir(d) {
+    const key = String(d && d.key || '').slice(0, 40);
+    loadAcTypes().then(ok => postToPage('acDir', { key, families: ok && acx.idx ? acx.idx.families : null, at: ok && acx.idx ? acx.idx.at : 0 }));
+  }
+  // (a page of one: type GLEX or family GLOBAL, page n - the monitor's answer as it is, or none)
+  function onAcPage(d) {
+    const key = String(d && d.key || '').slice(0, 80), kind = d && d.kind === 'family' ? 'family' : 'type', code = String(d && d.code || '').toUpperCase(), pg = Math.max(1, Math.min(5000, Math.floor(+(d && d.page)) || 1));
+    if (!/^[A-Z0-9]{2,12}$/.test(code)) { postToPage('acPage', { key, page: null }); return; }
+    monGet('/actype?' + kind + '=' + encodeURIComponent(code) + '&page=' + pg, { timeout: 15000 })
+      .then(j => postToPage('acPage', { key, page: j && Array.isArray(j.rows) ? j : null }), () => postToPage('acPage', { key, page: null }));
+  }
 
 
   // ---- live state of the tracked flights -------------------------------------------------------------------------------
@@ -18132,7 +18368,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // (the version whose "what's new" was put away, and the one whose dot on the button the window was opened for)
   const UB_SEEN_KEY = 'tweeks.fr24.ladd.seenver', UB_DOT_KEY = 'tweeks.fr24.ladd.dotver';
   // (the newest CHANGELOG section's headlines, written in by build.mjs: { v, items })
-  const UB_WHATS_NEW = {"v":"1.3.4","items":["OurAirports airports now behave like FR24's own airports across FR24:","Their pages build in one load. A link to RAF Woodvale's page (/data/airports/egow) now loads straight as Woodvale's, with no detour through Liverpool's page and no wait. It went to Blackpool's page before, which FR24's server doesn't have, and ended on FR24's airport search.","Their airport window:","**Runway usage**: the monitor now logs which runway flights use at OurAirports airfields, as it does at FR24's airports. Woodvale's runway usage was always empty.","**Address typed into a new tab** (extension only): an OurAirports airport's address typed or pasted into a new tab now opens the airport's page. The extension now has the webRequest permission for this: it only watches FR24's server redirect such a request to its airport search, and never blocks or changes anything.","**Aircraft directory**: missing aircraft types (Bombardier Globals, Gulfstreams and others) in FR24's aircraft directory (/data/aircraft) are not in this version. They come next, in 1.3.5."]};
+  const UB_WHATS_NEW = {"v":"1.3.5","items":["**FR24's aircraft directory** (flightradar24.com/data/aircraft) now lists the types of aircraft FR24 leaves out, from the monitor's aircraft database:","The pages open from FR24's own links, its search and its list's pages, and load in one go."]};
   // (an aircraft with an open padlock: FR24's outline style - 24 grid, 1.5 stroke in the text colour)
   const UB_ICON = '<svg data-tl-ub-icon="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
   const UB_X = '<svg viewBox="0 0 14 14" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5l11 11M12.5 1.5l-11 11"/></svg>';
@@ -19457,6 +19693,8 @@ html.tl-no-strip .tl-strip{display:none!important}`;
       case 'needRoutes': onNeedRoutes(d).catch(e => log('routes page', e)); break;
       case 'needAirportData': onNeedAirportData(d).catch(e => log('airport page', e)); break;
       case 'oaFind': onOaFind(d); break;
+      case 'acDir': onAcDir(d); break;
+      case 'acPage': onAcPage(d); break;
       case 'oaDir': loadOa().then(() => loadAirports()).then(() => { const o = oaDirectory(d) || {}; o.key = d.key; postToPage('oaDir', o); }).catch(() => postToPage('oaDir', { key: d.key })); break;
       case 'needAirportPanel': onNeedAirportPanel(d).catch(e => log('airport panel', e)); break;
       case 'needApWx': onNeedApWx(d).catch(e => { log('airport weather', String(e && e.message || e)); postToPage('apWxGot', { ap: d.ap, wx: null }); }); break;
@@ -19501,6 +19739,10 @@ html.tl-no-strip .tl-strip{display:none!important}`;
           if (am || want) { let code = ''; try { code = want || decodeURIComponent(am[1]); } catch (e) { code = ''; } if (code) oaIsFor(code); }
           // (1.3.4) FR24's airport search, the browser sent there by FR24's server from one of their pages' addresses (typed or
           // pasted): the extension's background saw where from - that airport's page made
+          // (1.3.5) the same for one of the aircraft directory's added pages, sent elsewhere: the page makes it from FR24's
+          if (/^\/data\/aircraft(\/|$)/i.test(location.pathname) && typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.id) {
+            try { chrome.runtime.sendMessage({ tlOaFrom: true }, p => { void chrome.runtime.lastError; if (typeof p === 'string' && /^\/data\/aircraft\/[a-z0-9-\/]{1,110}(\?[^#]*)?$/i.test(p)) postToPage('acFrom', { path: p }); }); } catch (e) { /* no extension */ }
+          }
           if (/^\/data\/airports\/?$/i.test(location.pathname) && typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.id) {
             try { chrome.runtime.sendMessage({ tlOaFrom: true }, p => { void chrome.runtime.lastError; const m = typeof p === 'string' && p.match(/^\/data\/airports\/([^/?#]+)/i); if (!m) return; postToPage('oaFrom', { path: p }); try { oaIsFor(decodeURIComponent(m[1])); } catch (e) { /* not a code */ } }); } catch (e) { /* not the extension */ }
           } }

@@ -165,6 +165,8 @@
       case 'needRoutes': onNeedRoutes(d).catch(e => log('routes page', e)); break;
       case 'needAirportData': onNeedAirportData(d).catch(e => log('airport page', e)); break;
       case 'oaFind': onOaFind(d); break;
+      case 'acDir': onAcDir(d); break;
+      case 'acPage': onAcPage(d); break;
       case 'oaDir': loadOa().then(() => loadAirports()).then(() => { const o = oaDirectory(d) || {}; o.key = d.key; postToPage('oaDir', o); }).catch(() => postToPage('oaDir', { key: d.key })); break;
       case 'needAirportPanel': onNeedAirportPanel(d).catch(e => log('airport panel', e)); break;
       case 'needApWx': onNeedApWx(d).catch(e => { log('airport weather', String(e && e.message || e)); postToPage('apWxGot', { ap: d.ap, wx: null }); }); break;
@@ -209,6 +211,10 @@
           if (am || want) { let code = ''; try { code = want || decodeURIComponent(am[1]); } catch (e) { code = ''; } if (code) oaIsFor(code); }
           // (1.3.4) FR24's airport search, the browser sent there by FR24's server from one of their pages' addresses (typed or
           // pasted): the extension's background saw where from - that airport's page made
+          // (1.3.5) the same for one of the aircraft directory's added pages, sent elsewhere: the page makes it from FR24's
+          if (/^\/data\/aircraft(\/|$)/i.test(location.pathname) && typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.id) {
+            try { chrome.runtime.sendMessage({ tlOaFrom: true }, p => { void chrome.runtime.lastError; if (typeof p === 'string' && /^\/data\/aircraft\/[a-z0-9-\/]{1,110}(\?[^#]*)?$/i.test(p)) postToPage('acFrom', { path: p }); }); } catch (e) { /* no extension */ }
+          }
           if (/^\/data\/airports\/?$/i.test(location.pathname) && typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.id) {
             try { chrome.runtime.sendMessage({ tlOaFrom: true }, p => { void chrome.runtime.lastError; const m = typeof p === 'string' && p.match(/^\/data\/airports\/([^/?#]+)/i); if (!m) return; postToPage('oaFrom', { path: p }); try { oaIsFor(decodeURIComponent(m[1])); } catch (e) { /* not a code */ } }); } catch (e) { /* not the extension */ }
           } }
