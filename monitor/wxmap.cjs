@@ -281,7 +281,13 @@ function createWxMap(env) {
       let cur = img;
       for (let z = 4; z >= 1; z--) {
         const n = cur.width / 256;
-        for (let ty = 0; ty < n; ty++) for (let tx = 0; tx < n; tx++) { const t = cut(cur, tx * 256, ty * 256); if (t) tiles.set(z + '/' + (qx * n + tx) + '/' + (qy * n + ty), PNG.encode(256, 256, t)); }
+        // (1.3.2: the server answering between tiles - sixty-four of them cut and packed in one go held it for over a second,
+        // four times each time the rain was built: the monitor's own profile)
+        let t0 = Date.now();
+        for (let ty = 0; ty < n; ty++) for (let tx = 0; tx < n; tx++) {
+          const t = cut(cur, tx * 256, ty * 256); if (t) tiles.set(z + '/' + (qx * n + tx) + '/' + (qy * n + ty), PNG.encode(256, 256, t));
+          if (Date.now() - t0 >= 12) { await tick(); t0 = Date.now(); }
+        }
         if (z > 1) cur = half(cur);
         await tick();
       }

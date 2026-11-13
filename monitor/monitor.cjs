@@ -51,6 +51,8 @@ const http = require('http');
 const crypto = require('crypto');
 const zlib = require('zlib');
 const DIR = __dirname, DATA = process.env.MON_DATA || path.join(DIR, 'data'), STORE = process.env.MON_STORE || path.join(DIR, 'store');
+// (1.3.2) OurAirports' files as last fetched (oaap.cjs, oarwy.cjs): in the store, never in the checkout
+const OADIR = path.join(STORE, 'oa');
 const PORT = +(process.env.PORT || process.env.MON_PORT || 47524), HOST = process.env.MON_HOST || '127.0.0.1';
 // (on a server: MON_TOKEN is the owner's secret - header X-Monitor-Token. A public monitor (monitor.json "public", the
 // default) answers every copy of the script without it, the dashboard's numbers and the full answers only with it; each
@@ -76,7 +78,7 @@ let PUBLIC = PUBLIC0, RATE = rateFor(PUBLIC0);
 const { createRouteEngine } = require(fs.existsSync(path.join(DIR, 'engine.js')) ? path.join(DIR, 'engine.js') : '../src/engine.js');
 const E = createRouteEngine();
 const FR = require('./fr24.cjs'), { createIdent } = require('./ident.cjs'), { createDest } = require('./dest.cjs'), { createOwners } = require('./owners.cjs');
-const { createAirportInfo } = require('./airport.cjs'), APT = createAirportInfo({ E });
+const { createAirportInfo } = require('./airport.cjs'), APT = createAirportInfo({ E, apOf: id => (id >= 1e7 ? OAAP.get(id) : null) });
 const { createNames } = require('./names.cjs');
 const { createTel } = require('./tel.cjs');
 const { createTracks } = require('./tracks.cjs');
@@ -119,14 +121,19 @@ const log = (...a) => {
   try { logRing.push(scrub(t + ' ' + a.map(x => x instanceof Error ? (x.stack || x.message) : typeof x === 'string' ? x : JSON.stringify(x)).join(' ')).slice(0, 2000)); if (logRing.length > 300) logRing.splice(0, logRing.length - 300); } catch (e) { /* not kept */ }
 };
 
+// (the folder OurAirports' airports file is read from: the store's once it has one, else the checkout's)
+function oaFieldsDir() { return fs.existsSync(path.join(OADIR, 'oa_airports.csv')) ? OADIR : DATA; }
 function loadEngine() {
   E.setAirports(JSON.parse(fs.readFileSync(path.join(DATA, 'airports.json'), 'utf8')).rows);
   const rd = f => { const p = path.join(DATA, f); return fs.existsSync(p) ? JSON.parse(fs.readFileSync(p, 'utf8')) : null; };
   const rw = rd('runways.json'); if (rw) E.setRunways(rw);
   const rl = rd('runway_len.json'); if (rl) E.setRunwayLengths(rl);
   APT.load(DATA);
-  const oa = path.join(DATA, 'oa_airports.csv');
-  if (fs.existsSync(oa)) { const fields = require(fs.existsSync(path.join(DIR, 'dataset.cjs')) ? path.join(DIR, 'dataset.cjs') : '../test/dataset.cjs').loadFields(DATA); E.setFields(fields); }
+  // (1.3.2: every airport's runways and frequencies as OurAirports had them when last asked - the store's files, once
+  // there are any - over the checkout's)
+  try { const d = OARW.buildSync(OAAP.file); if (d) APT.set(d.info, d.freqs); } catch (e) { console.log('OurAirports runways', String(e && e.message || e)); }
+  const oaDir = oaFieldsDir();
+  if (fs.existsSync(path.join(oaDir, 'oa_airports.csv'))) { const fields = require(fs.existsSync(path.join(DIR, 'dataset.cjs')) ? path.join(DIR, 'dataset.cjs') : '../test/dataset.cjs').loadFields(oaDir); E.setFields(fields); }
   // (the learned tables and weights the userscript is built with: airports' usage by kind of aircraft, routes, the model -
   // for the rough destinations, and so a flight's guessed end is weighed as the browser weighs it)
   const src = f => [path.join(DIR, f), path.join(DIR, '..', 'src', f)].find(x => fs.existsSync(x));
@@ -620,7 +627,16 @@ const datalink = DL.createDatalink({ isAirport: c => !!E.byIcao(c) });
 // on what all the browsers showing it send and on the monitor's logs - one answer for all of them (POST /calc)
 // (1.1.0) every answer of central calculation noted and scored once the flight is down - live accuracy, training data
 const { createScores } = require('./scores.cjs');
-const SC = createScores({ store: STORE, E, log: (...a) => log('scores', ...a), logOf: hex => logOf(hex), room: () => !WS.full });
+// (1.3.2) Where a followed flight came down is looked for in the flights heard here these last days (the live log, in
+// memory) - not in the aircraft's whole log (logOf): that reads its file and looks each of 366 days up in the world log,
+// for every one of ten thousand flights followed, every five minutes - the monitor's own profile (prof.cjs) showed it
+// holding the server for 70 to 98 seconds each time. A flight is given up after eight hours: the live log has it.
+function recentLog(hex) {
+  const m = legs.get(hex); if (!m || !m.size) return [];
+  const b = blocked.get(hex), x = ac.get(hex), type = String(((x && x.meta) || {}).type || (b && b.type) || '').toUpperCase();
+  return E.chainLegs(E.stitchLegs([...m.values()].map(l => Object.assign({}, l))), type ? { cls: E.classify({ type }), type } : null);
+}
+const SC = createScores({ store: STORE, E, log: (...a) => log('scores', ...a), logOf: hex => recentLog(hex), room: () => !WS.full });
 // (1.2.9) What central calculation may hold, by the heap this process may use: the 1 GB VM's 1,500 flights and 400,000
 // points with a heap under 4 GB; eight thousand and 2.5 million with more (the A1's 12 GB) - full, it let new flights go
 // unanswered
@@ -692,7 +708,8 @@ const RL = createRwyLog({ E, APT, store: STORE, legacy: rwyKnown, keepDays: +CFG
 const { createApWx } = require('./apwx.cjs');
 // (1.3) every OurAirports airport FR24 does not list, closed ones aside, as airports of their own - oaap.cjs
 const { createOaAirports } = require('./oaap.cjs');
-const OAAP = createOaAirports({ E, dataDir: DATA });
+const OAAP = createOaAirports({ E, dataDir: DATA, storeDir: OADIR });
+const OARW = require('./oarwy.cjs').createOaRunways({ storeDir: OADIR });
 const APWX = createApWx(Object.assign({ E: { byId: id => E.byId(id) || (id >= 1e7 ? OAAP.get(id) : null) }, fetch: (u, o) => global.fetch(u, o) }, CFG.apwx || {}));
 try { RL.load(); } catch (e) { log('runways', String(e && e.message || e)); }
 // (a blocked flight's take-offs and landings, from its ADS-B track - its legs: [hex, 0 | 1, runway, time] at an airport.
@@ -831,7 +848,7 @@ function centralWorkers() {
 function centralStart() {
   let ops = null; try { ops = learnedOut && learnedOut.json ? JSON.parse(learnedOut.json).ops : null; } catch (e) { ops = null; }
   return central.start({ off: CFG.central === false, free: memAvail(), freeNow: () => { memAt = 0; return memAvail(); }, needMb: +CFG.centralFreeMb || 300, srcDir: SRC_DIR, mainDir: path.join(SRC_DIR, 'main'), sitesCsv: path.join(DATA, 'oa_airports.csv'), learnedOps: ops,
-    workers: centralWorkers(), engineFile: require.resolve('../src/engine.js'), dataDir: DATA, datasetFile: fs.existsSync(path.join(DIR, 'dataset.cjs')) ? path.join(DIR, 'dataset.cjs') : require.resolve('../test/dataset.cjs') })
+    workers: centralWorkers(), engineFile: require.resolve('../src/engine.js'), dataDir: DATA, fieldsDir: oaFieldsDir(), datasetFile: fs.existsSync(path.join(DIR, 'dataset.cjs')) ? path.join(DIR, 'dataset.cjs') : require.resolve('../test/dataset.cjs') })
     .then(st => log('central calculation', st.on ? `on - tables ${st.mb} MB, ${st.sites || 0} landing sites, ${st.learned || 0} learned increments, ${st.workers ? st.workers + ' worker threads' : 'on the main thread' + (st.workersWhy ? ' (' + st.workersWhy + ')' : '')}` : 'off - ' + st.why));
 }
 const dlSeen = new Set();
@@ -902,7 +919,7 @@ function idxLookup(d, hexNum) {
   if (!archIdx.has(d)) return undefined;
   let fd; try { fd = fs.openSync(idxFile(d), 'r'); } catch (e) { archIdx.delete(d); return undefined; }
   try {
-    let h = idxHeads.get(d); if (!h) { h = ARCH.indexHead(fd); idxHeads.set(d, h); if (idxHeads.size > 64) idxHeads.delete(idxHeads.keys().next().value); }
+    let h = idxHeads.get(d); if (!h) { h = ARCH.indexHead(fd); idxHeads.set(d, h); if (idxHeads.size > 800) idxHeads.delete(idxHeads.keys().next().value); }   // (1.3.2: every day's, not the last 64 read - a year of days is gone through for each aircraft)
     const r = ARCH.indexFind(fd, h, hexNum); return r ? Object.assign(r, { parts: h.parts }) : null;
   } finally { fs.closeSync(fd); }
 }
@@ -1150,6 +1167,32 @@ const nextHist = () => { const n = Date.now(), i = histQ.findIndex(j => j.at <= 
 // aircraft of the FAA's list counts as watched by that list only while it is seen on it (with the flag) - within two weeks
 // of the day: one whose owner has left the programme is on no list, and its days are not claimed)
 const LAD_SPAN = 14 * 86400
+// (1.3.2) What a past day's files say of an aircraft - whether it is in adsb.lol's archive of the day, and its line of the
+// world log - kept once looked up: a past day does not change, and the same aircraft is asked about again every quarter
+// of an hour while it flies (central calculation's history of it) and by every browser that opens it. Each asking went
+// through a year of days, two files opened, searched and closed for each: by the monitor's own count a sixth of all its
+// time. Kept as the file has it (a line of text, read into flights when used), for the 3,000 aircraft asked about last
+// and 300 MB at most; a day built again (its file's own time) or indexed since is looked up afresh.
+const dayMemo = new Map(); let dayMemoChars = 0;
+const DM = { hits: 0, misses: 0 };
+function dayLook(d, hex, hexNum) {
+  let m = dayMemo.get(hex);
+  if (m) { dayMemo.delete(hex); dayMemo.set(hex, m); } else { m = new Map(); dayMemo.set(hex, m); }
+  const wh = WORLD.days.get(d), stamp = wh ? wh.at || 1 : 0, e = m.get(d);
+  if (e && e[2] === stamp && !(e[0] === undefined && archIdx.has(d))) { DM.hits++; return e; }
+  DM.misses++;
+  let ix; try { const r = idxLookup(d, hexNum); ix = r === null ? null : r === undefined ? undefined : true; } catch (err) { return [undefined, undefined, -1]; }
+  let raw;
+  if (ix !== null && wh) { try { raw = WORLD.lookupRaw(d, hex); } catch (err) { return [ix, undefined, -1]; } }
+  const n = [ix, raw, stamp];
+  if (e && typeof e[1] === 'string') dayMemoChars -= e[1].length;
+  m.set(d, n); if (typeof raw === 'string') dayMemoChars += raw.length;
+  while ((dayMemo.size > 3000 || dayMemoChars > 300e6) && dayMemo.size > 1) {
+    const k = dayMemo.keys().next().value, old = dayMemo.get(k); dayMemo.delete(k);
+    for (const v of old.values()) if (typeof v[1] === 'string') dayMemoChars -= v[1].length;
+  }
+  return n;
+}
 // (since: 'YYYY-MM-DD' - the world log's days from it on only: a browser asks for the days it has not got)
 function histOf(hex, since) {
   const b = blocked.get(hex), own = fs.existsSync(histFile(hex)), h = own ? histRead(hex) : { days: {}, legs: [] }, days = {};
@@ -1176,9 +1219,9 @@ function histOf(hex, since) {
   for (const d of [...dset].sort().reverse()) {
     const hd = slashDay(d); if (d < sinceD || h.days[hd] >= 0 || hd in days) continue;
     if (Date.now() - t0 > 1500) { WS.cut = (WS.cut || 0) + 1; break; }
-    const ix = idxLookup(d, hexNum);
+    const dl = dayLook(d, hex, hexNum), ix = dl[0];
     if (ix === null) { days[hd] = 0; lo.add(hd); continue; }
-    let wl; if (WORLD.days.has(d)) { try { wl = WORLD.lookup(d, hex); } catch (e) { wl = undefined; } }
+    let wl; if (typeof dl[1] === 'string') { try { wl = WORLD.decode(dl[1], d); } catch (e) { wl = undefined; } } else wl = dl[1];
     // (in the day's index, not in the world log: its file would not read - not known, not "no flights")
     if (wl === null && ix) wl = undefined;
     if (wl !== undefined) { days[hd] = wl ? wl.length : 0; lo.add(hd); for (const l of wl || []) served.push(Object.assign(l, { src: 'world', lx: ['', '', ''] })); continue; }
@@ -2491,7 +2534,7 @@ function monStatus() {
     hist: Object.assign({ queue: histQ.length, closed }, histStats),
     central: Object.assign({}, central.stats, { round: CR }), scores: SC.summary(), boards: Object.assign({}, BD.stats, { wanted: BD.wanted.size }), nets: netSt, archive: Object.assign({ on: +CFG.archiveDays || 0, have: archHave(), idx: idxHave(), atrace: ARC }, AR, { world: worldStatus() }),
     datalink: Object.assign({ on: !!CFG.datalink, aircraft: datalink.byReg.size, byAddress: datalink.byHex.size }, datalink.stats),
-    oaap: Object.assign({}, OAAP.stats, { at: OAAP.at }),
+    oaap: Object.assign({}, OAAP.stats, { at: OAAP.at, store: OAAP.file !== path.join(DATA, 'oa_airports.csv') }), oarwy: Object.assign({}, OARW.stats, { known: APT.size }),
     airframes: Object.assign({}, AF.stats, { on: !!CFG.airframes && !!CFG.datalink, aircraft: AF.tails.size, stations: AF.stations.size }),
     tracks: Object.assign({ days: tracks.days }, tracks.stats), playback: PB,
     waiting: { flights: waiting.size, playback: waiting.count('pb'), live: waiting.count('live'), named: waiting.stats.named, tries: waiting.stats.tries, expired: waiting.stats.expired, rounds: WAIT.rounds, lastMs: WAIT.lastMs },
@@ -2505,7 +2548,7 @@ function monStatus() {
     wxmap: WXMAP_ON ? wxmap.status() : { off: true },
     apwx: APWX.stats,
     tel: { aircraft: tel.size, added: tel.stats.added, fromBrowsers: tel.stats.crowd || 0, refused: tel.stats.crowdBad || 0, served: tel.stats.served, asked: tel.stats.asked, missed: tel.stats.missed },
-    owners: owners.status(), acdb: Object.assign(AC.status(), { sweptDay: ACS.day, sweptQueued: ACS.queued }), ages: Object.assign(AGES.status(), { learnedFrom: AGS.n }), loop: Object.assign(lagStats(), heapStats(), { prof: PROF.stats }),
+    owners: owners.status(), acdb: Object.assign(AC.status(), { sweptDay: ACS.day, sweptQueued: ACS.queued }), ages: Object.assign(AGES.status(), { learnedFrom: AGS.n }), loop: Object.assign(lagStats(), heapStats(), { prof: PROF.stats, dayMemo: { aircraft: dayMemo.size, mb: Math.round(dayMemoChars / 1e5) / 10, hits: DM.hits, misses: DM.misses } }),
     areas: CFG.areas.concat(userAreas).map(a => a.slice(0, 2)), paused: Object.fromEntries(Object.entries(pause).filter(([, t]) => t > now).map(([h, t]) => [h, Math.round((t - now) / 1000)])) };
 }
 function dashStats() {
@@ -2864,7 +2907,7 @@ if (require.main === module) {
   setTimeout(() => { centralStart().catch(e => log('central calculation', String(e && e.message || e))); }, 30000);
   // (the last week's scores from their files; flights down found in the logs, old days packed - every five minutes)
   try { const n = SC.load(); if (n) log('scores', n, 'flights of the last week scored'); } catch (e) { log('scores', String(e && e.message || e)); }
-  setInterval(() => { try { SC.sweep(); } catch (e) { log('scores', String(e && e.message || e)); } }, 300000);
+  setInterval(() => { SC.sweepSlow().catch(e => log('scores', String(e && e.message || e))); }, 300000);
   // (every flight worked out continuously - five seconds apart, the work on worker threads where there are some)
   (async () => { for (;;) { await sleep(5000); try { await centralRound(Date.now()); } catch (e) { log('central round', String(e && e.message || e)); } } })();
   setInterval(() => central.prune(), 60000);
@@ -2900,7 +2943,20 @@ if (require.main === module) {
   // (1.3.1) the OurAirports airports: worked out a slice at a time a minute after start (not in one go, the first time a
   // browser asks), and OurAirports' own file asked for every day - only what changed - and the list made again from it
   setTimeout(() => { OAAP.rebuild().then(n => log('OurAirports airports', n)).catch(e => log('OurAirports airports', String(e && e.message || e))); }, 60000);
-  if (CFG.oaRefresh !== false) { const oaR = () => OAAP.refresh((u, o) => global.fetch(u, o)).then(ch => { if (ch) log('OurAirports airports: a new file -', OAAP.stats.rows, 'airports'); }).catch(() => {}); setTimeout(oaR, 10 * 60000); setInterval(oaR, 3600e3); }
+  // (1.3.2: a minute and a half after the start, then every hour - a few hundred bytes when nothing changed; its runways
+  // and frequencies with it, every airport's, and what the airport answers give made again from them)
+  if (CFG.oaRefresh !== false) {
+    const oaGet = (u, o) => global.fetch(u, o);
+    const oaR = async () => {
+      try {
+        const ch = await OAAP.refresh(oaGet, { everyMs: 50 * 60000 });
+        if (ch) log('OurAirports airports: a new file -', OAAP.stats.rows, 'airports');
+        const rw = await OARW.refresh(oaGet, { everyMs: 50 * 60000 });
+        if ((rw || ch) && OARW.have()) { const d = await OARW.build(OAAP.file); if (d) { APT.set(d.info, d.freqs); apAnswers.clear(); log('OurAirports runways:', d.runways, 'runways of', d.airports, 'airports'); } }
+      } catch (e) { log('OurAirports', String(e && e.message || e)); }
+    };
+    setTimeout(oaR, 90000); setInterval(oaR, 3600e3);
+  }
   if (CFG.prof !== false) PROF.start().then(st => log('prof', st.on ? 'on - what the main thread is busy with, in /status (loop.prof)' : 'off - ' + st.err));
   if (+CFG.tatEvery > 0) setTimeout(tatLoop, 15000);
   if (+CFG.archiveDays > 0) for (let i = 0; i < Math.max(1, Math.min(4, +CFG.archiveJobs || 1)); i++) setTimeout(archiveLoop, i * 3000);
@@ -2914,5 +2970,5 @@ if (require.main === module) {
   // (airports' schedules read from FR24 here, for the boards browsers open)
   setInterval(() => { BD.pump().catch(e => log('boards', String(e))); }, 5000);
 }
-module.exports = { OAAP, APWX, AF, PROF, afTargets, datalink, work, workSlow, saveSlow, setLadd: list => { lastLadd = { at: Date.now(), ac: list }; }, boardPlan, rwyFit, rwyKnown, rwyAnswer, rwySave, RL, rwyApAnswer, rwyApWarm, laddRwys, rwyHotRound, rwyLowRound, LOW, PACE, pace, fr24Client: () => fr24, fr24raw, fr24RawRound, wxmap, AGES, agesLearn, withAge, AC, acdbSweep, central, centralStart, centralRound, CR, SC, fleetOf, FL, naF, naTrack, selfEvidence, F24ref2: () => F24, WORLD, WS, AS, BD, boardRows, airportAnswer, apLegs, fr24Track, F24T, worldDay, worldWants, worldRoom, worldStatus, worldRecheck: () => { freeAt = 0; }, pollTat, TAT, TAT_HOST, carriesOn, liveExtra, logOf, heardPts, archBreath, memAvail, archTrace, archiveJob, indexDay, idxLookup, idxHave, archIdx, idxFile, ARC, setArcRange: f => { arcRange = f; }, surgeNow, datalink, datalinkRound, dlSeen, classifyTrace, traceGet, netSt, archiveDay, archiveState, archiveNext, archMark, archTried, archDays, archRunning, traceOf, AR, apliveTrace, HIST_V, HIST_RESET, resetHistLogs, histResetMark, get histResetN() { return histResetN; }, adminAnswer, ctl, logRing, log, MON_VER, learnCheck, learnFromCrowd, crowdLearnSave, crowdRows, LC, tracks, waiting, waitRound, waitLive, waitNamed, waitClaims, WAIT, saveWaiting, loadWaiting, pbMatch, learnedBuild, learnedDue, learnedLoad, learnedRef: () => learnedOut, liveBusy, backWaits, E, CFG, loadEngine, ingest, buildLegs, fr24Legs, fr24Leg, F24ref: () => F24, owners, ownersLoop, APT, legRunways, names, nearAnswer, telAnswer, tel, wx, pbNames, get PUBLIC() { return PUBLIC; }, get RATE() { return RATE; }, limited, tokenOk, installs, opts, optionsSet, optionsLoad, latestCheck, latestVer, helloAnswer, badge, wakeQuiet, parkedAt, boardLegs, flightsOfCs, lastHeard, legs, ac, backfillOne, backQ, blocked, markBlocked, seed, gapFill, addArea, userAreas,
+module.exports = { OAAP, OARW, OADIR, oaFieldsDir, recentLog, dayLook, APWX, AF, PROF, afTargets, datalink, work, workSlow, saveSlow, setLadd: list => { lastLadd = { at: Date.now(), ac: list }; }, boardPlan, rwyFit, rwyKnown, rwyAnswer, rwySave, RL, rwyApAnswer, rwyApWarm, laddRwys, rwyHotRound, rwyLowRound, LOW, PACE, pace, fr24Client: () => fr24, fr24raw, fr24RawRound, wxmap, AGES, agesLearn, withAge, AC, acdbSweep, central, centralStart, centralRound, CR, SC, fleetOf, FL, naF, naTrack, selfEvidence, F24ref2: () => F24, WORLD, WS, AS, BD, boardRows, airportAnswer, apLegs, fr24Track, F24T, worldDay, worldWants, worldRoom, worldStatus, worldRecheck: () => { freeAt = 0; }, pollTat, TAT, TAT_HOST, carriesOn, liveExtra, logOf, heardPts, archBreath, memAvail, archTrace, archiveJob, indexDay, idxLookup, idxHave, archIdx, idxFile, ARC, setArcRange: f => { arcRange = f; }, surgeNow, datalink, datalinkRound, dlSeen, classifyTrace, traceGet, netSt, archiveDay, archiveState, archiveNext, archMark, archTried, archDays, archRunning, traceOf, AR, apliveTrace, HIST_V, HIST_RESET, resetHistLogs, histResetMark, get histResetN() { return histResetN; }, adminAnswer, ctl, logRing, log, MON_VER, learnCheck, learnFromCrowd, crowdLearnSave, crowdRows, LC, tracks, waiting, waitRound, waitLive, waitNamed, waitClaims, WAIT, saveWaiting, loadWaiting, pbMatch, learnedBuild, learnedDue, learnedLoad, learnedRef: () => learnedOut, liveBusy, backWaits, E, CFG, loadEngine, ingest, buildLegs, fr24Legs, fr24Leg, F24ref: () => F24, owners, ownersLoop, APT, legRunways, names, nearAnswer, telAnswer, tel, wx, pbNames, get PUBLIC() { return PUBLIC; }, get RATE() { return RATE; }, limited, tokenOk, installs, opts, optionsSet, optionsLoad, latestCheck, latestVer, helloAnswer, badge, wakeQuiet, parkedAt, boardLegs, flightsOfCs, lastHeard, legs, ac, backfillOne, backQ, blocked, markBlocked, seed, gapFill, addArea, userAreas,
   serve, fr24, ident, dest, F24, report, identRound, fr24Round, saveIdent, loadIdent, histUnknown, learnSince, learnWrite, diskLegs, KEEP_LADD, save, loadStore, dirtyDays, pollOpenSky, adsbxUse, live, liveList, answer, step, P, piaState, apiGet, gate, stats, lastOk, noteWatch, watch, watchedAll, flew, closeDays, histQ, histPend, histOne, histDay, histOf, histRead, histWrite, histFile, fillHist, fillAsked, queueHist, photos, nextHist, saveState, loadState, lastW, get closed() { return closed; }, set closed(v) { closed = v; }, pause };

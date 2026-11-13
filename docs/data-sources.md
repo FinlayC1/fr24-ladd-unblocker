@@ -43,7 +43,7 @@ Automated reading of FR24's feed is the part of the project that FR24's terms ar
 
 | Source | Used for | Licence |
 |---|---|---|
-| OurAirports (`davidmegginson/ourairports-data`) | Airfields, heliports, seaplane bases, runways (each end in full), radio frequencies (`monitor/mkdata.cjs`); 1.3: every one not closed that FR24 does not list, as an airport in FR24 (`oaap.cjs`) | Public domain |
+| OurAirports (`davidmegginson/ourairports-data`, updated nightly) | Airfields, heliports, seaplane bases, runways (each end in full), radio frequencies; 1.3: every one not closed that FR24 does not list, as an airport in FR24 (`oaap.cjs`); 1.3.2: every airport's runways and frequencies, and all three files asked for again every hour by the monitor (`oarwy.cjs`; the checkout's own copies by `monitor/mkdata.cjs`) | Public domain |
 | Open-Meteo GFS API (`api.open-meteo.com`, NOAA's GFS model) | Wind and temperature on nine pressure levels, for 5-degree cells where aircraft fly without Mode S EHS (most of the US, the oceans): the monitor works out true and indicated airspeed, Mach, wind and temperature from them (`monitor/wx.cjs`). Each cell every 12 hours, at most 7,000 weighted calls a day (the free tier's limit is 10,000) | Free, non-commercial; CC BY 4.0 |
 | Open-Meteo forecast API (`api.open-meteo.com/v1/forecast`, current conditions) | (1.3) The weather now at an airport FR24 shows none for (no METAR sent from it), and the METAR the monitor writes from it (`apwx.cjs`) | Free, non-commercial; CC BY 4.0 |
 | FAA NOTAM Search (`notams.aim.faa.gov`) and DINS (`www.notams.faa.gov`) | (1.3) The day's PACOTS Track Definition Messages (KZAK, RJJJ, PAZA) for the Pacific's oceanic tracks | US government, public |

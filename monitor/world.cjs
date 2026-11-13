@@ -107,7 +107,11 @@ function createWorld(dir) {
 
   // One aircraft's flights of a day: [] none (heard, did not fly), null not in that day's file (adsb.lol heard nothing of
   // it), undefined no file of that day
-  function lookup(day, hex) {
+  // (1.3.2: lookupRaw - the aircraft's line of the day as it is in the file, not yet read into flights: what the monitor
+  // keeps of a past day for an aircraft it is asked about again and again - and decode, that line into its flights)
+  function lookup(day, hex) { const r = lookupRaw(day, hex); return typeof r === 'string' ? decode(r, day) : r; }
+  function decode(raw, day) { return JSON.parse(raw).map(a => decodeLeg(a, day.replace(/-/g, '/'))); }
+  function lookupRaw(day, hex) {
     const h = days.get(day); if (!h) return undefined;
     const t0 = Date.now(), want = parseInt(hex, 16); stats.lookups++;
     let fd; try { fd = fs.openSync(fileOf(day), 'r'); } catch (e) { days.delete(day); stats.days = days.size; return undefined; }
@@ -123,7 +127,7 @@ function createWorld(dir) {
       const i = txt.startsWith(key) ? 0 : txt.indexOf('\n' + key) + 1;
       if (i <= 0 && !txt.startsWith(key)) return null;
       const line = txt.slice(i + key.length, txt.indexOf('\n', i)), tab = line.indexOf('\t');
-      return JSON.parse(tab < 0 ? line : line.slice(0, tab)).map(a => decodeLeg(a, day.replace(/-/g, '/')));
+      return tab < 0 ? line : line.slice(0, tab);
     } finally { fs.closeSync(fd); stats.ms += Date.now() - t0; }
   }
   // (1.0.2) Every aircraft's flights of a day, block by block: cb(hex, legs, ac) for each - ac: { type, reg, flags, cat }
@@ -147,7 +151,7 @@ function createWorld(dir) {
     } finally { fs.closeSync(fd); }
     return n;
   }
-  return { dir, days, has, writer, lookup, each, scan, stats, fileOf };
+  return { dir, days, has, writer, lookup, lookupRaw, decode, each, scan, stats, fileOf };
 }
 
 // Free space where the store is, in bytes (Infinity: not known)

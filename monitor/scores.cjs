@@ -69,22 +69,45 @@ function createScores(env) {
   }
   // Every few minutes: a flight not heard of for three quarters of an hour, looked for in the monitor's own log - its flight
   // ending at an airport (on its runway or low over it) is where it went; given up after eight hours. Old days gzipped.
-  function sweep(nowS) {
-    nowS = nowS || Date.now() / 1000;
-    for (const x of [...open.values()]) {
-      if (nowS - x.t1 < C.quietMin * 60) continue;
-      let legs = []; try { legs = x.hex && env.logOf ? env.logOf(x.hex) || [] : []; } catch (e) { legs = []; }
-      const l = legs.find(q => q && sure(q.to) && (q.tEnd || 0) >= x.t1 - 1800 && (q.tStart || 0) <= x.t1 + 600 && (q.tOn || q.tEnd) >= x.t0);
-      if (l) { finish(x, l.to.id, 'log', l.tOn || l.tEnd); continue; }
-      if (nowS - x.t1 > C.giveUpH * 3600) { open.delete(x.id); S.unresolved++; }
-    }
-    // (the figures: a fortnight kept)
+  // (one flight followed: found down in its aircraft's log, or given up)
+  function sweepOne(x, nowS) {
+    if (nowS - x.t1 < C.quietMin * 60) return;
+    let legs = []; try { legs = x.hex && env.logOf ? env.logOf(x.hex) || [] : []; } catch (e) { legs = []; }
+    const l = legs.find(q => q && sure(q.to) && (q.tEnd || 0) >= x.t1 - 1800 && (q.tStart || 0) <= x.t1 + 600 && (q.tOn || q.tEnd) >= x.t0);
+    if (l) { finish(x, l.to.id, 'log', l.tOn || l.tEnd); return; }
+    if (nowS - x.t1 > C.giveUpH * 3600) { open.delete(x.id); S.unresolved++; }
+  }
+  // (the days' files of two days ago and before, packed: which there are)
+  function oldFiles(nowS) {
     for (const d of Object.keys(S.days)) if (d < dayOf(nowS - 14 * 86400)) delete S.days[d];
     let names = []; try { names = fs.readdirSync(dir); } catch (e) { names = []; }
-    for (const f of names) {
-      const m = /^(\d{4}-\d\d-\d\d)\.jsonl$/.exec(f); if (!m || m[1] >= dayOf(nowS - 2 * 86400)) continue;
-      try { const p = path.join(dir, f); fs.writeFileSync(p + '.gz.tmp', zlib.gzipSync(fs.readFileSync(p), { level: 6 })); fs.renameSync(p + '.gz.tmp', p + '.gz'); fs.unlinkSync(p); } catch (e) { S.err = String(e && e.message || e).slice(0, 120); }
+    return names.filter(f => { const m = /^(\d{4}-\d\d-\d\d)\.jsonl$/.exec(f); return m && m[1] < dayOf(nowS - 2 * 86400); }).map(f => path.join(dir, f));
+  }
+  function sweep(nowS) {
+    nowS = nowS || Date.now() / 1000;
+    for (const x of [...open.values()]) sweepOne(x, nowS);
+    // (the figures: a fortnight kept)
+    for (const p of oldFiles(nowS)) {
+      try { fs.writeFileSync(p + '.gz.tmp', zlib.gzipSync(fs.readFileSync(p), { level: 6 })); fs.renameSync(p + '.gz.tmp', p + '.gz'); fs.unlinkSync(p); } catch (e) { S.err = String(e && e.message || e).slice(0, 120); }
     }
+  }
+  // (1.3.2) the same a slice at a time, an old day's file packed as it is read (never whole in memory, never on the main
+  // thread): the five-minute sweep held the server for over a minute - see monitor.cjs recentLog
+  let sweeping = false;
+  async function sweepSlow(nowS) {
+    if (sweeping) return false; sweeping = true;
+    try {
+      nowS = nowS || Date.now() / 1000;
+      let t = Date.now();
+      for (const x of [...open.values()]) { sweepOne(x, nowS); if (Date.now() - t >= 12) { await new Promise(r => setImmediate(r)); t = Date.now(); } }
+      for (const p of oldFiles(nowS)) {
+        try {
+          await new Promise((res, rej) => { const out = fs.createWriteStream(p + '.gz.tmp'); fs.createReadStream(p).on('error', rej).pipe(zlib.createGzip({ level: 6 })).on('error', rej).pipe(out).on('error', rej).on('finish', res); });
+          fs.renameSync(p + '.gz.tmp', p + '.gz'); fs.unlinkSync(p);
+        } catch (e) { S.err = String(e && e.message || e).slice(0, 120); }
+      }
+    } finally { sweeping = false; }
+    return true;
   }
   // (the figures for /status: the last seven days together, and each day's)
   function summary(nowS) {
@@ -111,7 +134,7 @@ function createScores(env) {
     }
     return n;
   }
-  return { note, sweep, summary, finish, load, open, stats: S };
+  return { note, sweep, sweepSlow, summary, finish, load, open, stats: S };
 }
 
 module.exports = { createScores };

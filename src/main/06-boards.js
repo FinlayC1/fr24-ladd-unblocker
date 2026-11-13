@@ -715,9 +715,10 @@
     if (rwyInfo) return Promise.resolve(rwyInfo);
     if (!rwyInfoLoading) rwyInfoLoading = (async () => {
       // (1.3.1: the OurAirports airports' too - by OurAirports' own code, "GB-0002", for a field with no ICAO code - and read
-      // again every month)
+      // again every week (1.3.2; a month before): what is shown comes from the monitor, which asks OurAirports every hour -
+      // this is for when it does not answer)
       const c = await store.getHist('b:rwyends2');
-      if (c && c.map && now() - (c.at || 0) < 30 * 864e5) { rwyInfo = c.map; return rwyInfo; }
+      if (c && c.map && now() - (c.at || 0) < 7 * 864e5) { rwyInfo = c.map; return rwyInfo; }
       await loadAirports(); await loadOa().catch(() => false);
       const csv = await gmRequest(RWY_URL, { timeout: 60000, json: false, accept: 'text/csv,text/plain' });
       const icaos = new Set(airports.list.map(a => String(a.icao || '').toUpperCase()).filter(Boolean));
@@ -756,7 +757,8 @@
     let j = await ask(); if (!(j && j.known) && monUp()) j = await sleep(1500).then(ask);
     if (!(j && j.known)) panelAsked.set(code, now() - 45000);   // (another try within a quarter of a minute)
     if (j && j.known) Object.assign(out, { runways: Array.isArray(j.runways) ? j.runways : [], freqs: Array.isArray(j.freqs) ? j.freqs : [], usage: Array.isArray(j.usage) ? j.usage : [], moves: j.moves || 0, withRunway: j.withRunway || 0, monitor: true, daily: Array.isArray(j.daily) ? j.daily : null, allDays: j.allDays || 0 });
-    else out.ends = await runwaysOf(ap).catch(() => []);
+    // (1.3.2: or the monitor knows the airport and none of its runways - OurAirports' own file then, read here)
+    if (!(out.runways && out.runways.length)) out.ends = await runwaysOf(ap).catch(() => []);
     postToPage('airportPanel', out);
   }
   // (1.3) an airport's weather now from the monitor, for one FR24 has none for (no METAR there): the page asks once a

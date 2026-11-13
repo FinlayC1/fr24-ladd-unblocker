@@ -107,6 +107,7 @@
   // (1.3) LADD Unblock switched off: what FR24's own feed and boards show here (the page's part reads them on their way
   // past, changing nothing), kept only to go to the monitor with the next report - nothing asked of it, nothing named,
   // nothing put on the page (N500EU's panel was still filled with it switched off)
+  let oaTimer = 0;
   function onReportOnly(d) {
     switch (d.__tweeksLadd) {
       case 'feed': {
@@ -198,6 +199,9 @@
         store.ready.then(() => { pushKnown(true); return pushAllPubIds(); }).catch(e => log('pubIds', e));
         store.kvReady.then(pushSites).catch(() => {});          // (the landing places learned, for FR24's airport list)
         loadOa().then(pushOa).catch(() => {});                  // (1.3: every OurAirports airport FR24 does not list, for its list and map)
+        // (1.3.2: and looked at again while the tab is open - loadOa asks the monitor whether its list is still the one, a
+        // quarter of an hour after it last did)
+        if (!oaTimer) oaTimer = setInterval(() => { if (!document.hidden) loadOa().catch(() => {}); }, 5 * 60000);
         break;
       }
       default: break;

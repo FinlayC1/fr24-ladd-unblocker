@@ -4,6 +4,62 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 
 1.0.0 is the first release. The versions before it are the betas, labelled B: B22.31.12 is version 22.31.12.
 
+## [1.3.2] - 2026-11-12
+
+### In short
+- The monitor no longer stops for over a minute every five minutes. Its own measurements (1.3.1's `/status` `loop.prof`) showed it: 70 to 98 seconds each time, about 80% of its one thread busy. During a stop nothing was answered, which is why panels stayed locked and lists stayed empty.
+- "Recent flights" on a LADD aircraft said "No flights available" while its log page listed flights. FR24 draws that list once, from an answer that waits nine seconds at most, and the monitor was often stopped for longer than that. This should be fixed by the change above; it is the one item here that could only be checked on the live monitor after the update.
+- OurAirports pins stay on the map when an aircraft or an airport is clicked. They vanished because the script read the map's position from FR24's address, which belongs to the aircraft or airport once one is open.
+- The Departures, Arrivals and On ground tabs of an OurAirports airport are no longer blank. They were blank whenever the pins had been taken away, for the same reason.
+- An OurAirports airport's window shows its ICAO code, its time zone, and today's sunrise and sunset (all "N/A" before). A field with no code of its own, such as "GB-0002", shows that under "OurAirports ID".
+- Runway details and runway usage work for OurAirports airports: RAF Woodvale shows its three runways and five frequencies. FR24's padlocked picture is never left in the runway section.
+- "More" in an OurAirports airport's window opens the airport's page. FR24's server sends a request for such a page on to its airport search; the link now goes round that.
+- OurAirports data is current. The monitor asks OurAirports every hour (once a day before, and for the airports file only), browsers ask the monitor every quarter of an hour (once a day before, and never again while a tab stayed open), and the data shipped with the monitor was rebuilt from today's files.
+- **Updating the monitor this one time needs one extra command**, given under Notes: 1.3.1 wrote a file inside the checkout, and the update script refuses to run when it finds one changed.
+- One limit remains: an OurAirports airport's address typed or pasted into a new tab (`/data/airports/egow`) still ends on FR24's airport search. FR24's server has sent the browser on before the script runs, and nothing in the browser says where from.
+
+### Fixed
+- **The monitor stopped for 70 to 98 seconds every five minutes** (`monitor/scores.cjs`, `monitor/monitor.cjs`). Every five minutes the scoring of its own answers looked up, for each flight it was following and had not heard of since (some 9,700), that aircraft's whole flight log: its saved log file, and a year of days of the world log. All of it in one go, on the thread that answers requests.
+  - The sweep now asks only for the flights the monitor already holds in memory for the aircraft (`recentLog`). That is all it needs: a flight that ended in the last hours.
+  - It runs a slice at a time (`sweepSlow`), with requests answered in between, and never twice at once. Old score files are packed as a stream instead of in one block.
+- **The same lookups made faster where they are still needed** (`monitor/monitor.cjs` `dayLook`, `monitor/world.cjs`). An aircraft's flight log reads up to 366 days of the world log; each day's answer for an aircraft is now remembered while that day's file is unchanged (3,000 aircraft or 300 MB at most), and the index of 800 archive days is kept open instead of 64.
+- **Rain map tiles no longer hold the monitor for over a second** (`monitor/wxmap.cjs`): they are made a slice at a time.
+- **OurAirports pins vanished when an aircraft or an FR24 airport was clicked** (`src/page.js` `oaView`, `oaMap`). The map's position now comes from FR24's address while nothing is open, and from the area FR24 last asked its feed for once something is. The zoom is worked out from how wide that area is. If neither is known, what is shown stays.
+- **Blank Departures, Arrivals and On ground tabs** (`src/page.js` `oaStoreKeep`). FR24's window looks the airport up in its own tables of airports by code. An OurAirports airport was only in those tables when FR24 had fetched its airport list after the script's list arrived; otherwise the tabs drew nothing. The airport is now put in those tables when its pin is drawn, when it is looked up and when its details are asked for, and the airport a window is open on always keeps its pin.
+- **FR24's newer board address** (`www.flightradar24.com/common/v2/airport.json`) is answered for OurAirports airports as the older one was.
+- **Window details** (`src/page.js` `oaApi`, `panelCodeFields`):
+  - ICAO: the airport's ICAO or GPS code. IATA: its IATA code if it has one, else "N/A" (it showed the ICAO code there).
+  - A field with only OurAirports' own ident: that ident, with the field named "OurAirports ID".
+  - Time zone as words ("Europe/London (UTC+00:00)"), from the nearest FR24 airport's zone and today's offset.
+  - Sunrise and sunset worked out for the airport's position (checked against London in November and June, Sydney, and the polar night).
+  - The map's labels set to "ICAO" now show these airports' identifiers; they showed nothing.
+- **Runways of OurAirports airports** (`monitor/oarwy.cjs`, `monitor/airport.cjs`). The monitor only had runway details for FR24's own airports (6,352), so every OurAirports airport said "No runways known" and kept FR24's padlocked picture. It now has every airport's (34,259 airports, 40,835 runways), found by OurAirports' ident and by ICAO and GPS code. An airport the route engine doesn't know (a heliport, a seaplane base) is answered too; before, the monitor said "not known".
+- **The runway section never shows FR24's padlock** (`src/page.js` `rwyPanel`). While the answer is on its way it says so; when no runway is known anywhere it says that. If the monitor has none, the runway ends from OurAirports' own file are listed, in the usage list too.
+- **"More" and FR24's redirect** (`src/page.js` `oaLinkPressed`, `oaLost`):
+  - A link to an OurAirports airport's page that opens its own tab is pointed, as it is pressed, at the nearest FR24 airport's page marked with this airport's code; the airport's own page is shown from there, as in 1.3.1.
+  - A tab that still lands on FR24's airport search because FR24's server sent it there is taken on to the airport when a link to one was pressed within the last minute, or when the tab was reloading or going back to one of these pages.
+- **OurAirports data out of date**:
+  - Monitor: the airports file, and now the runways and frequencies files, are asked for a minute and a half after the start and then every hour. Only what changed is sent, so an hour with nothing new costs a few hundred bytes. OurAirports publishes its files nightly.
+  - Browser: the list is checked with the monitor every 15 minutes, in an open tab too, and a newer list replaces the old one at once (`src/main/03-data.js`).
+  - The data shipped with the monitor (`monitor/data`) was rebuilt from OurAirports' files of 12 November 2026.
+- **The update script refused to run after 1.3.1** (`monitor/oaap.cjs`, `monitor/deploy.sh`). 1.3.1 saved OurAirports' new airports file over `monitor/data/oa_airports.csv`, a file of the checkout, and `deploy.sh` stops when a file of the checkout has changed. The monitor now keeps OurAirports' files in its store (`store/oa/`), and `deploy.sh` puts that one file back by itself if it finds it changed.
+
+### Changed
+- A stall in `/status` `loop.prof` now says how much of it was work (`busyMs`) and how much was the thread waiting (`idleMs`), so a stall with no work in it can be told from one with.
+- `/status` has `oarwy` (runways and frequencies: airports, runways, last checked, fetched, built) next to `oaap`.
+
+### Notes
+- **Updating the monitor this once** (Windows PowerShell, one line). The first part puts back the file 1.3.1 changed; from 1.3.2 on the usual command is enough again:
+  `ssh -o ServerAliveInterval=30 -i "$env:USERPROFILE\Downloads\ssh-key-2026-10-12.key" ubuntu@79.72.69.41 "git -C ~/fr24-ladd checkout -- monitor/data/oa_airports.csv; bash ~/fr24-ladd/monitor/deploy.sh --restart"`
+- What could not be tried on FR24's live site from here: the map window itself. The pins, FR24's tables, the window's answers, the code fields, the runway section and the links were each tested against FR24's own code as read from its current build, in a browser environment, but not in FR24's running map.
+- The time zone of an OurAirports airport is its nearest FR24 airport's (within 300 km). Close to a zone border it can be the neighbour's.
+- A newer OurAirports file reaches the airport list browsers get and the runway details within the hour. The route engine's own table of airfields (which airfields a destination can be) is read from it when the monitor starts, so an airfield added to OurAirports becomes a possible destination at the next restart or update.
+- Four stalls of about four seconds in the monitor's central round had almost no work in them when measured. `idleMs` is there to show, after this update, whether they are waiting rather than work.
+
+### Tests
+- `test/unit_132.cjs` (50 checks): the sweep in slices against the sweep in one go; the log from memory with no file read; a stall's work and waiting; OurAirports' runways and frequencies (codes, closed airports, helipads, the store's files, ETags, a file that is not the file); the airports file never written into the checkout; airport answers for an airfield and a heliport; the pins with an aircraft or airport open, with the map moved, zoomed out; FR24's tables; the window's details; sunrise and sunset; FR24's newer address; the code fields; the runway section; "More" and the redirect.
+- `test/unit_deploy.cjs`: the changed airports file put back and the update going on; any other changed file still stops it.
+
 ## [1.3.1] - 2026-11-12
 
 ### In short

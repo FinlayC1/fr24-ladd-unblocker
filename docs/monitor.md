@@ -90,8 +90,8 @@ Any of these can be overridden in a `monitor.json` next to `monitor.cjs` (the fi
 | `boards` | see text | (1.1.0) Airport boards kept here: `{ fetch: true, every: 20, pace: 5, wantH: 24, pauseH: 3, pages: 6, keepMem: 400 }`. `fetch`: read FR24's airport schedule itself for every airport a browser opened in the last `wantH` hours, one airport every `pace` s, each again after `every` minutes, `pages` pages each way; FR24 refusing: left alone `pauseH` hours. `keepMem`: airports held in memory. |
 | `datalink` | `true` | (1.0) Read adsb.lol's open datalink data (github.com/adsblol/aircraft-data-links-<year>, CC0) every ten minutes: today's and yesterday's new hourly files, decompressed here (Node's zstd from 22.15, else `vendor/fzstd.cjs`), and only the routes in them kept, 36 hours. Two GitHub API requests every ten minutes (60 an hour are allowed without a key). |
 | `airframes` / `airframesPerMin` | `true` / `12` | (1.3.1) Airframes.io as a second, live source of the same datalink messages (`airframes.cjs`), its satellite links too: asked per aircraft, only for flights in the air with no destination from FR24 - those a browser is showing first, then the LADD list's aircraft flying now. A small look-up first, the messages only when there is something new. Needs `datalink` on. |
-| `prof` | `true` | (1.3.1) What the main thread is busy with (`prof.cjs`): V8's sampling profiler, always on at a sample every 20 ms, read a minute at a time into `/status` `loop.prof` - `busyPct`, `top` (functions, their own time in ms), `jobs` (what started them), `stalls` (each time the event loop stood still a second or more: when, how long, the job, the functions). |
-| `oaRefresh` | `true` | (1.3.1) Ask OurAirports for its own `airports.csv` every day (only what changed: its ETag) and rebuild the list of airports FR24 doesn't list from it, a slice at a time. A file that isn't the airports file is never put in place of the one kept. `/status` `oaap` shows when it was last checked and built. |
+| `prof` | `true` | (1.3.1) What the main thread is busy with (`prof.cjs`): V8's sampling profiler, always on at a sample every 20 ms, read a minute at a time into `/status` `loop.prof` - `busyPct`, `top` (functions, their own time in ms), `jobs` (what started them), `stalls` (each time the event loop stood still a second or more: when, how long, the job, the functions; 1.3.2: the work in it, `busyMs`, and the time the thread was waiting, `idleMs`). |
+| `oaRefresh` | `true` | Ask OurAirports for its own files again: a minute and a half after the start, then every hour (1.3.1: `airports.csv` once a day; 1.3.2: `runways.csv` and `airport-frequencies.csv` too). Only what changed is sent (ETag), so an hour with nothing new costs a few hundred bytes. From them: the list of airports FR24 doesn't list (`oaap.cjs`) and every airport's runways and frequencies (`oarwy.cjs`), each rebuilt a slice at a time. The files are kept in the store (`store/oa/`), never in the checkout: 1.3.1 wrote the new airports file over `monitor/data/oa_airports.csv`, and `deploy.sh` then refused to update ("files of the checkout were changed by hand"); `deploy.sh` now puts that one file back by itself. A file that isn't the one asked for is never put in place of the one kept. `/status` `oaap` and `oarwy` show when each was last checked, fetched and built. |
 | `fullGap` | `200` | Longest silence (s) of a list for a day to count as watched throughout |
 | `backWorkers` | `3` | Parallel workers reading adsb.lol's day traces |
 | `fr24Scan` | `true` | Scan FR24's map from the server. Set to `false` to leave the world scan to the browsers. |
@@ -288,10 +288,10 @@ The monitor counts how many people use the script, anonymously, with `POST /hell
 
 ## Airport and runway data
 
-`monitor/data/` is part of the repository. `runways.json`, `runway_len.json`, `runway_info.json` and `freqs.json` are built from [OurAirports](https://ourairports.com) (public domain) by:
+`monitor/data/` is part of the repository: what a new monitor starts from. Once it runs, the monitor keeps newer copies of OurAirports' files in its store and uses those (`oaRefresh` above). `runways.json`, `runway_len.json`, `runway_info.json` (1.3.2: every airport's runways, not FR24's airports alone), `freqs.json` and `oa_airports.csv` are built from [OurAirports](https://ourairports.com) (public domain) by:
 
 ```bash
-node monitor/mkdata.cjs              # downloads OurAirports' runways.csv and airport-frequencies.csv
+node monitor/mkdata.cjs              # downloads OurAirports' airports.csv, runways.csv and airport-frequencies.csv
 node monitor/mkdata.cjs <folder>     # or from copies already downloaded
 ```
 
