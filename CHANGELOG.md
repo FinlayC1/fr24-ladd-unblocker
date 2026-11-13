@@ -4,6 +4,26 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 
 1.0.0 is the first release. The versions before it are the betas, labelled B: B22.31.12 is version 22.31.12.
 
+## [1.3.3] - 2026-11-13
+
+### In short
+- The extension's update page no longer gets stuck. Pressing "Update" could leave the button pressed with nothing said: the page remembered the extension's folder from the last update, and Chrome, asked whether the page may edit it again, never answered.
+- Now the page says what it is waiting for ("choose Allow in the box by the address bar"). If Chrome hasn't answered within 20 seconds, it says so, frees the button to choose the folder afresh, and offers the new version's zip to unzip over the folder by hand.
+- Getting from 1.3.1 or 1.3.2 to this version uses the old page. If it sticks there, update by hand once (see Notes).
+
+### Fixed
+- **Update button stuck with no message** (`extension/update.js` `go`). Asking Chrome again for permission to edit a remembered folder waited for an answer with nothing on screen and no time limit.
+  - The request is now said on the page while it is open.
+  - After 20 seconds with no answer, the remembered folder is forgotten and the button asks for the folder again, through Chrome's folder picker, which asks for permission in the same step.
+  - The "install it by hand" box (download the zip, unzip it over the folder) is shown then, and whenever an update stops with an error. Before, it only appeared in browsers that cannot write to an extension's folder at all.
+
+### Notes
+- **Updating by hand, once, if the old page sticks:** download https://github.com/FinlayC1/fr24-ladd-unblocker/raw/v1.3.3/dist/fr24-ladd-unblocker-extension.zip, unzip it over the extension's folder (shown next to Source on the extension's Details page in `chrome://extensions`), replacing the files, then click the reload arrow on the extension there. Later updates use the fixed page.
+- Why Chrome gave no answer could not be seen from here: Chrome's own permission prompt cannot be shown in the test browser. The page now copes either way.
+
+### Tests
+- `test/unit_selfupdate.cjs`: a remembered folder whose permission request never answers. The page says what it waits for, then frees the button to choose the folder again, offers the zip and forgets the folder. The update then goes through by the folder picker as before.
+
 ## [1.3.2] - 2026-11-12
 
 ### In short

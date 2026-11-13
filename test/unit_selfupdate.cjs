@@ -118,6 +118,21 @@ const walk = (d, pre = '') => fs.readdirSync(d, { withFileTypes: true }).flatMap
     const notYet = await up.evaluate(() => __tlUpdate.getPlan('9.0.1').then(() => 'no error', e => e.message));
     check('a version whose release is not out yet: said so', /still being published/.test(notYet), notYet);
 
+    // (1.3.2) the folder chosen last time, and Chrome never answering the request to edit it (1.3.1: the button stayed
+    // pressed, nothing said): said what it waits for; then the folder asked for afresh, and the zip offered
+    await up.evaluate(async () => { const d = await (await navigator.storage.getDirectory()).getDirectoryHandle('ext'); await __tlUpdate.kvSet('dir', d); });
+    await up.reload(); await up.waitForSelector('#go:not([hidden])', { timeout: 15000 });
+    const goLabel0 = await up.textContent('#go');
+    await up.evaluate(() => { window.__tlAskMs = 1500; const P = FileSystemHandle.prototype; P.__q = P.queryPermission; P.__r = P.requestPermission; P.queryPermission = async () => 'prompt'; P.requestPermission = () => new Promise(() => {}); });
+    await up.click('#go');
+    await up.waitForTimeout(400);
+    const asking = await up.textContent('#msg');
+    await up.waitForFunction(() => /didn.t ask/.test(document.getElementById('msg').textContent), null, { timeout: 8000 }).catch(() => null);
+    const stuck = { msg: await up.textContent('#msg'), go: await up.textContent('#go'), enabled: await up.isEnabled('#go'), manual: await up.isVisible('#manual'), dl: await up.isVisible('#dl'), kept: await up.evaluate(() => __tlUpdate.kvGet('dir').then(d => !!d)) };
+    check('the folder kept from last time, Chrome asked for permission to edit it: said so while it asks', /Update to v9\.0\.0/.test(goLabel0) && /choose Allow/.test(asking), [goLabel0, asking]);
+    check('... Chrome never answering: after a while, said so - the button free again, to choose the folder afresh; the zip offered to put in by hand; the folder kept forgotten', /didn.t ask for permission/.test(stuck.msg) && /Choose the extension folder/.test(stuck.go) && stuck.enabled && stuck.manual && stuck.dl && !stuck.kept, stuck);
+    await up.evaluate(() => { const P = FileSystemHandle.prototype; P.queryPermission = P.__q; P.requestPermission = P.__r; });
+
     // the click: Chrome's picker answered with that folder
     await up.evaluate(async () => { const d = await (await navigator.storage.getDirectory()).getDirectoryHandle('ext'); window.showDirectoryPicker = async () => d; });
     await up.click('#go');
