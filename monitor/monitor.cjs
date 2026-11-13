@@ -1639,6 +1639,15 @@ const ACS = { at: 0, day: '', queued: 0 };
 const { createAges } = require('./ages.cjs');
 const AGES = createAges({ file: path.join(DIR, '..', 'src', 'agetable.json'), log: (...a) => log('ages', ...a) });
 const AGS = { learnedFrom: 0, n: 0, running: false };
+// (1.3.5) FR24's aircraft directory: every type of aircraft of the database, in families, with each one's aircraft
+const { createAcTypes } = require('./actypes.cjs');
+const ACT = createAcTypes({ store: STORE, log: (...a) => log('aircraft', ...a), pause: () => new Promise(res => setImmediate(res)) });
+async function acTypesBuild() {
+  if (!AC.stats.at || !ACT.due(AC.stats.at)) return false;
+  const freeMb = +((CFG.acdb && CFG.acdb.freeMb) || 300);
+  if (memAvail() < freeMb * 1048576) { log('aircraft', `types not rebuilt: under ${freeMb} MB of memory free`); return false; }
+  return ACT.build(AC.each, AC.stats.at, o => AGES.of({ type: o.type, msn: o.msn, op: o.op || o.owner }));
+}
 async function agesLearn() {
   if (AGS.running || !AC.stats.at || AGS.learnedFrom === AC.stats.at) return 0;
   AGS.running = true;
@@ -1670,6 +1679,7 @@ async function acdbLoop() {
       const freeMb = +((CFG.acdb && CFG.acdb.freeMb) || 300);
       if (CFG.acdb !== false && AC.due() && !WS.full) { if (memAvail() > freeMb * 1048576) await AC.build(); else log('aircraft', `database not rebuilt: under ${freeMb} MB of memory free - again in 6 hours`); }
       await agesLearn();
+      await acTypesBuild();
       await acdbSweep();
     } catch (e) { log('aircraft', String(e && e.stack || e)); }
     await sleep(6 * 3600e3);
@@ -2550,7 +2560,7 @@ function monStatus() {
     wxmap: WXMAP_ON ? wxmap.status() : { off: true },
     apwx: APWX.stats,
     tel: { aircraft: tel.size, added: tel.stats.added, fromBrowsers: tel.stats.crowd || 0, refused: tel.stats.crowdBad || 0, served: tel.stats.served, asked: tel.stats.asked, missed: tel.stats.missed },
-    owners: owners.status(), acdb: Object.assign(AC.status(), { sweptDay: ACS.day, sweptQueued: ACS.queued }), ages: Object.assign(AGES.status(), { learnedFrom: AGS.n }), loop: Object.assign(lagStats(), heapStats(), { prof: PROF.stats, dayMemo: { aircraft: dayMemo.size, mb: Math.round(dayMemoChars / 1e5) / 10, hits: DM.hits, misses: DM.misses } }),
+    owners: owners.status(), acdb: Object.assign(AC.status(), { sweptDay: ACS.day, sweptQueued: ACS.queued }), actypes: ACT.status(), ages: Object.assign(AGES.status(), { learnedFrom: AGS.n }), loop: Object.assign(lagStats(), heapStats(), { prof: PROF.stats, dayMemo: { aircraft: dayMemo.size, mb: Math.round(dayMemoChars / 1e5) / 10, hits: DM.hits, misses: DM.misses } }),
     areas: CFG.areas.concat(userAreas).map(a => a.slice(0, 2)), paused: Object.fromEntries(Object.entries(pause).filter(([, t]) => t > now).map(([h, t]) => [h, Math.round((t - now) / 1000)])) };
 }
 function dashStats() {
@@ -2723,6 +2733,8 @@ function answer(u, nowS, ctx) {
   if (p === '/stats') return admin ? dashStats() : null;
   if (p === '/status') { const st = Object.assign({ v: 3, data: 'adsb.lol (ODbL)', since: stats.since, public: PUBLIC, ver: MON_VER, commit: MON_COMMIT }, monStatus()); if (!admin) delete st.areas; else if (TOKEN) st.controls = controls(); return st; }
   if (p === '/near') return nearAnswer(+q('lat'), +q('lon'), +q('r'));
+  // (1.3.5) a page of a type's aircraft (type=GLEX) or of a family's (family=GLOBAL), for FR24's aircraft directory
+  if (p === '/actype') return ACT.page({ type: q('type'), family: q('family'), page: q('page'), per: q('per') });
   if (p === '/tel') return telAnswer(hexList(q('hex'), 100), +(q('lat') || NaN), +(q('lon') || NaN));
   if (p === '/names') return { list: names.get(String(q('ids') || '').split(',').slice(0, 2000), +q('t') || 0) };
   // (the flights of a day, as kept: derived from adsb.lol's data, offered under the same licence - the ODbL)
@@ -2818,6 +2830,11 @@ function serve() {
       try { const b = OAAP.body(); res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Encoding': 'gzip', 'Content-Length': b.length, 'Cache-Control': 'public, max-age=3600' }); res.end(b); }
       catch (e) { res.writeHead(500); res.end(); log('oaap', String(e && e.message || e)); }
       return;
+    }
+    // (1.3.5) the aircraft directory's families and types - gzipped, built weekly
+    if (u.pathname === '/actypes' && req.method === 'GET') {
+      const b = ACT.indexBody(); if (!b) { res.writeHead(503, { 'Retry-After': '3600' }); res.end(); return; }
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Encoding': 'gzip', 'Content-Length': b.length, 'Cache-Control': 'public, max-age=3600' }); res.end(b); return;
     }
     if (u.pathname.startsWith('/wx/') && req.method === 'GET') {
       if (!WXMAP_ON) { res.writeHead(404); res.end(); return; }
@@ -2972,5 +2989,5 @@ if (require.main === module) {
   // (airports' schedules read from FR24 here, for the boards browsers open)
   setInterval(() => { BD.pump().catch(e => log('boards', String(e))); }, 5000);
 }
-module.exports = { OAAP, OARW, OADIR, oaFieldsDir, recentLog, dayLook, APWX, AF, PROF, afTargets, datalink, work, workSlow, saveSlow, setLadd: list => { lastLadd = { at: Date.now(), ac: list }; }, boardPlan, rwyFit, rwyKnown, rwyAnswer, rwySave, RL, rwyApAnswer, rwyApWarm, laddRwys, rwyHotRound, rwyLowRound, LOW, PACE, pace, fr24Client: () => fr24, fr24raw, fr24RawRound, wxmap, AGES, agesLearn, withAge, AC, acdbSweep, central, centralStart, centralRound, CR, SC, fleetOf, FL, naF, naTrack, selfEvidence, F24ref2: () => F24, WORLD, WS, AS, BD, boardRows, airportAnswer, apLegs, fr24Track, F24T, worldDay, worldWants, worldRoom, worldStatus, worldRecheck: () => { freeAt = 0; }, pollTat, TAT, TAT_HOST, carriesOn, liveExtra, logOf, heardPts, archBreath, memAvail, archTrace, archiveJob, indexDay, idxLookup, idxHave, archIdx, idxFile, ARC, setArcRange: f => { arcRange = f; }, surgeNow, datalink, datalinkRound, dlSeen, classifyTrace, traceGet, netSt, archiveDay, archiveState, archiveNext, archMark, archTried, archDays, archRunning, traceOf, AR, apliveTrace, HIST_V, HIST_RESET, resetHistLogs, histResetMark, get histResetN() { return histResetN; }, adminAnswer, ctl, logRing, log, MON_VER, learnCheck, learnFromCrowd, crowdLearnSave, crowdRows, LC, tracks, waiting, waitRound, waitLive, waitNamed, waitClaims, WAIT, saveWaiting, loadWaiting, pbMatch, learnedBuild, learnedDue, learnedLoad, learnedRef: () => learnedOut, liveBusy, backWaits, E, CFG, loadEngine, ingest, buildLegs, fr24Legs, fr24Leg, F24ref: () => F24, owners, ownersLoop, APT, legRunways, names, nearAnswer, telAnswer, tel, wx, pbNames, get PUBLIC() { return PUBLIC; }, get RATE() { return RATE; }, limited, tokenOk, installs, opts, optionsSet, optionsLoad, latestCheck, latestVer, helloAnswer, badge, wakeQuiet, parkedAt, boardLegs, flightsOfCs, lastHeard, legs, ac, backfillOne, backQ, blocked, markBlocked, seed, gapFill, addArea, userAreas,
+module.exports = { ACT, acTypesBuild, OAAP, OARW, OADIR, oaFieldsDir, recentLog, dayLook, APWX, AF, PROF, afTargets, datalink, work, workSlow, saveSlow, setLadd: list => { lastLadd = { at: Date.now(), ac: list }; }, boardPlan, rwyFit, rwyKnown, rwyAnswer, rwySave, RL, rwyApAnswer, rwyApWarm, laddRwys, rwyHotRound, rwyLowRound, LOW, PACE, pace, fr24Client: () => fr24, fr24raw, fr24RawRound, wxmap, AGES, agesLearn, withAge, AC, acdbSweep, central, centralStart, centralRound, CR, SC, fleetOf, FL, naF, naTrack, selfEvidence, F24ref2: () => F24, WORLD, WS, AS, BD, boardRows, airportAnswer, apLegs, fr24Track, F24T, worldDay, worldWants, worldRoom, worldStatus, worldRecheck: () => { freeAt = 0; }, pollTat, TAT, TAT_HOST, carriesOn, liveExtra, logOf, heardPts, archBreath, memAvail, archTrace, archiveJob, indexDay, idxLookup, idxHave, archIdx, idxFile, ARC, setArcRange: f => { arcRange = f; }, surgeNow, datalink, datalinkRound, dlSeen, classifyTrace, traceGet, netSt, archiveDay, archiveState, archiveNext, archMark, archTried, archDays, archRunning, traceOf, AR, apliveTrace, HIST_V, HIST_RESET, resetHistLogs, histResetMark, get histResetN() { return histResetN; }, adminAnswer, ctl, logRing, log, MON_VER, learnCheck, learnFromCrowd, crowdLearnSave, crowdRows, LC, tracks, waiting, waitRound, waitLive, waitNamed, waitClaims, WAIT, saveWaiting, loadWaiting, pbMatch, learnedBuild, learnedDue, learnedLoad, learnedRef: () => learnedOut, liveBusy, backWaits, E, CFG, loadEngine, ingest, buildLegs, fr24Legs, fr24Leg, F24ref: () => F24, owners, ownersLoop, APT, legRunways, names, nearAnswer, telAnswer, tel, wx, pbNames, get PUBLIC() { return PUBLIC; }, get RATE() { return RATE; }, limited, tokenOk, installs, opts, optionsSet, optionsLoad, latestCheck, latestVer, helloAnswer, badge, wakeQuiet, parkedAt, boardLegs, flightsOfCs, lastHeard, legs, ac, backfillOne, backQ, blocked, markBlocked, seed, gapFill, addArea, userAreas,
   serve, fr24, ident, dest, F24, report, identRound, fr24Round, saveIdent, loadIdent, histUnknown, learnSince, learnWrite, diskLegs, KEEP_LADD, save, loadStore, dirtyDays, pollOpenSky, adsbxUse, live, liveList, answer, step, P, piaState, apiGet, gate, stats, lastOk, noteWatch, watch, watchedAll, flew, closeDays, histQ, histPend, histOne, histDay, histOf, histRead, histWrite, histFile, fillHist, fillAsked, queueHist, photos, nextHist, saveState, loadState, lastW, get closed() { return closed; }, set closed(v) { closed = v; }, pause };

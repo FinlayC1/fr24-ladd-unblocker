@@ -2129,3 +2129,33 @@
     } finally { airBusy = false; }
   }
   function firLabelAt(lat, lon, alt) { const f = firInfo(lat, lon, alt); return f ? (f.name !== f.code ? `${f.name} (${f.code})` : f.code) : ''; }
+
+  // ---- (1.3.5) FR24's aircraft directory (/data/aircraft): the families and types the monitor's aircraft database knows -
+  // Bombardier Global, Gulfstream and the rest FR24 does not list - and a page of a type's or a family's aircraft. The list
+  // of families kept a day (it changes weekly); the page asks for which of them FR24 leaves out and adds only those.
+  const acx = { idx: null, got: 0, loading: null };
+  const acGood = j => !!(j && j.v === 1 && Array.isArray(j.families) && j.families.length);
+  function loadAcTypes() {
+    if (acx.idx && now() - acx.got < 864e5) return Promise.resolve(true);
+    if (acx.loading) return acx.loading;
+    acx.loading = (async () => {
+      const c = acx.idx ? null : await store.getHist('b:actypes1').catch(() => null);
+      if (acGood(c) && now() - (c.got || 0) < 864e5) { acx.idx = c; acx.got = c.got; return true; }
+      const j = await monGet('/actypes', { timeout: 30000, bg: true }).catch(() => null);
+      if (acGood(j)) { j.got = now(); acx.idx = j; acx.got = j.got; store.setHist('b:actypes1', j); return true; }
+      if (acGood(c)) { acx.idx = c; acx.got = c.got || 0; return true; }   // (an old one rather than none)
+      return !!acx.idx;
+    })().catch(e => { log('aircraft types', String(e && e.message || e)); return !!acx.idx; }).finally(() => { acx.loading = null; });
+    return acx.loading;
+  }
+  function onAcDir(d) {
+    const key = String(d && d.key || '').slice(0, 40);
+    loadAcTypes().then(ok => postToPage('acDir', { key, families: ok && acx.idx ? acx.idx.families : null, at: ok && acx.idx ? acx.idx.at : 0 }));
+  }
+  // (a page of one: type GLEX or family GLOBAL, page n - the monitor's answer as it is, or none)
+  function onAcPage(d) {
+    const key = String(d && d.key || '').slice(0, 80), kind = d && d.kind === 'family' ? 'family' : 'type', code = String(d && d.code || '').toUpperCase(), pg = Math.max(1, Math.min(5000, Math.floor(+(d && d.page)) || 1));
+    if (!/^[A-Z0-9]{2,12}$/.test(code)) { postToPage('acPage', { key, page: null }); return; }
+    monGet('/actype?' + kind + '=' + encodeURIComponent(code) + '&page=' + pg, { timeout: 15000 })
+      .then(j => postToPage('acPage', { key, page: j && Array.isArray(j.rows) ? j : null }), () => postToPage('acPage', { key, page: null }));
+  }

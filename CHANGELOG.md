@@ -4,6 +4,39 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 
 1.0.0 is the first release. The versions before it are the betas, labelled B: B22.31.12 is version 22.31.12.
 
+## [1.3.5] - 2026-11-13
+
+### In short
+- **FR24's aircraft directory** (flightradar24.com/data/aircraft) now lists the types of aircraft FR24 leaves out, from the monitor's aircraft database:
+  - **Families**: Bombardier Global (Global Express, 5000, 6000, 7500), Gulfstream (G150 to G800), Dassault Falcon, Cessna Citation, Embraer Phenom and Praetor, Learjet, Challenger, King Air, Pilatus, the helicopter makers, and every other type by its maker. Each comes with its number of aircraft.
+  - **A family FR24 already has** keeps its page and gains only the types it lacks. A type FR24 lists itself is left to FR24.
+  - **Search**: FR24's search on the directory page finds them by name or code (GLEX, GLF6), as it finds FR24's own.
+  - **Their pages**: each family and type has a page in FR24's own layout, with its count, average age and production list: registration, serial number, owner or operator and age, page by page. Registrations link to FR24's page for the aircraft.
+- The pages open from FR24's own links, its search and its list's pages, and load in one go.
+
+### Added
+- **Monitor** (`monitor/actypes.cjs`): every type in the aircraft database, in families, with each type's aircraft in production order. Ages are worked out where the database gives no year built. It is rebuilt with the aircraft database each week and kept in the store (`actypes/`).
+  - `GET /actypes`: the families and types.
+  - `GET /actype?type=GL5T` (or `family=GLOBAL`), `&page=`: a page of the aircraft.
+- **Page part** (`src/page.js`):
+  - FR24's directory list is merged with theirs (`acMerge`).
+  - Their pages are made from a family and a type page FR24 has, learned from its own list. This happens in FR24's own moves between pages (its XHR or fetch), on its reload of the list's pictures, and as a page loads (`acPageOf`, `acFastPage`).
+  - Links to them go to the page they are made from (`acLinkPressed`).
+  - The last 30 production-list pages are kept in the browser, so going back is instant.
+- **Userscript**: the families are kept a day; a page of aircraft is asked of the monitor when wanted.
+- **Extension**: FR24's server sending one of their addresses elsewhere (typed, or reloaded) is seen, as for airports in 1.3.4, and the page is made from FR24's.
+
+### Notes
+- FR24's directory couldn't be fetched from where this was built: its server refuses automated requests. The pages are built on FR24's own page code. Which of FR24's families their pages are made from is learned the first time its directory is opened, so open flightradar24.com/data/aircraft once after updating.
+- A registration with no serial number, owner or year in the open databases shows "—" there, as FR24 does.
+
+### Tests
+- `test/unit_135.cjs` (25 checks):
+  - **Monitor**: families and types, makers' names, production order, pages, kept on disk.
+  - **Extension**: the redirect seen.
+  - **Page part**: the directory merged; a family of FR24's given the types it lacks; addresses; links; a type's and a family's page made from FR24's; the production list's rows and pages; a page built as it loads and filled; FR24's router's XHR and fetch answered.
+- `test/unit_deploy.cjs`: the new module is in the files checked.
+
 ## [1.3.4] - 2026-11-13
 
 ### In short
