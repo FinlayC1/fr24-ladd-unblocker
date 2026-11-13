@@ -75,7 +75,9 @@ function dayLegs(hex, type, day, j) {
   }
 
   // ================= tracks: points taken out again =================
-  { const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'trk102-')), T = createTracks({ store: dir }), t0 = Math.round(Date.now() / 1000) - 7200, hex = 'abc123';
+  { const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'trk102-')), T = createTracks({ store: dir }), hex = 'abc123';
+    // (yesterday at midday: its points never cross into the next day - two hours ago, just after midnight, they did)
+    const t0 = Math.floor(Date.now() / 86400000) * 86400 - 86400 + 12 * 3600;
     T.put(hex, [0, 1, 2, 3, 4].map(k => ({ t: t0 + k * 120, lat: 50 + k * 0.1, lon: 0, alt: 30000 })));
     const n = T.drop(hex, [t0 + 120, t0 + 360, t0 + 99999]), left = T.of(hex, dayOf(t0)).map(p => p[0] - t0);
     check('tracks.drop: the points at exactly those moments taken out, the rest kept', n === 2 && left.join() === '0,240,480', { n, left }); }

@@ -21,6 +21,25 @@ chrome.runtime.onConnect.addListener(port => {
   });
   port.onDisconnect.addListener(() => { for (const c of running.values()) c.abort(); running.clear(); });
 });
+// (1.3.4) An OurAirports airport's page typed or pasted (flightradar24.com/data/airports/egow): FR24's server has no such
+// page and sends the browser on to its airport search before anything of the extension runs there. The address it came
+// from is seen here (only seen - nothing is changed or held up), kept a minute for that tab, and told to the content
+// script when it asks: the airport's own page is then made.
+const oaFrom = new Map();   // tab id -> { path, at }
+try {
+  chrome.webRequest.onBeforeRedirect.addListener(d => {
+    try {
+      const u = new URL(d.url), to = new URL(d.redirectUrl, d.url);
+      if (/^\/data\/airports\/[^/]+/.test(u.pathname) && /^\/data\/airports\/?$/.test(to.pathname)) { oaFrom.set(d.tabId, { path: u.pathname + u.search, at: Date.now() }); if (oaFrom.size > 50) oaFrom.delete(oaFrom.keys().next().value); }
+    } catch (e) { /* not an address */ }
+  }, { urls: ['https://www.flightradar24.com/data/airports/*', 'https://flightradar24.com/data/airports/*'], types: ['main_frame'] });
+} catch (e) { /* no webRequest here */ }
+chrome.runtime.onMessage.addListener((m, sender, reply) => {
+  if (!m || m.tlOaFrom !== true || sender.id !== chrome.runtime.id) return;
+  const t = sender.tab && sender.tab.id, v = t != null ? oaFrom.get(t) : null;
+  if (t != null) oaFrom.delete(t);
+  reply(v && Date.now() - v.at < 60000 ? v.path : '');
+});
 // A monitor of the user's own (the LADD Unblock window's Data sources) at an address the manifest does not list: the browser asks the user to
 // allow it, on the extension's own page (grant.html) - only a click there may grant a host. Answered true when it is
 // allowed already.

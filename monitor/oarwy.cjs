@@ -6,8 +6,9 @@
 //   - build(): OurAirports' runways.csv and airport-frequencies.csv into what airport.cjs answers with - per airport,
 //     every runway [ident, other end's ident, length ft, width ft, surface (FR24's code), surface as the source has it,
 //     lit 1/0/-1, closed 1/0, then for each end (this, other): elevation ft, true heading, displaced threshold ft, lat,
-//     lon], and [[type, description, MHz]]. An airport is found by OurAirports' own ident and by its ICAO and GPS codes
-//     (airports.csv, when given: "US-0009" is also "48ID"); helipads are left out
+//     lon], and [[type, description, MHz]]; 1.3.4: and a heliport's pads apart (pads: [ident, length ft, width ft,
+//     surface code, surface, lit, closed, lat, lon]) - they are no runways. An airport is found by OurAirports' own ident and by its ICAO and GPS codes
+//     (airports.csv, when given: "US-0009" is also "48ID"); helipads kept apart
 //   - createOaRunways(): the two files kept in the monitor's store (never in the checkout: a file of the checkout changed
 //     stops the next deploy), asked for again every hour - only what changed is sent (ETag) - and never replaced by
 //     something that is not that file
@@ -40,7 +41,7 @@ function* rowsOf(csv, cols) {
 const order = ['ATIS', 'TWR', 'GND', 'APP', 'DEP', 'CTR', 'UNIC', 'CTAF', 'AFIS', 'A/G', 'RDO'];
 // the work, a row at a time (a generator: run through in one go, or a slice at a time with the server answering between)
 function* steps(rcsv, fcsv, acsv) {
-  const info = {}, freqs = {}, alias = [];
+  const info = {}, freqs = {}, pads = {}, alias = [];
   let n = 0;
   if (acsv) for (const r of rowsOf(acsv, ['ident', 'type', 'icao_code', 'gps_code'])) {
     const id = r.ident.toUpperCase().trim(); if (!id) continue;
@@ -53,7 +54,10 @@ function* steps(rcsv, fcsv, acsv) {
     if (++n % 2000 === 0) yield;
     const ap = r.airport_ident.toUpperCase().trim(); if (!ap) continue;
     const le = r.le_ident.toUpperCase().trim(), he = r.he_ident.toUpperCase().trim();
-    if (!le || /^H/.test(le)) continue;
+    if (!le) continue;
+    // (1.3.4: a helipad - "H1" - is kept apart, a heliport's own: [ident, length ft, width ft, surface (FR24's code),
+    // surface as the source has it, lit 1/0/-1, closed 1/0, lat, lon]; never a runway)
+    if (/^H/.test(le)) { (pads[ap] = pads[ap] || []).push([le, num(r.length_ft), num(r.width_ft), surfCode(r.surface), String(r.surface || '').slice(0, 40), r.lighted === '1' ? 1 : r.lighted === '0' ? 0 : -1, r.closed === '1' ? 1 : 0, num(r.le_latitude_deg, 5), num(r.le_longitude_deg, 5)]); continue; }
     const lit = r.lighted === '1' ? 1 : r.lighted === '0' ? 0 : -1, end = s => [num(r[s + '_elevation_ft']), num(r[s + '_heading_degT']), num(r[s + '_displaced_threshold_ft']), num(r[s + '_latitude_deg'], 5), num(r[s + '_longitude_deg'], 5)];
     (info[ap] = info[ap] || []).push([le, he, num(r.length_ft), num(r.width_ft), surfCode(r.surface), String(r.surface || '').slice(0, 40), lit, r.closed === '1' ? 1 : 0].concat(end('le'), end('he')));
   }
@@ -68,8 +72,8 @@ function* steps(rcsv, fcsv, acsv) {
   for (const k of Object.keys(freqs)) freqs[k].sort((a, b) => ((order.indexOf(a[0]) + 1) || 99) - ((order.indexOf(b[0]) + 1) || 99) || a[2] - b[2]);
   const airports = Object.keys(info).length;
   // (its other codes: never over an airport that has that code as its own ident)
-  for (const [a, id] of alias) { if (info[id] && !info[a]) info[a] = info[id]; if (freqs[id] && !freqs[a]) freqs[a] = freqs[id]; }
-  return { info, freqs, airports, runways };
+  for (const [a, id] of alias) { if (info[id] && !info[a]) info[a] = info[id]; if (freqs[id] && !freqs[a]) freqs[a] = freqs[id]; if (pads[id] && !pads[a]) pads[a] = pads[id]; }
+  return { info, freqs, pads, airports, runways };
 }
 function build(rcsv, fcsv, acsv) { const g = steps(rcsv, fcsv, acsv); let x; while (!(x = g.next()).done) { /* in one go */ } return x.value; }
 async function buildSlow(rcsv, fcsv, acsv) {

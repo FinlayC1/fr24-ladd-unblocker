@@ -376,6 +376,9 @@
   function siteNearBook(lat, lon, km) { const bk = siteBk(); if (!bk || !fin(lat) || !fin(lon)) return null; let best = null, bd = km; for (const s of bk.list) { const d = ENGINE.dist(lat, lon, s.lat, s.lon); if (d < bd) { bd = d; best = s; } } return best; }
   function siteIdAt(lat, lon) { const s = siteNearBook(lat, lon, 1.5); return s ? s.id : 0; }
   function learnSite(lat, lon, opts) {
+    // (1.3.4: down at one of the OurAirports airports - M-SKTO at Axis Business Park's helipad: that airport, as FR24's
+    // own airports are, never a landing place of its own beside it)
+    { const oid = oaIdNear(lat, lon, opts && opts.heli ? 0.35 : 1); if (oid) return oid; }
     const bk = siteBk(); if (!bk || !fin(lat) || !fin(lon) || ENGINE.airports.length < 1000) return 0;
     if (!sites.grid) { loadSites(); return 0; }                     // (named once the list of strips and towns is in)
     const heli = !!(opts && opts.heli), p = privatePlace(lat, lon, { heli, onNew: () => learnSite(lat, lon, opts) });
@@ -415,12 +418,27 @@
   function sitesSoon() { siteLab = null; if (siteSaveT) return; siteSaveT = setTimeout(() => { siteSaveT = 0; store.kvSet('sites2', siteBk()); pushSites(); }, 3000); }
   // ---- (1.3) every OurAirports airport FR24 does not list (closed ones aside) - the monitor's list (oaap.cjs: the route
   // engine's own ids), kept here a week - given to the page for FR24's airport list, its map, boards and panel
-  const oa = { rows: null, ids: new Set(), byId: new Map(), byCode: new Map(), sig: '', loading: null };
+  const oa = { rows: null, ids: new Set(), byId: new Map(), byCode: new Map(), grid: new Map(), sig: '', loading: null };
   const oaKnown = id => id >= 1e7 && oa.ids.has(id);
   function oaSet(c) {
     oa.rows = c.rows; oa.sig = String(c.n || c.rows.length) + '.' + (c.at || 0); oa.ids = new Set(); oa.byId = new Map(); oa.byCode = new Map();
-    for (const r of c.rows) if (Array.isArray(r) && r[0] >= 1e7) { oa.ids.add(r[0]); oa.byId.set(r[0], r); oa.byCode.set(String(r[1]).toUpperCase(), r[0]); }
+    oa.grid = new Map();
+    for (const r of c.rows) if (Array.isArray(r) && r[0] >= 1e7) {
+      oa.ids.add(r[0]); oa.byId.set(r[0], r); oa.byCode.set(String(r[1]).toUpperCase(), r[0]);
+      const k = oaCell(r[6], r[7]); let g = oa.grid.get(k); if (!g) oa.grid.set(k, g = []); g.push(r);
+    }
   }
+  // (1.3.4) the airports of the list by where they are: a 0.1° grid
+  const oaCell = (lat, lon) => Math.floor(lat * 10) * 10000 + Math.floor(lon * 10);
+  function oaEachNear(lat, lon, km, fn) {
+    if (!oa.grid.size || !fin(lat) || !fin(lon)) return;
+    const la = Math.floor(lat * 10), lo = Math.floor(lon * 10), dl = Math.ceil(km / 11) + 1, dn = Math.ceil(km / (11 * Math.max(0.05, Math.cos(lat * Math.PI / 180)))) + 1;
+    for (let i = -dl; i <= dl; i++) for (let j = -dn; j <= dn; j++) { const g = oa.grid.get((la + i) * 10000 + lo + j); if (!g) continue; for (const r of g) { const d = ENGINE.dist(lat, lon, r[6], r[7]); if (d <= km) fn(r, d); } }
+  }
+  // (the one at a spot: the nearest within km - a helicopter down at Axis Business Park's pad is at that heliport)
+  function oaIdNear(lat, lon, km) { let best = 0, bd = Infinity; oaEachNear(lat, lon, km, (r, d) => { if (d < bd) { bd = d; best = r[0]; } }); return best; }
+  // (whether OurAirports gives it an ICAO code of its own: the monitor says so (1.3.4); a list from before, by its look)
+  const oaHasIcao = r => (r[10] === 1 || r[10] === 0) ? r[10] === 1 : /^[A-Z]{4}$/.test(String(r[2] || '')) && !/^[A-Z]{2}-/.test(String(r[1] || ''));
   // (1.3.2) The list is checked with the monitor every quarter of an hour - a few bytes when it is the same one (1.3.1:
   // once a day, and never again while a tab stayed open - an airport added to OurAirports showed up a day late, or not
   // until the page was loaded again). A newer one replaces it at once, in this tab's page too. Never more than a week
@@ -468,14 +486,93 @@
     if (!oa.rows) return;
     await loadAirports().catch(() => {});
     const refs = {};
-    for (const r of oa.rows) { const id = r[5]; if (id && !(id in refs)) { const a = airports.byId.get(id); refs[id] = a ? String(a.iata || a.icao || '') : ''; } }
+    for (const r of oa.rows) { const id = r[5]; if (id && !(id in refs)) refs[id] = oaPageRef(id); }
     postToPage('oaRows', { rows: oa.rows, sig: oa.sig, refs });
+  }
+  // (1.3.4) The FR24 airport whose pages an OurAirports airport's are made from: FR24's server must have pages of it, and it
+  // has them for its big airports - the nearest FR24 airport could be one it has none of (RAF Woodvale's, Blackpool: "More"
+  // ended on FR24's airport search). The nearest of its country's with 10,000 flights a year and more, else any such.
+  const pageRefMemo = new Map(); let bigAps = null;
+  function oaPageRef(refId) {
+    if (pageRefMemo.has(refId)) return pageRefMemo.get(refId);
+    const a = airports.byId.get(refId); if (!a) return '';
+    if (!bigAps) bigAps = airports.list.filter(x => (x.size || 0) >= 10000 && (x.iata || x.icao) && fin(x.lat));
+    let best = null, bd = Infinity, any = null, ad = Infinity;
+    for (const x of bigAps) { const d = ENGINE.dist(a.lat, a.lon, x.lat, x.lon); if (d < ad) { ad = d; any = x; } if (x.countryId === a.countryId && d < bd) { bd = d; best = x; } }
+    const p = best || any || a, code = String(p.iata || p.icao || '').toLowerCase();
+    pageRefMemo.set(refId, code); return code;
+  }
+  // (1.3.4) FR24's searches - its search box on every page, its airport pages' own: the OurAirports airports matching a
+  // code or a name (page.js has the same: test/unit_134.cjs checks they agree)
+  const OA_RANK = { L: 6, M: 5, S: 3, W: 2, H: 1, B: 0 };
+  // ==OA-MATCH==
+  function oaMatchRows(rows, q, n, size) {
+    q = String(q || '').trim().toLowerCase(); if (q.length < 2 || !rows) return [];
+    var hits = [], word = { test: function (nm) { for (var k = nm.indexOf(q); k >= 0; k = nm.indexOf(q, k + 1)) { if (k === 0 || ' (/-'.indexOf(nm.charAt(k - 1)) >= 0) return true; } return false; } };
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i]; if (!Array.isArray(r)) continue;
+      var c1 = String(r[1]).toLowerCase(), c2 = String(r[2]).toLowerCase(), nm = String(r[3] || '').toLowerCase(), s = -1;
+      if (c1 === q || c2 === q) s = 0; else if (c1.indexOf(q) === 0 || c2.indexOf(q) === 0) s = 1; else if (nm.indexOf(q) === 0) s = 2; else if (q.length >= 3 && word.test(nm)) s = 3; else if (q.length >= 3 && (nm.indexOf(q) >= 0 || String(r[4] || '').toLowerCase().indexOf(q) >= 0)) s = 4;
+      if (s >= 0) hits.push([s, size(r), r]);
+    }
+    hits.sort(function (a, b) { return a[0] - b[0] || b[1] - a[1] || String(a[2][3]).localeCompare(String(b[2][3])); });
+    return hits.slice(0, n || 10).map(function (h) { return h[2]; });
+  }
+  // ==/OA-MATCH==
+  function oaFind(q, n) { return oaMatchRows(oa.rows, q, n, r => OA_RANK[r[9]] || 0); }
+  // (1.3.4) Their places in FR24's airport lists (/data/airports: each country's count; a country's list, or its states' -
+  // a state's list): the country is the one of their ISO region (r[11], "US-ID": FR24's own country id for "US" - that of
+  // most of the US ones' nearest FR24 airports), else their nearest FR24 airport's
+  let oaIso = null;
+  function oaCountryOf(r) {
+    if (!oaIso) {
+      const votes = new Map();
+      for (const x of oa.rows) { const reg = String(x[11] || ''), a = airports.byId.get(x[5]); if (!reg || !a || !a.countryId) continue; const k = reg.slice(0, 2); let m = votes.get(k); if (!m) votes.set(k, m = new Map()); m.set(a.countryId, (m.get(a.countryId) || 0) + 1); }
+      oaIso = new Map(); for (const [k, m] of votes) oaIso.set(k, [...m].sort((a, b) => b[1] - a[1])[0][0]);
+    }
+    const reg = String(r[11] || ''); return (reg && oaIso.get(reg.slice(0, 2))) || (airports.byId.get(r[5]) || {}).countryId || 0;
+  }
+  const oaState = r => String(r[11] || '').split('-')[1] || '';
+  // what a page of FR24's airport lists needs: { kind: 'counts' } -> { counts: { countryId: n } }; { kind: 'country' |
+  // 'state', id, name, states: { name: code } } -> { airports: [FR24's form], states: { code: n }, rows: [...], nears }
+  function oaDirectory(d) {
+    if (!oa.rows || !airports.list) return null;
+    if (d.kind === 'counts') { const counts = {}; for (const r of oa.rows) { const id = oaCountryOf(r); if (id) counts[id] = (counts[id] || 0) + 1; } return { counts }; }
+    let cid = Number(d.id) || 0;
+    if (!cid && d.name) { const a = airports.list.find(x => String(x.country || '').toLowerCase() === String(d.name).toLowerCase()); cid = a ? a.countryId : 0; }
+    if (!cid) return null;
+    let rows = oa.rows.filter(r => oaCountryOf(r) === cid);
+    const states = {}; for (const r of rows) { const s = oaState(r); if (s) states[s] = (states[s] || 0) + 1; }
+    if (d.kind === 'state') { const code = String(d.code || '').toUpperCase(); if (!code) return null; rows = rows.filter(r => oaState(r) === code); }
+    else if (d.hasStates) return { states };
+    const nears = {}; for (const r of rows) if (!(r[5] in nears)) nears[r[5]] = airports.byId.get(r[5]) || null;
+    const refs = {}; for (const id of Object.keys(nears)) refs[id] = oaPageRef(Number(id));
+    return { airports: rows.map(r => ({ id: r[0], name: r[3], iata: String(r[1]), icao: /^[A-Z0-9]{4}$/.test(String(r[2])) ? r[2] : '', total: 0 })), rows, refs, nears, states };
+  }
+  // (its name as FR24 names a place: "Woodvale" for RAF Woodvale - not the town OurAirports gives, Southport)
+  const oaCity = r => ENGINE.placeShort(ENGINE.fieldShortName(r[3])) || ENGINE.placeShort(r[4]) || r[1];
+  // (1.3.4) FR24's "closest airports" of an airport: its own and the OurAirports airports with an ICAO code of their own
+  // (not those known only by a local or OurAirports code) - the n nearest, in FR24's form; and the rows of those of the
+  // list, so their links open their pages
+  function closestOf(ap, n) {
+    if (!ap || !fin(ap.lat)) return { items: [], oa: [] };
+    const cand = [];
+    for (const a of airports.list) if (a.id !== ap.id && fin(a.lat) && (a.iata || a.icao)) { const d = ENGINE.dist(ap.lat, ap.lon, a.lat, a.lon); if (d <= 400) cand.push([d, a, null]); }
+    oaEachNear(ap.lat, ap.lon, 120, (r, d) => { if (r[0] !== ap.id && oaHasIcao(r)) cand.push([d, oaAp(r[0]), r]); });
+    cand.sort((x, y) => x[0] - y[0]);
+    const items = [], rows = [];
+    for (const [d, a, r] of cand.slice(0, n || 5)) {
+      const code = String(a.iata || a.icao || a.code || '');
+      items.push({ id: a.id, name: a.name, city: a.city || '', iata: r ? r[1] : (a.iata || null), icao: (r ? r[2] : a.icao) || null, countryId: a.countryId || 0, countryName: a.country || '', url: '/data/airports/' + code.toLowerCase(), distanceKm: Math.round(d) });
+      if (r) rows.push({ row: r, ref: oaPageRef(r[5]), near: airports.byId.get(r[5]) || null });
+    }
+    return { items, oa: rows };
   }
   // (one of them as an airport: its row, the nearest FR24 airport's country and zone)
   function oaAp(id) {
     const r = oa.byId.get(id); if (!r) return null;
     const ref = airports.byId.get(r[5]) || {};
-    return { id: r[0], iata: r[1], icao: /^[A-Z]{4}$/.test(r[2]) ? r[2] : '', code: r[1], ident: r[2], name: r[3], city: ENGINE.placeShort(r[4]) || ENGINE.placeShort(r[3]), country: ref.country || '', countryId: ref.countryId || 0,
+    return { id: r[0], iata: r[1], icao: /^[A-Z]{4}$/.test(r[2]) ? r[2] : '', code: r[1], ident: r[2], name: r[3], city: oaCity(r), town: ENGINE.placeShort(r[4]), kind: r[9] || '', country: ref.country || '', countryId: ref.countryId || 0,
       lat: r[6], lon: r[7], alt: r[8] || 0, size: 1, timezone: ref.timezone || null, tz: ref.timezone ? ref.timezone.offset : (ref.tz || 0), oa: true };
   }
   // (an unlisted airfield - an id from the route engine's field list - answers too; and a learned landing place)

@@ -131,7 +131,7 @@ function loadEngine() {
   APT.load(DATA);
   // (1.3.2: every airport's runways and frequencies as OurAirports had them when last asked - the store's files, once
   // there are any - over the checkout's)
-  try { const d = OARW.buildSync(OAAP.file); if (d) APT.set(d.info, d.freqs); } catch (e) { console.log('OurAirports runways', String(e && e.message || e)); }
+  try { const d = OARW.buildSync(OAAP.file); if (d) APT.set(d.info, d.freqs, d.pads); } catch (e) { console.log('OurAirports runways', String(e && e.message || e)); }
   const oaDir = oaFieldsDir();
   if (fs.existsSync(path.join(oaDir, 'oa_airports.csv'))) { const fields = require(fs.existsSync(path.join(DIR, 'dataset.cjs')) ? path.join(DIR, 'dataset.cjs') : '../test/dataset.cjs').loadFields(oaDir); E.setFields(fields); }
   // (the learned tables and weights the userscript is built with: airports' usage by kind of aircraft, routes, the model -
@@ -2359,6 +2359,8 @@ function airportAnswer(apId, nowS, days, hist) {
   const key = apId + ':' + days + ':' + hist, c = apAnswers.get(key);
   if (c && Date.now() - c.at < 60000) return c.v;
   const v = APT.answer(apId, apLegs(apId), nowS, days, AS, hist);
+  // (1.3.4: an OurAirports airport's kind - a heliport's window lists its pads, not runways)
+  if (v && v.known && apId >= 1e7) { const o = OAAP.get(apId); if (o) v.kind = o.kind || ''; }
   // (1.3) the runways of the window as the runway log has them - every flight's, from FR24's own tracks (1.2.10-1.2.12's
   // rules) - over what the day files and the ADS-B legs counted: each runway's take-offs and landings, the larger of the two
   if (v && v.known && Array.isArray(v.usage)) {
@@ -2952,7 +2954,7 @@ if (require.main === module) {
         const ch = await OAAP.refresh(oaGet, { everyMs: 50 * 60000 });
         if (ch) log('OurAirports airports: a new file -', OAAP.stats.rows, 'airports');
         const rw = await OARW.refresh(oaGet, { everyMs: 50 * 60000 });
-        if ((rw || ch) && OARW.have()) { const d = await OARW.build(OAAP.file); if (d) { APT.set(d.info, d.freqs); apAnswers.clear(); log('OurAirports runways:', d.runways, 'runways of', d.airports, 'airports'); } }
+        if ((rw || ch) && OARW.have()) { const d = await OARW.build(OAAP.file); if (d) { APT.set(d.info, d.freqs, d.pads); apAnswers.clear(); log('OurAirports runways:', d.runways, 'runways of', d.airports, 'airports'); } }
       } catch (e) { log('OurAirports', String(e && e.message || e)); }
     };
     setTimeout(oaR, 90000); setInterval(oaR, 3600e3);

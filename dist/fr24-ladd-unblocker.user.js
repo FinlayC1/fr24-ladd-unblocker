@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Flightradar24 LADD / N-A Unblocker (feed-level)
 // @namespace    tweeks.io
-// @version      1.3.3
+// @version      1.3.4
 // @description  Identifies every LADD / N/A / blocked military aircraft on Flightradar24 from public ADS-B, and injects callsign, registration, operator, age, country, MSN, squawk, vertical speed, GPS altitude, airspeeds, wind, photos, a reasoned origin/destination with a wind-corrected ETA (also for ordinary flights FR24 shows as N/A - military, private, GA, helicopters, with private landing sites; learned from 63 days of every aircraft worldwide, with live weather and closures), airport-board entries and a rebuilt 7-month flight log straight into FR24's own data - so it all renders like normal FR24 traffic.
 // @author       Finlay Clarke
 // @updateURL    https://raw.githubusercontent.com/FinlayC1/fr24-ladd-unblocker/main/dist/fr24-ladd-unblocker.user.js
@@ -98,7 +98,7 @@
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "1.3.3";
+    var BRIDGE_V = "1.3.4";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed but the
@@ -1689,23 +1689,23 @@
     }
     // (the userscript's search answer - the blocked aircraft and callsigns it keeps logs of - asked for as FR24 asks its own;
     // a moment at most, then without it)
-    var searchWait = {}, searchSeq = 0;
+    var searchWait = new Map(), searchSeq = 0;
     // (1.2.1: routes for flights the page has none of - asked of the userscript, which asks the monitor; 1.5 s at most)
-    var routeAskWait = {};
+    var routeAskWait = new Map();
     function askRoutes(ids) {
       if (!ids || !ids.length) return Promise.resolve();
       var rid = 'r' + (++searchSeq);
-      return new Promise(function (res) { routeAskWait[rid] = res; oSetTimeout(function () { if (routeAskWait[rid]) { delete routeAskWait[rid]; res(); } }, 1500); post('routesAsk', { rid: rid, ids: ids }); });
+      return new Promise(function (res) { routeAskWait.set(rid, res); oSetTimeout(function () { if (routeAskWait.has(rid)) { routeAskWait.delete(rid); res(); } }, 1500); post('routesAsk', { rid: rid, ids: ids }); });
     }
     function onRoutesGot(d) {
       Object.keys(d && d.routes || {}).forEach(function (k) { var r = d.routes[k]; if (r && !routes.has(Number(k))) routes.set(Number(k), r); });
-      var f = routeAskWait[d && d.rid]; if (f) { delete routeAskWait[d.rid]; f(); }
+      var f = d && typeof d.rid === 'string' ? routeAskWait.get(d.rid) : null; if (typeof f === 'function') { routeAskWait.delete(d.rid); f(); }
     }
-    function askSearch(q) { var rid = 's' + (++searchSeq); return new Promise(function (res) { searchWait[rid] = res; oSetTimeout(function () { if (searchWait[rid]) { delete searchWait[rid]; res({ rows: [], live: [] }); } }, 700); post('needSearch', { q: q, rid: rid }); }); }
+    function askSearch(q) { var rid = 's' + (++searchSeq); return new Promise(function (res) { searchWait.set(rid, res); oSetTimeout(function () { if (searchWait.has(rid)) { searchWait.delete(rid); res({ rows: [], live: [] }); } }, 700); post('needSearch', { q: q, rid: rid }); }); }
     function onSearchAdd(d) {
       // (each a blocked aircraft or a callsign of one: its Playback is FR24's map playback of its flight)
       (Array.isArray(d.rows) ? d.rows : []).forEach(function (r) { if (r && r.id && (r.type === 'aircraft' || r.type === 'schedule')) pbBlkNote(r.type === 'aircraft' ? 'A' : 'C', r.id, r.type === 'aircraft' && r.detail ? r.detail.hex : ''); });
-      var f = searchWait[d.rid]; if (f) { delete searchWait[d.rid]; f({ rows: Array.isArray(d.rows) ? d.rows : [], live: Array.isArray(d.live) ? d.live : [] }); }
+      var f = d && typeof d.rid === 'string' ? searchWait.get(d.rid) : null; if (typeof f === 'function') { searchWait.delete(d.rid); f({ rows: Array.isArray(d.rows) ? d.rows : [], live: Array.isArray(d.live) ? d.live : [] }); }
     }
     // (a logo FR24 has none of - BAE Systems' - on any row of its search: airline, aircraft, flight)
     function logoFix(r) { var id = r && r.detail && r.detail.operator_id; if (!id || !LOGO_ADD[id] || r.detail.logo === LOGO_ADD[id].source) return false; r.detail.logo = LOGO_ADD[id].source; return true; }
@@ -2136,6 +2136,19 @@
     // (a place is its part before the first comma - "Rotherham, South Yorkshire" is Rotherham: the same cut as the userscript's
     // ENGINE.placeShort, which test/unit_places.cjs checks them against. The landing places kept from before, cut here; the
     // userscript's own list, which keeps both names where two places would read the same, replaces them at once)
+    // (1.3.4) an airfield's name as FR24 would show it - the place, not the kind of field: "RAF Woodvale" is Woodvale - the
+    // route engine's ENGINE.fieldShortName, which test/unit_134.cjs checks this against
+    function fieldShortName(n) {
+      var s = String(n || '').replace(/\s*\((disused|closed|private|abandoned)\)\s*$/i, '').trim();
+      var t = s.replace(/^(RAF|RNAS|RAAF|RCAF|RNZAF|RNLAF|AAC|MOD|NAS|NAF|ANGB|Royal Air Force|Army Air Corps|Naval Air Station|Air Force Base)\s+/i, '');
+      for (var k = 0, was = ''; k < 4 && was !== t; k++) {
+        was = t;
+        t = t.replace(/\s*\([^()]*\b(field|airport|airfield|air ?base|heliport)\)\s*$/i, '').replace(/\s+\(?(UL|ULM|microlight|private|disused)\)?$/i, '')
+          .replace(/\s+(MCAS|MCAF|AFB|ARB|AAF|ANGB|NAS|NAF|JRB|NAWS|army air ?field|army heliport|air national guard base|air reserve base|naval air station|marine corps air station)$/i, '')
+          .replace(/\s+(airfield|aerodrome|airport|air ?strip|air ?field|air ?base|air station|flying field|landing (strip|ground|field)|glider ?field|gliding (site|club)|aero ?club|farm ?strip|private strip|strip|airpark|air park|heliport)$/i, '').trim();
+      }
+      return t.length >= 3 ? t : s;
+    }
     function placeShort(n) {
       var s = String(n == null ? '' : n).replace(/\s+/g, ' ').trim(), i = s.indexOf(',');
       return i < 0 ? s : s.slice(0, i).trim() || s.replace(/^[,\s]+|[,\s]+$/g, '').replace(/,\s*/g, ', ');
@@ -2149,6 +2162,9 @@
     // view once it is zoomed in (all of them at once would be some 63,000 pins); their boards and FR24's airport answer
     // for them made here
     var oaRows = null, oaById = null, oaByCode = new Map(), oaWait = [];
+    // (FR24's own rows by id, as its list came - the OurAirports airports take their country and zone from them; made
+    // here, before any of their pages is made as it loads - oaFast)
+    var fr24Refs = new Map();
     // FR24's airport answer (common/v1/airport.json) for one of them - its details in FR24's form, no runways or weather of
     // FR24's (the monitor's weather goes in where FR24's panel says "N/A"), its schedules empty (its boards are filled
     // apart)
@@ -2156,7 +2172,7 @@
       var c = decodeURIComponent((url.match(/[?&]code=([^&#]+)/) || [])[1] || '').toLowerCase(), r = c && oaByCode.get(c); if (!r) return null;
       // (never for a code FR24 itself has: its own answer stands)
       var mine = true; fr24Refs.forEach(function (a) { if (mine && ((a.iata && String(a.iata).toLowerCase() === c) || (a.icao && String(a.icao).toLowerCase() === c))) mine = false; }); if (!mine) return null;
-      var row = oaFr24Row(r, fr24Refs.get(r[5])), now = Math.floor(Date.now() / 1000), tz = row.timezone || UTC_TZ;
+      var row = oaFr24Row(r, refOf(r[5])), now = Math.floor(Date.now() / 1000), tz = row.timezone || UTC_TZ;
       var sched = function () { return { item: { current: 0, total: 0, limit: 100 }, page: { current: 1, total: 1 }, timestamp: now, data: [] }; };
       var pd = { details: { name: row.name, code: { iata: row.iata, icao: row.icao || null }, delayIndex: null, stats: null,
         position: { latitude: row.lat, longitude: row.lon, altitude: row.alt, country: { name: row.country || null, code: null, id: row.countryId || null }, region: { city: row.city || null } },
@@ -2171,6 +2187,7 @@
       if (part === '/disruptions') return Promise.resolve({ data: {} });
       if (part === '/weather') return apWxWait(id, 6000).then(function (w) { return { data: w ? oaWeather(w) : {} }; });
       var a = oaStoreRow(r), sun = sunTimes(a.latitude, a.longitude, Date.now());
+      if (oaRefs.has(r[5])) oaOneKeep(r, oaRefs.get(r[5]), refOf(r[5]));
       oaStoreKeep(pinStore('airports'), a);
       // (1.3.2: its ICAO code where it has one - or its GPS code: three or four letters and figures; its time zone as
       // words, today's sunrise and sunset there, worked out - 1.3.1 left all four "N/A")
@@ -2179,8 +2196,22 @@
     }
     // (what kind of code an OurAirports airport is known by: its ICAO or GPS code - "EGOW", "48ID" - or only OurAirports'
     // own - "GB-0002")
+    // (1.3.4) one of them by its codes, as FR24's window and pins show an airport's: its ICAO code - else its GPS or
+    // OurAirports' own - and " / " its IATA code only where it has a real one: "EGOW", "GB-0735", "EGWS / WSX"; never
+    // the same code twice, never "/ null"
+    function oaRealIata(r) { var c = String((r && r[1]) || '').toUpperCase(); return /^[A-Z]{3}$/.test(c) && c !== String(r[2] || '').toUpperCase() ? c : ''; }
+    function oaCodeLine(r) { var ia = oaRealIata(r), main = String(r[2] || r[1] || '').toUpperCase(); return main + (ia ? ' / ' + ia : ''); }
+    // (FR24's pins write an airport's label [iata, icao].join(" / "): for theirs, the code line instead - only for an
+    // array of exactly their two codes, joined with exactly that; every other join as it is)
+    var oaPinLabels = new Map(), oJoin = Array.prototype.join;
+    function oaPinKey(a, b) { return String(a) + '\u0001' + String(b); }
+    try {
+      Object.defineProperty(Array.prototype, 'join', { configurable: true, writable: true, value: function join(sep) {
+        if (sep === ' / ' && this.length === 2 && oaPinLabels.size && typeof this[0] === 'string') { var l = oaPinLabels.get(oaPinKey(this[0], this[1])); if (l !== undefined) return l; }
+        return oJoin.apply(this, arguments);
+      } });
+    } catch (e) { /* the pins as FR24 writes them */ }
     function oaIcaoOf(r) { var id = String((r && r[2]) || '').toUpperCase(); return /^[A-Z0-9]{3,4}$/.test(id) ? id : null; }
-    function oaHasIata(r) { var c = String((r && r[1]) || '').toUpperCase(); return /^[A-Z]{3}$/.test(c) && c !== String(r[2] || '').toUpperCase(); }
     // (a time zone as words: "Europe/London (UTC+00:00)" - its offset as it is today, by the browser's own tables)
     function tzText(name, abbr, offH) {
       if (!name) return null;
@@ -2214,17 +2245,42 @@
     }
     // (1.3.1) one of them alone - an airport data page's own, the whole list not sent there - and the FR24 airport its
     // pages are made from
-    function acceptOaOne(d) {
+    function acceptOaOne(d, quiet) {
       var r = d && d.row; if (!Array.isArray(r) || !(r[0] >= 1e7) || typeof d.ref !== 'string' || !/^[a-z0-9]{3,4}$/i.test(d.ref)) return;
       if (!oaById) oaById = new Map();
-      oaById.set(r[0], r); oaByCode.set(String(r[1]).toLowerCase(), r); oaRefs[r[5]] = d.ref.toLowerCase();
-      oaLostGo();
+      oaById.set(r[0], r); oaByCode.set(String(r[1]).toLowerCase(), r); if (Number.isInteger(r[5])) oaRefs.set(r[5], d.ref.toLowerCase());
+      if (d.near && typeof d.near === 'object' && d.near.id === r[5] && !fr24Refs.has(r[5])) fr24Refs.set(r[5], d.near);
+      oaOneKeep(r, d.ref.toLowerCase(), d.near || refOf(r[5]));
+      if (!quiet) oaLostGo();
+    }
+    // (1.3.4) One of them as this browser last had it - its row, the FR24 airport its pages are made from, its nearest FR24
+    // airport (country, time zone) - kept for each one looked at, its window opened, its page linked to: its page is then
+    // made from the page FR24's server sends the moment that loads, before FR24's app starts - no second load, no wait
+    // for the userscript (1.3.3: the airport's page loaded, then the userscript's list was read, then the page asked for
+    // again - and shown the while). The last 60 kept.
+    var OA_ONE = 'tl.oa.one.';
+    function oaOneKeep(r, ref, near) {
+      if (!Array.isArray(r) || !ref) return;
+      var code = String(r[1]).toLowerCase();
+      try {
+        var idx = JSON.parse(lsGet('tl.oa.ones') || '[]'); if (!Array.isArray(idx)) idx = [];
+        idx = idx.filter(function (c) { return c !== code; }); idx.push(code);
+        while (idx.length > 60) { var old = idx.shift(); try { localStorage.removeItem(OA_ONE + old); } catch (e) { /* none */ } }
+        // (of the FR24 airport its page is made from, only what the page takes from it: its country and time zone)
+        var nearKept = near && near.id === r[5] ? { id: near.id, iata: near.iata || '', icao: near.icao || '', name: near.name || '', city: near.city || '', country: near.country || '', countryId: near.countryId || 0, size: near.size || 0, timezone: near.timezone || null } : null;
+        lsSet(OA_ONE + code, JSON.stringify({ row: r, ref: ref, near: nearKept, at: Date.now() }));
+        lsSet('tl.oa.ones', JSON.stringify(idx));
+      } catch (e) { /* full: as before */ }
+    }
+    function oaOneGet(code) {
+      try { var o = JSON.parse(lsGet(OA_ONE + String(code || '').toLowerCase()) || 'null'); return o && Array.isArray(o.row) && o.row[0] >= 1e7 && typeof o.ref === 'string' && /^[a-z0-9]{3,4}$/.test(o.ref) && Date.now() - o.at < 30 * 864e5 ? o : null; } catch (e) { return null; }
     }
     function acceptOa(d) {
       if (!d || !Array.isArray(d.rows)) return;
-      if (d.refs && typeof d.refs === 'object') Object.keys(d.refs).forEach(function (k) { if (typeof d.refs[k] === 'string' && /^[a-z0-9]{3,4}$/i.test(d.refs[k])) oaRefs[k] = d.refs[k].toLowerCase(); });
+      if (d.refs && typeof d.refs === 'object') Object.keys(d.refs).forEach(function (k) { var v = d.refs[k], id = Number(k); if (Number.isInteger(id) && id > 0 && typeof v === 'string' && /^[a-z0-9]{3,4}$/i.test(v)) oaRefs.set(id, v.toLowerCase()); });
       oaRows = d.rows; oaById = new Map(); oaByCode = new Map(); d.rows.forEach(function (r) { if (Array.isArray(r) && r[0] >= 1e7) { oaById.set(r[0], r); oaByCode.set(String(r[1]).toLowerCase(), r); } });
       if (d.sig) lsSet('tl.oa.sig', String(d.sig));
+      oaFillTables();
       var w = oaWait; oaWait = []; w.forEach(function (f) { try { f(); } catch (e) { /* ignore */ } });
       oaMapSoon();
     }
@@ -2234,9 +2290,10 @@
     // this one (its name, code, place; the country and time zone of the airport it was made from), every figure of that
     // other airport taken out (its lists empty, its numbers and words none); then filled as FR24's own pages are -
     // the flights kept for it, its weather, its movements, its runway usage. Every link and tab on it stays on it.
-    var oaRefs = {};        // FR24 airport id -> its code in FR24's addresses (from the userscript)
+    var oaRefs = new Map(); // FR24 airport id -> its code in FR24's addresses (from the userscript)
     // (the OurAirports code this page is for, as its address said when it loaded - FR24's app may rewrite the address
     // before the userscript asks: its own page's code, or the one marked on its nearest airport's page)
+    var oaFast = null;     // (1.3.4: this page made into one of theirs as it loads - its code and sub-page)
     var oaWant = (function () { var m = location.pathname.match(/^\/data\/airports\/([^\/?#]+)/i); if (!m) return ''; var t = new URLSearchParams(location.search).get('tl-oa'); try { return String(t || decodeURIComponent(m[1])).toLowerCase(); } catch (e) { return ''; } })();
     function oaPageReq(url) {
       if (!oaByCode.size) return null;
@@ -2244,7 +2301,7 @@
       if (!/flightradar24\.com$/.test(u.hostname)) return null;
       var m = u.pathname.match(/^\/data\/airports\/([^\/?#]+)(\/[^?#]*)?$/i); if (!m) return null;
       var code = decodeURIComponent(m[1]).toLowerCase(), r = oaByCode.get(code); if (!r || !(r[0] >= 1e7)) return null;
-      var ref = oaRefs[r[5]]; if (!ref) return null;
+      var ref = oaRefs.get(r[5]); if (!ref) return null;
       var sub = (m[2] || '').replace(/\/+$/, ''), q = new URLSearchParams(u.search); q.delete('tl-oa');
       var qs = q.toString();
       return { row: r, code: code, sub: sub, query: qs ? '?' + qs : '', refUrl: '/data/airports/' + encodeURIComponent(ref) + sub + (qs ? '?' + qs : '') };
@@ -2267,6 +2324,7 @@
         ap.id = r[0]; ap.name = a.name; if ('city' in ap0) ap.city = a.city || null; ap.iata = r[1]; ap.icao = a.icao && a.icao !== r[1] ? a.icao : null;   // (one code, shown once)
         if ('elevationFt' in ap0) ap.elevationFt = r[8] || 0; if ('elevation' in ap0) ap.elevation = r[8] || 0; if ('altitude' in ap0) ap.altitude = r[8] || 0;
         ['latitude', 'lat'].forEach(function (k) { if (k in ap0) ap[k] = r[6]; }); ['longitude', 'lon', 'lng'].forEach(function (k) { if (k in ap0) ap[k] = r[7]; });
+        { var nr = refOf(r[5]); if (nr && nr.timezone && nr.timezone.name && 'timezone' in ap0 && typeof ap0.timezone === 'string') ap.timezone = nr.timezone.name; }
         if ('slug' in ap0) ap.slug = code; if ('code' in ap0) ap.code = r[1]; if ('url' in ap0) ap.url = '/data/airports/' + code;
         out.airport = ap;
       }
@@ -2286,12 +2344,15 @@
       var want = new URLSearchParams(location.search).get('tl-oa');
       if (want) {
         lsSet('tl.oa.goto', '');
+        // (kept here from before: made from this page as it loads - oaFast, in the page's data, below)
+        var one = oaOneGet(want);
+        if (one && one.ref === decodeURIComponent(m[1]).toLowerCase()) { acceptOaOne({ row: one.row, ref: one.ref, near: one.near }, true); oaFast = { code: String(want).toLowerCase(), sub: m[2] || '' }; return; }
         try { var hide = document.createElement('style'); hide.id = 'tl-oa-hide'; hide.textContent = '#app{visibility:hidden!important}'; (document.head || document.documentElement).appendChild(hide); } catch (e) { /* none */ }
         var shown = function () { var h = document.getElementById('tl-oa-hide'); if (h) h.remove(); };
-        oSetTimeout(shown, 10000);
+        oSetTimeout(shown, 15000);
         (function go(n) {
           var gp = mxGp(), router = gp && gp.$inertia;
-          if (!router || !oaPageReq('/data/airports/' + want + (m[2] || ''))) { if (n < 200) oSetTimeout(function () { go(n + 1); }, 50); else shown(); return; }
+          if (!router || !oaPageReq('/data/airports/' + want + (m[2] || ''))) { if (n < 600) oSetTimeout(function () { go(n + 1); }, 50); else shown(); return; }
           var q = new URLSearchParams(location.search); q.delete('tl-oa'); var qs = q.toString();
           document.addEventListener('inertia:navigate', function () { oSetTimeout(shown, 30); }, { once: true });
           try { router.visit('/data/airports/' + encodeURIComponent(want) + (m[2] || '') + (qs ? '?' + qs : ''), { replace: true, preserveScroll: false, preserveState: false }); } catch (e) { shown(); }
@@ -2308,7 +2369,7 @@
         var gp = mxGp(), router = gp && gp.$inertia;
         if (router) { try { router.visit(location.pathname + location.search, { replace: true }); return; } catch (e) { /* by its nearest airport's page */ } }
         var q = new URLSearchParams(location.search); q.set('tl-oa', oq.code);
-        location.replace('/data/airports/' + encodeURIComponent(oaRefs[oq.row[5]]) + oq.sub + '?' + q.toString());
+        location.replace('/data/airports/' + encodeURIComponent(oaRefs.get(oq.row[5])) + oq.sub + '?' + q.toString());
       };
       if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function () { oSetTimeout(check, 300); }, { once: true }); else oSetTimeout(check, 300);
     })();
@@ -2329,7 +2390,9 @@
         var a = ev.target && ev.target.closest ? ev.target.closest('a[href]') : null; if (!a) return;
         var oq = oaPageReq(a.href); if (!oq) return;
         lsSet(OA_GOTO, JSON.stringify({ code: oq.code, sub: oq.sub, q: oq.query, at: Date.now() }));
-        if (String(a.getAttribute('target') || '').toLowerCase() === '_blank') a.setAttribute('href', oaRefHref(oq));
+        oaOneKeep(oq.row, oaRefs.get(oq.row[5]), refOf(oq.row[5]));
+        // (1.3.4: every such link - FR24's airport lists' are plain links, and its server would send them to its search)
+        a.setAttribute('href', oaRefHref(oq));
       } catch (e) { stats.errors++; stats.lastError = String(e); }
     }
     ['pointerdown', 'mousedown', 'touchstart', 'auxclick', 'contextmenu', 'keydown'].forEach(function (k) { document.addEventListener(k, function (ev) { if (k === 'keydown' && ev.key !== 'Enter') return; oaLinkPressed(ev); }, true); });
@@ -2366,6 +2429,17 @@
       try { var lostHide = document.createElement('style'); lostHide.id = 'tl-oa-hide'; lostHide.textContent = '#app{visibility:hidden!important}'; (document.head || document.documentElement).appendChild(lostHide); } catch (e) { /* none */ }
       oSetTimeout(function () { var h = document.getElementById('tl-oa-hide'); if (h) h.remove(); oaLost = null; }, 3500);
     }
+    // (1.3.4: the extension saw FR24's server send this tab here from one of their pages' addresses - typed or pasted)
+    function acceptOaFrom(d) {
+      if (!/^\/data\/airports\/?$/i.test(location.pathname) || !d || typeof d.path !== 'string') return;
+      var m = d.path.match(/^\/data\/airports\/([^\/?#]+)(\/[a-z-]{1,20})?\/?(\?[^#]*)?$/i); if (!m) return;
+      var code = ''; try { code = decodeURIComponent(m[1]).toLowerCase(); } catch (e) { return; }
+      if (!/^[a-z0-9-]{2,12}$/.test(code)) return;
+      oaLost = { code: code, sub: m[2] || '', q: m[3] || '' }; oaWant = code;
+      try { if (!document.getElementById('tl-oa-hide')) { var h = document.createElement('style'); h.id = 'tl-oa-hide'; h.textContent = '#app{visibility:hidden!important}'; (document.head || document.documentElement).appendChild(h); } } catch (e) { /* none */ }
+      oSetTimeout(function () { var x = document.getElementById('tl-oa-hide'); if (x) x.remove(); oaLost = null; }, 8000);
+      var one = oaOneGet(code); if (one) acceptOaOne({ row: one.row, ref: one.ref, near: one.near });
+    }
     var oaNav = function (u) { location.replace(u); };
     function oaLostGo() {
       if (!oaLost) return;
@@ -2374,10 +2448,129 @@
       try { oaNav(oaRefHref(oq)); } catch (e) { stats.errors++; stats.lastError = String(e); }
     }
     var OA_SIZE = { L: 3000, M: 400, S: 12, H: 3, W: 3, B: 1 };
+    // ---- (1.3.4) FR24's searches: its search box on every page (/v1/search/web/find) and its airport pages' own
+    // (/api/v1/airports/search) find the OurAirports airports as they find FR24's - by code (EGOW, GB-0002) or by name -
+    // in FR24's own form, opened as FR24's are. On the map the list is here; elsewhere the userscript is asked (it has it),
+    // half a second at most, and FR24's own answer never waits longer
+    // ==OA-MATCH==
+    function oaMatchRows(rows, q, n, size) {
+      q = String(q || '').trim().toLowerCase(); if (q.length < 2 || !rows) return [];
+      var hits = [], word = { test: function (nm) { for (var k = nm.indexOf(q); k >= 0; k = nm.indexOf(q, k + 1)) { if (k === 0 || ' (/-'.indexOf(nm.charAt(k - 1)) >= 0) return true; } return false; } };
+      for (var i = 0; i < rows.length; i++) {
+        var r = rows[i]; if (!Array.isArray(r)) continue;
+        var c1 = String(r[1]).toLowerCase(), c2 = String(r[2]).toLowerCase(), nm = String(r[3] || '').toLowerCase(), s = -1;
+        if (c1 === q || c2 === q) s = 0; else if (c1.indexOf(q) === 0 || c2.indexOf(q) === 0) s = 1; else if (nm.indexOf(q) === 0) s = 2; else if (q.length >= 3 && word.test(nm)) s = 3; else if (q.length >= 3 && (nm.indexOf(q) >= 0 || String(r[4] || '').toLowerCase().indexOf(q) >= 0)) s = 4;
+        if (s >= 0) hits.push([s, size(r), r]);
+      }
+      hits.sort(function (a, b) { return a[0] - b[0] || b[1] - a[1] || String(a[2][3]).localeCompare(String(b[2][3])); });
+      return hits.slice(0, n || 10).map(function (h) { return h[2]; });
+    }
+    // ==/OA-MATCH==
+    var oaFindWait = new Map(), oaFindSeq = 0;
+    function oaSearch(q, ms) {
+      q = String(q || '').trim(); if (q.length < 2) return Promise.resolve([]);
+      if (oaRows) return Promise.resolve(oaMatchRows(oaRows, q, 10, function (r) { return OA_SIZE[r[9]] || 0; }));
+      return new Promise(function (res) {
+        var key = 'f' + (++oaFindSeq), t = oSetTimeout(function () { oaFindWait.delete(key); res([]); }, ms || 500);
+        oaFindWait.set(key, function (rows) { oClearTimeout(t); oaFindWait.delete(key); res(rows); });
+        post('oaFind', { key: key, q: q });
+      });
+    }
+    function acceptOaFound(d) {
+      if (!d || !Array.isArray(d.list)) return;
+      d.list.forEach(function (o) { acceptOaOne(o, true); });
+      var f = typeof d.key === 'string' && /^f\d{1,9}$/.test(d.key) ? oaFindWait.get(d.key) : null; if (typeof f === 'function') f(d.list.filter(function (o) { return o && Array.isArray(o.row); }).map(function (o) { return o.row; }));
+    }
+    var oaLabel = function (r) { var ic = oaIcaoOf(r); return String(r[3]) + ' (' + r[1] + (ic && ic !== String(r[1]).toUpperCase() ? ' / ' + ic : '') + ')'; };
+    // (FR24's search box's answer: { results: [{ id: its code, label: "Name (CODE / ICAO)", detail: { lat, lon, size },
+    // type: 'airport', match, name }], stats: { total, count } } - theirs among its airports: an exact code first)
+    function searchMerge(j, rows, q) {
+      if (!j || !Array.isArray(j.results) || !rows.length) return null;
+      var have = new Set(); j.results.forEach(function (x) { if (x && x.type === 'airport') have.add(String(x.id).toUpperCase()); });
+      var ql = q.trim().toLowerCase(), first = [], rest = [];
+      rows.forEach(function (r) {
+        if (have.has(String(r[1]).toUpperCase()) || oaDupe(r)) return;
+        var c1 = String(r[1]).toLowerCase(), c2 = String(r[2]).toLowerCase(), exact = c1 === ql || c2 === ql;
+        var o = { id: String(r[1]), label: oaLabel(r), detail: { lat: r[6], lon: r[7], size: OA_SIZE[r[9]] || 1 }, type: 'airport', match: exact ? (c2 === ql && c2.length === 4 ? 'icao' : 'iata') : c1.indexOf(ql) === 0 || c2.indexOf(ql) === 0 ? 'begins' : 'contains', name: String(r[3]) };
+        (exact ? first : rest).push(o);
+      });
+      var add = first.length + rest.length; if (!add) return null;
+      var ap = j.results.filter(function (x) { return x && x.type === 'airport'; }), other = j.results.filter(function (x) { return !(x && x.type === 'airport'); });
+      j.results = first.concat(ap, rest, other);
+      ['total', 'count'].forEach(function (k) { var s = j.stats && j.stats[k]; if (s && typeof s === 'object') { s.airport = (s.airport || 0) + add; if ('all' in s) s.all = (s.all || 0) + add; } });
+      return j;
+    }
+    // (an airport page's search: { data: [{ id, iata, icao, name, countryId, ... }] } - the code is what its links go by)
+    function apSearchMerge(j, rows) {
+      if (!j || !Array.isArray(j.data) || !rows.length) return null;
+      var have = new Set(); j.data.forEach(function (x) { if (x) have.add(x.id); });
+      var add = rows.filter(function (r) { return !have.has(r[0]); }).map(function (r) {
+        var a = oaFr24Row(r, refOf(r[5]));
+        return { id: r[0], iata: String(r[1]), icao: oaIcaoOf(r), name: String(r[3]), city: a.city || null, countryId: a.countryId || null, countryName: a.country || null, latitude: r[6], longitude: r[7] };
+      });
+      if (!add.length) return null;
+      j.data = j.data.concat(add); return j;
+    }
+    // ---- (1.3.4) FR24's airport lists (/data/airports): each country's count with theirs; a country's list of airports -
+    // or of its states, each one's count - and a state's list, with theirs, in FR24's form: { id, name, iata (the code its
+    // links go by), icao, total }. Asked of the userscript once a page; a country's counts kept here, so the page has
+    // them at once next time. Their links go straight to their pages (oaLinkPressed).
+    var dirAsked = new Map(), dirGot = new Map();
+    var US_STATES = { alabama: 'AL', alaska: 'AK', arizona: 'AZ', arkansas: 'AR', california: 'CA', colorado: 'CO', connecticut: 'CT', delaware: 'DE', 'district of columbia': 'DC', florida: 'FL', georgia: 'GA', hawaii: 'HI', idaho: 'ID', illinois: 'IL', indiana: 'IN', iowa: 'IA', kansas: 'KS', kentucky: 'KY', louisiana: 'LA', maine: 'ME', maryland: 'MD', massachusetts: 'MA', michigan: 'MI', minnesota: 'MN', mississippi: 'MS', missouri: 'MO', montana: 'MT', nebraska: 'NE', nevada: 'NV', 'new hampshire': 'NH', 'new jersey': 'NJ', 'new mexico': 'NM', 'new york': 'NY', 'north carolina': 'NC', 'north dakota': 'ND', ohio: 'OH', oklahoma: 'OK', oregon: 'OR', pennsylvania: 'PA', 'rhode island': 'RI', 'south carolina': 'SC', 'south dakota': 'SD', tennessee: 'TN', texas: 'TX', utah: 'UT', vermont: 'VT', virginia: 'VA', washington: 'WA', 'west virginia': 'WV', wisconsin: 'WI', wyoming: 'WY' };
+    function dirAsk(key, msg) {
+      if (dirGot.has(key) || (dirAsked.has(key) && Date.now() - dirAsked.get(key) < 20000)) return dirGot.get(key) || null;
+      dirAsked.set(key, Date.now()); msg.key = key; post('oaDir', msg); return null;
+    }
+    function acceptOaDir(d) {
+      if (!d || typeof d.key !== 'string' || !dirAsked.has(d.key)) return;
+      if (Array.isArray(d.rows)) { var refs = d.refs && typeof d.refs === 'object' ? d.refs : {}, nears = d.nears && typeof d.nears === 'object' ? d.nears : {}; d.rows.forEach(function (r) { var k = Array.isArray(r) && Number.isInteger(r[5]) ? String(r[5]) : ''; if (k && Object.prototype.hasOwnProperty.call(refs, k)) acceptOaOne({ row: r, ref: refs[k], near: Object.prototype.hasOwnProperty.call(nears, k) ? nears[k] : null }, true); }); }
+      dirGot.set(d.key, d); if (d.counts) lsSet('tl.oa.counts', JSON.stringify({ at: Date.now(), counts: d.counts }));
+      dirTick();
+    }
+    // (a list of FR24's with what is to be added: none twice, FR24's own first - its order kept, as its page sorts them)
+    function dirMerge(list, add, key) {
+      var base = list.__tlBase || list, have = new Set(); base.forEach(function (x) { if (x) have.add(x.id); });
+      var out = base.concat(add.filter(function (x) { return !have.has(x.id); })); out.__tl = key; out.__tlBase = base; return out;
+    }
+    function dirTick() {
+      if (!/^\/data\/airports(\/|$)/i.test(location.pathname)) return;
+      var gp = mxGp(), pg = gp && gp.$page, p = pg && pg.props; if (!p) return;
+      try {
+        if (pg.component === 'Data/Airports' && Array.isArray(p.airportsByCountry)) {
+          var got = dirAsk('counts', { kind: 'counts' }); if (!got) { try { got = JSON.parse(lsGet('tl.oa.counts') || 'null'); } catch (e) { got = null; } }
+          var c = got && got.counts; if (!c || p.airportsByCountry.__tl === 'n') return;
+          var base = p.airportsByCountry.__tlBase || p.airportsByCountry, out = base.map(function (x) { var n = c[x.id] || 0; return n ? Object.assign({}, x, { total: (x.total || 0) + n }) : x; });
+          out.__tl = 'n'; out.__tlBase = base; p.airportsByCountry = out; stats.oaDir = (stats.oaDir || 0) + 1;
+        } else if ((pg.component === 'Data/AirportsByCountry' || pg.component === 'Data/AirportsByState') && p.country) {
+          var st = pg.component === 'Data/AirportsByState' ? p.state : null, cs = String(p.country.slug || p.country.name || '');
+          var sc = '';
+          if (st) { try { sc = (JSON.parse(lsGet('tl.oa.states.' + cs) || '{}') || {})[String(st.slug || '')] || ''; } catch (e) { sc = ''; } if (!sc) sc = US_STATES[String(st.name || '').toLowerCase()] || ''; if (!sc) return; }
+          var key = (st ? 'state:' + cs + ':' + sc : 'country:' + cs), d = dirAsk(key, { kind: st ? 'state' : 'country', id: p.country.id || 0, name: p.country.name || '', code: sc, hasStates: !st && Array.isArray(p.states) });
+          // (a country of states: which code each state's address has, for its own page)
+          if (!st && Array.isArray(p.states)) { var map = Object.create(null); p.states.forEach(function (s) { var m = String(s.url || '').match(/\/([^\/?#]+)\/?$/); if (m && s.code && /^[a-z0-9-]{1,40}$/i.test(m[1])) map[m[1]] = String(s.code).toUpperCase(); }); lsSet('tl.oa.states.' + cs, JSON.stringify(map)); }
+          if (!d) return;
+          if (!st && Array.isArray(p.states)) {
+            if (p.states.__tl === key || !d.states) return;
+            var sb = p.states.__tlBase || p.states, so = sb.map(function (s) { var n = d.states[String(s.code || '').toUpperCase()] || 0; return n ? Object.assign({}, s, { total: (s.total || 0) + n }) : s; });
+            so.__tl = key; so.__tlBase = sb; p.states = so; stats.oaDir = (stats.oaDir || 0) + 1;
+          } else if (Array.isArray(d.airports) && d.airports.length && (p.airports || []).__tl !== key) { p.airports = dirMerge(p.airports || [], d.airports, key); stats.oaDir = (stats.oaDir || 0) + 1; }
+        }
+      } catch (e) { stats.errors++; stats.lastError = String(e); }
+    }
+    setInterval(dirTick, 400);
+    function searchFetch(self, args, url, kind) {
+      var u; try { u = new URL(url, location.href); } catch (e) { return null; }
+      var q = u.searchParams.get('query') || '', type = u.searchParams.get('type') || '';
+      if (q.trim().length < 2 || (kind === 'find' && type && type !== 'airport')) return null;
+      return Promise.all([oFetch.apply(self, args), oaSearch(q, 500)]).then(function (x) {
+        var res = x[0], rows = x[1]; if (!rows.length || !res || !res.ok) return res;
+        return res.clone().json().then(function (j) { var o = kind === 'find' ? searchMerge(j, rows, q) : apSearchMerge(j, rows); if (o) stats.oaSearch = (stats.oaSearch || 0) + 1; return o ? jsonResponse(res, o) : res; }, function () { return res; });
+      });
+    }
     var UTC_TZ = { abbr: 'UTC', abbrName: null, isDst: false, name: 'UTC', offset: 0, offsetHours: '0:00' };
     function oaFr24Row(r, ref) {
       ref = ref || {};
-      var name = String(r[3] || r[1]), city = placeShort(r[4]) || placeShort(name);
+      var name = String(r[3] || r[1]), city = placeShort(fieldShortName(name)) || placeShort(r[4]) || placeShort(name);
       // (1.3.2: its identifier - ICAO, GPS or OurAirports' own - where FR24 keeps an ICAO code: the map's labels set to "ICAO"
       // showed nothing for these, the window's ICAO field "N/A")
       return { id: r[0], iata: r[1], icao: String(r[2] || r[1] || ''), name: name, city: city, country: ref.country || '', countryId: ref.countryId || 0, lat: r[6], lon: r[7], alt: r[8] || 0,
@@ -2387,25 +2580,71 @@
     // longitude, its zone's name and offset); 1.3 put the list's rows themselves on the map, with lat / lon where FR24's
     // map reads latitude / longitude: every pin was drawn nowhere
     function oaStoreRow(r) {
-      var a = oaFr24Row(r, fr24Refs.get(r[5])), tz = a.timezone || UTC_TZ;
+      if (oaPinLabels.size < 200000) { var ic0 = String(r[2] || r[1] || ''); oaPinLabels.set(oaPinKey(String(r[1]), ic0), oaCodeLine(r)); }
+      return storeForm(oaFr24Row(r, refOf(r[5])));
+    }
+    // (an airport of FR24's list as FR24's own store keeps it: its latitude and longitude, its zone's name and offset)
+    function storeForm(a) {
+      var tz = a.timezone || UTC_TZ;
       return { id: a.id, iata: a.iata, icao: a.icao, name: a.name, latitude: a.lat, longitude: a.lon, altitude: a.alt, city: a.city, country: a.country, countryId: a.countryId, size: a.size,
         timezoneName: tz.name, timezoneCode: tz.abbr, timezoneDST: !!tz.isDst, timezoneOffset: tz.offset, timezoneOffsetHours: tz.offsetHours, videoStream: null };
     }
-    // (FR24's own rows by id, as its list came - the OurAirports airports take their country and zone from them)
-    var fr24Refs = new Map();
+    // (1.3.4) one of FR24's airports in its list's form: as its list came, else from FR24's own table of airports - FR24
+    // reads its list from its cache most of the time, and the list never comes past here then
+    function refOf(id) {
+      var r = fr24Refs.get(id); if (r || !id) return r || null;
+      var st = pinStore('airports'), m = st && st.airportsById, a = m && typeof m.get === 'function' ? m.get(id) : null;
+      if (!a || !(a.id < 9000000) || !isFinite(a.latitude)) return null;
+      r = { id: a.id, iata: a.iata, icao: a.icao, name: a.name, city: a.city, country: a.country || '', countryId: a.countryId || 0, lat: a.latitude, lon: a.longitude, alt: a.altitude || 0, size: a.size || 0,
+        timezone: a.timezoneName ? { name: a.timezoneName, abbr: a.timezoneCode, abbrName: null, isDst: !!a.timezoneDST, offset: a.timezoneOffset, offsetHours: a.timezoneOffsetHours } : UTC_TZ };
+      fr24Refs.set(id, r); return r;
+    }
+    // (1.3.4) Every one of them in FR24's own tables of airports - by id and by code - whatever its map shows: FR24 looks
+    // airports up there for its playback, its boards, its panels and its window, and one missing is "-" (M-SKTO's landings
+    // at Axis Business Park's helipad in playback) or a window with nothing in it. In the tables themselves, not through
+    // FR24's reactive wrapper of them (63,000 changes would each wake its map); the landing places learned too. Again each
+    // time FR24 makes the tables anew.
+    var oaFillT = 0, oaFillAt = null;
+    function rawOf(m) { return m && m.__v_raw ? m.__v_raw : m; }
+    function oaFillTables() {
+      if (oaFillT) return;
+      var st = pinStore('airports'), byId = st && rawOf(st.airportsById), byIata = st && rawOf(st.airportsByIata);
+      if (!byId || typeof byId.set !== 'function' || !(byId.size > 100)) return;
+      var todo = (oaRows || []).slice(), sites = siteRows.slice(), i = 0;
+      oaFillAt = byId;
+      var step = function () {
+        oaFillT = 0;
+        if (oaFillAt !== byId) return;                     // (FR24 made its tables anew meanwhile: done again for those)
+        var t = Date.now();
+        while (i < todo.length && Date.now() - t < 12) {
+          // (theirs always as the list has them now - FR24's cached list may hold them as an older script made them)
+          var r = todo[i++]; if (!Array.isArray(r) || !(r[0] >= 1e7) || oaDupe(r)) continue;
+          var o = oaStoreRow(r); byId.set(o.id, o); if (byIata && o.iata) byIata.set(o.iata, o);
+        }
+        if (i < todo.length) { oaFillT = setTimeout(step, 0); return; }
+        sites.forEach(function (a) { if (a && a.id > 9000000 && a.id < 1e7 && isFinite(a.lat)) { var o = storeForm(a); byId.set(o.id, o); if (byIata && o.iata && o.iata !== 'PVT' && !byIata.has(o.iata)) byIata.set(o.iata, o); } });
+        stats.oaTables = byId.size;
+      };
+      oaFillT = setTimeout(step, 0);
+    }
     var isOaRow = function (a) { return !!a && a.id >= 1e7; };
+    // (1.3.4) the codes of FR24's own airports as its list has them now - one of theirs with such a code is FR24's: left to
+    // FR24 (London Heliport's pin, both, and a window that would not open)
+    var fr24Codes = new Set();
+    function noteFr24Codes(list) { (list || []).forEach(function (a) { if (a && a.id < 9000000) { if (a.iata) fr24Codes.add(String(a.iata).toUpperCase()); if (a.icao) fr24Codes.add(String(a.icao).toUpperCase()); } }); }
+    function oaDupe(r) { return fr24Codes.size > 0 && (fr24Codes.has(String(r[1]).toUpperCase()) || (/^[A-Z]{4}$/.test(String(r[2])) && fr24Codes.has(String(r[2]).toUpperCase()))); }
     function patchList(kind, j) {
       if (!j || !Array.isArray(j.rows) || j.rows.length < 100) return false;
       if (kind === 'airlines') j.rows.forEach(function (r) { var l = r && LOGO_ADD[r.id]; if (l && !(r.metadata && r.metadata.images)) r.metadata = { images: { logotypes: { default: { file: { dimensions: l.dimensions, name: r.id + '.png', size: 0, source: l.source, type: 'PNG' } } } } }; });
       else {
         var have = {}; j.rows.forEach(function (r) { if (r) { have[r.id] = true; if (r.id < 9000000) fr24Refs.set(r.id, r); } });
         siteRows.forEach(function (r) { if (r && r.id && !have[r.id]) j.rows.push(r); });
-        if (oaRows) oaRows.forEach(function (r) { if (Array.isArray(r) && r[0] >= 1e7 && !have[r[0]]) j.rows.push(oaFr24Row(r, fr24Refs.get(r[5]))); });
+        if (oaRows) oaRows.forEach(function (r) { if (Array.isArray(r) && r[0] >= 1e7 && !have[r[0]]) j.rows.push(oaFr24Row(r, refOf(r[5]))); });
       }
       lsSet('tl.list.' + kind, listSig(kind));
       return true;
     }
-    function acceptSites(list) { if (!Array.isArray(list)) return; siteRows = list; lsSet('tl.sites', JSON.stringify(list)); }
+    function acceptSites(list) { if (!Array.isArray(list)) return; siteRows = list; lsSet('tl.sites', JSON.stringify(list)); oaFillTables(); }
     // Learned landing places stay in FR24's airport list (its panel and boards look airports up there by id) but never on
     // its map: the airport layer draws the 'airports' store's array - and highlights by IATA code, which every site shares
     // ("PVT"), so one selected flight's site lit them all. Taken out of that array alone, each time FR24 fills it.
@@ -2418,7 +2657,7 @@
         var st = pinStore('airports');
         if (!st || typeof st.$onAction !== 'function') return false;
         // (1.3: the OurAirports airports too - but for those in view, put in by oaMap)
-        var strip = function () { var a = st.airports; if (Array.isArray(a) && a.some(function (x) { return isSiteRow(x) || isOaRow(x); })) { oaBase = a.filter(function (x) { return !isSiteRow(x) && !isOaRow(x); }); oaShown = ''; st.airports = oaBase; oaMapSoon(); } else if (Array.isArray(a)) oaBase = a.filter(function (x) { return !isOaRow(x); }); };
+        var strip = function () { var a = st.airports; if (Array.isArray(a) && a.some(function (x) { return isSiteRow(x) || isOaRow(x); })) { oaBase = a.filter(function (x) { return !isSiteRow(x) && !isOaRow(x); }); oaShown = ''; st.airports = oaBase; oaMapSoon(); } else if (Array.isArray(a)) oaBase = a.filter(function (x) { return !isOaRow(x); }); noteFr24Codes(oaBase); oaFillTables(); };
         st.$onAction(function (c) { if (c.name === 'setAirports') c.after(strip); }); strip();
         return true;
       } catch (e) { return false; }
@@ -2474,7 +2713,7 @@
       if (open) key += '+' + open[0];
       if (key === oaShown) return;
       if (v.z >= 7.95) {
-        oaRows.forEach(function (r) { var a = r[6] - la, o = r[7] - lo; if (o > 180) o -= 360; if (o < -180) o += 360; if (Math.abs(a) <= dLa && Math.abs(o) <= dLo) pick.push([a * a + o * o * cosL * cosL, r]); });
+        oaRows.forEach(function (r) { var a = r[6] - la, o = r[7] - lo; if (o > 180) o -= 360; if (o < -180) o += 360; if (Math.abs(a) <= dLa && Math.abs(o) <= dLo && !oaDupe(r)) pick.push([a * a + o * o * cosL * cosL, r]); });
         pick.sort(function (x, y) { return x[0] - y[0]; }); pick = pick.slice(0, 400);
       }
       if (open && !pick.some(function (x) { return x[1] === open; })) pick.push([0, open]);
@@ -2532,7 +2771,7 @@
     var apData = new Map(), servedMem = {};
     function inertiaPage() { try { var el = document.getElementById('app'), va = el && el.__vue_app__, pg = va && va.config.globalProperties.$page; return pg && pg.props && pg.props.airport ? pg : null; } catch (e) { return null; } }
     function apDataOf(apId) { var d = apData.get(apId); if (!d) { try { d = JSON.parse(lsGet('tl.ap.' + apId) || 'null'); } catch (e) { d = null; } d = d || {}; apData.set(apId, d); if (d.routes && !routesAdd.has(apId)) routesAdd.set(apId, d.routes); } return d; }
-    function keepApData(apId) { var d = apDataOf(apId), r = routesAdd.get(apId); lsSet('tl.ap.' + apId, JSON.stringify({ runways: d.runways || null, routes: r || null, stats: d.stats || null, at: Date.now() })); }
+    function keepApData(apId) { var d = apDataOf(apId), r = routesAdd.get(apId); lsSet('tl.ap.' + apId, JSON.stringify({ runways: d.runways || null, routes: r || null, stats: d.stats || null, closest: d.closest || null, at: Date.now() })); }
     // (the airports and countries FR24 itself counts as served: the ends of its own routes of the week, read once)
     function servedOf(pg) {
       var ap = pg.props.airport, code = String(ap.iata || ap.icao || '').toLowerCase(); if (servedMem[code]) return servedMem[code].ids ? servedMem[code] : null;
@@ -2578,7 +2817,9 @@
     // the id read as the code, "2002", left the panel's runway details and usage locked, its data asked for an airport that
     // does not exist)
     // (1.3: an OurAirports airport's code too - OurAirports' own idents run to "GB-0123")
-    function panelCode() { var m = location.pathname.match(/^\/airport\/(?:\d+\/)?([a-z0-9]{3,4}|[a-z0-9]{2,3}-[a-z0-9]{2,5})(?:[/?#]|$)/i); return m && !/^\d+$/.test(m[1]) ? rwyKey(m[1]) : ''; }
+    function panelCode() {
+      try { if (document.querySelector('[data-testid="airport-panel"]')) { var st = pinStore('airports'), inf = st && st.airport && st.airport.info; if (inf && inf.iata) return rwyKey(inf.iata); } } catch (e) { /* by the address */ }
+      var m = location.pathname.match(/^\/airport\/(?:\d+\/)?([a-z0-9]{3,4}|[a-z0-9]{2,3}-[a-z0-9]{2,5})(?:[/?#]|$)/i); return m && !/^\d+$/.test(m[1]) ? rwyKey(m[1]) : ''; }
     function tlTable(box, head, rows, title) {
       var cell = 'px-1.5 py-1', tb = document.createElement('table'); tb.className = 'w-full';
       if (title) { var cap = document.createElement('caption'); cap.className = 'px-1.5 pt-2 pb-1 text-left text-xs font-semibold uppercase text-gray-900'; cap.textContent = title; tb.appendChild(cap); }
@@ -2586,6 +2827,13 @@
       row('text-xs font-semibold uppercase text-gray-900', 'th', head);
       rows.forEach(function (v) { row('border-t border-gray-500 text-sm font-semibold text-gray-1300', 'td', v); });
       box.appendChild(tb);
+    }
+    // (1.3.4) a heliport with no runway of its own: said so - a helipad (its name says so), or a heliport no pad of which
+    // is known
+    function heliText(pd, code) {
+      var r = code ? oaByCode.get(code.toLowerCase()) : null, kind = (pd && pd.kind) || (r ? r[9] : ''), name = (pd && pd.name) || (r ? r[3] : '');
+      if (kind !== 'H' && !/\bheli(pad|port)\b/i.test(name)) return '';
+      return /helipad/i.test(name) || kind !== 'H' ? 'This is a helipad: it has no runways.' : 'This is a heliport: it has no runways, and none of its pads\' details are known.';
     }
     function rwyPanel() {
       var pic = document.querySelector('[data-testid="airport-panel__promo-runway_details"]'), box = pic && (pic.closest('button') || pic);
@@ -2598,16 +2846,17 @@
       // (1.3.2: FR24's own answer asked for only where FR24 has the airport; and with nothing known of its runways - yet,
       // or at all - that is said in the table's place: FR24's padlocked picture is never left there. 1.3.1 left it for
       // every airport the monitor knew no runway of - every OurAirports one)
-      var isOa = !!(code && oaByCode.get(code.toLowerCase())), none = !ours && !(list && list.length) && !ends;
+      var isOa = !!(code && oaByCode.get(code.toLowerCase())), none = !ours && !(list && list.length) && !ends, pads = pd && pd.pads && pd.pads.length ? pd.pads : null;
       if (code && !isOa) rwyWant(code);
       // (asked for a quarter of a minute and nothing said: none known)
       var waited = !pd && !(panelOpen.code === code && Date.now() - panelOpen.at < 15000);
-      var sig = code + ':' + (none ? (pd || waited ? 'none' : 'wait') : ours ? 'o' + ours.length + ':' + (freqs ? freqs.length : 0) : list && list.length ? 'f' + list.length : 'e' + ends.length);
+      var sig = code + ':' + (none ? (pads ? 'p' + pads.length : pd || waited ? 'none' : 'wait') : ours ? 'o' + ours.length + ':' + (freqs ? freqs.length : 0) : list && list.length ? 'f' + list.length : 'e' + ends.length);
       if (mine && mine.getAttribute('data-sig') === sig) return;
       if (!mine) { mine = document.createElement('div'); box.after(mine); }
       mine.className = 'tl-rwy w-full overflow-hidden rounded border border-gray-500 bg-gray-100'; mine.setAttribute('data-code', code); mine.setAttribute('data-sig', sig); mine.textContent = '';
       var n = function (v) { return fin(v) ? Number(v).toLocaleString('en-GB') : '–'; }, m = function (ft) { return fin(ft) ? Math.round(ft * 0.3048) : null; };
-      if (none) { var np = document.createElement('div'); np.className = 'px-1.5 py-2 text-sm text-gray-900'; np.textContent = pd || waited ? 'No runway details are known for this airport.' : 'Reading this airport\'s runways…'; mine.appendChild(np); }
+      if (none && pads) tlTable(mine, ['Helipad', 'Size (m)', 'Surface', 'Lights'], pads.map(function (p) { return [p[0] + (p[6] ? ' (closed)' : ''), fin(p[1]) || fin(p[2]) ? n(m(p[1])) + ' × ' + n(m(p[2])) : '–', SURF_NAME[p[3]] || p[4] || 'Unknown', p[5] === 1 ? 'Yes' : p[5] === 0 ? 'No' : '–']; }), 'Helipads');
+      else if (none) { var np = document.createElement('div'); np.className = 'px-1.5 py-2 text-sm text-gray-900'; np.textContent = !(pd || waited) ? 'Reading this airport\'s runways…' : heliText(pd, code) || 'Runway details not available.'; mine.appendChild(np); }
       else if (ours) {
         // [ident, other end, length ft, width ft, surface code, surface, lit, closed, then each end: elevation, heading, displaced threshold, lat, lon]
         tlTable(mine, ['Runway', 'Length (m/ft)', 'Width (m)', 'Surface', 'Lights'], ours.map(function (r) { return [r[0] + (r[1] ? '/' + r[1] : '') + (r[7] ? ' (closed)' : ''), n(m(r[2])) + '/' + n(r[2]), n(m(r[3])), SURF_NAME[r[4]] || r[5] || 'Unknown', r[6] === 1 ? 'Yes' : r[6] === 0 ? 'No' : '–']; }));
@@ -2916,7 +3165,7 @@
       (d.runways || []).forEach(function (r) { if (r[7]) return; [r[0], r[1]].forEach(function (e) { if (e && !by[e]) by[e] = { off: 0, on: 0 }; }); });
       (d.ends || []).forEach(function (e) { if (e && e.name && !by[e.name]) by[e.name] = { off: 0, on: 0 }; });
       var rows = Object.keys(by).map(function (k) { return { label: k, off: by[k].off, on: by[k].on }; }).sort(function (a, b) { return (b.off + b.on) - (a.off + a.on) || a.label.localeCompare(b.label, 'en', { numeric: true }); });
-      if (!rows.length) { p = document.createElement('div'); p.className = 'px-1.5 py-2 text-sm text-gray-900'; p.textContent = 'No runways known for this airport.'; box.appendChild(p); return 'none'; }
+      if (!rows.length) { p = document.createElement('div'); p.className = 'px-1.5 py-2 text-sm text-gray-900'; p.textContent = heliText(d, panelCode()) ? 'Helicopters land on its pads: it has no runways to count.' : 'Runway usage not available: no runways are known for this airport.'; box.appendChild(p); return 'none'; }
       var max = Math.max(1, Math.max.apply(null, rows.map(function (r) { return r.off + r.on; })));
       grid(box, rows, max);
       legend(box, d.moves ? 'Take-offs / landings of the ' + d.moves + ' movement' + (d.moves > 1 ? 's' : '') + (d.allDays ? ' public ADS-B heard here in the last ' + (d.days || 7) + ' days (every aircraft on the ' + d.allDays + ' day' + (d.allDays > 1 ? 's' : '') + ' the monitor has counted; the rest, the flights it tracks)' : ' the monitor tracked here in the last ' + (d.days || 7) + ' days (blocked aircraft worldwide, all traffic in its areas - not every flight)') + '; the runway was clear from the track for ' + (d.withRunway || 0) + '.' : 'No take-offs or landings heard here in the last ' + (d.days || 7) + ' days.');
@@ -2932,24 +3181,25 @@
       while (probe.firstChild) mine.appendChild(probe.firstChild);
       box.style.display = 'none';
     }
-    // (1.3.2) An OurAirports airport's codes in FR24's window. FR24 keeps one code per airport as its "IATA" - what its
-    // pins, its window and its addresses go by - and for these it is whatever code the airport has: "EGOW" stood under
-    // IATA, with ICAO "N/A". Now ICAO says its ICAO or GPS code (the answer made for FR24: oaApi), and under IATA: its
-    // IATA code where it has one, else "N/A" - or, for a field with neither ("GB-0002"), the field is named for what it
-    // holds, "OurAirports ID". Only the words of FR24's own two fields are changed (never its elements: it redraws them),
-    // and put back when the window shows another airport.
+    // (1.3.4) An OurAirports airport's codes in FR24's window. FR24 keeps one code per airport as its "IATA" - what its
+    // pins, its window and its addresses go by - and for these it is OurAirports' code of it ("EGOW", "GB-1368"): the field
+    // is named so, "OurAirports code", for every one of them; ICAO says its ICAO or GPS code, or "N/A". The header's line
+    // under the name - FR24's flag and "LPL / EGGP" - says its code, and its ICAO code where that is another. Only the
+    // words of FR24's own fields are changed (never its elements: it redraws them), and put back for FR24's airports.
     function panelCodeFields(panel, code) {
-      var r = code ? oaByCode.get(code.toLowerCase()) : null, own = !!r && !oaHasIata(r), idOnly = own && !oaIcaoOf(r);
+      var r = code ? oaByCode.get(code.toLowerCase()) : null;
       var dts = panel.querySelectorAll('dt');
       for (var i = 0; i < dts.length; i++) {
         var lab = null, w = document.createTreeWalker(dts[i], NodeFilter.SHOW_TEXT, null), t;
         while ((t = w.nextNode())) { if (t.__tlWas != null || /^\s*IATA(?: code)?\s*$/i.test(t.data)) { lab = t; break; } }
         if (!lab) continue;
-        if (idOnly) { if (lab.__tlWas == null) lab.__tlWas = lab.data; if (lab.data !== 'OurAirports ID') lab.data = 'OurAirports ID'; }
+        if (r) { if (lab.__tlWas == null) lab.__tlWas = lab.data; if (lab.data !== 'OurAirports code') lab.data = 'OurAirports code'; }
         else if (lab.__tlWas != null) { lab.data = lab.__tlWas; lab.__tlWas = null; }
-        var dd = dts[i].nextElementSibling; if (!dd || dd.tagName !== 'DD' || !own || idOnly) continue;
-        var w2 = document.createTreeWalker(dd, NodeFilter.SHOW_TEXT, null), v;
-        while ((v = w2.nextNode())) if (v.data.trim().toUpperCase() === String(r[1]).toUpperCase()) { v.data = 'N/A'; break; }
+      }
+      var hc = panel.querySelector('[data-testid="airport-panel__header__codes"]'), tn = hc && hc.firstChild && hc.firstChild.nodeType === 3 ? hc.firstChild : null;
+      if (tn) {
+        if (r) { var want = oaCodeLine(r); if (tn.__tlWas == null) tn.__tlWas = tn.data; if (tn.data !== want) tn.data = want; }
+        else tn.__tlWas = null;      // (FR24's own airport: its words as FR24 writes them)
       }
     }
     function panelTick() {
@@ -2980,7 +3230,7 @@
     function panelSig(panel, code, d) { return [panelSize(panel), d ? d.at : 0, (lsGet('tl.mv.' + code.toLowerCase()) || '').length, ((d && routesAdd.get(d.apId)) || []).length, Math.floor(Date.now() / 60000)].join(':'); }
     function acceptAirportPanel(d) {
       var code = rwyKey(d.code); if (!code) return;
-      panelData[code] = { at: Date.now(), apId: Number(d.apId) || 0, tz: String(d.tz || ''), days: Number(d.days) || 7, runways: Array.isArray(d.runways) ? d.runways : null, freqs: Array.isArray(d.freqs) ? d.freqs : null, usage: Array.isArray(d.usage) ? d.usage : null, moves: Number(d.moves) || 0, withRunway: Number(d.withRunway) || 0, monitor: !!d.monitor, ends: Array.isArray(d.ends) ? d.ends : null, daily: Array.isArray(d.daily) ? d.daily : null, allDays: Number(d.allDays) || 0 };
+      panelData[code] = { at: Date.now(), apId: Number(d.apId) || 0, tz: String(d.tz || ''), days: Number(d.days) || 7, runways: Array.isArray(d.runways) ? d.runways : null, freqs: Array.isArray(d.freqs) ? d.freqs : null, usage: Array.isArray(d.usage) ? d.usage : null, moves: Number(d.moves) || 0, withRunway: Number(d.withRunway) || 0, monitor: !!d.monitor, ends: Array.isArray(d.ends) ? d.ends : null, daily: Array.isArray(d.daily) ? d.daily : null, allDays: Number(d.allDays) || 0, pads: Array.isArray(d.pads) ? d.pads : null, kind: String(d.kind || ''), name: String(d.name || '') };
       panelKeep(code, panelData[code]);
       panelSigs[code] = ''; panelTick();
     }
@@ -3085,10 +3335,22 @@
       p.locked = lk; p.tlUnlocked = un; stats.statsUnlocked = (stats.statsUnlocked || 0) + 1;
       return true;
     }
+    // (1.3.4) the page FR24's server sent for the FR24 airport theirs are made from, made into theirs (oaPageOf) - its
+    // address theirs at once (FR24's app takes the page's own, /data/airports/egow)
+    function oaFastPage(pg) {
+      if (!oaFast || !pg || !pg.component || !/^Data\/Airport/.test(pg.component)) return pg;
+      var q = new URLSearchParams(location.search); q.delete('tl-oa'); var qs = q.toString();
+      var oq = oaPageReq('/data/airports/' + encodeURIComponent(oaFast.code) + oaFast.sub + (qs ? '?' + qs : '')); if (!oq) return pg;
+      var o = oaPageOf(pg, oq);
+      try { history.replaceState(history.state, '', o.url); } catch (e) { /* the address as it is */ }
+      Object.defineProperty(o, '__tlOa', { value: true, enumerable: false });
+      stats.oaFast = (stats.oaFast || 0) + 1;
+      return o;
+    }
     // (the page as FR24's server gave it, in #app: read and put back unlocked the moment it is in the document - FR24's
     // app reads it once the page is parsed)
     (function () {
-      if (!/^\/data\/airports\/[^/]+(?:\/statistics)?\/?$/i.test(location.pathname)) return;
+      if (!oaFast && !/^\/data\/airports\/[^/]+(?:\/statistics)?\/?$/i.test(location.pathname)) return;
       // (a frame of a locked table drawn by FR24's server before its app starts, should it send one: not shown - with the
       // tables unlocked FR24's app never draws one)
       try { var css = document.createElement('style'); css.id = 'tl-stats-frame'; css.textContent = '#app [class*="max-h-84"]{visibility:hidden!important}'; (document.head || document.documentElement).appendChild(css); } catch (e) { /* none */ }
@@ -3102,8 +3364,8 @@
         done = true;
         try {
           var raw = el && el.getAttribute('data-page');
-          if (raw) { var pg = JSON.parse(raw); if (statsUnlock(pg)) el.setAttribute('data-page', JSON.stringify(pg)); }
-          else if (sc && sc.textContent) { var pg2 = JSON.parse(sc.textContent); if (statsUnlock(pg2)) sc.textContent = JSON.stringify(pg2); }
+          if (raw) { var pg = oaFastPage(JSON.parse(raw)); if (statsUnlock(pg) || pg.__tlOa) el.setAttribute('data-page', JSON.stringify(pg)); }
+          else if (sc && sc.textContent) { var pg2 = oaFastPage(JSON.parse(sc.textContent)); if (statsUnlock(pg2) || pg2.__tlOa) sc.textContent = JSON.stringify(pg2); }
         } catch (e) { stats.errors++; stats.lastError = String(e); }
         return true;
       }
@@ -3184,9 +3446,20 @@
       else if (p.statistics && p.statistics.today) { var tb = p.statistics.__tlBase || p.statistics; p.statistics = Object.assign({}, tb, { today: Object.assign({}, tb.today, { total: (tb.today.total || 0) + todayCount(mine.filter(function (m) { return !fl.some(function (x) { return !x.__tl && ((m.flightId && x.flightId === m.flightId) || (m.callsign && x.callsign === m.callsign)); }); }), p.airport.timezone) }), __tlBase: tb }); }
       return added;
     }
+    // (FR24's own list of the airport's closest - each { id, name, city, iata, icao, countryId, countryName, url,
+    // distanceKm } - and the userscript's, in one: none twice, nearest first, as many as FR24 shows)
+    function closestMerge(p, d) {
+      if (!Array.isArray(d.closest) || !d.closest.length || !Array.isArray(p.closestAirports)) return;
+      var sig = d.closest.map(function (x) { return x.id; }).join(','); if (p.closestAirports.__tl === sig) return;
+      var base = p.closestAirports.__tlBase || p.closestAirports, by = new Set(), out = [];
+      base.concat(d.closest).forEach(function (x) { if (x && x.id && x.id !== p.airport.id && !by.has(x.id)) { by.add(x.id); out.push(x); } });
+      out.sort(function (a, b) { return (a.distanceKm || 0) - (b.distanceKm || 0); });
+      out = out.slice(0, Math.max(5, base.length)); out.__tl = sig; out.__tlBase = base; p.closestAirports = out;
+    }
     function applyAirport(pg) {
       var p = pg.props, apId = p.airport.id, d = apDataOf(apId);
       unlockRunways(p, apId);
+      closestMerge(p, d);
       if (d.board && p.boards && p.boards.__tl !== hashStr(JSON.stringify(d.board))) {
         var nb = {}; ['departures', 'arrivals', 'onGround'].forEach(function (k) { var x = p.boards[k]; if (!x || !Array.isArray(x.flights)) { nb[k] = x; return; } nb[k] = Object.assign({}, x, { flights: mergeFlights(x.flights, d.board[k], k, k === 'onGround' ? null : spanOf(x.flights, null), x.flights.length || 5) }); });
         nb.__tl = hashStr(JSON.stringify(d.board)); p.boards = nb;
@@ -3206,7 +3479,7 @@
       if (!/^\/data\/airports\/[^/]+/.test(location.pathname)) return;
       var pg = inertiaPage(); if (!pg) return;
       var c = pg.component, apId = pg.props.airport.id;
-      var kinds = c === 'Data/AirportRoutes' ? ['routes'] : c === 'Data/AirportStatistics' ? ['routes', 'stats'] : c === 'Data/Airport' ? ['board', 'routes', 'runways'] : c === 'Data/AirportBoard' ? ['board'] : [];
+      var kinds = c === 'Data/AirportRoutes' ? ['routes'] : c === 'Data/AirportStatistics' ? ['routes', 'stats'] : c === 'Data/Airport' ? ['board', 'routes', 'runways', 'closest'] : c === 'Data/AirportBoard' ? ['board'] : [];
       if (!kinds.length) return;
       apDataOf(apId);
       var key = apId + ':' + kinds.join(','); if (!dataAsked[key] || Date.now() - dataAsked[key] > 60000) { dataAsked[key] = Date.now(); post('needAirportData', { apId: apId, kinds: kinds }); }
@@ -3307,6 +3580,17 @@
               });
             };
             look.__tl = true; v.byCodeOrId = look; mx.oaLookup = (mx.oaLookup || 0) + 1;
+            // (1.3.4) and by id - FR24's aircraft panel and its playback look a flight's airports up so (scheduleInfo's
+            // originId / destinationId): M-SKTO's landings at Axis Business Park's helipad were "-" - by IATA and by ICAO
+            // code too; the landing places learned likewise. FR24's own answer first, always
+            var ownById = v.byId, ownIata = v.byIATA, ownIcao = v.byICAO;
+            var oaOf = function (n) { n = Number(n); if (n >= 1e7 && oaById && oaById.has(n)) return oaStoreRow(oaById.get(n)); if (n > 9000000 && n < 1e7) { for (var i = 0; i < siteRows.length; i++) if (siteRows[i] && siteRows[i].id === n && isFinite(siteRows[i].lat)) return storeForm(siteRows[i]); } return null; };
+            // (FR24's own object of it where its database has one - by its id - else one of that form)
+            var byCode = function (c) { var r = typeof c === 'string' && oaByCode.size ? oaByCode.get(c.toLowerCase()) : null; if (!r) return null; return Promise.resolve(ownById.call(v, r[0])).then(function (b) { return b || oaStoreRow(r); }, function () { return oaStoreRow(r); }); };
+            v.byId = function (id) { return Promise.resolve(ownById.apply(this, arguments)).then(function (a) { return a || oaOf(id) || a; }, function (e) { var o = oaOf(id); if (o) return o; throw e; }); };
+            v.byIATA = function (c) { return Promise.resolve(ownIata.apply(this, arguments)).then(function (a) { return a || byCode(c) || a; }); };
+            v.byICAO = function (c) { return Promise.resolve(ownIcao.apply(this, arguments)).then(function (a) { return a || byCode(c) || a; }); };
+            v.byId.__tl = v.byIATA.__tl = v.byICAO.__tl = true;
           }
         } catch (e) { /* not a table */ }
       });
@@ -5167,6 +5451,8 @@
       } catch (e) { stats.errors++; stats.lastError = String(e); }
       // (1.3: an OurAirports airport's board - FR24 has none: an empty one of FR24's form, filled below as FR24's own are -
       // the flights kept for it, those followed here)
+      // (1.3.4: FR24's searches - with the OurAirports airports)
+      if (/\/api\/v1\/airports\/search\?/.test(url)) { var sap = searchFetch(this, arguments, url, 'airports'); if (sap) return sap; }
       // (1.3.2: by either of its addresses - api.flightradar24.com/common/v1 and, newer, www.flightradar24.com/common/v2)
       if (/\/common\/v\d+\/airport\.json\?/.test(url) && oaByCode.size) { var oaJ = oaAirportJson(url); if (oaJ) return Promise.resolve(jsonResponse(null, oaJ)); }
       // (1.3.1) An OurAirports airport's window on the map: FR24 asks its airport API for it by id - its details, pictures,
@@ -5422,6 +5708,28 @@
       } catch (e) { stats.errors++; stats.lastError = String(e); }
       return p;
     };
+    // (1.3.4) FR24's search box: the OurAirports airports added once all the above has made FR24's answer - its aircraft,
+    // its routes, its logos - so both are in it
+    (function () {
+      var hooked = window.fetch;
+      window.fetch = function (input, init) {
+        var url = urlOf(input);
+        if (optOn('on') && /\/v1\/search\/web\/find\?/.test(url)) {
+          var u = null; try { u = new URL(url, location.href); } catch (e) { u = null; }
+          var q = u ? (u.searchParams.get('query') || '') : '', type = u ? (u.searchParams.get('type') || '') : '';
+          if (q.trim().length >= 2 && (!type || type === 'airport')) {
+            var oaP = oaSearch(q, 500);
+            return Promise.resolve(hooked.apply(this, arguments)).then(function (res) {
+              return oaP.then(function (rows) {
+                if (!rows.length || !res || !res.ok) return res;
+                return res.clone().json().then(function (j) { var o = searchMerge(j, rows, q); if (o) stats.oaSearch = (stats.oaSearch || 0) + 1; return o ? jsonResponse(res, o) : res; }, function () { return res; });
+              });
+            });
+          }
+        }
+        return hooked.apply(this, arguments);
+      };
+    })();
 
     // ---- bridge ---------------------------------------------------------------------------------------------
     function acceptEntries(entries) {
@@ -5824,12 +6132,15 @@
       else if (d.__tweeksLadd === 'sites') acceptSites(d.list);
       else if (d.__tweeksLadd === 'oaRows') acceptOa(d);
       else if (d.__tweeksLadd === 'oaIs') acceptOaOne(d);
+      else if (d.__tweeksLadd === 'oaFrom') acceptOaFrom(d);
+      else if (d.__tweeksLadd === 'oaFound') acceptOaFound(d);
+      else if (d.__tweeksLadd === 'oaDir') acceptOaDir(d);
       else if (d.__tweeksLadd === 'pbRoute') { if (d.id != null) { var prId = Number(d.id); if (!d.none) { if (d.route) pbRoutes.set(prId, d.route); else pbRoutes.delete(prId); if (pbRoutes.size > 3000) pbRoutes.delete(pbRoutes.keys().next().value); } pbRouteDone.add(prId); if (pbRouteDone.size > 3000) pbRouteDone.delete(pbRouteDone.values().next().value); pbRelease(); } }
       else if (d.__tweeksLadd === 'pbTrace') { if (d.id != null && Array.isArray(d.pts)) { pbTrace = { id: Number(d.id), hex: d.hex || '', pts: d.pts }; pbRelease(); } }
       else if (d.__tweeksLadd === 'routesAdd') { if (d.apId) { routesAdd.set(Number(d.apId), d.list || []); keepApData(Number(d.apId)); routesTick(); } }
       else if (d.__tweeksLadd === 'airportPanel') acceptAirportPanel(d);
       else if (d.__tweeksLadd === 'searchAdd') onSearchAdd(d);
-      else if (d.__tweeksLadd === 'airportData') { if (d.apId) { var ad = apDataOf(Number(d.apId)); if (d.runways) ad.runways = d.runways; if (d.board) ad.board = d.board; if (d.stats && typeof d.stats === 'object') ad.stats = Object.assign({ at: Date.now() }, d.stats); keepApData(Number(d.apId)); routesTick(); } }
+      else if (d.__tweeksLadd === 'airportData') { if (d.apId) { var ad = apDataOf(Number(d.apId)); if (d.runways) ad.runways = d.runways; if (Array.isArray(d.closest)) ad.closest = d.closest; if (Array.isArray(d.oa)) d.oa.forEach(function (o) { acceptOaOne(o, true); }); if (d.board) ad.board = d.board; if (d.stats && typeof d.stats === 'object') ad.stats = Object.assign({ at: Date.now() }, d.stats); keepApData(Number(d.apId)); routesTick(); } }
       else if (d.__tweeksLadd === 'hist') {
         var reg = String(d.reg || '').toUpperCase(); if (!reg) return;
         if (d.data) hist.set(reg, { data: d.data, at: Date.now(), partial: !!d.partial });
@@ -5855,7 +6166,7 @@
       else if (d.__tweeksLadd === 'hello') post('ready', { oaWant: oaWant, stats: stats, feedReady: !!feedHeaders, hdr: feedHdrPublic(), v: BRIDGE_V });
     });
     window[NS] = { resolved: resolved, routes: routes, naRecs: naRecs, naRoutes: naRoutes, telem: telem, hist: hist, lastPos: lastPos, photoCache: photoCache, psCache: psCache, stats: stats, fetchPhotos: fetchPhotos, hello: function () { post('ready', { oaWant: oaWant, stats: stats, feedReady: !!feedHeaders, v: BRIDGE_V }); }, v: BRIDGE_V };
-    if (window.__tlTestHook) try { window.__tlTestHook({ csOf: csOf, patchTopFlights: patchTopFlights, onTopGot: onTopGot, topNames: topNames, fillFlightList: fillFlightList, routeRows: routeRows, liveDestFix: liveDestFix, hist: hist, preloaded: function () { return preloaded; }, parse: parse, photoFits: photoFits, makerOf: makerOf, patchFollow: patchFollow, patchFlightMsg: patchFlightMsg, pushFollow: pushFollow, followSt: function () { return followSt; }, setFollowSt: function (s) { followSt = s; }, shownPhotos: shownPhotos, photoCache: photoCache, FOLLOW: FOLLOW, DETAILS: DETAILS, fLen: fLen, fStr: fStr, fVar: fVar, patchFlight: patchFlight, patchLiveFeed: patchLiveFeed, fr24Named: fr24Named, psState: function () { return { q: psQ.length, busy: psBusy, last: psLast, blockedFor: Math.max(0, psBlockedUntil - Date.now()), pri: Array.from(psPri), jobs: photoJobs.size, head: psQ.slice(0, 3).map(function (j) { return j.hex; }) }; }, acceptPubTel: acceptPubTel, pubTelFor: pubTelFor, fillNativeCard: fillNativeCard, regsOfCallsign: regsOfCallsign, categoryOf: categoryOf, placeShort: placeShort, nativeFill: nativeFill, natInfo: natInfo, addArch: addArch, acceptBoardArch: acceptBoardArch, telem: telem, b64Encode: b64Encode, b64DecodeInto: b64DecodeInto, frameHeader: frameHeader, concat: concat, varintInt32: varintInt32, PLAYBACK: PLAYBACK, patchPlayback: patchPlayback, patchPlaybackRequest: patchPlaybackRequest, pbRoutes: pbRoutes, pbTelAt: pbTelAt, setPbTrace: function (t) { pbTrace = t; }, patchList: patchList, acceptSites: acceptSites, listSig: listSig, mergeRoutes: mergeRoutes, applyRoutes: applyRoutes, routesAdd: routesAdd, applyAirport: applyAirport, applyBoardPage: applyBoardPage, applyStats: applyStats, mergeFlights: mergeFlights, apData: apData, telAt: telAt, noteTelem: noteTelem, pbTraceOf: function () { return pbTrace; }, logoOf: logoOf, archDetail: archDetail, tsOf: tsOf, noteAirportJson: noteAirportJson, rwyOf: rwyOf, rwyPanel: rwyPanel, panelTick: panelTick, panelData: panelData, promoSlots: promoSlots, acceptAirportPanel: acceptAirportPanel, unlockRunways: unlockRunways, mvRows: mvRows, mvKept: mvKept, dayOf: dayOf, pbPanelTick: pbPanelTick, logoFix: logoFix, liveEntries: liveEntries, pbPos: pbPos, unlockFeed: unlockFeed, derivedVs: derivedVs, altHist: altHist, acceptAir: acceptAir, airCache: airCache, flushAir: flushAir, airWant: function () { return airWant; }, lastPos: lastPos, resolved: resolved, stats: stats, pbFind: pbFind, inBar: inBar, pbBlk: pbBlk, cardInfo: cardInfo, boardRowsSeen: boardRowsSeen, archById: archById, placeBoard: placeBoard, stopBoardHold: stopBoardHold, needBoardArch: needBoardArch, mx: mx, mxPatchCore: mxPatchCore, mxAuth: mxAuth, mxNatList: mxNatList, mxTrackOk: mxTrackOk, stripRestriction: stripRestriction, mxBmMerge: mxBmMerge, mxBmItem: mxBmItem, mxMonTile: mxMonTile, mxMonOr: mxMonOr, mxPinVer: mxPinVer, mxAirportHistory: mxAirportHistory, mxHistItems: mxHistItems, mxTrackFile: mxTrackFile, mxDataTick: mxDataTick, mxPbProps: mxPbProps, mxPbShow: mxPbShow, mxPbStandIn: mxPbStandIn, mxPbReadAt: mxPbReadAt, mxPbStand: mxPbStand, mxBoardRwy: mxBoardRwy, reqIdOf: reqIdOf, mxPbOpen: mxPbOpen, mxPbTake: mxPbTake, setNav: function (f) { mxNav = f; }, mxPbAway: mxPbAway, mxLegacyPbJson: mxLegacyPbJson, mxLegacyPb: mxLegacyPb, mxPbFlags: mxPbFlags, mxPbSynId: mxPbSynId, mxPbParam: mxPbParam, setPbWanted: function (v) { mxPbWanted = v; }, mxPlans: function () { return mxPlans; }, mxLiveRunways: mxLiveRunways, mxRwy: mxRwy, mxSetApply: mxSetApply, mxSetNote: mxSetNote, mxSetKept: mxSetKept, mxLastClicked: mxLastClicked, mxLcList: mxLcList, onLcClick: onLcClick, mxLcFill: mxLcFill, cardRwy: cardRwy, naEndsFill: naEndsFill, onEndsGot: onEndsGot, naEnds: naEnds, boardWant: boardWant, mxLegacyImages: mxLegacyImages, rwyInUse: rwyInUse, windOfText: windOfText, mxRwyAirport: mxRwyAirport, mxRwyByHex: mxRwyByHex, mxRowHex: mxRowHex, mxDataEnds: mxDataEnds, rwyUsePanel: rwyUsePanel, apWxPanel: apWxPanel, apWxData: apWxData, apWxOf: apWxOf, mxApWxAdd: mxApWxAdd, vsNoLock: vsNoLock, statsUsage: statsUsage, statsMoves: statsMoves, apDataOf: apDataOf, acceptOa: acceptOa, oaAirportJson: oaAirportJson, oaMap: oaMap, oaRefs: fr24Refs, setOaBase: function (b) { oaBase = b; oaShown = 'x'; }, oaStoreRow: oaStoreRow, setViewBox: function (b) { viewBox = b; }, oaView: oaView, sunTimes: sunTimes, tzText: tzText, panelCodeFields: panelCodeFields, oaLinkPressed: oaLinkPressed, oaRefHref: oaRefHref, acceptOaOne: acceptOaOne, oaLost: function () { return oaLost; }, setOaNav: function (f) { oaNav = f; }, oaWantNow: function () { return oaWant; }, oaApi: oaApi, oaPageReq: oaPageReq, oaPageOf: oaPageOf, statsUnlock: statsUnlock, onApWxGot: onApWxGot, mxStat: function () { return mx; }, mxTracksPac: mxTracksPac, setPac: function (o) { mxPac = { at: Date.now(), o: o }; }, rwyUseData: rwyUseData, rwyUseWant: rwyUseWant, cardRwyFill: cardRwyFill, rwyUseKept: rwyUseKept, mxLcTick: mxLcTick, mxBmMax: mxBmMax, mxNatParse: mxNatParse, mxAirsigList: mxAirsigList, mxStations: mxStations, mxLightning: mxLightning, mxLx: mxLx, mxFetch: mxFetch, mxWxText: mxWxText, mxWxKind: mxWxKind, mxCsv: mxCsv, patchLiveFeedRequest: patchLiveFeedRequest, mxCats: mxCats, mxOp: mxOp, mxLevels: mxLevels, mxNearest: mxNearest, MX_ICE: MX_ICE, MX_TURB: MX_TURB, mxWafsUrl: mxWafsUrl, routes: routes, setCurFollow: function (id) { curFollowId = id; } }); } catch (e) { /* ignore */ }
+    if (window.__tlTestHook) try { window.__tlTestHook({ csOf: csOf, patchTopFlights: patchTopFlights, onTopGot: onTopGot, topNames: topNames, fillFlightList: fillFlightList, routeRows: routeRows, liveDestFix: liveDestFix, hist: hist, preloaded: function () { return preloaded; }, parse: parse, photoFits: photoFits, makerOf: makerOf, patchFollow: patchFollow, patchFlightMsg: patchFlightMsg, pushFollow: pushFollow, followSt: function () { return followSt; }, setFollowSt: function (s) { followSt = s; }, shownPhotos: shownPhotos, photoCache: photoCache, FOLLOW: FOLLOW, DETAILS: DETAILS, fLen: fLen, fStr: fStr, fVar: fVar, patchFlight: patchFlight, patchLiveFeed: patchLiveFeed, fr24Named: fr24Named, psState: function () { return { q: psQ.length, busy: psBusy, last: psLast, blockedFor: Math.max(0, psBlockedUntil - Date.now()), pri: Array.from(psPri), jobs: photoJobs.size, head: psQ.slice(0, 3).map(function (j) { return j.hex; }) }; }, acceptPubTel: acceptPubTel, pubTelFor: pubTelFor, fillNativeCard: fillNativeCard, regsOfCallsign: regsOfCallsign, categoryOf: categoryOf, placeShort: placeShort, nativeFill: nativeFill, natInfo: natInfo, addArch: addArch, acceptBoardArch: acceptBoardArch, telem: telem, b64Encode: b64Encode, b64DecodeInto: b64DecodeInto, frameHeader: frameHeader, concat: concat, varintInt32: varintInt32, PLAYBACK: PLAYBACK, patchPlayback: patchPlayback, patchPlaybackRequest: patchPlaybackRequest, pbRoutes: pbRoutes, pbTelAt: pbTelAt, setPbTrace: function (t) { pbTrace = t; }, patchList: patchList, acceptSites: acceptSites, listSig: listSig, mergeRoutes: mergeRoutes, applyRoutes: applyRoutes, routesAdd: routesAdd, applyAirport: applyAirport, applyBoardPage: applyBoardPage, applyStats: applyStats, mergeFlights: mergeFlights, apData: apData, telAt: telAt, noteTelem: noteTelem, pbTraceOf: function () { return pbTrace; }, logoOf: logoOf, archDetail: archDetail, tsOf: tsOf, noteAirportJson: noteAirportJson, rwyOf: rwyOf, rwyPanel: rwyPanel, panelTick: panelTick, panelData: panelData, promoSlots: promoSlots, acceptAirportPanel: acceptAirportPanel, unlockRunways: unlockRunways, mvRows: mvRows, mvKept: mvKept, dayOf: dayOf, pbPanelTick: pbPanelTick, logoFix: logoFix, liveEntries: liveEntries, pbPos: pbPos, unlockFeed: unlockFeed, derivedVs: derivedVs, altHist: altHist, acceptAir: acceptAir, airCache: airCache, flushAir: flushAir, airWant: function () { return airWant; }, lastPos: lastPos, resolved: resolved, stats: stats, pbFind: pbFind, inBar: inBar, pbBlk: pbBlk, cardInfo: cardInfo, boardRowsSeen: boardRowsSeen, archById: archById, placeBoard: placeBoard, stopBoardHold: stopBoardHold, needBoardArch: needBoardArch, mx: mx, mxPatchCore: mxPatchCore, mxAuth: mxAuth, mxNatList: mxNatList, mxTrackOk: mxTrackOk, stripRestriction: stripRestriction, mxBmMerge: mxBmMerge, mxBmItem: mxBmItem, mxMonTile: mxMonTile, mxMonOr: mxMonOr, mxPinVer: mxPinVer, mxAirportHistory: mxAirportHistory, mxHistItems: mxHistItems, mxTrackFile: mxTrackFile, mxDataTick: mxDataTick, mxPbProps: mxPbProps, mxPbShow: mxPbShow, mxPbStandIn: mxPbStandIn, mxPbReadAt: mxPbReadAt, mxPbStand: mxPbStand, mxBoardRwy: mxBoardRwy, reqIdOf: reqIdOf, mxPbOpen: mxPbOpen, mxPbTake: mxPbTake, setNav: function (f) { mxNav = f; }, mxPbAway: mxPbAway, mxLegacyPbJson: mxLegacyPbJson, mxLegacyPb: mxLegacyPb, mxPbFlags: mxPbFlags, mxPbSynId: mxPbSynId, mxPbParam: mxPbParam, setPbWanted: function (v) { mxPbWanted = v; }, mxPlans: function () { return mxPlans; }, mxLiveRunways: mxLiveRunways, mxRwy: mxRwy, mxSetApply: mxSetApply, mxSetNote: mxSetNote, mxSetKept: mxSetKept, mxLastClicked: mxLastClicked, mxLcList: mxLcList, onLcClick: onLcClick, mxLcFill: mxLcFill, cardRwy: cardRwy, naEndsFill: naEndsFill, onEndsGot: onEndsGot, naEnds: naEnds, boardWant: boardWant, mxLegacyImages: mxLegacyImages, rwyInUse: rwyInUse, windOfText: windOfText, mxRwyAirport: mxRwyAirport, mxRwyByHex: mxRwyByHex, mxRowHex: mxRowHex, mxDataEnds: mxDataEnds, rwyUsePanel: rwyUsePanel, apWxPanel: apWxPanel, apWxData: apWxData, apWxOf: apWxOf, mxApWxAdd: mxApWxAdd, vsNoLock: vsNoLock, statsUsage: statsUsage, statsMoves: statsMoves, apDataOf: apDataOf, acceptOa: acceptOa, oaAirportJson: oaAirportJson, oaMap: oaMap, oaRefs: fr24Refs, setOaBase: function (b) { oaBase = b; oaShown = 'x'; }, oaStoreRow: oaStoreRow, setViewBox: function (b) { viewBox = b; }, oaView: oaView, sunTimes: sunTimes, tzText: tzText, panelCodeFields: panelCodeFields, oaLinkPressed: oaLinkPressed, oaRefHref: oaRefHref, acceptOaOne: acceptOaOne, oaLost: function () { return oaLost; }, acceptOaFrom: acceptOaFrom, oaCodeLine: oaCodeLine, noteFr24Codes: noteFr24Codes, oaDupe: oaDupe, dirTick: dirTick, acceptOaDir: acceptOaDir, searchMerge: searchMerge, apSearchMerge: apSearchMerge, oaMatchRows: oaMatchRows, oaOneGet: oaOneGet, oaFillTables: oaFillTables, refOf: refOf, fieldShortName: fieldShortName, closestMerge: closestMerge, heliText: heliText, oaFast: function () { return oaFast; }, setOaNav: function (f) { oaNav = f; }, oaWantNow: function () { return oaWant; }, oaApi: oaApi, oaPageReq: oaPageReq, oaPageOf: oaPageOf, statsUnlock: statsUnlock, onApWxGot: onApWxGot, mxStat: function () { return mx; }, mxTracksPac: mxTracksPac, setPac: function (o) { mxPac = { at: Date.now(), o: o }; }, rwyUseData: rwyUseData, rwyUseWant: rwyUseWant, cardRwyFill: cardRwyFill, rwyUseKept: rwyUseKept, mxLcTick: mxLcTick, mxBmMax: mxBmMax, mxNatParse: mxNatParse, mxAirsigList: mxAirsigList, mxStations: mxStations, mxLightning: mxLightning, mxLx: mxLx, mxFetch: mxFetch, mxWxText: mxWxText, mxWxKind: mxWxKind, mxCsv: mxCsv, patchLiveFeedRequest: patchLiveFeedRequest, mxCats: mxCats, mxOp: mxOp, mxLevels: mxLevels, mxNearest: mxNearest, MX_ICE: MX_ICE, MX_TURB: MX_TURB, mxWafsUrl: mxWafsUrl, routes: routes, setCurFollow: function (id) { curFollowId = id; } }); } catch (e) { /* ignore */ }
     post('ready', { oaWant: oaWant, stats: stats, feedReady: false, v: BRIDGE_V });
   }
 
@@ -8584,7 +8895,7 @@
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '1.3.3';
+  const VERSION = '1.3.4';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
@@ -10809,6 +11120,9 @@
   function siteNearBook(lat, lon, km) { const bk = siteBk(); if (!bk || !fin(lat) || !fin(lon)) return null; let best = null, bd = km; for (const s of bk.list) { const d = ENGINE.dist(lat, lon, s.lat, s.lon); if (d < bd) { bd = d; best = s; } } return best; }
   function siteIdAt(lat, lon) { const s = siteNearBook(lat, lon, 1.5); return s ? s.id : 0; }
   function learnSite(lat, lon, opts) {
+    // (1.3.4: down at one of the OurAirports airports - M-SKTO at Axis Business Park's helipad: that airport, as FR24's
+    // own airports are, never a landing place of its own beside it)
+    { const oid = oaIdNear(lat, lon, opts && opts.heli ? 0.35 : 1); if (oid) return oid; }
     const bk = siteBk(); if (!bk || !fin(lat) || !fin(lon) || ENGINE.airports.length < 1000) return 0;
     if (!sites.grid) { loadSites(); return 0; }                     // (named once the list of strips and towns is in)
     const heli = !!(opts && opts.heli), p = privatePlace(lat, lon, { heli, onNew: () => learnSite(lat, lon, opts) });
@@ -10848,12 +11162,27 @@
   function sitesSoon() { siteLab = null; if (siteSaveT) return; siteSaveT = setTimeout(() => { siteSaveT = 0; store.kvSet('sites2', siteBk()); pushSites(); }, 3000); }
   // ---- (1.3) every OurAirports airport FR24 does not list (closed ones aside) - the monitor's list (oaap.cjs: the route
   // engine's own ids), kept here a week - given to the page for FR24's airport list, its map, boards and panel
-  const oa = { rows: null, ids: new Set(), byId: new Map(), byCode: new Map(), sig: '', loading: null };
+  const oa = { rows: null, ids: new Set(), byId: new Map(), byCode: new Map(), grid: new Map(), sig: '', loading: null };
   const oaKnown = id => id >= 1e7 && oa.ids.has(id);
   function oaSet(c) {
     oa.rows = c.rows; oa.sig = String(c.n || c.rows.length) + '.' + (c.at || 0); oa.ids = new Set(); oa.byId = new Map(); oa.byCode = new Map();
-    for (const r of c.rows) if (Array.isArray(r) && r[0] >= 1e7) { oa.ids.add(r[0]); oa.byId.set(r[0], r); oa.byCode.set(String(r[1]).toUpperCase(), r[0]); }
+    oa.grid = new Map();
+    for (const r of c.rows) if (Array.isArray(r) && r[0] >= 1e7) {
+      oa.ids.add(r[0]); oa.byId.set(r[0], r); oa.byCode.set(String(r[1]).toUpperCase(), r[0]);
+      const k = oaCell(r[6], r[7]); let g = oa.grid.get(k); if (!g) oa.grid.set(k, g = []); g.push(r);
+    }
   }
+  // (1.3.4) the airports of the list by where they are: a 0.1° grid
+  const oaCell = (lat, lon) => Math.floor(lat * 10) * 10000 + Math.floor(lon * 10);
+  function oaEachNear(lat, lon, km, fn) {
+    if (!oa.grid.size || !fin(lat) || !fin(lon)) return;
+    const la = Math.floor(lat * 10), lo = Math.floor(lon * 10), dl = Math.ceil(km / 11) + 1, dn = Math.ceil(km / (11 * Math.max(0.05, Math.cos(lat * Math.PI / 180)))) + 1;
+    for (let i = -dl; i <= dl; i++) for (let j = -dn; j <= dn; j++) { const g = oa.grid.get((la + i) * 10000 + lo + j); if (!g) continue; for (const r of g) { const d = ENGINE.dist(lat, lon, r[6], r[7]); if (d <= km) fn(r, d); } }
+  }
+  // (the one at a spot: the nearest within km - a helicopter down at Axis Business Park's pad is at that heliport)
+  function oaIdNear(lat, lon, km) { let best = 0, bd = Infinity; oaEachNear(lat, lon, km, (r, d) => { if (d < bd) { bd = d; best = r[0]; } }); return best; }
+  // (whether OurAirports gives it an ICAO code of its own: the monitor says so (1.3.4); a list from before, by its look)
+  const oaHasIcao = r => (r[10] === 1 || r[10] === 0) ? r[10] === 1 : /^[A-Z]{4}$/.test(String(r[2] || '')) && !/^[A-Z]{2}-/.test(String(r[1] || ''));
   // (1.3.2) The list is checked with the monitor every quarter of an hour - a few bytes when it is the same one (1.3.1:
   // once a day, and never again while a tab stayed open - an airport added to OurAirports showed up a day late, or not
   // until the page was loaded again). A newer one replaces it at once, in this tab's page too. Never more than a week
@@ -10901,14 +11230,93 @@
     if (!oa.rows) return;
     await loadAirports().catch(() => {});
     const refs = {};
-    for (const r of oa.rows) { const id = r[5]; if (id && !(id in refs)) { const a = airports.byId.get(id); refs[id] = a ? String(a.iata || a.icao || '') : ''; } }
+    for (const r of oa.rows) { const id = r[5]; if (id && !(id in refs)) refs[id] = oaPageRef(id); }
     postToPage('oaRows', { rows: oa.rows, sig: oa.sig, refs });
+  }
+  // (1.3.4) The FR24 airport whose pages an OurAirports airport's are made from: FR24's server must have pages of it, and it
+  // has them for its big airports - the nearest FR24 airport could be one it has none of (RAF Woodvale's, Blackpool: "More"
+  // ended on FR24's airport search). The nearest of its country's with 10,000 flights a year and more, else any such.
+  const pageRefMemo = new Map(); let bigAps = null;
+  function oaPageRef(refId) {
+    if (pageRefMemo.has(refId)) return pageRefMemo.get(refId);
+    const a = airports.byId.get(refId); if (!a) return '';
+    if (!bigAps) bigAps = airports.list.filter(x => (x.size || 0) >= 10000 && (x.iata || x.icao) && fin(x.lat));
+    let best = null, bd = Infinity, any = null, ad = Infinity;
+    for (const x of bigAps) { const d = ENGINE.dist(a.lat, a.lon, x.lat, x.lon); if (d < ad) { ad = d; any = x; } if (x.countryId === a.countryId && d < bd) { bd = d; best = x; } }
+    const p = best || any || a, code = String(p.iata || p.icao || '').toLowerCase();
+    pageRefMemo.set(refId, code); return code;
+  }
+  // (1.3.4) FR24's searches - its search box on every page, its airport pages' own: the OurAirports airports matching a
+  // code or a name (page.js has the same: test/unit_134.cjs checks they agree)
+  const OA_RANK = { L: 6, M: 5, S: 3, W: 2, H: 1, B: 0 };
+  // ==OA-MATCH==
+  function oaMatchRows(rows, q, n, size) {
+    q = String(q || '').trim().toLowerCase(); if (q.length < 2 || !rows) return [];
+    var hits = [], word = { test: function (nm) { for (var k = nm.indexOf(q); k >= 0; k = nm.indexOf(q, k + 1)) { if (k === 0 || ' (/-'.indexOf(nm.charAt(k - 1)) >= 0) return true; } return false; } };
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i]; if (!Array.isArray(r)) continue;
+      var c1 = String(r[1]).toLowerCase(), c2 = String(r[2]).toLowerCase(), nm = String(r[3] || '').toLowerCase(), s = -1;
+      if (c1 === q || c2 === q) s = 0; else if (c1.indexOf(q) === 0 || c2.indexOf(q) === 0) s = 1; else if (nm.indexOf(q) === 0) s = 2; else if (q.length >= 3 && word.test(nm)) s = 3; else if (q.length >= 3 && (nm.indexOf(q) >= 0 || String(r[4] || '').toLowerCase().indexOf(q) >= 0)) s = 4;
+      if (s >= 0) hits.push([s, size(r), r]);
+    }
+    hits.sort(function (a, b) { return a[0] - b[0] || b[1] - a[1] || String(a[2][3]).localeCompare(String(b[2][3])); });
+    return hits.slice(0, n || 10).map(function (h) { return h[2]; });
+  }
+  // ==/OA-MATCH==
+  function oaFind(q, n) { return oaMatchRows(oa.rows, q, n, r => OA_RANK[r[9]] || 0); }
+  // (1.3.4) Their places in FR24's airport lists (/data/airports: each country's count; a country's list, or its states' -
+  // a state's list): the country is the one of their ISO region (r[11], "US-ID": FR24's own country id for "US" - that of
+  // most of the US ones' nearest FR24 airports), else their nearest FR24 airport's
+  let oaIso = null;
+  function oaCountryOf(r) {
+    if (!oaIso) {
+      const votes = new Map();
+      for (const x of oa.rows) { const reg = String(x[11] || ''), a = airports.byId.get(x[5]); if (!reg || !a || !a.countryId) continue; const k = reg.slice(0, 2); let m = votes.get(k); if (!m) votes.set(k, m = new Map()); m.set(a.countryId, (m.get(a.countryId) || 0) + 1); }
+      oaIso = new Map(); for (const [k, m] of votes) oaIso.set(k, [...m].sort((a, b) => b[1] - a[1])[0][0]);
+    }
+    const reg = String(r[11] || ''); return (reg && oaIso.get(reg.slice(0, 2))) || (airports.byId.get(r[5]) || {}).countryId || 0;
+  }
+  const oaState = r => String(r[11] || '').split('-')[1] || '';
+  // what a page of FR24's airport lists needs: { kind: 'counts' } -> { counts: { countryId: n } }; { kind: 'country' |
+  // 'state', id, name, states: { name: code } } -> { airports: [FR24's form], states: { code: n }, rows: [...], nears }
+  function oaDirectory(d) {
+    if (!oa.rows || !airports.list) return null;
+    if (d.kind === 'counts') { const counts = {}; for (const r of oa.rows) { const id = oaCountryOf(r); if (id) counts[id] = (counts[id] || 0) + 1; } return { counts }; }
+    let cid = Number(d.id) || 0;
+    if (!cid && d.name) { const a = airports.list.find(x => String(x.country || '').toLowerCase() === String(d.name).toLowerCase()); cid = a ? a.countryId : 0; }
+    if (!cid) return null;
+    let rows = oa.rows.filter(r => oaCountryOf(r) === cid);
+    const states = {}; for (const r of rows) { const s = oaState(r); if (s) states[s] = (states[s] || 0) + 1; }
+    if (d.kind === 'state') { const code = String(d.code || '').toUpperCase(); if (!code) return null; rows = rows.filter(r => oaState(r) === code); }
+    else if (d.hasStates) return { states };
+    const nears = {}; for (const r of rows) if (!(r[5] in nears)) nears[r[5]] = airports.byId.get(r[5]) || null;
+    const refs = {}; for (const id of Object.keys(nears)) refs[id] = oaPageRef(Number(id));
+    return { airports: rows.map(r => ({ id: r[0], name: r[3], iata: String(r[1]), icao: /^[A-Z0-9]{4}$/.test(String(r[2])) ? r[2] : '', total: 0 })), rows, refs, nears, states };
+  }
+  // (its name as FR24 names a place: "Woodvale" for RAF Woodvale - not the town OurAirports gives, Southport)
+  const oaCity = r => ENGINE.placeShort(ENGINE.fieldShortName(r[3])) || ENGINE.placeShort(r[4]) || r[1];
+  // (1.3.4) FR24's "closest airports" of an airport: its own and the OurAirports airports with an ICAO code of their own
+  // (not those known only by a local or OurAirports code) - the n nearest, in FR24's form; and the rows of those of the
+  // list, so their links open their pages
+  function closestOf(ap, n) {
+    if (!ap || !fin(ap.lat)) return { items: [], oa: [] };
+    const cand = [];
+    for (const a of airports.list) if (a.id !== ap.id && fin(a.lat) && (a.iata || a.icao)) { const d = ENGINE.dist(ap.lat, ap.lon, a.lat, a.lon); if (d <= 400) cand.push([d, a, null]); }
+    oaEachNear(ap.lat, ap.lon, 120, (r, d) => { if (r[0] !== ap.id && oaHasIcao(r)) cand.push([d, oaAp(r[0]), r]); });
+    cand.sort((x, y) => x[0] - y[0]);
+    const items = [], rows = [];
+    for (const [d, a, r] of cand.slice(0, n || 5)) {
+      const code = String(a.iata || a.icao || a.code || '');
+      items.push({ id: a.id, name: a.name, city: a.city || '', iata: r ? r[1] : (a.iata || null), icao: (r ? r[2] : a.icao) || null, countryId: a.countryId || 0, countryName: a.country || '', url: '/data/airports/' + code.toLowerCase(), distanceKm: Math.round(d) });
+      if (r) rows.push({ row: r, ref: oaPageRef(r[5]), near: airports.byId.get(r[5]) || null });
+    }
+    return { items, oa: rows };
   }
   // (one of them as an airport: its row, the nearest FR24 airport's country and zone)
   function oaAp(id) {
     const r = oa.byId.get(id); if (!r) return null;
     const ref = airports.byId.get(r[5]) || {};
-    return { id: r[0], iata: r[1], icao: /^[A-Z]{4}$/.test(r[2]) ? r[2] : '', code: r[1], ident: r[2], name: r[3], city: ENGINE.placeShort(r[4]) || ENGINE.placeShort(r[3]), country: ref.country || '', countryId: ref.countryId || 0,
+    return { id: r[0], iata: r[1], icao: /^[A-Z]{4}$/.test(r[2]) ? r[2] : '', code: r[1], ident: r[2], name: r[3], city: oaCity(r), town: ENGINE.placeShort(r[4]), kind: r[9] || '', country: ref.country || '', countryId: ref.countryId || 0,
       lat: r[6], lon: r[7], alt: r[8] || 0, size: 1, timezone: ref.timezone || null, tz: ref.timezone ? ref.timezone.offset : (ref.tz || 0), oa: true };
   }
   // (an unlisted airfield - an id from the route engine's field list - answers too; and a learned landing place)
@@ -14011,7 +14419,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // our own marks (the '?' of a predicted airport) sit beside it without being counted as its text.
   const ownText = el => { for (const n of el.childNodes) if (n.nodeType === 3) return n; return null; };
   const textOf = el => { let s = ''; for (const n of el.childNodes) if (n.nodeType === 3) s += n.data; else if (!(n.classList && n.classList.contains('tl-inf'))) s += n.textContent; return s; };
-  function writeOwn(el, value) { const t = ownText(el); if (t) t.data = value; else el.insertBefore(document.createTextNode(value), el.firstChild); }
+  function writeOwn(el, value) { const t = ownText(el); if (t) t.nodeValue = String(value); else el.insertBefore(document.createTextNode(value), el.firstChild); }
   function setText(el, value, title, ours) {
     if (!el || !value) return;
     const cur = clean(textOf(el)), bare = cur.replace(/\?$/, '');
@@ -16413,7 +16821,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     await loadAirports();
     // (1.3: an OurAirports airport's panel too, by its code)
     const ap = (code.length === 4 && ENGINE.byIcao(code)) || airports.byIata.get(code) || (oa.byCode.has(code) ? apById(oa.byCode.get(code)) : null); if (!ap || !boardOk(ap.id)) return;
-    const full = apById(ap.id) || ap, out = { code, apId: ap.id, tz: (full.timezone && full.timezone.name) || '', days: 7, runways: null, freqs: null, usage: null, moves: 0, withRunway: 0, monitor: false, daily: null, allDays: 0 };
+    const full = apById(ap.id) || ap, out = { code, apId: ap.id, kind: full.kind || '', name: full.name || '', tz: (full.timezone && full.timezone.name) || '', days: 7, runways: null, freqs: null, usage: null, moves: 0, withRunway: 0, monitor: false, daily: null, allDays: 0 };
     routesOf(ap.id).then(list => postToPage('routesAdd', { apId: ap.id, list })).catch(e => log('routes', e));
     // (1.0.2) and every one of the last two weeks' take-offs and landings there - every aircraft public ADS-B heard, counted
     // by the monitor as each day's world log is built (daily)
@@ -16422,7 +16830,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     const ask = () => monGet(`/airport?ap=${ap.id}&days=7&hist=14`, { timeout: 15000 }).catch(() => null);
     let j = await ask(); if (!(j && j.known) && monUp()) j = await sleep(1500).then(ask);
     if (!(j && j.known)) panelAsked.set(code, now() - 45000);   // (another try within a quarter of a minute)
-    if (j && j.known) Object.assign(out, { runways: Array.isArray(j.runways) ? j.runways : [], freqs: Array.isArray(j.freqs) ? j.freqs : [], usage: Array.isArray(j.usage) ? j.usage : [], moves: j.moves || 0, withRunway: j.withRunway || 0, monitor: true, daily: Array.isArray(j.daily) ? j.daily : null, allDays: j.allDays || 0 });
+    if (j && j.known) Object.assign(out, { runways: Array.isArray(j.runways) ? j.runways : [], freqs: Array.isArray(j.freqs) ? j.freqs : [], pads: Array.isArray(j.pads) ? j.pads : [], kind: String(j.kind || full.kind || ''), usage: Array.isArray(j.usage) ? j.usage : [], moves: j.moves || 0, withRunway: j.withRunway || 0, monitor: true, daily: Array.isArray(j.daily) ? j.daily : null, allDays: j.allDays || 0 });
     // (1.3.2: or the monitor knows the airport and none of its runways - OurAirports' own file then, read here)
     if (!(out.runways && out.runways.length)) out.ends = await runwaysOf(ap).catch(() => []);
     postToPage('airportPanel', out);
@@ -16439,9 +16847,14 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     postToPage('apWxGot', { ap, wx: wx && !wx.none ? wx : null });
   }
   async function onNeedAirportData(d) {
-    const apId = Number(d.apId); if (!boardOk(apId)) return;
+    const apId = Number(d.apId);
+    // (1.3.4: one of the OurAirports airports - a data page reads their list only now: waited for, not turned away)
+    if (apId >= 1e7 && !oaKnown(apId)) await loadOa().catch(() => false);
+    if (!boardOk(apId)) return;
     await loadAirports();
     const ap = apById(apId), kinds = d.kinds || [];
+    // (1.3.4) its closest airports: FR24's own and the OurAirports airports with an ICAO code
+    if (kinds.includes('closest')) loadOa().then(() => { const c = closestOf(ap, 5); if (c.items.length) postToPage('airportData', { apId, closest: c.items, oa: c.oa }); }).catch(e => log('closest airports', String(e && e.message || e)));
     if (kinds.includes('runways')) runwaysOf(ap).then(rw => postToPage('airportData', { apId, runways: rw })).catch(() => {});
     if (kinds.includes('routes')) routesOf(apId).then(list => postToPage('routesAdd', { apId, list })).catch(e => log('routes', e));
     // (1.3) the statistics page: the monitor's week of runway usage (its runway log of FR24's own tracks) and its counts of
@@ -17719,7 +18132,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // (the version whose "what's new" was put away, and the one whose dot on the button the window was opened for)
   const UB_SEEN_KEY = 'tweeks.fr24.ladd.seenver', UB_DOT_KEY = 'tweeks.fr24.ladd.dotver';
   // (the newest CHANGELOG section's headlines, written in by build.mjs: { v, items })
-  const UB_WHATS_NEW = {"v":"1.3.3","items":["The extension's update page no longer gets stuck. Pressing \"Update\" could leave the button pressed with nothing said: the page remembered the extension's folder from the last update, and Chrome, asked whether the page may edit it again, never answered.","Now the page says what it is waiting for (\"choose Allow in the box by the address bar\"). If Chrome hasn't answered within 20 seconds, it says so, frees the button to choose the folder afresh, and offers the new version's zip to unzip over the folder by hand.","Getting from 1.3.1 or 1.3.2 to this version uses the old page. If it sticks there, update by hand once (see Notes)."]};
+  const UB_WHATS_NEW = {"v":"1.3.4","items":["OurAirports airports now behave like FR24's own airports across FR24:","Their pages build in one load. A link to RAF Woodvale's page (/data/airports/egow) now loads straight as Woodvale's, with no detour through Liverpool's page and no wait. It went to Blackpool's page before, which FR24's server doesn't have, and ended on FR24's airport search.","Their airport window:","**Runway usage**: the monitor now logs which runway flights use at OurAirports airfields, as it does at FR24's airports. Woodvale's runway usage was always empty.","**Address typed into a new tab** (extension only): an OurAirports airport's address typed or pasted into a new tab now opens the airport's page. The extension now has the webRequest permission for this: it only watches FR24's server redirect such a request to its airport search, and never blocks or changes anything.","**Aircraft directory**: missing aircraft types (Bombardier Globals, Gulfstreams and others) in FR24's aircraft directory (/data/aircraft) are not in this version. They come next, in 1.3.5."]};
   // (an aircraft with an open padlock: FR24's outline style - 24 grid, 1.5 stroke in the text colour)
   const UB_ICON = '<svg data-tl-ub-icon="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
   const UB_X = '<svg viewBox="0 0 14 14" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5l11 11M12.5 1.5l-11 11"/></svg>';
@@ -18987,6 +19400,26 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   // past, changing nothing), kept only to go to the monitor with the next report - nothing asked of it, nothing named,
   // nothing put on the page (N500EU's panel was still filled with it switched off)
   let oaTimer = 0;
+  // (1.3.4) whether a code is one of the OurAirports airports - that one only, and the FR24 airport its pages are made from
+  // (the page's part makes them: oaPageOf)
+  // (1.3.4) the OurAirports airports matching a search on the page - with what the page needs to open each
+  function onOaFind(d) {
+    if (!d || typeof d.key !== 'string') return;
+    loadOa().then(async () => {
+      await loadAirports().catch(() => {});
+      const list = oaFind(String(d.q || ''), 10).map(r => ({ row: r, ref: oaPageRef(r[5]), near: airports.byId.get(r[5]) || null }));
+      postToPage('oaFound', { key: d.key, list });
+    }).catch(() => postToPage('oaFound', { key: d.key, list: [] }));
+  }
+  function oaIsFor(code) {
+    loadOa().then(async ok => {
+      if (!ok) return;
+      const id = oa.byCode.get(String(code).toUpperCase()), r = id && oa.byId.get(id); if (!r) return;
+      await loadAirports().catch(() => {});
+      const a = airports.byId.get(r[5]); if (!a || !(a.iata || a.icao)) return;
+      postToPage('oaIs', { row: r, ref: oaPageRef(r[5]) || String(a.iata || a.icao), near: a });
+    }).catch(e => log('OurAirports airport page', String(e && e.message || e)));
+  }
   function onReportOnly(d) {
     switch (d.__tweeksLadd) {
       case 'feed': {
@@ -19023,6 +19456,8 @@ html.tl-no-strip .tl-strip{display:none!important}`;
       case 'boardRows': onBoardRows(d); break;
       case 'needRoutes': onNeedRoutes(d).catch(e => log('routes page', e)); break;
       case 'needAirportData': onNeedAirportData(d).catch(e => log('airport page', e)); break;
+      case 'oaFind': onOaFind(d); break;
+      case 'oaDir': loadOa().then(() => loadAirports()).then(() => { const o = oaDirectory(d) || {}; o.key = d.key; postToPage('oaDir', o); }).catch(() => postToPage('oaDir', { key: d.key })); break;
       case 'needAirportPanel': onNeedAirportPanel(d).catch(e => log('airport panel', e)); break;
       case 'needApWx': onNeedApWx(d).catch(e => { log('airport weather', String(e && e.message || e)); postToPage('apWxGot', { ap: d.ap, wx: null }); }); break;
       case 'mxGet': onMxGet(d); break;
@@ -19063,14 +19498,12 @@ html.tl-no-strip .tl-strip{display:none!important}`;
         // (1.3.1) an airport's data page: whether its code is one of the OurAirports airports - that one only, and the FR24
         // airport its pages are made from (the page's part makes them: oaPageOf)
         { const am = location.pathname.match(/^\/data\/airports\/([^/?#]+)/i), want = typeof d.oaWant === 'string' ? d.oaWant : '';
-          if (am || want) loadOa().then(async ok => {
-            if (!ok) return;
-            let code = ''; try { code = (want || decodeURIComponent(am[1])).toUpperCase(); } catch (e) { return; }
-            const id = oa.byCode.get(code), r = id && oa.byId.get(id); if (!r) return;
-            await loadAirports().catch(() => {});
-            const a = airports.byId.get(r[5]); if (!a || !(a.iata || a.icao)) return;
-            postToPage('oaIs', { row: r, ref: String(a.iata || a.icao) });
-          }).catch(e => log('OurAirports airport page', String(e && e.message || e))); }
+          if (am || want) { let code = ''; try { code = want || decodeURIComponent(am[1]); } catch (e) { code = ''; } if (code) oaIsFor(code); }
+          // (1.3.4) FR24's airport search, the browser sent there by FR24's server from one of their pages' addresses (typed or
+          // pasted): the extension's background saw where from - that airport's page made
+          if (/^\/data\/airports\/?$/i.test(location.pathname) && typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.id) {
+            try { chrome.runtime.sendMessage({ tlOaFrom: true }, p => { void chrome.runtime.lastError; const m = typeof p === 'string' && p.match(/^\/data\/airports\/([^/?#]+)/i); if (!m) return; postToPage('oaFrom', { path: p }); try { oaIsFor(decodeURIComponent(m[1])); } catch (e) { /* not a code */ } }); } catch (e) { /* not the extension */ }
+          } }
         if (isDataPage || isAircraftPage || isFlightPage) break;
         pushKnown(false);
         if (srvIds.rows.size) srvPush([...srvIds.rows.values()]);     // (the monitor's names, before FR24's first answer)
@@ -19264,7 +19697,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true }); else start();
   }
   }
-  try { (pageWindow()).__tweeksLadd = { version: VERSION, msgCount, datalinkPlan, datalinkRoutes, surgeNow, morphHtml, photoJob, photosOut, monPhotos, routeSearch, onNeedNaRoutes, onTopNeed, naFromTrail, naWanted, fr24Trail, schedOf, trailFor, get shownId() { return shownId; }, posStats, get bridgeV() { return bridgeV; }, hexOfId, currentPos, idHex, engine: ENGINE, live, pending, telemetry, store, routeState, planState, globalList, fr24, todayCache, sweep, resolveTargeted, routeFor, composeRoute, composeRoute0, centralOf, calcWhy, calcGot, calcSent, calcAsk, calcFlush, calcEvidence, calcNow, calcExtra, localView, hexCalcId, altsOf, holdTerminal, termHold, worldScan, refreshLists, quickRouteAll, historyPump, histPumped, learnedStore, regCountry, fr24Sched, pubRouted, pubRecs, privatePlace, loadSites, siteNear, sites, onSched, pubMem: () => pubMem, publishRoute, syncPanel, normalizeReadsb, telemOf, noteCands, csOfRec, warmHist, hostStat, wantWx, wxMap, wantNotams, closedMap, estimateEta, nNumberHex, watchList, pollWatch, accStore, accNote, statsHtml, fleetList, checkHealth, health, exportCsv, predictForHex, verifyAgainstList, strikes, revokedIds, fr24Named, noteFr24Named, loadHistory, loadToday, readTrace, classifyTrace, fetchTrace, netState, NETS, sourcesHtml, logGaps, fetchJetphotos, loadRunways, knownLegs, areaCache, pollView, saveSnapshot, boardNoteLegs, boardNoteFlight, boardNoteSched, boardScrub, boardLoad, boardList, naRouteOf, naEvidenceOf, pbWhere, pbFlight, pbSynId, onPbPage, legRowHtml, pbHashPlay, noteNa, naFeed, matchParked, parkedTick, isProv, adopt, recordFromMatch, matchAgainstList, verifyAll, fillAircraftHeader, ownersOut, identityToMonitor, matchByTraces, boardDrain, boardMem, onNeedBoard, operatorOf, shownOwner, enrich, userConfirm, userDestOf, monGet, monPost, monCheck, noteFr24Blocked, monLive, monUp, MON_DEFAULTS, get monBase() { return monBase; }, liveSources, tatSource: TAT_SOURCE, telOut, noteTelOut, reportTel, pbOut, srvIds, pullSrvIds, srvAdopt, reportToMonitor, srvRoute, srvRec, crowdOf, routesOut, routesSent, noteRouteOut, noteRouteWithdrawn, learnFromLeg, learnOutTake, learnOutBack, get learnOutN() { return learnOut.length; }, get feedHdr() { return feedHdr; }, boardMonFill, natRowOf, fnRows, buildSnapshot, bootHold, firAt, loadFir, onAirAsk, pb, onPbFeed, onPbFollow, onPbHex, pbRouteFor, pbMatch, pbFromMonitor, onNeedRoutes, onNeedAirportData, onNeedAirportPanel, liveBoardRows, runwaysOf, parseRunwayEnds, flightsOfCallsign, bootFlightPage, unlockExports, exportFile, rowWindow, hexOfFid, onNeedSearch, osmPick, wantOsmPlace, osmPlaceAt, learnSite, siteIdAt, siteBk, siteRow, apById, operatorIdOf, airlineIdByName, fr24Cat, onHistElsewhere, get viewBox() { return viewBox; }, get selectedId() { return currentId(); }, opt, setOpt, notify, openUnblockWindow, closeUnblockWindow, ensureBarButton, findBar, checkLatest, installKind, sayHello, helloSt, ubBanners, ubOffer, installId }; } catch (_) { /* ignore */ }
+  try { (pageWindow()).__tweeksLadd = { version: VERSION, oaTest: { buildAirports, oaSet, closestOf, oaPageRef, oaIdNear, learnSite, oaAp, oaCity, apById, fr24Ap }, msgCount, datalinkPlan, datalinkRoutes, surgeNow, morphHtml, photoJob, photosOut, monPhotos, routeSearch, onNeedNaRoutes, onTopNeed, naFromTrail, naWanted, fr24Trail, schedOf, trailFor, get shownId() { return shownId; }, posStats, get bridgeV() { return bridgeV; }, hexOfId, currentPos, idHex, engine: ENGINE, live, pending, telemetry, store, routeState, planState, globalList, fr24, todayCache, sweep, resolveTargeted, routeFor, composeRoute, composeRoute0, centralOf, calcWhy, calcGot, calcSent, calcAsk, calcFlush, calcEvidence, calcNow, calcExtra, localView, hexCalcId, altsOf, holdTerminal, termHold, worldScan, refreshLists, quickRouteAll, historyPump, histPumped, learnedStore, regCountry, fr24Sched, pubRouted, pubRecs, privatePlace, loadSites, siteNear, sites, onSched, pubMem: () => pubMem, publishRoute, syncPanel, normalizeReadsb, telemOf, noteCands, csOfRec, warmHist, hostStat, wantWx, wxMap, wantNotams, closedMap, estimateEta, nNumberHex, watchList, pollWatch, accStore, accNote, statsHtml, fleetList, checkHealth, health, exportCsv, predictForHex, verifyAgainstList, strikes, revokedIds, fr24Named, noteFr24Named, loadHistory, loadToday, readTrace, classifyTrace, fetchTrace, netState, NETS, sourcesHtml, logGaps, fetchJetphotos, loadRunways, knownLegs, areaCache, pollView, saveSnapshot, boardNoteLegs, boardNoteFlight, boardNoteSched, boardScrub, boardLoad, boardList, naRouteOf, naEvidenceOf, pbWhere, pbFlight, pbSynId, onPbPage, legRowHtml, pbHashPlay, noteNa, naFeed, matchParked, parkedTick, isProv, adopt, recordFromMatch, matchAgainstList, verifyAll, fillAircraftHeader, ownersOut, identityToMonitor, matchByTraces, boardDrain, boardMem, onNeedBoard, operatorOf, shownOwner, enrich, userConfirm, userDestOf, monGet, monPost, monCheck, noteFr24Blocked, monLive, monUp, MON_DEFAULTS, get monBase() { return monBase; }, liveSources, tatSource: TAT_SOURCE, telOut, noteTelOut, reportTel, pbOut, srvIds, pullSrvIds, srvAdopt, reportToMonitor, srvRoute, srvRec, crowdOf, routesOut, routesSent, noteRouteOut, noteRouteWithdrawn, learnFromLeg, learnOutTake, learnOutBack, get learnOutN() { return learnOut.length; }, get feedHdr() { return feedHdr; }, boardMonFill, natRowOf, fnRows, buildSnapshot, bootHold, firAt, loadFir, onAirAsk, pb, onPbFeed, onPbFollow, onPbHex, pbRouteFor, pbMatch, pbFromMonitor, onNeedRoutes, onNeedAirportData, onNeedAirportPanel, liveBoardRows, runwaysOf, parseRunwayEnds, flightsOfCallsign, bootFlightPage, unlockExports, exportFile, rowWindow, hexOfFid, onNeedSearch, osmPick, wantOsmPlace, osmPlaceAt, learnSite, siteIdAt, siteBk, siteRow, apById, operatorIdOf, airlineIdByName, fr24Cat, onHistElsewhere, get viewBox() { return viewBox; }, get selectedId() { return currentId(); }, opt, setOpt, notify, openUnblockWindow, closeUnblockWindow, ensureBarButton, findBar, checkLatest, installKind, sayHello, helloSt, ubBanners, ubOffer, installId }; } catch (_) { /* ignore */ }
   log('loaded v' + VERSION);
 
 })();

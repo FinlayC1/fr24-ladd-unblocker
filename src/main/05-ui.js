@@ -103,7 +103,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // our own marks (the '?' of a predicted airport) sit beside it without being counted as its text.
   const ownText = el => { for (const n of el.childNodes) if (n.nodeType === 3) return n; return null; };
   const textOf = el => { let s = ''; for (const n of el.childNodes) if (n.nodeType === 3) s += n.data; else if (!(n.classList && n.classList.contains('tl-inf'))) s += n.textContent; return s; };
-  function writeOwn(el, value) { const t = ownText(el); if (t) t.data = value; else el.insertBefore(document.createTextNode(value), el.firstChild); }
+  function writeOwn(el, value) { const t = ownText(el); if (t) t.nodeValue = String(value); else el.insertBefore(document.createTextNode(value), el.firstChild); }
   function setText(el, value, title, ours) {
     if (!el || !value) return;
     const cur = clean(textOf(el)), bare = cur.replace(/\?$/, '');

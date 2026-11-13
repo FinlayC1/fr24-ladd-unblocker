@@ -10,18 +10,18 @@ const fin = v => typeof v === 'number' && isFinite(v);
 
 function createAirportInfo(env) {
   const { E } = env;
-  let info = {}, freqs = {};
+  let info = {}, freqs = {}, pads = {};
   const endsMemo = new Map();
   // (1.3.2: an airport the engine does not know - an OurAirports heliport, a seaplane base - by the monitor's list)
   const apOf = id => E.byId(id) || (typeof env.apOf === 'function' ? env.apOf(id) : null);
   function load(dir) {
     const rd = f => { try { return JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')); } catch (e) { return null; } };
-    info = rd('runway_info.json') || {}; freqs = rd('freqs.json') || {};
+    info = rd('runway_info.json') || {}; freqs = rd('freqs.json') || {}; pads = rd('pads.json') || {};
     endsMemo.clear();
     return Object.keys(info).length;
   }
   // (1.3.2) every airport's, as OurAirports has them now (oarwy.cjs) - in place of the checkout's own
-  function set(i, f) { if (i && typeof i === 'object') info = i; if (f && typeof f === 'object') freqs = f; endsMemo.clear(); return Object.keys(info).length; }
+  function set(i, f, p) { if (i && typeof i === 'object') info = i; if (f && typeof f === 'object') freqs = f; if (p && typeof p === 'object') pads = p; endsMemo.clear(); return Object.keys(info).length; }
   // the ends of an airport's open runways: { id, lat, lon, hdg (true, the way an aircraft using it goes) }
   function endsOf(icao) {
     icao = String(icao || '').toUpperCase(); if (endsMemo.has(icao)) return endsMemo.get(icao);
@@ -200,7 +200,7 @@ function createAirportInfo(env) {
       if (o) daily.push([d, x ? x[0] || 0 : 0, x ? x[1] || 0 : 0, 'all']);
       else if (live.has(d) || k === 0) daily.push([d, live.has(d) ? live.get(d)[0] : 0, live.has(d) ? live.get(d)[1] : 0, 'live']);   // (today always: so far)
     }
-    return { ap: apId, icao, known: true, days, runways: info[icao] || [], freqs: freqs[icao] || [], usage: [...use].map(([r, u]) => [r, u[0], u[1]]).sort((x, y) => (y[1] + y[2]) - (x[1] + x[2]) || x[0].localeCompare(y[0])), moves, withRunway: withRwy, daily, allDays: counted.size };
+    return { ap: apId, icao, known: true, days, runways: info[icao] || [], freqs: freqs[icao] || [], pads: pads[icao] || [], kind: a.kind || '', usage: [...use].map(([r, u]) => [r, u[0], u[1]]).sort((x, y) => (y[1] + y[2]) - (x[1] + x[2]) || x[0].localeCompare(y[0])), moves, withRunway: withRwy, daily, allDays: counted.size };
   }
   // (an airport's runways as kept: [end, end, length ft, width ft, surface, lighted, ..., closed (7), ...] - its rows)
   const runwaysOf = icao => info[String(icao || '').toUpperCase()] || [];

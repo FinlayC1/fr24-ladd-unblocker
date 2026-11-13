@@ -288,7 +288,7 @@ The monitor counts how many people use the script, anonymously, with `POST /hell
 
 ## Airport and runway data
 
-`monitor/data/` is part of the repository: what a new monitor starts from. Once it runs, the monitor keeps newer copies of OurAirports' files in its store and uses those (`oaRefresh` above). `runways.json`, `runway_len.json`, `runway_info.json` (1.3.2: every airport's runways, not FR24's airports alone), `freqs.json` and `oa_airports.csv` are built from [OurAirports](https://ourairports.com) (public domain) by:
+`monitor/data/` is part of the repository: what a new monitor starts from. Once it runs, the monitor keeps newer copies of OurAirports' files in its store and uses those (`oaRefresh` above). `runways.json`, `runway_len.json`, `runway_info.json` (1.3.2: every airport's runways, not FR24's airports alone), `freqs.json`, `pads.json` (1.3.4: heliports' helipads) and `oa_airports.csv` are built from [OurAirports](https://ourairports.com) (public domain) by:
 
 ```bash
 node monitor/mkdata.cjs              # downloads OurAirports' airports.csv, runways.csv and airport-frequencies.csv

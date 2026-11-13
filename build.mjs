@@ -84,6 +84,8 @@ const manifest = {
   host_permissions: [...new Set(hosts.flatMap(hostPerm))],
   // (a monitor of the user's own, at any https address: asked for when it is set, on grant.html)
   optional_host_permissions: ['https://*/*'],
+  // (1.3.4: to see FR24's server send an OurAirports airport's page on to its airport search - background.js; only seen)
+  permissions: ['webRequest'],
   content_scripts: [
     { matches: ['https://www.flightradar24.com/*', 'https://flightradar24.com/*'], js: ['page.js'], run_at: 'document_start', world: 'MAIN', all_frames: false },
     { matches: ['https://www.flightradar24.com/*', 'https://flightradar24.com/*'], js: ['content.js'], run_at: 'document_start', all_frames: false }
