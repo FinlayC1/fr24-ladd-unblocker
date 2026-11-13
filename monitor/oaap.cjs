@@ -7,7 +7,9 @@
 // the monitor's boards, logs and weather (apwx.cjs).
 // "FR24 lists it" as the engine reads it: its code is an FR24 airport's, or it lies within that airport's own reach.
 // GET /oaap gives the list once a browser starts (kept a week there): { v, at, n, rows: [[id, code, ident, name, city,
-// ref (nearest FR24 airport id), lat, lon, ft, kind (L large, M medium, S small, H heliport, W seaplane base, B balloon)]] }
+// ref (nearest FR24 airport id), lat, lon, ft, kind (L large, M medium, S small, H heliport, W seaplane base, B balloon),
+// icao (1.3.4: 1 when OurAirports gives it an ICAO code of its own - not a GPS or local code), region (1.3.4: its ISO
+// region, "GB-ENG", "US-ID" - its country and state in FR24's airport lists)]] }
 const fs = require('fs'), path = require('path'), zlib = require('zlib');
 const { fetchFile, readMeta, writeMeta, linesOf, SRC } = require('./oarwy.cjs');
 const KIND = { large_airport: 'L', medium_airport: 'M', small_airport: 'S', heliport: 'H', seaplane_base: 'W', balloonport: 'B' };
@@ -41,13 +43,13 @@ function createOaAirports(env) {
     if (!fs.existsSync(file) || typeof E.fieldId !== 'function') return c;
     c.lines = fs.readFileSync(file, 'utf8').split(/\r?\n/);
     const head = cells(c.lines[0] || ''), ix = k => head.indexOf(k);
-    c.col = ['type', 'name', 'latitude_deg', 'longitude_deg', 'elevation_ft', 'municipality', 'icao_code', 'gps_code', 'ident', 'iata_code'].map(ix);
+    c.col = ['type', 'name', 'latitude_deg', 'longitude_deg', 'elevation_ft', 'municipality', 'icao_code', 'gps_code', 'ident', 'iata_code', 'iso_region'].map(ix);
     for (const a of E.airports) if (a.id < 1e7) { if (a.iata) { c.fr24Iata.add(String(a.iata).toUpperCase()); c.fr24Code.add(String(a.iata).toUpperCase()); } if (a.icao) c.fr24Code.add(String(a.icao).toUpperCase()); }
     return c;
   }
   function step(c, i) {
     const l = c.lines[i]; if (!l) return;
-    const [cT, cN, cLa, cLo, cE, cM, cI, cG, cId, cA] = c.col;
+    const [cT, cN, cLa, cLo, cE, cM, cI, cG, cId, cA, cR] = c.col;
     const r = cells(l), kind = KIND[r[cT]]; if (!kind) return;                 // (closed ones, and anything else, left out)
     const lat = +r[cLa], lon = +r[cLo]; if (!Number.isFinite(lat) || !Number.isFinite(lon) || r[cLa] === '' || r[cLo] === '') return;
     // (its code: its ICAO code, else its GPS code, else OurAirports' own ident - "GB-0674", a field with neither)
@@ -63,7 +65,7 @@ function createOaAirports(env) {
     // (its code as shown and in its address: never one of FR24's own airports' codes, never another of these)
     const oaId = String(r[cId] || '').toUpperCase().trim(), code = [/^[A-Z]{3}$/.test(iata) ? iata : '', ident, oaId].find(k => k && !c.fr24Code.has(k) && !c.taken.has(k)) || ('OA' + id);
     c.taken.add(code);
-    const row = [id, code, ident, String(r[cN] || ident), String(r[cM] || ''), refId, Math.round(lat * 1e5) / 1e5, Math.round(lon * 1e5) / 1e5, Math.round(+r[cE] || 0), kind];
+    const row = [id, code, ident, String(r[cN] || ident), String(r[cM] || ''), refId, Math.round(lat * 1e5) / 1e5, Math.round(lon * 1e5) / 1e5, Math.round(+r[cE] || 0), kind, /^[A-Z0-9]{4}$/.test(String(r[cI] || '').trim().toUpperCase()) ? 1 : 0, String(cR >= 0 && r[cR] || '').toUpperCase().slice(0, 8)];
     c.out.push(row); c.ids.set(id, row);
   }
   function makeSync() { const c = prepare(); for (let i = 1; i < c.lines.length; i++) step(c, i); return c; }
@@ -89,7 +91,7 @@ function createOaAirports(env) {
     return building;
   }
   const get = id => { const r = (rows(), byId.get(id)); if (!r) return null;
-    return { id: r[0], iata: r[1] === r[2] ? '' : r[1], icao: r[2], code: r[1], name: r[3], city: r[4], lat: r[6], lon: r[7], alt: r[8], kind: r[9], ref: r[5] }; };
+    return { id: r[0], iata: r[1] === r[2] ? '' : r[1], icao: r[2], code: r[1], name: r[3], city: r[4], lat: r[6], lon: r[7], alt: r[8], kind: r[9], ref: r[5], hasIcao: r[10] === 1 }; };
   function body() { if (!gz) gz = zlib.gzipSync(Buffer.from(JSON.stringify({ v: 1, at, n: rows().length, rows: rows() }))); return gz; }
   // (1.3.1) GET /oaap?have=<at>: the browser's list is this one - a few bytes back, not the 2 MB
   function same(have) { return !!list && +have === at; }

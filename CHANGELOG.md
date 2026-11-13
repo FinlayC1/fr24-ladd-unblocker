@@ -4,6 +4,59 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 
 1.0.0 is the first release. The versions before it are the betas, labelled B: B22.31.12 is version 22.31.12.
 
+## [1.3.4] - 2026-11-13
+
+### In short
+- OurAirports airports now behave like FR24's own airports across FR24:
+  - **Search**: FR24's search box on every page finds them by code (EGOW, GB-1368) or by name, and they open as FR24's airports do. The search on the airport pages finds them too.
+  - **Airport lists** (flightradar24.com/data/airports): each country's count includes them. A country's list includes them, and so does each state's in countries split into states.
+  - **Playback, aircraft panels and boards** name them. M-SKTO's landings at Axis Business Park's helipad showed "-" in playback.
+  - **"Closest airports"** on every airport page includes those with a real ICAO code, nearest first. Those known only by a local or OurAirports code are left out.
+- Their pages build in one load. A link to RAF Woodvale's page (/data/airports/egow) now loads straight as Woodvale's, with no detour through Liverpool's page and no wait. It went to Blackpool's page before, which FR24's server doesn't have, and ended on FR24's airport search.
+- Their airport window:
+  - **Codes**: the field above their code is now named "OurAirports code". The line under the name shows the country flag and the code once: "EGOW", "GB-0735", or "EGWS / WSX" where there's a real IATA code. It used to show the code twice or "/ NULL". The map pins show the same.
+  - **Runways**: helicopter pads are listed for heliports. A helipad says it is one, and an airfield with no runway known says "Runway details not available." FR24's padlocked picture is never shown.
+  - **Names**: they are named the way FR24 names places, so RAF Woodvale is "Woodvale" on boards, not OurAirports' town for it, Southport.
+- **Runway usage**: the monitor now logs which runway flights use at OurAirports airfields, as it does at FR24's airports. Woodvale's runway usage was always empty.
+- **Address typed into a new tab** (extension only): an OurAirports airport's address typed or pasted into a new tab now opens the airport's page. The extension now has the `webRequest` permission for this: it only watches FR24's server redirect such a request to its airport search, and never blocks or changes anything.
+- **Aircraft directory**: missing aircraft types (Bombardier Globals, Gulfstreams and others) in FR24's aircraft directory (/data/aircraft) are not in this version. They come next, in 1.3.5.
+
+### Fixed
+- **"-" in playback and empty windows** (`src/page.js`):
+  - FR24's aircraft panel and playback look a flight's airports up in FR24's airport database by id. 1.3.1 only taught that database to find OurAirports airports by code; it now finds them by id, IATA code and ICAO code as well.
+  - FR24's own tables of airports now hold every OurAirports airport, not just those whose pins are on screen. They're written to the tables directly, so 63,000 additions don't each make FR24 redraw its map.
+  - The learned landing places (from 1.2) are added to those tables too.
+- **Helicopter landings at OurAirports heliports**: a helicopter that lands within 350 m of one is now taken to have landed at that heliport (other aircraft: within 1 km). Before, the landing became an unnamed landing place beside it (`learnSite`).
+- **No flag, time zone UTC**: an OurAirports airport's country and time zone come from its nearest FR24 airport. That was only known when FR24 had just downloaded its airport list. It's now also read from FR24's own table, which is there when FR24 uses its saved copy.
+- **"More" and links to their pages**:
+  - Their pages are made from a page FR24 really has: the nearest FR24 airport in the same country with 10,000+ flights a year. Before, it was simply the nearest FR24 airport, which for Woodvale is Blackpool, whose page FR24's server doesn't have.
+  - Any link to one of their pages now goes there directly, not only "More". FR24's airport lists use plain links.
+  - Each OurAirports airport looked at is remembered in the browser (the last 60), so its page is built from the page FR24's server sends, before FR24's app starts.
+- **Code line and pins**: FR24 builds a pin's label as "IATA / ICAO". For OurAirports airports the label is now their code line; every other label FR24 draws is unchanged.
+- **Airports FR24 now lists itself**: FR24 has added airports since the monitor's copy of its list was made. An OurAirports airport whose code FR24's current list has (London Heliport, EGLW, may be one) is now left to FR24, so there's no second pin and no clashing window.
+- **Runway details and usage** (`monitor/oarwy.cjs`, `monitor/airport.cjs`, `monitor/rwylog.cjs`):
+  - A heliport's helipads are kept apart from runways and listed with size, surface and lighting (7,484 heliports have them).
+  - Each answer says what kind of airport it is.
+  - The runway log covers the OurAirports airfields the route engine knows, so a landing on Woodvale's runway 21 is logged as 21.
+- **The board tabs of an OurAirports airport's window were blank** when its airport had been looked up before its pin was drawn: it was missing from FR24's own tables.
+
+### Changed
+- The monitor's OurAirports list now says, for each airport, whether it has a real ICAO code and which ISO region it is in (e.g. GB-ENG, US-ID). The region decides its country and state in FR24's airport lists.
+- `monitor/data/pads.json`: every heliport's helipads, built by `monitor/mkdata.cjs`. The monitor's own hourly copy is in its store.
+
+### Notes
+- Why London Heliport's window failed couldn't be reproduced here: its answers come out fine when tested on their own. The most likely cause is that FR24's current list now has an airport with its code, and that clash is what 1.3.4 removes. If it still fails after updating, I'll need a fresh look at FR24's own answer for it.
+- An OurAirports airport's country in FR24's lists comes from its region code, matched to FR24's country by most of that country's airports. Near a border it can still be the neighbour's.
+- A state's page (for example Idaho in the United States) finds its airports by the state's code, which its country's page gives. Visited directly, the US states are known by name; other countries' states need their country's page to be opened once first.
+
+### Tests
+- `test/unit_134.cjs` (37 checks):
+  - **Monitor**: helipads; the ICAO flag; a heliport's answer; a landing at Woodvale logged with its runway.
+  - **Extension**: the redirect seen, only seen, and told once to its own tab.
+  - **Userscript**: pages made from a big airport of the country; FR24-style names; a helicopter landing at a heliport; closest airports.
+  - **Page part**: FR24's tables filled directly; country and zone from FR24's own table; the airport database by id and by code; the code line, pin labels and the field name; helipads and helipad wording; the window found from FR24's store; a page built as it loads; closest airports merged; a typed address recovered; FR24's two searches; the airport lists by country and state.
+- `test/unit_132.cjs`: updated to the new field name, runway wording and links.
+
 ## [1.3.3] - 2026-11-13
 
 ### In short

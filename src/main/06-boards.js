@@ -747,7 +747,7 @@
     await loadAirports();
     // (1.3: an OurAirports airport's panel too, by its code)
     const ap = (code.length === 4 && ENGINE.byIcao(code)) || airports.byIata.get(code) || (oa.byCode.has(code) ? apById(oa.byCode.get(code)) : null); if (!ap || !boardOk(ap.id)) return;
-    const full = apById(ap.id) || ap, out = { code, apId: ap.id, tz: (full.timezone && full.timezone.name) || '', days: 7, runways: null, freqs: null, usage: null, moves: 0, withRunway: 0, monitor: false, daily: null, allDays: 0 };
+    const full = apById(ap.id) || ap, out = { code, apId: ap.id, kind: full.kind || '', name: full.name || '', tz: (full.timezone && full.timezone.name) || '', days: 7, runways: null, freqs: null, usage: null, moves: 0, withRunway: 0, monitor: false, daily: null, allDays: 0 };
     routesOf(ap.id).then(list => postToPage('routesAdd', { apId: ap.id, list })).catch(e => log('routes', e));
     // (1.0.2) and every one of the last two weeks' take-offs and landings there - every aircraft public ADS-B heard, counted
     // by the monitor as each day's world log is built (daily)
@@ -756,7 +756,7 @@
     const ask = () => monGet(`/airport?ap=${ap.id}&days=7&hist=14`, { timeout: 15000 }).catch(() => null);
     let j = await ask(); if (!(j && j.known) && monUp()) j = await sleep(1500).then(ask);
     if (!(j && j.known)) panelAsked.set(code, now() - 45000);   // (another try within a quarter of a minute)
-    if (j && j.known) Object.assign(out, { runways: Array.isArray(j.runways) ? j.runways : [], freqs: Array.isArray(j.freqs) ? j.freqs : [], usage: Array.isArray(j.usage) ? j.usage : [], moves: j.moves || 0, withRunway: j.withRunway || 0, monitor: true, daily: Array.isArray(j.daily) ? j.daily : null, allDays: j.allDays || 0 });
+    if (j && j.known) Object.assign(out, { runways: Array.isArray(j.runways) ? j.runways : [], freqs: Array.isArray(j.freqs) ? j.freqs : [], pads: Array.isArray(j.pads) ? j.pads : [], kind: String(j.kind || full.kind || ''), usage: Array.isArray(j.usage) ? j.usage : [], moves: j.moves || 0, withRunway: j.withRunway || 0, monitor: true, daily: Array.isArray(j.daily) ? j.daily : null, allDays: j.allDays || 0 });
     // (1.3.2: or the monitor knows the airport and none of its runways - OurAirports' own file then, read here)
     if (!(out.runways && out.runways.length)) out.ends = await runwaysOf(ap).catch(() => []);
     postToPage('airportPanel', out);
@@ -773,9 +773,14 @@
     postToPage('apWxGot', { ap, wx: wx && !wx.none ? wx : null });
   }
   async function onNeedAirportData(d) {
-    const apId = Number(d.apId); if (!boardOk(apId)) return;
+    const apId = Number(d.apId);
+    // (1.3.4: one of the OurAirports airports - a data page reads their list only now: waited for, not turned away)
+    if (apId >= 1e7 && !oaKnown(apId)) await loadOa().catch(() => false);
+    if (!boardOk(apId)) return;
     await loadAirports();
     const ap = apById(apId), kinds = d.kinds || [];
+    // (1.3.4) its closest airports: FR24's own and the OurAirports airports with an ICAO code
+    if (kinds.includes('closest')) loadOa().then(() => { const c = closestOf(ap, 5); if (c.items.length) postToPage('airportData', { apId, closest: c.items, oa: c.oa }); }).catch(e => log('closest airports', String(e && e.message || e)));
     if (kinds.includes('runways')) runwaysOf(ap).then(rw => postToPage('airportData', { apId, runways: rw })).catch(() => {});
     if (kinds.includes('routes')) routesOf(apId).then(list => postToPage('routesAdd', { apId, list })).catch(e => log('routes', e));
     // (1.3) the statistics page: the monitor's week of runway usage (its runway log of FR24's own tracks) and its counts of

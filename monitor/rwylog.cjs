@@ -96,7 +96,9 @@ function createRwyLog(env) {
   // pts: { t, lat, lon, alt (ft, 0 on the ground), gs, trk, gnd } in time order. Each end where the track has it: begun on
   // the ground or low over an airport (its take-off), ended on the ground or low over one (its landing)
   const onGround = p => p.gnd === true || (p.alt === 0 && !(p.gs > 60));
-  function airportAt(lat, lon, km) { let best = null; E.nearby(lat, lon, km, (a, d) => { if (a.icao && APT.endsOf(a.icao).length && (!best || d < best.d)) best = { a, d }; }); return best ? best.a : null; }
+  // (1.3.4: FR24's airports and the OurAirports fields the engine knows alike - RAF Woodvale's runways logged as Liverpool's are)
+  const eachNear = (lat, lon, km, fn) => { E.nearby(lat, lon, km, fn); if (typeof E.nearbyFields === 'function') E.nearbyFields(lat, lon, km, fn); };
+  function airportAt(lat, lon, km) { let best = null; eachNear(lat, lon, km, (a, d) => { if (a.icao && APT.endsOf(a.icao).length && (!best || d < best.d)) best = { a, d }; }); return best ? best.a : null; }
   function fromTrack(fid, pts, how) {
     if (!Array.isArray(pts) || pts.length < 2) return 0;
     const P = pts.filter(p => p && fin(p.t) && fin(p.lat) && fin(p.lon)).map(p => ({ t: p.t, lat: p.lat, lon: p.lon, alt: onGround(p) ? null : (fin(p.alt) ? p.alt : null), gnd: onGround(p), gs: p.gs, trk: p.trk })).sort((a, b) => a.t - b.t);
@@ -121,7 +123,7 @@ function createRwyLog(env) {
   const fl = new Map();       // FR24 id -> { pts: [...], gAp, gT, dep, arrAgl, seen }
   // (what a runway needs: within 15 km and below 4,000 ft over the field, or rolling on the ground - not a parked aircraft)
   const keepPt = (f, a, d) => d <= 15 && (f.gnd ? f.spd > 30 : fin(f.alt) && f.alt - (a.alt || 0) < 4000);
-  function near(lat, lon, km) { const out = []; E.nearby(lat, lon, km, (a, d) => { if (a.icao && APT.endsOf(a.icao).length) out.push({ a, d }); }); return out.sort((x, y) => x.d - y.d); }
+  function near(lat, lon, km) { const out = []; eachNear(lat, lon, km, (a, d) => { if (a.icao && APT.endsOf(a.icao).length) out.push({ a, d }); }); return out.sort((x, y) => x.d - y.d); }
   // (the way it is going relative to the field: away from it, towards it)
   const away = (f, a) => { if (!fin(f.trk)) return null; const b = E.brg(a.lat, a.lon, f.lat, f.lon); return E.angDiff(b, f.trk) < 60; };
   const toward = (f, a) => { if (!fin(f.trk)) return null; const b = E.brg(f.lat, f.lon, a.lat, a.lon); return E.angDiff(b, f.trk) < 45; };

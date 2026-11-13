@@ -108,6 +108,26 @@
   // past, changing nothing), kept only to go to the monitor with the next report - nothing asked of it, nothing named,
   // nothing put on the page (N500EU's panel was still filled with it switched off)
   let oaTimer = 0;
+  // (1.3.4) whether a code is one of the OurAirports airports - that one only, and the FR24 airport its pages are made from
+  // (the page's part makes them: oaPageOf)
+  // (1.3.4) the OurAirports airports matching a search on the page - with what the page needs to open each
+  function onOaFind(d) {
+    if (!d || typeof d.key !== 'string') return;
+    loadOa().then(async () => {
+      await loadAirports().catch(() => {});
+      const list = oaFind(String(d.q || ''), 10).map(r => ({ row: r, ref: oaPageRef(r[5]), near: airports.byId.get(r[5]) || null }));
+      postToPage('oaFound', { key: d.key, list });
+    }).catch(() => postToPage('oaFound', { key: d.key, list: [] }));
+  }
+  function oaIsFor(code) {
+    loadOa().then(async ok => {
+      if (!ok) return;
+      const id = oa.byCode.get(String(code).toUpperCase()), r = id && oa.byId.get(id); if (!r) return;
+      await loadAirports().catch(() => {});
+      const a = airports.byId.get(r[5]); if (!a || !(a.iata || a.icao)) return;
+      postToPage('oaIs', { row: r, ref: oaPageRef(r[5]) || String(a.iata || a.icao), near: a });
+    }).catch(e => log('OurAirports airport page', String(e && e.message || e)));
+  }
   function onReportOnly(d) {
     switch (d.__tweeksLadd) {
       case 'feed': {
@@ -144,6 +164,8 @@
       case 'boardRows': onBoardRows(d); break;
       case 'needRoutes': onNeedRoutes(d).catch(e => log('routes page', e)); break;
       case 'needAirportData': onNeedAirportData(d).catch(e => log('airport page', e)); break;
+      case 'oaFind': onOaFind(d); break;
+      case 'oaDir': loadOa().then(() => loadAirports()).then(() => { const o = oaDirectory(d) || {}; o.key = d.key; postToPage('oaDir', o); }).catch(() => postToPage('oaDir', { key: d.key })); break;
       case 'needAirportPanel': onNeedAirportPanel(d).catch(e => log('airport panel', e)); break;
       case 'needApWx': onNeedApWx(d).catch(e => { log('airport weather', String(e && e.message || e)); postToPage('apWxGot', { ap: d.ap, wx: null }); }); break;
       case 'mxGet': onMxGet(d); break;
@@ -184,14 +206,12 @@
         // (1.3.1) an airport's data page: whether its code is one of the OurAirports airports - that one only, and the FR24
         // airport its pages are made from (the page's part makes them: oaPageOf)
         { const am = location.pathname.match(/^\/data\/airports\/([^/?#]+)/i), want = typeof d.oaWant === 'string' ? d.oaWant : '';
-          if (am || want) loadOa().then(async ok => {
-            if (!ok) return;
-            let code = ''; try { code = (want || decodeURIComponent(am[1])).toUpperCase(); } catch (e) { return; }
-            const id = oa.byCode.get(code), r = id && oa.byId.get(id); if (!r) return;
-            await loadAirports().catch(() => {});
-            const a = airports.byId.get(r[5]); if (!a || !(a.iata || a.icao)) return;
-            postToPage('oaIs', { row: r, ref: String(a.iata || a.icao) });
-          }).catch(e => log('OurAirports airport page', String(e && e.message || e))); }
+          if (am || want) { let code = ''; try { code = want || decodeURIComponent(am[1]); } catch (e) { code = ''; } if (code) oaIsFor(code); }
+          // (1.3.4) FR24's airport search, the browser sent there by FR24's server from one of their pages' addresses (typed or
+          // pasted): the extension's background saw where from - that airport's page made
+          if (/^\/data\/airports\/?$/i.test(location.pathname) && typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.id) {
+            try { chrome.runtime.sendMessage({ tlOaFrom: true }, p => { void chrome.runtime.lastError; const m = typeof p === 'string' && p.match(/^\/data\/airports\/([^/?#]+)/i); if (!m) return; postToPage('oaFrom', { path: p }); try { oaIsFor(decodeURIComponent(m[1])); } catch (e) { /* not a code */ } }); } catch (e) { /* not the extension */ }
+          } }
         if (isDataPage || isAircraftPage || isFlightPage) break;
         pushKnown(false);
         if (srvIds.rows.size) srvPush([...srvIds.rows.values()]);     // (the monitor's names, before FR24's first answer)
@@ -385,5 +405,5 @@
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true }); else start();
   }
   }
-  try { (pageWindow()).__tweeksLadd = { version: VERSION, msgCount, datalinkPlan, datalinkRoutes, surgeNow, morphHtml, photoJob, photosOut, monPhotos, routeSearch, onNeedNaRoutes, onTopNeed, naFromTrail, naWanted, fr24Trail, schedOf, trailFor, get shownId() { return shownId; }, posStats, get bridgeV() { return bridgeV; }, hexOfId, currentPos, idHex, engine: ENGINE, live, pending, telemetry, store, routeState, planState, globalList, fr24, todayCache, sweep, resolveTargeted, routeFor, composeRoute, composeRoute0, centralOf, calcWhy, calcGot, calcSent, calcAsk, calcFlush, calcEvidence, calcNow, calcExtra, localView, hexCalcId, altsOf, holdTerminal, termHold, worldScan, refreshLists, quickRouteAll, historyPump, histPumped, learnedStore, regCountry, fr24Sched, pubRouted, pubRecs, privatePlace, loadSites, siteNear, sites, onSched, pubMem: () => pubMem, publishRoute, syncPanel, normalizeReadsb, telemOf, noteCands, csOfRec, warmHist, hostStat, wantWx, wxMap, wantNotams, closedMap, estimateEta, nNumberHex, watchList, pollWatch, accStore, accNote, statsHtml, fleetList, checkHealth, health, exportCsv, predictForHex, verifyAgainstList, strikes, revokedIds, fr24Named, noteFr24Named, loadHistory, loadToday, readTrace, classifyTrace, fetchTrace, netState, NETS, sourcesHtml, logGaps, fetchJetphotos, loadRunways, knownLegs, areaCache, pollView, saveSnapshot, boardNoteLegs, boardNoteFlight, boardNoteSched, boardScrub, boardLoad, boardList, naRouteOf, naEvidenceOf, pbWhere, pbFlight, pbSynId, onPbPage, legRowHtml, pbHashPlay, noteNa, naFeed, matchParked, parkedTick, isProv, adopt, recordFromMatch, matchAgainstList, verifyAll, fillAircraftHeader, ownersOut, identityToMonitor, matchByTraces, boardDrain, boardMem, onNeedBoard, operatorOf, shownOwner, enrich, userConfirm, userDestOf, monGet, monPost, monCheck, noteFr24Blocked, monLive, monUp, MON_DEFAULTS, get monBase() { return monBase; }, liveSources, tatSource: TAT_SOURCE, telOut, noteTelOut, reportTel, pbOut, srvIds, pullSrvIds, srvAdopt, reportToMonitor, srvRoute, srvRec, crowdOf, routesOut, routesSent, noteRouteOut, noteRouteWithdrawn, learnFromLeg, learnOutTake, learnOutBack, get learnOutN() { return learnOut.length; }, get feedHdr() { return feedHdr; }, boardMonFill, natRowOf, fnRows, buildSnapshot, bootHold, firAt, loadFir, onAirAsk, pb, onPbFeed, onPbFollow, onPbHex, pbRouteFor, pbMatch, pbFromMonitor, onNeedRoutes, onNeedAirportData, onNeedAirportPanel, liveBoardRows, runwaysOf, parseRunwayEnds, flightsOfCallsign, bootFlightPage, unlockExports, exportFile, rowWindow, hexOfFid, onNeedSearch, osmPick, wantOsmPlace, osmPlaceAt, learnSite, siteIdAt, siteBk, siteRow, apById, operatorIdOf, airlineIdByName, fr24Cat, onHistElsewhere, get viewBox() { return viewBox; }, get selectedId() { return currentId(); }, opt, setOpt, notify, openUnblockWindow, closeUnblockWindow, ensureBarButton, findBar, checkLatest, installKind, sayHello, helloSt, ubBanners, ubOffer, installId }; } catch (_) { /* ignore */ }
+  try { (pageWindow()).__tweeksLadd = { version: VERSION, oaTest: { buildAirports, oaSet, closestOf, oaPageRef, oaIdNear, learnSite, oaAp, oaCity, apById, fr24Ap }, msgCount, datalinkPlan, datalinkRoutes, surgeNow, morphHtml, photoJob, photosOut, monPhotos, routeSearch, onNeedNaRoutes, onTopNeed, naFromTrail, naWanted, fr24Trail, schedOf, trailFor, get shownId() { return shownId; }, posStats, get bridgeV() { return bridgeV; }, hexOfId, currentPos, idHex, engine: ENGINE, live, pending, telemetry, store, routeState, planState, globalList, fr24, todayCache, sweep, resolveTargeted, routeFor, composeRoute, composeRoute0, centralOf, calcWhy, calcGot, calcSent, calcAsk, calcFlush, calcEvidence, calcNow, calcExtra, localView, hexCalcId, altsOf, holdTerminal, termHold, worldScan, refreshLists, quickRouteAll, historyPump, histPumped, learnedStore, regCountry, fr24Sched, pubRouted, pubRecs, privatePlace, loadSites, siteNear, sites, onSched, pubMem: () => pubMem, publishRoute, syncPanel, normalizeReadsb, telemOf, noteCands, csOfRec, warmHist, hostStat, wantWx, wxMap, wantNotams, closedMap, estimateEta, nNumberHex, watchList, pollWatch, accStore, accNote, statsHtml, fleetList, checkHealth, health, exportCsv, predictForHex, verifyAgainstList, strikes, revokedIds, fr24Named, noteFr24Named, loadHistory, loadToday, readTrace, classifyTrace, fetchTrace, netState, NETS, sourcesHtml, logGaps, fetchJetphotos, loadRunways, knownLegs, areaCache, pollView, saveSnapshot, boardNoteLegs, boardNoteFlight, boardNoteSched, boardScrub, boardLoad, boardList, naRouteOf, naEvidenceOf, pbWhere, pbFlight, pbSynId, onPbPage, legRowHtml, pbHashPlay, noteNa, naFeed, matchParked, parkedTick, isProv, adopt, recordFromMatch, matchAgainstList, verifyAll, fillAircraftHeader, ownersOut, identityToMonitor, matchByTraces, boardDrain, boardMem, onNeedBoard, operatorOf, shownOwner, enrich, userConfirm, userDestOf, monGet, monPost, monCheck, noteFr24Blocked, monLive, monUp, MON_DEFAULTS, get monBase() { return monBase; }, liveSources, tatSource: TAT_SOURCE, telOut, noteTelOut, reportTel, pbOut, srvIds, pullSrvIds, srvAdopt, reportToMonitor, srvRoute, srvRec, crowdOf, routesOut, routesSent, noteRouteOut, noteRouteWithdrawn, learnFromLeg, learnOutTake, learnOutBack, get learnOutN() { return learnOut.length; }, get feedHdr() { return feedHdr; }, boardMonFill, natRowOf, fnRows, buildSnapshot, bootHold, firAt, loadFir, onAirAsk, pb, onPbFeed, onPbFollow, onPbHex, pbRouteFor, pbMatch, pbFromMonitor, onNeedRoutes, onNeedAirportData, onNeedAirportPanel, liveBoardRows, runwaysOf, parseRunwayEnds, flightsOfCallsign, bootFlightPage, unlockExports, exportFile, rowWindow, hexOfFid, onNeedSearch, osmPick, wantOsmPlace, osmPlaceAt, learnSite, siteIdAt, siteBk, siteRow, apById, operatorIdOf, airlineIdByName, fr24Cat, onHistElsewhere, get viewBox() { return viewBox; }, get selectedId() { return currentId(); }, opt, setOpt, notify, openUnblockWindow, closeUnblockWindow, ensureBarButton, findBar, checkLatest, installKind, sayHello, helloSt, ubBanners, ubOffer, installId }; } catch (_) { /* ignore */ }
   log('loaded v' + VERSION);
