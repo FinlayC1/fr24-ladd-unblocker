@@ -2096,7 +2096,7 @@
       if (part === '/disruptions') return Promise.resolve({ data: {} });
       if (part === '/weather') return apWxWait(id, 6000).then(function (w) { return { data: w ? oaWeather(w) : {} }; });
       var a = oaStoreRow(r), sun = sunTimes(a.latitude, a.longitude, Date.now());
-      if (oaRefs[r[5]]) oaOneKeep(r, oaRefs[r[5]], refOf(r[5]));
+      if (oaRefs.has(r[5])) oaOneKeep(r, oaRefs.get(r[5]), refOf(r[5]));
       oaStoreKeep(pinStore('airports'), a);
       // (1.3.2: its ICAO code where it has one - or its GPS code: three or four letters and figures; its time zone as
       // words, today's sunrise and sunset there, worked out - 1.3.1 left all four "N/A")
@@ -2157,7 +2157,7 @@
     function acceptOaOne(d, quiet) {
       var r = d && d.row; if (!Array.isArray(r) || !(r[0] >= 1e7) || typeof d.ref !== 'string' || !/^[a-z0-9]{3,4}$/i.test(d.ref)) return;
       if (!oaById) oaById = new Map();
-      oaById.set(r[0], r); oaByCode.set(String(r[1]).toLowerCase(), r); oaRefs[r[5]] = d.ref.toLowerCase();
+      oaById.set(r[0], r); oaByCode.set(String(r[1]).toLowerCase(), r); if (Number.isInteger(r[5])) oaRefs.set(r[5], d.ref.toLowerCase());
       if (d.near && typeof d.near === 'object' && d.near.id === r[5] && !fr24Refs.has(r[5])) fr24Refs.set(r[5], d.near);
       oaOneKeep(r, d.ref.toLowerCase(), d.near || refOf(r[5]));
       if (!quiet) oaLostGo();
@@ -2184,7 +2184,7 @@
     }
     function acceptOa(d) {
       if (!d || !Array.isArray(d.rows)) return;
-      if (d.refs && typeof d.refs === 'object') Object.keys(d.refs).forEach(function (k) { if (typeof d.refs[k] === 'string' && /^[a-z0-9]{3,4}$/i.test(d.refs[k])) oaRefs[k] = d.refs[k].toLowerCase(); });
+      if (d.refs && typeof d.refs === 'object') Object.keys(d.refs).forEach(function (k) { var v = d.refs[k], id = Number(k); if (Number.isInteger(id) && id > 0 && typeof v === 'string' && /^[a-z0-9]{3,4}$/i.test(v)) oaRefs.set(id, v.toLowerCase()); });
       oaRows = d.rows; oaById = new Map(); oaByCode = new Map(); d.rows.forEach(function (r) { if (Array.isArray(r) && r[0] >= 1e7) { oaById.set(r[0], r); oaByCode.set(String(r[1]).toLowerCase(), r); } });
       if (d.sig) lsSet('tl.oa.sig', String(d.sig));
       oaFillTables();
@@ -2197,7 +2197,7 @@
     // this one (its name, code, place; the country and time zone of the airport it was made from), every figure of that
     // other airport taken out (its lists empty, its numbers and words none); then filled as FR24's own pages are -
     // the flights kept for it, its weather, its movements, its runway usage. Every link and tab on it stays on it.
-    var oaRefs = {};        // FR24 airport id -> its code in FR24's addresses (from the userscript)
+    var oaRefs = new Map(); // FR24 airport id -> its code in FR24's addresses (from the userscript)
     // (the OurAirports code this page is for, as its address said when it loaded - FR24's app may rewrite the address
     // before the userscript asks: its own page's code, or the one marked on its nearest airport's page)
     var oaFast = null;     // (1.3.4: this page made into one of theirs as it loads - its code and sub-page)
@@ -2208,7 +2208,7 @@
       if (!/flightradar24\.com$/.test(u.hostname)) return null;
       var m = u.pathname.match(/^\/data\/airports\/([^\/?#]+)(\/[^?#]*)?$/i); if (!m) return null;
       var code = decodeURIComponent(m[1]).toLowerCase(), r = oaByCode.get(code); if (!r || !(r[0] >= 1e7)) return null;
-      var ref = oaRefs[r[5]]; if (!ref) return null;
+      var ref = oaRefs.get(r[5]); if (!ref) return null;
       var sub = (m[2] || '').replace(/\/+$/, ''), q = new URLSearchParams(u.search); q.delete('tl-oa');
       var qs = q.toString();
       return { row: r, code: code, sub: sub, query: qs ? '?' + qs : '', refUrl: '/data/airports/' + encodeURIComponent(ref) + sub + (qs ? '?' + qs : '') };
@@ -2276,7 +2276,7 @@
         var gp = mxGp(), router = gp && gp.$inertia;
         if (router) { try { router.visit(location.pathname + location.search, { replace: true }); return; } catch (e) { /* by its nearest airport's page */ } }
         var q = new URLSearchParams(location.search); q.set('tl-oa', oq.code);
-        location.replace('/data/airports/' + encodeURIComponent(oaRefs[oq.row[5]]) + oq.sub + '?' + q.toString());
+        location.replace('/data/airports/' + encodeURIComponent(oaRefs.get(oq.row[5])) + oq.sub + '?' + q.toString());
       };
       if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function () { oSetTimeout(check, 300); }, { once: true }); else oSetTimeout(check, 300);
     })();
@@ -2297,7 +2297,7 @@
         var a = ev.target && ev.target.closest ? ev.target.closest('a[href]') : null; if (!a) return;
         var oq = oaPageReq(a.href); if (!oq) return;
         lsSet(OA_GOTO, JSON.stringify({ code: oq.code, sub: oq.sub, q: oq.query, at: Date.now() }));
-        oaOneKeep(oq.row, oaRefs[oq.row[5]], refOf(oq.row[5]));
+        oaOneKeep(oq.row, oaRefs.get(oq.row[5]), refOf(oq.row[5]));
         // (1.3.4: every such link - FR24's airport lists' are plain links, and its server would send them to its search)
         a.setAttribute('href', oaRefHref(oq));
       } catch (e) { stats.errors++; stats.lastError = String(e); }
@@ -2393,10 +2393,10 @@
     // type: 'airport', match, name }], stats: { total, count } } - theirs among its airports: an exact code first)
     function searchMerge(j, rows, q) {
       if (!j || !Array.isArray(j.results) || !rows.length) return null;
-      var have = {}; j.results.forEach(function (x) { if (x && x.type === 'airport') have[String(x.id).toUpperCase()] = 1; });
+      var have = new Set(); j.results.forEach(function (x) { if (x && x.type === 'airport') have.add(String(x.id).toUpperCase()); });
       var ql = q.trim().toLowerCase(), first = [], rest = [];
       rows.forEach(function (r) {
-        if (have[String(r[1]).toUpperCase()] || oaDupe(r)) return;
+        if (have.has(String(r[1]).toUpperCase()) || oaDupe(r)) return;
         var c1 = String(r[1]).toLowerCase(), c2 = String(r[2]).toLowerCase(), exact = c1 === ql || c2 === ql;
         var o = { id: String(r[1]), label: oaLabel(r), detail: { lat: r[6], lon: r[7], size: OA_SIZE[r[9]] || 1 }, type: 'airport', match: exact ? (c2 === ql && c2.length === 4 ? 'icao' : 'iata') : c1.indexOf(ql) === 0 || c2.indexOf(ql) === 0 ? 'begins' : 'contains', name: String(r[3]) };
         (exact ? first : rest).push(o);
@@ -2410,8 +2410,8 @@
     // (an airport page's search: { data: [{ id, iata, icao, name, countryId, ... }] } - the code is what its links go by)
     function apSearchMerge(j, rows) {
       if (!j || !Array.isArray(j.data) || !rows.length) return null;
-      var have = {}; j.data.forEach(function (x) { if (x) have[x.id] = 1; });
-      var add = rows.filter(function (r) { return !have[r[0]]; }).map(function (r) {
+      var have = new Set(); j.data.forEach(function (x) { if (x) have.add(x.id); });
+      var add = rows.filter(function (r) { return !have.has(r[0]); }).map(function (r) {
         var a = oaFr24Row(r, refOf(r[5]));
         return { id: r[0], iata: String(r[1]), icao: oaIcaoOf(r), name: String(r[3]), city: a.city || null, countryId: a.countryId || null, countryName: a.country || null, latitude: r[6], longitude: r[7] };
       });
@@ -2430,14 +2430,14 @@
     }
     function acceptOaDir(d) {
       if (!d || typeof d.key !== 'string' || !dirAsked.has(d.key)) return;
-      if (Array.isArray(d.rows)) { var refs = d.refs || {}, nears = d.nears || {}; d.rows.forEach(function (r) { if (Array.isArray(r) && refs[r[5]]) acceptOaOne({ row: r, ref: refs[r[5]], near: nears[r[5]] || null }, true); }); }
+      if (Array.isArray(d.rows)) { var refs = d.refs && typeof d.refs === 'object' ? d.refs : {}, nears = d.nears && typeof d.nears === 'object' ? d.nears : {}; d.rows.forEach(function (r) { var k = Array.isArray(r) && Number.isInteger(r[5]) ? String(r[5]) : ''; if (k && Object.prototype.hasOwnProperty.call(refs, k)) acceptOaOne({ row: r, ref: refs[k], near: Object.prototype.hasOwnProperty.call(nears, k) ? nears[k] : null }, true); }); }
       dirGot.set(d.key, d); if (d.counts) lsSet('tl.oa.counts', JSON.stringify({ at: Date.now(), counts: d.counts }));
       dirTick();
     }
     // (a list of FR24's with what is to be added: none twice, FR24's own first - its order kept, as its page sorts them)
     function dirMerge(list, add, key) {
-      var base = list.__tlBase || list, have = {}; base.forEach(function (x) { if (x) have[x.id] = 1; });
-      var out = base.concat(add.filter(function (x) { return !have[x.id]; })); out.__tl = key; out.__tlBase = base; return out;
+      var base = list.__tlBase || list, have = new Set(); base.forEach(function (x) { if (x) have.add(x.id); });
+      var out = base.concat(add.filter(function (x) { return !have.has(x.id); })); out.__tl = key; out.__tlBase = base; return out;
     }
     function dirTick() {
       if (!/^\/data\/airports(\/|$)/i.test(location.pathname)) return;
@@ -2454,7 +2454,7 @@
           if (st) { try { sc = (JSON.parse(lsGet('tl.oa.states.' + cs) || '{}') || {})[String(st.slug || '')] || ''; } catch (e) { sc = ''; } if (!sc) sc = US_STATES[String(st.name || '').toLowerCase()] || ''; if (!sc) return; }
           var key = (st ? 'state:' + cs + ':' + sc : 'country:' + cs), d = dirAsk(key, { kind: st ? 'state' : 'country', id: p.country.id || 0, name: p.country.name || '', code: sc, hasStates: !st && Array.isArray(p.states) });
           // (a country of states: which code each state's address has, for its own page)
-          if (!st && Array.isArray(p.states)) { var map = {}; p.states.forEach(function (s) { var m = String(s.url || '').match(/\/([^\/?#]+)\/?$/); if (m && s.code) map[m[1]] = String(s.code).toUpperCase(); }); lsSet('tl.oa.states.' + cs, JSON.stringify(map)); }
+          if (!st && Array.isArray(p.states)) { var map = Object.create(null); p.states.forEach(function (s) { var m = String(s.url || '').match(/\/([^\/?#]+)\/?$/); if (m && s.code && /^[a-z0-9-]{1,40}$/i.test(m[1])) map[m[1]] = String(s.code).toUpperCase(); }); lsSet('tl.oa.states.' + cs, JSON.stringify(map)); }
           if (!d) return;
           if (!st && Array.isArray(p.states)) {
             if (p.states.__tl === key || !d.states) return;
@@ -3358,8 +3358,8 @@
     function closestMerge(p, d) {
       if (!Array.isArray(d.closest) || !d.closest.length || !Array.isArray(p.closestAirports)) return;
       var sig = d.closest.map(function (x) { return x.id; }).join(','); if (p.closestAirports.__tl === sig) return;
-      var base = p.closestAirports.__tlBase || p.closestAirports, by = {}, out = [];
-      base.concat(d.closest).forEach(function (x) { if (x && x.id && x.id !== p.airport.id && !by[x.id]) { by[x.id] = 1; out.push(x); } });
+      var base = p.closestAirports.__tlBase || p.closestAirports, by = new Set(), out = [];
+      base.concat(d.closest).forEach(function (x) { if (x && x.id && x.id !== p.airport.id && !by.has(x.id)) { by.add(x.id); out.push(x); } });
       out.sort(function (a, b) { return (a.distanceKm || 0) - (b.distanceKm || 0); });
       out = out.slice(0, Math.max(5, base.length)); out.__tl = sig; out.__tlBase = base; p.closestAirports = out;
     }
