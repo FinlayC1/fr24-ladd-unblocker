@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Flightradar24 LADD / N-A Unblocker (feed-level)
 // @namespace    tweeks.io
-// @version      1.3.2
+// @version      1.3.3
 // @description  Identifies every LADD / N/A / blocked military aircraft on Flightradar24 from public ADS-B, and injects callsign, registration, operator, age, country, MSN, squawk, vertical speed, GPS altitude, airspeeds, wind, photos, a reasoned origin/destination with a wind-corrected ETA (also for ordinary flights FR24 shows as N/A - military, private, GA, helicopters, with private landing sites; learned from 63 days of every aircraft worldwide, with live weather and closures), airport-board entries and a rebuilt 7-month flight log straight into FR24's own data - so it all renders like normal FR24 traffic.
 // @author       Finlay Clarke
 // @updateURL    https://raw.githubusercontent.com/FinlayC1/fr24-ladd-unblocker/main/dist/fr24-ladd-unblocker.user.js
@@ -98,7 +98,7 @@
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "1.3.2";
+    var BRIDGE_V = "1.3.3";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed but the
@@ -8584,7 +8584,7 @@
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '1.3.2';
+  const VERSION = '1.3.3';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
@@ -17719,7 +17719,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // (the version whose "what's new" was put away, and the one whose dot on the button the window was opened for)
   const UB_SEEN_KEY = 'tweeks.fr24.ladd.seenver', UB_DOT_KEY = 'tweeks.fr24.ladd.dotver';
   // (the newest CHANGELOG section's headlines, written in by build.mjs: { v, items })
-  const UB_WHATS_NEW = {"v":"1.3.2","items":["The monitor no longer stops for over a minute every five minutes. Its own measurements (1.3.1's /status loop.prof) showed it: 70 to 98 seconds each time, about 80% of its one thread busy. During a stop nothing was answered, which is why panels stayed locked and lists stayed empty.","\"Recent flights\" on a LADD aircraft said \"No flights available\" while its log page listed flights. FR24 draws that list once, from an answer that waits nine seconds at most, and the monitor was often stopped for longer than that. This should be fixed by the change above; it is the one item here that could only be checked on the live monitor after the update.","OurAirports pins stay on the map when an aircraft or an airport is clicked. They vanished because the script read the map's position from FR24's address, which belongs to the aircraft or airport once one is open.","The Departures, Arrivals and On ground tabs of an OurAirports airport are no longer blank. They were blank whenever the pins had been taken away, for the same reason.","An OurAirports airport's window shows its ICAO code, its time zone, and today's sunrise and sunset (all \"N/A\" before). A field with no code of its own, such as \"GB-0002\", shows that under \"OurAirports ID\".","Runway details and runway usage work for OurAirports airports: RAF Woodvale shows its three runways and five frequencies. FR24's padlocked picture is never left in the runway section."]};
+  const UB_WHATS_NEW = {"v":"1.3.3","items":["The extension's update page no longer gets stuck. Pressing \"Update\" could leave the button pressed with nothing said: the page remembered the extension's folder from the last update, and Chrome, asked whether the page may edit it again, never answered.","Now the page says what it is waiting for (\"choose Allow in the box by the address bar\"). If Chrome hasn't answered within 20 seconds, it says so, frees the button to choose the folder afresh, and offers the new version's zip to unzip over the folder by hand.","Getting from 1.3.1 or 1.3.2 to this version uses the old page. If it sticks there, update by hand once (see Notes)."]};
   // (an aircraft with an open padlock: FR24's outline style - 24 grid, 1.5 stroke in the text colour)
   const UB_ICON = '<svg data-tl-ub-icon="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
   const UB_X = '<svg viewBox="0 0 14 14" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5l11 11M12.5 1.5l-11 11"/></svg>';

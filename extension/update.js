@@ -171,6 +171,8 @@ async function news(from, to) {
 // ---- the page ---------------------------------------------------------------------------------------------------------
 const state = { latest: '', dir: null, busy: false };
 function say(text, cls) { const m = $('msg'); m.textContent = text; m.className = cls || ''; }
+// (the zip to put in by hand, offered where the update in place didn't go through)
+function showManual(why) { $('manual').hidden = false; if (why) $('manualWhy').textContent = why; }
 function showGo(label) { const b = $('go'); b.textContent = label; b.hidden = false; b.disabled = false; $('goRow').hidden = false; }
 
 async function load() {
@@ -194,7 +196,19 @@ async function go() {
     // (the picker and the permission prompt need the click: asked first, before anything is awaited)
     let dir = state.dir, picked = false;
     if (dir) {
-      const p = await dir.queryPermission({ mode: 'readwrite' }) === 'granted' ? 'granted' : await dir.requestPermission({ mode: 'readwrite' });
+      // (1.3.2: the folder chosen last time, asked about again - Chrome forgets the permission when it restarts. While it
+      // asks, that is said; and should it never answer (1.3.1: the button stayed pressed, nothing said - Chrome had shown
+      // no prompt), the folder is asked for afresh after 20 seconds, and the zip offered to put in by hand)
+      let p = await dir.queryPermission({ mode: 'readwrite' });
+      if (p !== 'granted') {
+        say('Chrome is asking whether this page may edit the extension\'s folder: choose Allow in the box by the address bar.');
+        p = await Promise.race([dir.requestPermission({ mode: 'readwrite' }), new Promise(res => setTimeout(() => res('stuck'), +globalThis.__tlAskMs || 20000))]);
+      }
+      if (p === 'stuck') {
+        state.dir = null; await kvDel('dir').catch(() => {});
+        showManual("If the folder can't be chosen, download the new version and unzip it over the extension's folder instead:");
+        throw Object.assign(new Error("Chrome didn't ask for permission to edit the extension's folder. Click the button again and choose the folder (the one next to Source on the extension's Details page)."), { quiet: true });
+      }
       if (p !== 'granted') throw Object.assign(new Error("Chrome wasn't allowed to edit the folder, so nothing changed. Click again and choose Allow."), { quiet: true });
     } else {
       dir = await window.showDirectoryPicker({ id: 'tl-extension', mode: 'readwrite', startIn: 'downloads' });
@@ -216,7 +230,7 @@ async function go() {
   } catch (e) {
     if (e && e.name === 'AbortError') say('No folder chosen, so nothing changed.');
     else if (e && e.quiet) say(e.message, 'bad');
-    else say(`The update stopped: ${e && e.message || e}. The extension is unchanged unless it says otherwise; you can try again.`, 'bad');
+    else { say(`The update stopped: ${e && e.message || e}. The extension is unchanged unless it says otherwise; you can try again.`, 'bad'); showManual('Or download the new version and unzip it over the extension\'s folder:'); }
     if (!state.dir) { $('first').hidden = false; showGo('Choose the extension folder and update'); } else showGo(`Update to v${state.latest}`);
   } finally { state.busy = false; }
 }
