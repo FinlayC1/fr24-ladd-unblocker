@@ -22,7 +22,10 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 - **Logs and playback at heliports**: a helicopter that comes down on an OurAirports heliport has landed there. M-SKTO's landings on Axis Business Park's helipad were "-" in its log and playback. Names are simpler: "Axis Business Park Helipad" is "Axis Business Park".
 - **Log page codes**: an OurAirports airfield's or heliport's code on a log page opens its airport page on FR24 (it opened OurAirports' site, or nothing).
 - **Confirm destination**: the airport search there finds the OurAirports airports too, by code or name.
-- **Serial numbers**: T7-EZZ's (and any other's) was not searched for again. An aircraft opened once was taken as looked up for 30 days, serial number or not, and no register of San Marino's is asked. An aircraft opened with no serial number is now looked for again a day later, and FR24's own list of the registration is asked as well as JetPhotos.
+- **Serial numbers**: T7-EZZ's (and any other's) was not searched for again. An aircraft opened once was taken as looked up for 30 days, serial number or not, and no register of San Marino's is asked. An aircraft opened with no serial number is now looked for again a day later: FR24's own list of the registration and FR24's own page of it (its title gives the serial number: "M-PORT - Bombardier Global 5000 [9868]") are asked as well as JetPhotos.
+- **Departures across midnight UTC**: N915ML, off from Sumter at 23:21Z on 13 Nov, was shown "took off from CUB, out of ADS-B coverage". Two things went wrong once the day had turned:
+  - **Its track**: today's file began with it in the air, and its climb out of Sumter was in the day before's. A flight in the air at midnight now has the evening before put in front of it.
+  - **Its log**: the flight before it, on the 12th, was cut off by that day's end at 23:59:50, still at 8,725 ft west of Columbia, and closed "near CUB" - it had flown on and landed at Sumter. A last leg cut off by a day's end, never seen landing, is no longer taken as where the aircraft last landed. With both, it is "first seen climbing through 2,600 ft, 10 km from SUM".
 
 ### Fixed
 - **The message loop** (`src/main/03-data.js`, `src/main/07-boot.js`, `src/page.js`): the userscript's answers are `oaDirGot`, `acDirGot` and `acPageGot`. A test checks that no message name is handled on both sides.
@@ -32,10 +35,11 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 - **Their rows from a list** are no longer each written to the browser's storage; one is kept when its link is pressed.
 - **Heliports in the route engine** (`src/engine.js` `setHeliports`, `heliportAt`): kept apart from the engine's airports and fields, so used only where a helicopter is down or lifting off: on one within 400 m, before a strip within 1.2 km. Each has the OurAirports list's own id, so the browser names it and opens its page. Set by the userscript from its OurAirports list, by the monitor from its own, by its calculation worker from the file.
 - **Short names** (`fieldShortName`, the engine's and the page part's): "Helipad", "Heli pad", "Helistop", "Helicopter landing site" and "HLS" taken off the end, as "Heliport" was.
+- **Departures across midnight** (`src/main/03-data.js` `loadToday`, `src/engine.js` `inferOrigin`): today's file opening with the aircraft in the air within 20 minutes of midnight - the flight it is on from the day before's file (back to where it was on the ground, or a half-hour unheard); a last leg not seen to end, its last point within 3 minutes of midnight UTC (`cutAtMidnight`), not used as where it last landed. The monitor's log joins such a leg to the next day's piece when it builds that day, as before.
 - **Bookmark weather** (`mxBmOaWx`): FR24's bookmarks answer for an OurAirports airport has no weather; the monitor's, in FR24's form, is put in (Clear, Cloudy, Fog, Rain, Snow, Thunderstorm - FR24's words, so FR24 draws its icon).
 
 ### Tests
-- `test/unit_136.cjs` (21 checks): the message names; the engine's heliports (Axis Business Park's helipad) and short names; the directory and the airport lists built as they load, never added twice; the page hidden until built; the IATA field; the bookmarks' code line and weather.
+- `test/unit_136.cjs` (24 checks): the message names; the engine's heliports (Axis Business Park's helipad) and short names; N915ML's departure across midnight (from Sumter; never from its cut-off leg's guess, CUB; a landing seen still stands); the directory and the airport lists built as they load, never added twice; the page hidden until built; the IATA field; the bookmarks' code line and weather.
 - `test/unit_132.cjs`, `test/unit_134.cjs`, `test/unit_135.cjs`: updated to the window's fields and the answers' new names.
 
 ## [1.3.5] - 2026-11-13

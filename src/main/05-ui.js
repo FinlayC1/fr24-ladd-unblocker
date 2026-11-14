@@ -646,9 +646,19 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     note.dataset.sig = title + body;
     note.innerHTML = `<b>${esc(title)}</b><br>${esc(body)}`;
   }
+  // (1.3.6) the panel's "Recent <reg> flights": every row the aircraft's own - the tag after each callsign wherever the
+  // aircraft is LADD, PIA or military: the rows this script put in (a blocked aircraft's log) and FR24's own (an air
+  // force's transport FR24 shows - 1.3.5 tagged only rows of its own, of aircraft it had identified)
   function tagRecent(panel, rec) {
-    if (!panel || !rec || !histShown.has(String(rec.reg || '').toUpperCase())) return;
-    for (const el of panel.querySelectorAll('[data-testid="aircraft-panel__recent-flights__callsign"]')) addChip(el, rec);
+    if (!panel) return;
+    const cells = panel.querySelectorAll('[data-testid="aircraft-panel__recent-flights__callsign"]'); if (!cells.length) return;
+    let r = rec && badgeOf(flagsOf(rec)) ? rec : null;
+    if (!r) {
+      const box = panel.querySelector('[data-testid="aircraft-panel__recent-flights"]'), m = box && /Recent\s+([A-Z0-9-]{2,10})\s+flights/i.exec(clean(box.textContent));
+      const reg = (rec && rec.reg) || (m && m[1]) || '';
+      r = reg ? flaggedByLabel(reg) : null;
+    }
+    for (const el of cells) setChip(el, r);
   }
   // The Last-clicked flights widget: the tag after each flight's callsign, as on the boards - the flight found in the list
   // the page part keeps for the widget (localStorage, its callsign or registration), else by the label shown
@@ -699,7 +709,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     }
   }
   function tagEverything(added) {
-    try { tagSearchResults(); tagLastClicked(); tagBookmarks(); tagMostTracked(); tagBoards(added); const panel = document.querySelector(SEL.panel); if (panel) tagRecent(panel, live.get(currentId())); } catch (e) { log('tags', e); }
+    try { tagSearchResults(); tagLastClicked(); tagBookmarks(); tagMostTracked(); tagBoards(added); const panel = document.querySelector(SEL.panel); if (panel) { const cid = currentId(); tagRecent(panel, live.get(cid) || pubRecs.get(cid)); } } catch (e) { log('tags', e); }
   }
   // Run straight from the observer: its callback comes after the DOM change and before the next paint, so a new row
   // never shows up untagged (an animation-frame hop is not reliable - some embedded/background views never fire it).

@@ -1403,6 +1403,8 @@ function createRouteEngine() {
 
   // ---- origin --------------------------------------------------------------------------------------------------------
   // input: { ac, pos, trail, hist (summarized legs), now, plan }
+  // (1.3.6) a leg the day's end cut off in the air: not seen to end, and its last point within 3 minutes of midnight UTC
+  const cutAtMidnight = l => !!l && !l.ended && fin(l.tEnd) && Math.ceil(l.tEnd / 86400) * 86400 - l.tEnd < 180;
   function inferOrigin(inp) {
     const { pos, trail, now } = inp, ac = inp.ac || {};
     const hs = inp.hs || histStats(inp.hist || [], now);
@@ -1431,19 +1433,23 @@ function createRouteEngine() {
       const low = descending ? null : heliT ? airportAt(f.lat, f.lon, 3, { alt: f.alt, maxAgl: 1000 }) || heliportAt(f.lat, f.lon, 1, { alt: f.alt, maxAgl: 1000 }) || fieldAt(f.lat, f.lon, 3, { alt: f.alt, maxAgl: 1000 }) : (() => { const a = airportAt(f.lat, f.lon, 9, { alt: f.alt, maxAgl: 1800, mil: ctx.mil }), fl = fieldAt(f.lat, f.lon, 3, { alt: f.alt, maxAgl: 1000 }); return fl && (!a || fl.dist < a.dist) ? fl : a; })();
       // (low over one field, but down at another close by within the last 12 hours: it took off from where it landed -
       // M-ARNZ, in at Farnborough at 16:14 and off again at 17:36, first heard over Fairoaks 9 km on was "from Woking")
-      const lastLow = low && hs.last && hs.last.to && f.t > hs.last.tEnd && f.t - hs.last.tEnd < 12 * 3600 ? byId.get(hs.last.to.id) : null;
+      // (1.3.6: a last leg the day's end cut off in the air - a day's file stops at midnight UTC - was never seen landing: its
+      // "landing" is a guess from where it was lost, not where it went. N915ML's 12 Nov leg, cut at 23:59:50 at 8,725 ft
+      // west of Columbia SC and closed "near CUB", made its next flight - off from Sumter, 45 km on - "from CUB")
+      const hsLast = hs.last && hs.last.to && !cutAtMidnight(hs.last) ? hs.last : null;
+      const lastLow = low && hsLast && f.t > hsLast.tEnd && f.t - hsLast.tEnd < 12 * 3600 ? byId.get(hsLast.to.id) : null;
       if (lastLow && lastLow.id !== low.airport.id && dist(lastLow.lat, lastLow.lon, f.lat, f.lon) <= 25) return { airport: lastLow, conf: 'low', note: 'seen climbing out near ' + lastLow.code + ', where it last landed', departedAt: f.t - 60 };
       if (low) return { airport: low.airport, conf: 'low', note: 'seen climbing out of ' + low.airport.code, departedAt: f.t - 60 };
       let c = heliT ? null : departureFromClimb(f, ctx);
       // Where it last landed, when the climb fits it nearly as well: it is standing there until it flies again. LX-FBC,
       // in at Nice that morning, first seen at 14,700 ft north of it, was put down to La Mole 70 km west - and lost the
       // Nice -> Antwerp habit that says it is going home.
-      const lastTo = hs.last && hs.last.to && f.t - hs.last.tEnd < 2 * 86400 && f.t > hs.last.tEnd ? byId.get(hs.last.to.id) : null;
+      const lastTo = hsLast && f.t - hsLast.tEnd < 2 * 86400 && f.t > hsLast.tEnd ? byId.get(hsLast.to.id) : null;
       if (c && climbing && lastTo && lastTo.id !== c.airport.id) {
         const sL = climbFit(f, lastTo, ctx);
         // (landed there within six hours and first heard within climbing reach of it: from there, whatever field fits the
         // climb a little better - D-CLUB, down at Toulon at 12:59, first heard at 5,000 ft 70 km on at 14:07)
-        const dL = dist(lastTo.lat, lastTo.lon, f.lat, f.lon), recent = (f.t - hs.last.tEnd) / 3600 < 6 && dL <= 40 + Math.max(0, f.alt - (lastTo.alt || 0)) / 1000 * 9;
+        const dL = dist(lastTo.lat, lastTo.lon, f.lat, f.lon), recent = (f.t - hsLast.tEnd) / 3600 < 6 && dL <= 40 + Math.max(0, f.alt - (lastTo.alt || 0)) / 1000 * 9;
         if ((sL != null && sL > c.score - 4) || recent) c = { airport: lastTo, dist: dL, score: Math.max(sL == null ? -3.4 : sL, -3.4), last: true };
       }
       if (c && climbing && c.score > -3.5) {
@@ -1460,7 +1466,7 @@ function createRouteEngine() {
       const a = byId.get(open.from.id);
       if (a) return { airport: a, conf: open.from.conf === 'ground' ? 'ground' : 'history', note: 'took off from ' + a.code, departedAt: open.tStart };
     }
-    const last = hs.last && hs.last.to ? hs.last : null;
+    const last = hs.last && hs.last.to && !cutAtMidnight(hs.last) ? hs.last : null;
     if (last) {
       const a = byId.get(last.to.id);
       if (a) {

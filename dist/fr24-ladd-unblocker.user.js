@@ -7942,6 +7942,8 @@
 
     // ---- origin --------------------------------------------------------------------------------------------------------
     // input: { ac, pos, trail, hist (summarized legs), now, plan }
+    // (1.3.6) a leg the day's end cut off in the air: not seen to end, and its last point within 3 minutes of midnight UTC
+    const cutAtMidnight = l => !!l && !l.ended && fin(l.tEnd) && Math.ceil(l.tEnd / 86400) * 86400 - l.tEnd < 180;
     function inferOrigin(inp) {
       const { pos, trail, now } = inp, ac = inp.ac || {};
       const hs = inp.hs || histStats(inp.hist || [], now);
@@ -7970,19 +7972,23 @@
         const low = descending ? null : heliT ? airportAt(f.lat, f.lon, 3, { alt: f.alt, maxAgl: 1000 }) || heliportAt(f.lat, f.lon, 1, { alt: f.alt, maxAgl: 1000 }) || fieldAt(f.lat, f.lon, 3, { alt: f.alt, maxAgl: 1000 }) : (() => { const a = airportAt(f.lat, f.lon, 9, { alt: f.alt, maxAgl: 1800, mil: ctx.mil }), fl = fieldAt(f.lat, f.lon, 3, { alt: f.alt, maxAgl: 1000 }); return fl && (!a || fl.dist < a.dist) ? fl : a; })();
         // (low over one field, but down at another close by within the last 12 hours: it took off from where it landed -
         // M-ARNZ, in at Farnborough at 16:14 and off again at 17:36, first heard over Fairoaks 9 km on was "from Woking")
-        const lastLow = low && hs.last && hs.last.to && f.t > hs.last.tEnd && f.t - hs.last.tEnd < 12 * 3600 ? byId.get(hs.last.to.id) : null;
+        // (1.3.6: a last leg the day's end cut off in the air - a day's file stops at midnight UTC - was never seen landing: its
+        // "landing" is a guess from where it was lost, not where it went. N915ML's 12 Nov leg, cut at 23:59:50 at 8,725 ft
+        // west of Columbia SC and closed "near CUB", made its next flight - off from Sumter, 45 km on - "from CUB")
+        const hsLast = hs.last && hs.last.to && !cutAtMidnight(hs.last) ? hs.last : null;
+        const lastLow = low && hsLast && f.t > hsLast.tEnd && f.t - hsLast.tEnd < 12 * 3600 ? byId.get(hsLast.to.id) : null;
         if (lastLow && lastLow.id !== low.airport.id && dist(lastLow.lat, lastLow.lon, f.lat, f.lon) <= 25) return { airport: lastLow, conf: 'low', note: 'seen climbing out near ' + lastLow.code + ', where it last landed', departedAt: f.t - 60 };
         if (low) return { airport: low.airport, conf: 'low', note: 'seen climbing out of ' + low.airport.code, departedAt: f.t - 60 };
         let c = heliT ? null : departureFromClimb(f, ctx);
         // Where it last landed, when the climb fits it nearly as well: it is standing there until it flies again. LX-FBC,
         // in at Nice that morning, first seen at 14,700 ft north of it, was put down to La Mole 70 km west - and lost the
         // Nice -> Antwerp habit that says it is going home.
-        const lastTo = hs.last && hs.last.to && f.t - hs.last.tEnd < 2 * 86400 && f.t > hs.last.tEnd ? byId.get(hs.last.to.id) : null;
+        const lastTo = hsLast && f.t - hsLast.tEnd < 2 * 86400 && f.t > hsLast.tEnd ? byId.get(hsLast.to.id) : null;
         if (c && climbing && lastTo && lastTo.id !== c.airport.id) {
           const sL = climbFit(f, lastTo, ctx);
           // (landed there within six hours and first heard within climbing reach of it: from there, whatever field fits the
           // climb a little better - D-CLUB, down at Toulon at 12:59, first heard at 5,000 ft 70 km on at 14:07)
-          const dL = dist(lastTo.lat, lastTo.lon, f.lat, f.lon), recent = (f.t - hs.last.tEnd) / 3600 < 6 && dL <= 40 + Math.max(0, f.alt - (lastTo.alt || 0)) / 1000 * 9;
+          const dL = dist(lastTo.lat, lastTo.lon, f.lat, f.lon), recent = (f.t - hsLast.tEnd) / 3600 < 6 && dL <= 40 + Math.max(0, f.alt - (lastTo.alt || 0)) / 1000 * 9;
           if ((sL != null && sL > c.score - 4) || recent) c = { airport: lastTo, dist: dL, score: Math.max(sL == null ? -3.4 : sL, -3.4), last: true };
         }
         if (c && climbing && c.score > -3.5) {
@@ -7999,7 +8005,7 @@
         const a = byId.get(open.from.id);
         if (a) return { airport: a, conf: open.from.conf === 'ground' ? 'ground' : 'history', note: 'took off from ' + a.code, departedAt: open.tStart };
       }
-      const last = hs.last && hs.last.to ? hs.last : null;
+      const last = hs.last && hs.last.to && !cutAtMidnight(hs.last) ? hs.last : null;
       if (last) {
         const a = byId.get(last.to.id);
         if (a) {
@@ -11912,6 +11918,9 @@
     await sliced(all, ([h, v]) => { const r = pubIdRow(h, v); if (r) rows.push(r); if (rows.length >= 1500) { postToPage('pubIds', { rows }); rows = []; } }, { ms: 8 });
     if (rows.length) postToPage('pubIds', { rows });
   }
+  // (1.3.6) a serial number from FR24's page title of an aircraft: "<reg> - <model> [<serial>] - Flightradar24"; none for
+  // "N/A" or anything that is not a serial number's form
+  function msnOfTitle(t) { const m = String(t || '').replace(/&#0?39;|&amp;/g, ' ').match(/\[([A-Za-z0-9][A-Za-z0-9 .\/-]{0,19})\]/); const v = m ? clean(m[1]) : ''; return v && !isNA(v) ? v : ''; }
   // `bg`: prefetch for aircraft on screen - registry databases only (the photo site is left alone), low priority
   function publicIdentity(hex, reg, opts) {
     hex = String(hex || '').toLowerCase(); if (!/^[0-9a-f]{6}$/.test(hex)) return Promise.resolve(null);
@@ -11953,8 +11962,11 @@
       // (1.3.6: and FR24's own list of the registration - its aircraft's serial number there: FR24 padlocks it in the panel,
       // not in its list. Asked only for one opened: FR24 counts every request against one limit)
       const fr24Sn = !bg && r.reg && !hx.msn ? fetchFr24Photos(r.reg, true).then(x => clean(x && x.info && x.info.serialNo), () => '') : Promise.resolve('');
-      const [idn, jp, fsn] = await Promise.all([fetchIdentity(r, !bg, bg).catch(() => ({})), jpJob, fr24Sn]);
-      const out = { reg: r.reg || idn.reg || '', msn: hx.msn || idn.msn || fsn || (jp && jp.msn) || '', year: (hx.year > 1900 && !hx.yearEst ? hx.year : 0) || idn.year || hx.year || seed.year || 0, owner: (ownerName(hx.owner) ? hx.owner : '') || idn.owner || seed.owner || hx.owner || '', ownerCity: hx.ownerCity || idn.ownerCity || '', country: hx.country || idn.country || '', countryId: hx.countryId || idn.countryId || 0, type: hx.type || idn.type || seed.type || '', desc: hx.desc || idn.desc || seed.desc || (jp && jp.typeName) || '' };
+      // (and FR24's own page of the registration, whose title gives it - "M-PORT - Bombardier Global 5000 [9868]" - the page
+      // the log is drawn on, read for its pictures already)
+      const pageSn = !bg && r.reg && !hx.msn ? fr24AircraftHtml(r.reg).then(html => msnOfTitle((String(html).match(/<title[^>]*>([^<]*)<\/title>/i) || [])[1]), () => '') : Promise.resolve('');
+      const [idn, jp, fsn, psn] = await Promise.all([fetchIdentity(r, !bg, bg).catch(() => ({})), jpJob, fr24Sn, pageSn]);
+      const out = { reg: r.reg || idn.reg || '', msn: hx.msn || idn.msn || fsn || psn || (jp && jp.msn) || '', year: (hx.year > 1900 && !hx.yearEst ? hx.year : 0) || idn.year || hx.year || seed.year || 0, owner: (ownerName(hx.owner) ? hx.owner : '') || idn.owner || seed.owner || hx.owner || '', ownerCity: hx.ownerCity || idn.ownerCity || '', country: hx.country || idn.country || '', countryId: hx.countryId || idn.countryId || 0, type: hx.type || idn.type || seed.type || '', desc: hx.desc || idn.desc || seed.desc || (jp && jp.typeName) || '' };
       if (!out.year && !bg) { try { await fetchTrace(hex, '', { priority: true }); } catch (e) { /* not flying today */ } const m = traceMeta.get(hex); if (m && m.year) out.year = m.year; }
       out.pubAt = now(); if (idn.regAnswered || !idn.regFailed) { out.ownerAskedAt = now(); out.ownerFailAt = 0; } else out.ownerFailAt = now(); if (!bg) { out.pubFull = true; if (!hx.msn) out.msnTryAt = now(); } if (r.faaAt) out.faaAt = r.faaAt;
       // (a register's year over the monitor's estimate)
@@ -12905,7 +12917,20 @@
       // (TheAirTraffic's "no file" is not an answer: it hears less of the world than adsb.lol - an aircraft not there may well
       // have flown)
       if (!res.some(r => r.state === 'ok' || (r.state === 'none' && r.id !== 'tat'))) throw new Error(res.map(r => r.net + ': ' + (r.err || r.state)).join('; '));
-      const pts = mergeNets(res);
+      let pts = mergeNets(res);
+      // (1.3.6) a flight begun before midnight UTC - today's file opening with it in the air: the evening before from
+      // yesterday's file, so its take-off is in its track. N915ML, off from Sumter at 23:21Z, was "took off from CUB"
+      // once the day had turned: its climb was in yesterday's file, its log's last leg cut off by that day's end)
+      const d0 = Math.floor(now() / 864e5) * 86400;
+      if (pts.length && pts[0].t - d0 < 1200 && !pts[0].gnd && (pts[0].alt == null || pts[0].alt > 300)) {
+        const o2 = { priority: !!opts.priority, bg: !opts.priority, idle: !!opts.idle };
+        const yes = await Promise.all((opts.priority ? ['lol', 'apl'] : ['lol']).map(id => readTrace(id, hex, dayStr((d0 - 1) * 1000), o2).catch(() => ({ state: 'err' }))));
+        const ypts = mergeNets(yes.filter(r => r.state === 'ok').map(r => ({ pts: (r.pts || []).filter(q => q.t < d0 && q.t > d0 - 12 * 3600) })));
+        // (that flight alone - back to where it was on the ground, or to a half-hour unheard: the day's flights before it
+        // are yesterday's, not today's)
+        let k = ypts.length - 1;
+        if (k >= 0 && d0 - ypts[k].t < 1800) { while (k > 0 && !ypts[k].gnd && ypts[k].t - ypts[k - 1].t < 1800) k--; pts = ENGINE.mergePoints(ypts.slice(k), pts); }
+      }
       const cls0 = ENGINE.classify(acOfHex(hex)), heli = cls0 === 'heli', patrol = cls0 === 'fighter' || cls0 === 'milheavy';
       const ac0 = acOfHex(hex), legs = ENGINE.legsFromPoints(pts, { heli, patrol, cls: cls0, type: ac0.type, rangeKm: ENGINE.typeRangeKm(ac0) });   // (no dataEnd: today's file is rewritten now and then - it can end where the aircraft is still flying: HLE81 "landed at Gloucester" passing over it)
       const out = { at: now(), pts, lastPt: pts.length ? pts[pts.length - 1] : null, legs, sums: summarize(legs, hex).map(l => Object.assign(l, { day: dayStr(now()) })), both: res.length > 1, nets: res.map(r => r.net + ': ' + (r.state === 'err' || r.state === 'wall' ? r.err : r.state)) };
@@ -15406,9 +15431,19 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     note.dataset.sig = title + body;
     note.innerHTML = `<b>${esc(title)}</b><br>${esc(body)}`;
   }
+  // (1.3.6) the panel's "Recent <reg> flights": every row the aircraft's own - the tag after each callsign wherever the
+  // aircraft is LADD, PIA or military: the rows this script put in (a blocked aircraft's log) and FR24's own (an air
+  // force's transport FR24 shows - 1.3.5 tagged only rows of its own, of aircraft it had identified)
   function tagRecent(panel, rec) {
-    if (!panel || !rec || !histShown.has(String(rec.reg || '').toUpperCase())) return;
-    for (const el of panel.querySelectorAll('[data-testid="aircraft-panel__recent-flights__callsign"]')) addChip(el, rec);
+    if (!panel) return;
+    const cells = panel.querySelectorAll('[data-testid="aircraft-panel__recent-flights__callsign"]'); if (!cells.length) return;
+    let r = rec && badgeOf(flagsOf(rec)) ? rec : null;
+    if (!r) {
+      const box = panel.querySelector('[data-testid="aircraft-panel__recent-flights"]'), m = box && /Recent\s+([A-Z0-9-]{2,10})\s+flights/i.exec(clean(box.textContent));
+      const reg = (rec && rec.reg) || (m && m[1]) || '';
+      r = reg ? flaggedByLabel(reg) : null;
+    }
+    for (const el of cells) setChip(el, r);
   }
   // The Last-clicked flights widget: the tag after each flight's callsign, as on the boards - the flight found in the list
   // the page part keeps for the widget (localStorage, its callsign or registration), else by the label shown
@@ -15459,7 +15494,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     }
   }
   function tagEverything(added) {
-    try { tagSearchResults(); tagLastClicked(); tagBookmarks(); tagMostTracked(); tagBoards(added); const panel = document.querySelector(SEL.panel); if (panel) tagRecent(panel, live.get(currentId())); } catch (e) { log('tags', e); }
+    try { tagSearchResults(); tagLastClicked(); tagBookmarks(); tagMostTracked(); tagBoards(added); const panel = document.querySelector(SEL.panel); if (panel) { const cid = currentId(); tagRecent(panel, live.get(cid) || pubRecs.get(cid)); } } catch (e) { log('tags', e); }
   }
   // Run straight from the observer: its callback comes after the DOM change and before the next paint, so a new row
   // never shows up untagged (an animation-frame hop is not reliable - some embedded/background views never fire it).
