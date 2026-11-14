@@ -167,7 +167,7 @@
       case 'oaFind': onOaFind(d); break;
       case 'acDir': onAcDir(d); break;
       case 'acPage': onAcPage(d); break;
-      case 'oaDir': loadOa().then(() => loadAirports()).then(() => { const o = oaDirectory(d) || {}; o.key = d.key; postToPage('oaDir', o); }).catch(() => postToPage('oaDir', { key: d.key })); break;
+      case 'oaDir': loadOa().then(() => loadAirports()).then(() => { const o = oaDirectory(d) || {}; o.key = d.key; postToPage('oaDirGot', o); }).catch(() => postToPage('oaDirGot', { key: d.key })); break;
       case 'needAirportPanel': onNeedAirportPanel(d).catch(e => log('airport panel', e)); break;
       case 'needApWx': onNeedApWx(d).catch(e => { log('airport weather', String(e && e.message || e)); postToPage('apWxGot', { ap: d.ap, wx: null }); }); break;
       case 'mxGet': onMxGet(d); break;
@@ -369,7 +369,12 @@
     // FR24's airport pages - general, boards, routes, statistics: only the bridge for their lists and what they ask for (the
     // airports, airlines, kept boards) - none of the map's work, so what they show is there at once
     installBridge();
-    const startData = () => { addStyle(); loadAirports().catch(e => log('airports', e)); setTimeout(() => { fr24.loadAirlines().catch(() => {}); fr24.loadCountries().catch(() => {}); }, 200); };
+    const startData = () => {
+      addStyle(); loadAirports().catch(e => log('airports', e)); setTimeout(() => { fr24.loadAirlines().catch(() => {}); fr24.loadCountries().catch(() => {}); }, 200);
+      // (1.3.6) FR24's lists - of airports, of aircraft: what is added to them read now, so it is here when the page asks
+      if (opt.on && /^\/data\/airports(\/|$)/i.test(location.pathname)) loadOa().catch(() => {});
+      if (opt.on && /^\/data\/aircraft\/?$/i.test(location.pathname)) loadAcTypes().catch(() => {});
+    };
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', startData, { once: true }); else startData();
   } else {
     // the last session first (synchronous), then the page bridge - whose first 'ready' pushes all of it to the page

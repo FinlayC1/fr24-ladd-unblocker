@@ -142,7 +142,7 @@ const until = async (f, ms) => { const t = Date.now(); while (Date.now() - t < m
     const c2 = [codes(), lab()];
     panel.querySelector('[data-testid="airport-panel__header__codes"]').firstChild.data = 'BWF / EGNL'; H.panelCodeFields(panel, 'BWF');
     const c3 = [codes(), lab()];
-    check('the window: "OurAirports code" over their code; the header\'s line under the name - beside FR24\'s flag - its code (and its ICAO code where that is another); FR24\'s airports as FR24 writes them', JSON.stringify(c1) === '["EGXX","OurAirports code"]' && JSON.stringify(c2) === '["GB-0999","OurAirports code"]' && JSON.stringify(c3) === '["BWF / EGNL","IATA code"]', [c1, c2, c3]);
+    check('the window: "OurAirports code" over the code of one with no ICAO code (1.3.6: one with an ICAO code keeps FR24\'s "IATA code"); the header\'s line under the name - beside FR24\'s flag - its code (and its ICAO code where that is another); FR24\'s airports as FR24 writes them', JSON.stringify(c1) === '["EGXX","IATA code"]' && JSON.stringify(c2) === '["GB-0999","OurAirports code"]' && JSON.stringify(c3) === '["BWF / EGNL","IATA code"]', [c1, c2, c3]);
     // (which airport the window is open on: FR24's own store says, whatever the address)
     store.airport = { info: { id: 17000002, iata: 'GB-0999' } };
     P.w.history.pushState({}, '', '/N123AB/3a1b2c3d');
@@ -212,17 +212,17 @@ const until = async (f, ms) => { const t = Date.now(); while (Date.now() - t < m
     const mk = (component, props) => { const P = page('https://www.flightradar24.com/data/airports'); const gp = { $page: { component, props }, $inertia: {} }; P.w.document.getElementById('app').__vue_app__ = { config: { globalProperties: gp } }; return { P, H: P.H(), props, send: P.send }; };
     const A = mk('Data/Airports', { airportsByCountry: [{ id: 235, name: 'United Kingdom', total: 120 }, { id: 76, name: 'France', total: 90 }] });
     A.H.dirTick(); const askA = A.P.posts.find(p => p.__tweeksLadd === 'oaDir');
-    A.send({ __tweeksLadd: 'oaDir', key: askA.key, counts: { 235: 1500, 76: 0 } });
+    A.send({ __tweeksLadd: 'oaDirGot', key: askA.key, counts: { 235: 1500, 76: 0 } });
     check('FR24\'s airport lists: each country\'s count with theirs', askA.kind === 'counts' && A.props.airportsByCountry[0].total === 1620 && A.props.airportsByCountry[1].total === 90, A.props.airportsByCountry);
     A.P.w.close();
     const B = mk('Data/AirportsByCountry', { country: { id: 235, name: 'United Kingdom', slug: 'united-kingdom' }, airports: [{ id: 2002, name: 'Liverpool', iata: 'LPL', icao: 'EGGP', total: 300 }] });
     B.H.dirTick(); const askB = B.P.posts.find(p => p.__tweeksLadd === 'oaDir');
-    B.send({ __tweeksLadd: 'oaDir', key: askB.key, airports: [{ id: 17000001, name: 'RAF Walney', iata: 'EGXX', icao: 'EGXX', total: 0 }, { id: 2002, name: 'dup', iata: 'LPL', icao: '', total: 0 }], rows: [ROWS[0]], refs: { 530: 'man' }, nears: {} });
+    B.send({ __tweeksLadd: 'oaDirGot', key: askB.key, airports: [{ id: 17000001, name: 'RAF Walney', iata: 'EGXX', icao: 'EGXX', total: 0 }, { id: 2002, name: 'dup', iata: 'LPL', icao: '', total: 0 }], rows: [ROWS[0]], refs: { 530: 'man' }, nears: {} });
     check('... a country\'s list: theirs among its airports, none twice - and their links known here, to go straight to their pages', askB.kind === 'country' && askB.name === 'United Kingdom' && B.props.airports.length === 2 && B.props.airports[1].iata === 'EGXX' && !!B.H.oaPageReq('/data/airports/egxx'), B.props.airports.map(x => x.iata));
     B.P.w.close();
     const C = mk('Data/AirportsByCountry', { country: { id: 225, name: 'United States', slug: 'united-states' }, states: [{ code: 'ID', name: 'Idaho', total: 40, url: '/data/airports/united-states/idaho' }, { code: 'TX', name: 'Texas', total: 300, url: '/data/airports/united-states/texas' }] });
     C.H.dirTick(); const askC = C.P.posts.find(p => p.__tweeksLadd === 'oaDir');
-    C.send({ __tweeksLadd: 'oaDir', key: askC.key, states: { ID: 250, TX: 1900 } });
+    C.send({ __tweeksLadd: 'oaDirGot', key: askC.key, states: { ID: 250, TX: 1900 } });
     check('... a country of states: each state\'s count with theirs', askC.hasStates === true && C.props.states[0].total === 290 && C.props.states[1].total === 2200, C.props.states.map(s => s.total));
     const D = mk('Data/AirportsByState', { country: { name: 'United States', slug: 'united-states' }, state: { name: 'Idaho', slug: 'idaho' }, airports: [] });
     D.P.w.localStorage.setItem('tl.oa.states.united-states', C.P.w.localStorage.getItem('tl.oa.states.united-states'));

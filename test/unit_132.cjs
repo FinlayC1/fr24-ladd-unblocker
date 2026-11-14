@@ -223,12 +223,12 @@ const tmp = n => fs.mkdtempSync(path.join(os.tmpdir(), n));
       panel.innerHTML = '<dl>' + field('IATA', 'EGXX') + field('ICAO', 'EGXX') + field('Timezone', 'Europe/London') + '</dl>'; doc.body.appendChild(panel);
       const dt = () => [...panel.querySelectorAll('dt')].map(x => x.textContent), dd = () => [...panel.querySelectorAll('dd')].map(x => x.textContent), ddEls = [...panel.querySelectorAll('dd')];
       H.panelCodeFields(panel, 'EGXX');
-      check('the window\'s code fields for an airfield with an ICAO code (1.3.4): its code under "OurAirports code", ICAO its code - FR24\'s own elements, only their words changed', JSON.stringify(dd()) === '["EGXX","EGXX","Europe/London"]' && JSON.stringify(dt()) === '["OurAirports code","ICAO","Timezone"]' && [...panel.querySelectorAll('dd')][0] === ddEls[0], [dt(), dd()]);
+      check('the window\'s code fields for an airfield with an ICAO code and no IATA code (1.3.6): FR24\'s IATA field left FR24\'s - "N/A" in it - ICAO its code; FR24\'s own elements, only their words changed', JSON.stringify(dd()) === '["N/A","EGXX","Europe/London"]' && JSON.stringify(dt()) === '["IATA","ICAO","Timezone"]' && [...panel.querySelectorAll('dd')][0] === ddEls[0], [dt(), dd()]);
       // (FR24 redraws the field for the next airport)
       ddEls[0].firstChild.data = 'GB-0999'; ddEls[1].firstChild.data = 'N/A'; H.panelCodeFields(panel, 'GB-0999');
       check('... a field with neither ("GB-0999"): its code under "OurAirports code", ICAO "N/A"', JSON.stringify(dd().slice(0, 2)) === '["GB-0999","N/A"]' && dt()[0] === 'OurAirports code', [dt(), dd()]);
       ddEls[0].firstChild.data = 'WSX'; ddEls[1].firstChild.data = 'EGWS'; H.panelCodeFields(panel, 'WSX');
-      check('... one with both: both as they are, under "OurAirports code"', JSON.stringify(dd().slice(0, 2)) === '["WSX","EGWS"]' && dt()[0] === 'OurAirports code', [dt(), dd()]);
+      check('... one with both: both as they are, FR24\'s field names', JSON.stringify(dd().slice(0, 2)) === '["WSX","EGWS"]' && dt()[0] === 'IATA', [dt(), dd()]);
       ddEls[0].firstChild.data = 'GB-0999'; H.panelCodeFields(panel, 'GB-0999'); ddEls[0].firstChild.data = 'BWF'; ddEls[1].firstChild.data = 'EGNL'; H.panelCodeFields(panel, 'BWF');
       check('... then one of FR24\'s own airports: its fields as FR24 has them', JSON.stringify(dd().slice(0, 2)) === '["BWF","EGNL"]' && dt()[0] === 'IATA', [dt(), dd()]);
       panel.remove();

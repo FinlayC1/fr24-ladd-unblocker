@@ -709,6 +709,12 @@ const { createApWx } = require('./apwx.cjs');
 // (1.3) every OurAirports airport FR24 does not list, closed ones aside, as airports of their own - oaap.cjs
 const { createOaAirports } = require('./oaap.cjs');
 const OAAP = createOaAirports({ E, dataDir: DATA, storeDir: OADIR });
+// (1.3.6) the heliports of the list for the route engine: where a helicopter that comes down there has landed (engine.js
+// setHeliports) - by the list's own ids
+function oaHeliports() {
+  try { const n = E.setHeliports(OAAP.rows().filter(r => r[9] === 'H').map(r => ({ id: r[0], ident: r[2], code: r[1], name: r[3], city: r[4], lat: r[6], lon: r[7], alt: r[8] }))); log('heliports for the route engine', n); return n; }
+  catch (e) { log('heliports', String(e && e.message || e)); return 0; }
+}
 const OARW = require('./oarwy.cjs').createOaRunways({ storeDir: OADIR });
 const APWX = createApWx(Object.assign({ E: { byId: id => E.byId(id) || (id >= 1e7 ? OAAP.get(id) : null) }, fetch: (u, o) => global.fetch(u, o) }, CFG.apwx || {}));
 try { RL.load(); } catch (e) { log('runways', String(e && e.message || e)); }
@@ -1644,7 +1650,9 @@ const { createAcTypes } = require('./actypes.cjs');
 const ACT = createAcTypes({ store: STORE, log: (...a) => log('aircraft', ...a), pause: () => new Promise(res => setImmediate(res)) });
 async function acTypesBuild() {
   if (!AC.stats.at || !ACT.due(AC.stats.at)) return false;
-  const freeMb = +((CFG.acdb && CFG.acdb.freeMb) || 300);
+  // (1.3.6: about 100 MB while it builds - built when that is free, looked at again every 10 minutes until it is: 1.3.5
+  // waited for the aircraft database's next round, six hours, when the monitor started with too little free)
+  const freeMb = +((CFG.acdb && CFG.acdb.typesFreeMb) || 160);
   if (memAvail() < freeMb * 1048576) { log('aircraft', `types not rebuilt: under ${freeMb} MB of memory free`); return false; }
   return ACT.build(AC.each, AC.stats.at, o => AGES.of({ type: o.type, msn: o.msn, op: o.op || o.owner }));
 }
@@ -1672,6 +1680,13 @@ async function acdbSweep() {
   }, () => new Promise(res => setImmediate(res)));
   ACS.queued += n; return n;
 }
+async function acTypesLoop() {
+  await sleep(60e3);
+  for (;;) {
+    try { if (CFG.acdb !== false && !WS.full) await acTypesBuild(); } catch (e) { log('aircraft', String(e && e.stack || e)); }
+    await sleep(10 * 60e3);
+  }
+}
 async function acdbLoop() {
   for (;;) {
     // (built in a worker thread - about 250 MB for a minute or two - only with that much memory free on the machine)
@@ -1679,7 +1694,6 @@ async function acdbLoop() {
       const freeMb = +((CFG.acdb && CFG.acdb.freeMb) || 300);
       if (CFG.acdb !== false && AC.due() && !WS.full) { if (memAvail() > freeMb * 1048576) await AC.build(); else log('aircraft', `database not rebuilt: under ${freeMb} MB of memory free - again in 6 hours`); }
       await agesLearn();
-      await acTypesBuild();
       await acdbSweep();
     } catch (e) { log('aircraft', String(e && e.stack || e)); }
     await sleep(6 * 3600e3);
@@ -2961,7 +2975,7 @@ if (require.main === module) {
   if (CFG.datalink && CFG.airframes) setTimeout(airframesLoop, 45000);
   // (1.3.1) the OurAirports airports: worked out a slice at a time a minute after start (not in one go, the first time a
   // browser asks), and OurAirports' own file asked for every day - only what changed - and the list made again from it
-  setTimeout(() => { OAAP.rebuild().then(n => log('OurAirports airports', n)).catch(e => log('OurAirports airports', String(e && e.message || e))); }, 60000);
+  setTimeout(() => { OAAP.rebuild().then(n => { log('OurAirports airports', n); oaHeliports(); }).catch(e => log('OurAirports airports', String(e && e.message || e))); }, 60000);
   // (1.3.2: a minute and a half after the start, then every hour - a few hundred bytes when nothing changed; its runways
   // and frequencies with it, every airport's, and what the airport answers give made again from them)
   if (CFG.oaRefresh !== false) {
@@ -2969,7 +2983,7 @@ if (require.main === module) {
     const oaR = async () => {
       try {
         const ch = await OAAP.refresh(oaGet, { everyMs: 50 * 60000 });
-        if (ch) log('OurAirports airports: a new file -', OAAP.stats.rows, 'airports');
+        if (ch) { log('OurAirports airports: a new file -', OAAP.stats.rows, 'airports'); oaHeliports(); }
         const rw = await OARW.refresh(oaGet, { everyMs: 50 * 60000 });
         if ((rw || ch) && OARW.have()) { const d = await OARW.build(OAAP.file); if (d) { APT.set(d.info, d.freqs, d.pads); apAnswers.clear(); log('OurAirports runways:', d.runways, 'runways of', d.airports, 'airports'); } }
       } catch (e) { log('OurAirports', String(e && e.message || e)); }
@@ -2984,10 +2998,11 @@ if (require.main === module) {
   for (const [hex, b] of blocked) owners.want(hex, b.reg);
   ownersLoop();
   setTimeout(acdbLoop, 60000);
+  acTypesLoop();
   setInterval(() => { wx.pump().catch(e => log('wx', String(e))); }, 2000);
   if (WXMAP_ON) setInterval(() => { wxmap.pump().catch(e => log('wxmap', String(e))); }, 15000);
   // (airports' schedules read from FR24 here, for the boards browsers open)
   setInterval(() => { BD.pump().catch(e => log('boards', String(e))); }, 5000);
 }
-module.exports = { ACT, acTypesBuild, OAAP, OARW, OADIR, oaFieldsDir, recentLog, dayLook, APWX, AF, PROF, afTargets, datalink, work, workSlow, saveSlow, setLadd: list => { lastLadd = { at: Date.now(), ac: list }; }, boardPlan, rwyFit, rwyKnown, rwyAnswer, rwySave, RL, rwyApAnswer, rwyApWarm, laddRwys, rwyHotRound, rwyLowRound, LOW, PACE, pace, fr24Client: () => fr24, fr24raw, fr24RawRound, wxmap, AGES, agesLearn, withAge, AC, acdbSweep, central, centralStart, centralRound, CR, SC, fleetOf, FL, naF, naTrack, selfEvidence, F24ref2: () => F24, WORLD, WS, AS, BD, boardRows, airportAnswer, apLegs, fr24Track, F24T, worldDay, worldWants, worldRoom, worldStatus, worldRecheck: () => { freeAt = 0; }, pollTat, TAT, TAT_HOST, carriesOn, liveExtra, logOf, heardPts, archBreath, memAvail, archTrace, archiveJob, indexDay, idxLookup, idxHave, archIdx, idxFile, ARC, setArcRange: f => { arcRange = f; }, surgeNow, datalink, datalinkRound, dlSeen, classifyTrace, traceGet, netSt, archiveDay, archiveState, archiveNext, archMark, archTried, archDays, archRunning, traceOf, AR, apliveTrace, HIST_V, HIST_RESET, resetHistLogs, histResetMark, get histResetN() { return histResetN; }, adminAnswer, ctl, logRing, log, MON_VER, learnCheck, learnFromCrowd, crowdLearnSave, crowdRows, LC, tracks, waiting, waitRound, waitLive, waitNamed, waitClaims, WAIT, saveWaiting, loadWaiting, pbMatch, learnedBuild, learnedDue, learnedLoad, learnedRef: () => learnedOut, liveBusy, backWaits, E, CFG, loadEngine, ingest, buildLegs, fr24Legs, fr24Leg, F24ref: () => F24, owners, ownersLoop, APT, legRunways, names, nearAnswer, telAnswer, tel, wx, pbNames, get PUBLIC() { return PUBLIC; }, get RATE() { return RATE; }, limited, tokenOk, installs, opts, optionsSet, optionsLoad, latestCheck, latestVer, helloAnswer, badge, wakeQuiet, parkedAt, boardLegs, flightsOfCs, lastHeard, legs, ac, backfillOne, backQ, blocked, markBlocked, seed, gapFill, addArea, userAreas,
+module.exports = { ACT, acTypesBuild, oaHeliports, OAAP, OARW, OADIR, oaFieldsDir, recentLog, dayLook, APWX, AF, PROF, afTargets, datalink, work, workSlow, saveSlow, setLadd: list => { lastLadd = { at: Date.now(), ac: list }; }, boardPlan, rwyFit, rwyKnown, rwyAnswer, rwySave, RL, rwyApAnswer, rwyApWarm, laddRwys, rwyHotRound, rwyLowRound, LOW, PACE, pace, fr24Client: () => fr24, fr24raw, fr24RawRound, wxmap, AGES, agesLearn, withAge, AC, acdbSweep, central, centralStart, centralRound, CR, SC, fleetOf, FL, naF, naTrack, selfEvidence, F24ref2: () => F24, WORLD, WS, AS, BD, boardRows, airportAnswer, apLegs, fr24Track, F24T, worldDay, worldWants, worldRoom, worldStatus, worldRecheck: () => { freeAt = 0; }, pollTat, TAT, TAT_HOST, carriesOn, liveExtra, logOf, heardPts, archBreath, memAvail, archTrace, archiveJob, indexDay, idxLookup, idxHave, archIdx, idxFile, ARC, setArcRange: f => { arcRange = f; }, surgeNow, datalink, datalinkRound, dlSeen, classifyTrace, traceGet, netSt, archiveDay, archiveState, archiveNext, archMark, archTried, archDays, archRunning, traceOf, AR, apliveTrace, HIST_V, HIST_RESET, resetHistLogs, histResetMark, get histResetN() { return histResetN; }, adminAnswer, ctl, logRing, log, MON_VER, learnCheck, learnFromCrowd, crowdLearnSave, crowdRows, LC, tracks, waiting, waitRound, waitLive, waitNamed, waitClaims, WAIT, saveWaiting, loadWaiting, pbMatch, learnedBuild, learnedDue, learnedLoad, learnedRef: () => learnedOut, liveBusy, backWaits, E, CFG, loadEngine, ingest, buildLegs, fr24Legs, fr24Leg, F24ref: () => F24, owners, ownersLoop, APT, legRunways, names, nearAnswer, telAnswer, tel, wx, pbNames, get PUBLIC() { return PUBLIC; }, get RATE() { return RATE; }, limited, tokenOk, installs, opts, optionsSet, optionsLoad, latestCheck, latestVer, helloAnswer, badge, wakeQuiet, parkedAt, boardLegs, flightsOfCs, lastHeard, legs, ac, backfillOne, backQ, blocked, markBlocked, seed, gapFill, addArea, userAreas,
   serve, fr24, ident, dest, F24, report, identRound, fr24Round, saveIdent, loadIdent, histUnknown, learnSince, learnWrite, diskLegs, KEEP_LADD, save, loadStore, dirtyDays, pollOpenSky, adsbxUse, live, liveList, answer, step, P, piaState, apiGet, gate, stats, lastOk, noteWatch, watch, watchedAll, flew, closeDays, histQ, histPend, histOne, histDay, histOf, histRead, histWrite, histFile, fillHist, fillAsked, queueHist, photos, nextHist, saveState, loadState, lastW, get closed() { return closed; }, set closed(v) { closed = v; }, pause };

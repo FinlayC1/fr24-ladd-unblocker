@@ -95,7 +95,7 @@ const until = async (f, ms) => { const t = Date.now(); while (Date.now() - t < m
   { const P = page('https://www.flightradar24.com/data/aircraft'), H = P.H();
     const props = { families: FR24.map(f => Object.assign({}, f)) }; vue(P, 'Data/Aircraft', props);
     H.acTick(); const ask = P.posts.find(p => p.__tweeksLadd === 'acDir');
-    P.send({ __tweeksLadd: 'acDir', key: ask && ask.key, families: OURS, at: 1 });
+    P.send({ __tweeksLadd: 'acDirGot', key: ask && ask.key, families: OURS, at: 1 });
     const fam = props.families, codes = fam.map(f => f.code), cit = fam.find(f => f.code === 'CITATION'), gl = fam.find(f => f.code === 'GLOBAL');
     check('FR24\'s aircraft directory: their families among FR24\'s own, after them, most aircraft first - in FR24\'s own form (its search on the page searches this list, so finds them)', !!ask && codes.join() === 'A320,CITATION,GLOBAL,GULFSTREAM' && gl.slug === 'bombardier-global' && gl.count === 1819 && gl.types.length === 3 && gl.photo === null, codes);
     check('... a type FR24 lists itself left to FR24 (Airbus\'s A320s - no "Airbus" family twice); a family FR24 has given only the types it lacks (Citation: the 560XL, its count raised)', !codes.includes('AIRBUS') && cit.types.map(t => t.code).join() === 'C25A,C56X' && cit.count === 900 + 1192, cit);
@@ -138,7 +138,7 @@ const until = async (f, ms) => { const t = Date.now(); while (Date.now() - t < m
     const props = JSON.parse(JSON.stringify(pg.props)); vue(P, 'Data/AircraftType', props);
     H.acTick(); const ask = P.posts.find(p => p.__tweeksLadd === 'acPage');
     check('... its production list asked of the monitor (through the userscript) - that type, that page', !!ask && ask.kind === 'type' && ask.code === 'GLF6' && ask.page === 1, ask);
-    P.send({ __tweeksLadd: 'acPage', key: ask.key, page: { code: 'GLF6', total: 3, averageAge: 12.5, page: 1, lastPage: 1, perPage: 50, rows: [['N650GA', '6001', 2012, '', '400006'], ['N651GA', '6002', 2013, 'GA Ops', '400007']] } });
+    P.send({ __tweeksLadd: 'acPageGot', key: ask.key, page: { code: 'GLF6', total: 3, averageAge: 12.5, page: 1, lastPage: 1, perPage: 50, rows: [['N650GA', '6001', 2012, '', '400006'], ['N651GA', '6002', 2013, 'GA Ops', '400007']] } });
     const gp = P.w.document.getElementById('app').__vue_app__.config.globalProperties;
     await until(() => gp.$page.props.aircraft.data.length === 2, 2000);
     check('... and filled when it comes; kept, so the way back is at once', gp.$page.props.aircraft.data[0].registration === 'N650GA' && gp.$page.props.statistics.total === 3 && /N650GA/.test(P.w.localStorage.getItem('tl.ac.pg') || ''), gp.$page.props.aircraft.data);
@@ -170,7 +170,7 @@ const until = async (f, ms) => { const t = Date.now(); while (Date.now() - t < m
     await until(() => P.posts.some(p => p.__tweeksLadd === 'acPage'), 1000);
     const ask = P.posts.find(p => p.__tweeksLadd === 'acPage'); await sleep(30);
     const early = asked.length;
-    P.send({ __tweeksLadd: 'acPage', key: ask.key, page: PG });
+    P.send({ __tweeksLadd: 'acPageGot', key: ask.key, page: PG });
     await until(() => got, 2000);
     check('FR24\'s router moving to one of theirs (its XHR - a page of its list, its pictures): FR24\'s page it is made from asked for instead, only once the monitor\'s page of it is here, and given to FR24 as theirs', early === 0 && asked[0] === '/data/aircraft/airbus-a320/a320?tl-ac=%2Fdata%2Faircraft%2Fbombardier-global%2Fgl5t&page=2' && got && got.component === 'Data/AircraftType' && got.props.type.code === 'GL5T' && got.props.aircraft.current_page === 2 && got.props.aircraft.data[0].registration === 'M-PORT' && got.url === '/data/aircraft/bombardier-global/gl5t?page=2', { asked, got: got && { c: got.component, url: got.url } });
     asked.length = 0;

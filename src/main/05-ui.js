@@ -537,8 +537,12 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     tagSearchResults();
   }
   let regIdx = null, regIdxAt = 0;
-  function keptByRegIn(row) {
+  function regIndex() {
     if (!regIdx || now() - regIdxAt > 60000) { regIdx = new Map(); regIdxAt = now(); for (const [hex, v] of store.allHex()) if (v && v.reg && (v.ladd || v.pia || v.mil || v.fr24Blocked)) regIdx.set(String(v.reg).toUpperCase().replace(/[^A-Z0-9]/g, ''), Object.assign({ hex }, v)); }
+    return regIdx;
+  }
+  function keptByRegIn(row) {
+    regIndex();
     for (const w of clean(row.textContent).toUpperCase().split(/[^A-Z0-9-]+/)) { const k = w.replace(/[^A-Z0-9]/g, ''); if (k.length >= 3 && regIdx.has(k)) return regIdx.get(k); }
     return null;
   }
@@ -658,11 +662,44 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       let rec = k ? live.get(Number(k.id)) || null : null;
       if (!rec && k && /^[0-9a-f]{6}$/.test(String(k.hex || ''))) rec = { hex: String(k.hex) };
       if (!rec) rec = recByLabel(label);
-      addChip(cell, rec);
+      // (1.3.6: an ordinary flight - a military one FR24 shows as its own: by its label as heard on ADS-B, or its registration)
+      if (!badgeOf(flagsOf(rec))) rec = flaggedByLabel(label) || (k && k.registration ? flaggedByLabel(k.registration) : null) || rec;
+      setChip(cell, rec);
+    }
+  }
+  // (1.3.6) an aircraft by the label a widget shows - its callsign or registration: one identified here; else one heard on
+  // ADS-B lately, as the aircraft databases mark it (an air force's transport FR24 shows as its own); else one kept here
+  // as LADD, PIA or military by its registration
+  const flagIdx = { at: 0, map: new Map() };
+  function flaggedByLabel(label) {
+    label = clean(label).toUpperCase(); if (!label || isNA(label)) return null;
+    const r = recByLabel(label); if (r && badgeOf(flagsOf(r))) return r;
+    if (now() - flagIdx.at > 5000) {
+      flagIdx.map = new Map(); flagIdx.at = now();
+      for (const c of areaCache.values()) if (c && (c.ladd || c.pia || c.mil)) { if (c.cs) flagIdx.map.set(String(c.cs).toUpperCase(), c); if (c.reg) flagIdx.map.set(String(c.reg).toUpperCase().replace(/[^A-Z0-9]/g, ''), c); }
+    }
+    const k = label.replace(/[^A-Z0-9]/g, '');
+    return flagIdx.map.get(label) || flagIdx.map.get(k) || regIndex().get(k) || null;
+  }
+  // (1.3.6) the LADD / PIA / MIL tag in the Bookmarks widget - an aircraft by its registration, a flight by its number -
+  // and in Most tracked flights, after each flight's callsign
+  // (a widget's row FR24 draws again for another flight keeps none of the last one's tag)
+  function setChip(after, rec) {
+    if (badgeOf(flagsOf(rec))) return addChip(after, rec);
+    const nx = after && after.nextElementSibling; if (nx && nx.classList.contains('tl-ladd-chip')) nx.remove();
+  }
+  function tagBookmarks() {
+    for (const el of document.querySelectorAll('[data-testid="bookmarks__item-aircraft__reg"], [data-testid="bookmarks__item-flight__number"]')) setChip(el, flaggedByLabel(el.textContent));
+  }
+  function tagMostTracked() {
+    const box = document.querySelector('[data-testid="most-tracked-flights-widget"]'); if (!box) return;
+    for (const line of box.querySelectorAll('.cursor-pointer.rounded-md .flex-nowrap')) {
+      const cs = line.children[1]; if (!cs || cs.classList.contains('tl-ladd-chip')) continue;
+      setChip(cs, flaggedByLabel(cs.textContent));
     }
   }
   function tagEverything(added) {
-    try { tagSearchResults(); tagLastClicked(); tagBoards(added); const panel = document.querySelector(SEL.panel); if (panel) tagRecent(panel, live.get(currentId())); } catch (e) { log('tags', e); }
+    try { tagSearchResults(); tagLastClicked(); tagBookmarks(); tagMostTracked(); tagBoards(added); const panel = document.querySelector(SEL.panel); if (panel) tagRecent(panel, live.get(currentId())); } catch (e) { log('tags', e); }
   }
   // Run straight from the observer: its callback comes after the DOM change and before the next paint, so a new row
   // never shows up untagged (an animation-frame hop is not reliable - some embedded/background views never fire it).
