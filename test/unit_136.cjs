@@ -52,6 +52,31 @@ const until = async (f, ms) => { const t = Date.now(); while (Date.now() - t < m
     check('... a last leg seen to land stands as before (landed at CUB an hour before midnight: last landed at CUB)', o3 && o3.airport && o3.airport.iata === 'CUB', o3 && o3.note);
   }
 
+  // ---- 2c. ... its evening before, from the day before's file: that flight alone, asked once a day ----------------------
+  { const main = fs.readFileSync(path.join(__dirname, '..', 'src', 'main', '03-data.js'), 'utf8');
+    const src = (main.match(/\n {2}const eveCache = new Map\(\);[^\n]*\n {2}async function eveningBefore[\s\S]*?\n {2}\}\n/) || [''])[0];
+    const E = require('../src/engine.js').createRouteEngine(), d0 = 1794614400, asks = [];
+    let T = (d0 + 600) * 1000, fail = false;
+    // (the day before: a flight 18:00-19:00, on the ground at Sumter 23:15-23:20, then off and flying at midnight)
+    const Y = [];
+    for (let t = d0 - 6 * 3600; t <= d0 - 5 * 3600; t += 60) Y.push({ t, lat: 33, lon: -80, alt: 5000, gs: 150 });
+    for (let t = d0 - 2700; t <= d0 - 2400; t += 60) Y.push({ t, lat: 33.97, lon: -80.47, alt: 0, gs: 0, gnd: true });
+    for (let t = d0 - 2340; t < d0; t += 30) Y.push({ t, lat: 33.9, lon: -80.6, alt: 4600, gs: 165 });
+    const env = { now: () => T, dayStr: t => new Date(t).toISOString().slice(0, 10).replace(/-/g, '/'), ENGINE: E,
+      readTrace: async (id, hex, day) => { asks.push(id + ' ' + day); return fail ? { state: 'err', pts: [] } : { state: 'ok', pts: Y.slice() }; },
+      mergeNets: res => { let pts = []; for (const r of res) if (r.pts.length) pts = pts.length ? E.mergePoints(pts, r.pts) : r.pts; return pts; } };
+    const eve = src && new Function(...Object.keys(env), src + '\nreturn eveningBefore;')(...Object.values(env));
+    const a1 = eve ? await eve('acaa5c', d0, {}) : [], n1 = asks.slice();
+    check('a flight in the air at midnight UTC: its evening before from the day before\'s file - that flight alone, from where it last stood on the ground (Sumter, 23:20Z); the evening\'s flight before it left out', a1.length && a1[0].t === d0 - 2400 && a1[0].gnd && a1[a1.length - 1].t < d0 && n1.length === 1 && n1[0] === 'lol 2026/11/13', { n: a1.length, first: a1[0], asks: n1 });
+    T += 60e3; await eve('acaa5c', d0, {}); T += 60e3; await eve('acaa5c', d0, {});
+    const n2 = asks.length; await eve('acaa5c', d0, { priority: true }); const n3 = asks.length; T += 60e3; await eve('acaa5c', d0, { priority: true });
+    check('... the day before\'s file asked once a day for each aircraft, not at each of today\'s re-reads (adsb.lol asked as little as can be); for the aircraft looked at, both networks\' once', n2 === 1 && n3 === 3 && asks.length === 3 && asks.slice(1).sort().join() === 'apl 2026/11/13,lol 2026/11/13', asks);
+    fail = true; const b0 = asks.length; await eve('n1', d0, {}); T += 5 * 60e3; await eve('n1', d0, {}); const b1 = asks.length; T += 6 * 60e3; fail = false; const b2 = await eve('n1', d0, {});
+    check('... no answer: asked again only 10 minutes on', b1 - b0 === 1 && asks.length - b0 === 2 && b2.length > 0, asks.slice(b0));
+    const c0 = asks.length, c1 = await eve('acaa5c', d0 + 86400, {});
+    check('... the next day, the day before that is asked for anew; a flight not in the air at midnight none of it', asks.length - c0 === 1 && asks[asks.length - 1] === 'lol 2026/11/14' && c1.length === 0, asks.slice(c0));
+  }
+
   let JSDOM = null; try { ({ JSDOM } = require(path.join(NM, 'jsdom'))); } catch (e) { console.log('(skipped the browser: no jsdom)'); }
   if (!JSDOM) { console.log(fails ? `\n${fails} failed` : '\nall passed'); process.exit(fails ? 1 : 0); }
   const SRC = fs.readFileSync(path.join(__dirname, '..', 'dist', 'fr24-ladd-unblocker.user.js'), 'utf8');

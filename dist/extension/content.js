@@ -12949,6 +12949,23 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     }).catch(e => log('today from disk', e));
   }
   // opts.priority: the selected aircraft (first in line, retried within seconds); opts.bg: background prefetch
+  // (1.3.6) the evening before of a flight in the air at midnight UTC: that flight alone from yesterday's file - back to
+  // where it was on the ground, or to a half-hour unheard (the day's flights before it are yesterday's, not today's).
+  // Asked once a day for each aircraft (a day gone by is not rewritten; one with no answer asked again 10 minutes on),
+  // not at each of today's file's re-reads - adsb.lol is asked as little as can be
+  const eveCache = new Map();   // hex -> { d0, pts, both, failAt }
+  async function eveningBefore(hex, d0, opts) {
+    const c = eveCache.get(hex), both = !!opts.priority;
+    if (c && c.d0 === d0 && (c.both || !both) && (!c.failAt || now() - c.failAt < 10 * 60e3)) return c.pts;
+    const o2 = { priority: both, bg: !both, idle: !!opts.idle };
+    const yes = await Promise.all((both ? ['lol', 'apl'] : ['lol']).map(id => readTrace(id, hex, dayStr((d0 - 1) * 1000), o2).catch(() => ({ state: 'err', pts: [] }))));
+    const ypts = mergeNets(yes.filter(r => r.state === 'ok').map(r => ({ pts: (r.pts || []).filter(q => q.t < d0 && q.t > d0 - 12 * 3600) })));
+    let k = ypts.length - 1, pts = [];
+    if (k >= 0 && d0 - ypts[k].t < 1800) { while (k > 0 && !ypts[k].gnd && ypts[k].t - ypts[k - 1].t < 1800) k--; pts = ypts.slice(k); }
+    if (!eveCache.has(hex) && eveCache.size >= 400) eveCache.delete(eveCache.keys().next().value);
+    eveCache.set(hex, { d0, pts, both, failAt: yes.some(r => r.state === 'ok' || r.state === 'none') ? 0 : now() });
+    return pts;
+  }
   async function loadToday(hex, maxAgeMs, opts) {
     opts = opts || {};
     if (!todayCache.has(hex) && !todayWarmed.has(hex)) await warmToday([hex]);
@@ -12970,13 +12987,8 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       // once the day had turned: its climb was in yesterday's file, its log's last leg cut off by that day's end)
       const d0 = Math.floor(now() / 864e5) * 86400;
       if (pts.length && pts[0].t - d0 < 1200 && !pts[0].gnd && (pts[0].alt == null || pts[0].alt > 300)) {
-        const o2 = { priority: !!opts.priority, bg: !opts.priority, idle: !!opts.idle };
-        const yes = await Promise.all((opts.priority ? ['lol', 'apl'] : ['lol']).map(id => readTrace(id, hex, dayStr((d0 - 1) * 1000), o2).catch(() => ({ state: 'err' }))));
-        const ypts = mergeNets(yes.filter(r => r.state === 'ok').map(r => ({ pts: (r.pts || []).filter(q => q.t < d0 && q.t > d0 - 12 * 3600) })));
-        // (that flight alone - back to where it was on the ground, or to a half-hour unheard: the day's flights before it
-        // are yesterday's, not today's)
-        let k = ypts.length - 1;
-        if (k >= 0 && d0 - ypts[k].t < 1800) { while (k > 0 && !ypts[k].gnd && ypts[k].t - ypts[k - 1].t < 1800) k--; pts = ENGINE.mergePoints(ypts.slice(k), pts); }
+        const ev = await eveningBefore(hex, d0, opts);
+        if (ev.length) pts = ENGINE.mergePoints(ev, pts);
       }
       const cls0 = ENGINE.classify(acOfHex(hex)), heli = cls0 === 'heli', patrol = cls0 === 'fighter' || cls0 === 'milheavy';
       const ac0 = acOfHex(hex), legs = ENGINE.legsFromPoints(pts, { heli, patrol, cls: cls0, type: ac0.type, rangeKm: ENGINE.typeRangeKm(ac0) });   // (no dataEnd: today's file is rewritten now and then - it can end where the aircraft is still flying: HLE81 "landed at Gloucester" passing over it)
