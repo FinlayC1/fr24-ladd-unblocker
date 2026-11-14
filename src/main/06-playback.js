@@ -242,6 +242,9 @@
   }
   function pbRouteSet(id, route) {
     pb.routes.set(id, route); if (pb.routes.size > 3000) pb.routes.delete(pb.routes.keys().next().value);
+    // (1.3.6: one of its ends one of the OurAirports airports - a heliport it came down on: the page's part told which,
+    // so FR24's player names it as it names its own)
+    for (const apId of [route && route.originId, route && route.destId]) { const r = apId >= 1e7 ? oa.byId.get(apId) : null; if (r) oaLinkSoon(r[1]); }
     postToPage('pbRoute', { id, route });
     if (id === pb.sel) syncPanelSoon();
     return route;

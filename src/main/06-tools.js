@@ -284,8 +284,12 @@
       if (s) out.push([s, a.size || 0, a]);
     }
     const f = ENGINE.byIcao(q); if (f && f.field) out.push([3, 0, f]);
+    // (1.3.6) and the OurAirports airports FR24 does not list - by code or name, as FR24's own search finds them (oaFind)
+    if (oa.rows) { for (const r of oaFind(q, 12)) { const a = oaAp(r[0]); if (!a) continue; const ex = String(r[1]).toUpperCase() === q || String(r[2]).toUpperCase() === q; out.push([ex ? 3 : 1, -1, a]); } }
+    else loadOa().catch(() => {});
     out.sort((x, y) => y[0] - x[0] || y[1] - x[1]);
-    return out.slice(0, 12).map(x => x[2]);
+    const seen = new Set();
+    return out.filter(x => !seen.has(x[2].id) && seen.add(x[2].id)).slice(0, 12).map(x => x[2]);
   }
   function confirmListHtml(id, rec, q) {
     const r = (routeState.get(id) || {}).route || rec.route || {};

@@ -167,6 +167,7 @@ function createRouteEngine() {
     }
     FL = []; fgrid = new Map();
     if (fieldRows) setFields(fieldRows); else applyUsage();
+    if (heliRows) setHeliports(heliRows);   // (1.3.6: their countries and zones from the airports as they are now)
     return AP.length;
   }
   // Business/GA usage prior: ICAO -> weight (learned from observed LADD traffic; see the userscript for the shipped
@@ -309,7 +310,7 @@ function createRouteEngine() {
       was = t;
       t = t.replace(/\s*\([^()]*\b(field|airport|airfield|air ?base|heliport)\)\s*$/i, '').replace(/\s+\(?(UL|ULM|microlight|private|disused)\)?$/i, '')
         .replace(/\s+(MCAS|MCAF|AFB|ARB|AAF|ANGB|NAS|NAF|JRB|NAWS|army air ?field|army heliport|air national guard base|air reserve base|naval air station|marine corps air station)$/i, '')
-        .replace(/\s+(airfield|aerodrome|airport|air ?strip|air ?field|air ?base|air station|flying field|landing (strip|ground|field)|glider ?field|gliding (site|club)|aero ?club|farm ?strip|private strip|strip|airpark|air park|heliport)$/i, '').trim();
+        .replace(/\s+(airfield|aerodrome|airport|air ?strip|air ?field|air ?base|air station|flying field|landing (strip|ground|field)|glider ?field|gliding (site|club)|aero ?club|farm ?strip|private strip|strip|airpark|air park|heliport|heli ?pad|helistop|helicopter landing (site|pad|area)|hls)$/i, '').trim();
     }
     return t.length >= 3 ? t : s;
   }
@@ -350,6 +351,35 @@ function createRouteEngine() {
     }
     applyUsage();
     return FL.length;
+  }
+  // (1.3.6) The OurAirports heliports FR24 does not list - where a helicopter that comes down there has landed: M-SKTO
+  // on Axis Business Park's helipad was "-". For helicopters only: never among the fields, so never a destination a
+  // fixed-wing flight is predicted for, nor taken for one of them elsewhere (heliById, not byId). Each by the id the
+  // OurAirports list gives it - fieldId of its ident - so the browser names it and opens its page as that list's.
+  let HL = [], hgrid = new Map(), HB = new Map(), heliRows = null;
+  function setHeliports(rows) {
+    heliRows = rows || null; HL = []; hgrid = new Map(); HB = new Map();
+    for (const r of rows || []) {
+      if (!r || !fin(r.lat) || !fin(r.lon) || !r.ident) continue;
+      const ident = String(r.ident).toUpperCase(), own = byIcao.get(ident);
+      if (own && !own.field) continue;                                   // (FR24 lists it)
+      const id = r.id >= FIELD_BASE ? r.id : fieldId(ident); if (byId.has(id) || HB.has(id)) continue;
+      let listed = false; nearby(r.lat, r.lon, 5.5, (a, d) => { if (d <= Math.max(2.5, 1.5 + Math.min(3.5, Math.log10(1 + (a.size || 0)) * 0.7) + 0.5)) listed = true; }); if (listed) continue;
+      const ref = airportAt(r.lat, r.lon, 150), code = String(r.code || ident).toUpperCase();
+      const a = { id, iata: '', icao: ident, code, name: r.name || ident, city: placeShort(fieldShortName(r.name)) || placeShort(r.city), town: placeShort(r.city), townFull: r.city || '', country: ref ? ref.airport.country : '', countryId: ref ? ref.airport.countryId : 0, lat: r.lat, lon: r.lon, alt: +r.alt || 0, size: 0, tz: ref ? ref.airport.tz : null, tzName: ref ? ref.airport.tzName : '', heliport: true };
+      a.mil = MIL_RE.test(a.name);
+      HL.push(a); HB.set(id, a);
+      const k = cellKey(a.lat, a.lon); (hgrid.get(k) || hgrid.set(k, []).get(k)).push(a);
+    }
+    return HL.length;
+  }
+  // (the heliport a helicopter is on: within km - a pad is small, so the net is tight)
+  function heliportAt(lat, lon, km, opts) {
+    if (!HL.length || !fin(lat) || !fin(lon)) return null;
+    let best = null;
+    const alt = opts && fin(opts.alt) ? opts.alt : NaN, maxAgl = opts && opts.maxAgl;
+    nearbyIn(hgrid, lat, lon, km || 0.4, (a, d) => { if (fin(alt) && fin(maxAgl) && alt - a.alt > maxAgl) return; if (!best || d < best.dist) best = { airport: a, dist: d }; });
+    return best;
   }
   function applyUsage() { usageMax = 1; for (const a of AP.concat(FL)) { const k = a.icao.toUpperCase(); for (const kind of ['use', 'useGA', 'useMil', 'useHB', 'useLJ']) a[kind] = usageRaw[kind].get(k) || 0; if (a.use > usageMax) usageMax = a.use; } }
   function nearbyIn(g, lat, lon, km, fn) {
@@ -1092,7 +1122,7 @@ function createRouteEngine() {
     }
     if (p.alt == null) return null;
     // (first seen low by a strip FR24 does not list: lifted from there - G-DGFD out of Enstone)
-    if (heliT) { const low = airportAt(p.lat, p.lon, 3, { alt: p.alt, maxAgl: 1000 }) || (isStart ? fieldAt(p.lat, p.lon, 3, { alt: p.alt, maxAgl: 1000 }) : null); return low ? { airport: low.airport, conf: 'low', dist: low.dist } : null; }
+    if (heliT) { const low = airportAt(p.lat, p.lon, 3, { alt: p.alt, maxAgl: 1000 }) || (isStart ? heliportAt(p.lat, p.lon, 1, { alt: p.alt, maxAgl: 1000 }) || fieldAt(p.lat, p.lon, 3, { alt: p.alt, maxAgl: 1000 }) : null); return low ? { airport: low.airport, conf: 'low', dist: low.dist } : null; }
     const lowA = airportAt(p.lat, p.lon, 9, { alt: p.alt, maxAgl: 1800, mil: ctx && ctx.mil }), lowF = fieldAt(p.lat, p.lon, 3, { alt: p.alt, maxAgl: 1000 });
     const low = lowF && (!lowA || lowF.dist < lowA.dist) ? lowF : lowA;
     if (low) return { airport: low.airport, conf: 'low', dist: low.dist };
@@ -1373,6 +1403,8 @@ function createRouteEngine() {
 
   // ---- origin --------------------------------------------------------------------------------------------------------
   // input: { ac, pos, trail, hist (summarized legs), now, plan }
+  // (1.3.6) a leg the day's end cut off in the air: not seen to end, and its last point within 3 minutes of midnight UTC
+  const cutAtMidnight = l => !!l && !l.ended && fin(l.tEnd) && Math.ceil(l.tEnd / 86400) * 86400 - l.tEnd < 180;
   function inferOrigin(inp) {
     const { pos, trail, now } = inp, ac = inp.ac || {};
     const hs = inp.hs || histStats(inp.hist || [], now);
@@ -1398,22 +1430,26 @@ function createRouteEngine() {
       // low over a field is a departure only if it is not coming down into it (first seen on approach = arriving)
       // (a helicopter: a listed airport close by, else a strip FR24 does not list - G-DGFD first seen at 550 ft above
       // Enstone 2.9 km from it, the morning after landing there)
-      const low = descending ? null : heliT ? airportAt(f.lat, f.lon, 3, { alt: f.alt, maxAgl: 1000 }) || fieldAt(f.lat, f.lon, 3, { alt: f.alt, maxAgl: 1000 }) : (() => { const a = airportAt(f.lat, f.lon, 9, { alt: f.alt, maxAgl: 1800, mil: ctx.mil }), fl = fieldAt(f.lat, f.lon, 3, { alt: f.alt, maxAgl: 1000 }); return fl && (!a || fl.dist < a.dist) ? fl : a; })();
+      const low = descending ? null : heliT ? airportAt(f.lat, f.lon, 3, { alt: f.alt, maxAgl: 1000 }) || heliportAt(f.lat, f.lon, 1, { alt: f.alt, maxAgl: 1000 }) || fieldAt(f.lat, f.lon, 3, { alt: f.alt, maxAgl: 1000 }) : (() => { const a = airportAt(f.lat, f.lon, 9, { alt: f.alt, maxAgl: 1800, mil: ctx.mil }), fl = fieldAt(f.lat, f.lon, 3, { alt: f.alt, maxAgl: 1000 }); return fl && (!a || fl.dist < a.dist) ? fl : a; })();
       // (low over one field, but down at another close by within the last 12 hours: it took off from where it landed -
       // M-ARNZ, in at Farnborough at 16:14 and off again at 17:36, first heard over Fairoaks 9 km on was "from Woking")
-      const lastLow = low && hs.last && hs.last.to && f.t > hs.last.tEnd && f.t - hs.last.tEnd < 12 * 3600 ? byId.get(hs.last.to.id) : null;
+      // (1.3.6: a last leg the day's end cut off in the air - a day's file stops at midnight UTC - was never seen landing: its
+      // "landing" is a guess from where it was lost, not where it went. N915ML's 12 Nov leg, cut at 23:59:50 at 8,725 ft
+      // west of Columbia SC and closed "near CUB", made its next flight - off from Sumter, 45 km on - "from CUB")
+      const hsLast = hs.last && hs.last.to && !cutAtMidnight(hs.last) ? hs.last : null;
+      const lastLow = low && hsLast && f.t > hsLast.tEnd && f.t - hsLast.tEnd < 12 * 3600 ? byId.get(hsLast.to.id) : null;
       if (lastLow && lastLow.id !== low.airport.id && dist(lastLow.lat, lastLow.lon, f.lat, f.lon) <= 25) return { airport: lastLow, conf: 'low', note: 'seen climbing out near ' + lastLow.code + ', where it last landed', departedAt: f.t - 60 };
       if (low) return { airport: low.airport, conf: 'low', note: 'seen climbing out of ' + low.airport.code, departedAt: f.t - 60 };
       let c = heliT ? null : departureFromClimb(f, ctx);
       // Where it last landed, when the climb fits it nearly as well: it is standing there until it flies again. LX-FBC,
       // in at Nice that morning, first seen at 14,700 ft north of it, was put down to La Mole 70 km west - and lost the
       // Nice -> Antwerp habit that says it is going home.
-      const lastTo = hs.last && hs.last.to && f.t - hs.last.tEnd < 2 * 86400 && f.t > hs.last.tEnd ? byId.get(hs.last.to.id) : null;
+      const lastTo = hsLast && f.t - hsLast.tEnd < 2 * 86400 && f.t > hsLast.tEnd ? byId.get(hsLast.to.id) : null;
       if (c && climbing && lastTo && lastTo.id !== c.airport.id) {
         const sL = climbFit(f, lastTo, ctx);
         // (landed there within six hours and first heard within climbing reach of it: from there, whatever field fits the
         // climb a little better - D-CLUB, down at Toulon at 12:59, first heard at 5,000 ft 70 km on at 14:07)
-        const dL = dist(lastTo.lat, lastTo.lon, f.lat, f.lon), recent = (f.t - hs.last.tEnd) / 3600 < 6 && dL <= 40 + Math.max(0, f.alt - (lastTo.alt || 0)) / 1000 * 9;
+        const dL = dist(lastTo.lat, lastTo.lon, f.lat, f.lon), recent = (f.t - hsLast.tEnd) / 3600 < 6 && dL <= 40 + Math.max(0, f.alt - (lastTo.alt || 0)) / 1000 * 9;
         if ((sL != null && sL > c.score - 4) || recent) c = { airport: lastTo, dist: dL, score: Math.max(sL == null ? -3.4 : sL, -3.4), last: true };
       }
       if (c && climbing && c.score > -3.5) {
@@ -1430,7 +1466,7 @@ function createRouteEngine() {
       const a = byId.get(open.from.id);
       if (a) return { airport: a, conf: open.from.conf === 'ground' ? 'ground' : 'history', note: 'took off from ' + a.code, departedAt: open.tStart };
     }
-    const last = hs.last && hs.last.to ? hs.last : null;
+    const last = hs.last && hs.last.to && !cutAtMidnight(hs.last) ? hs.last : null;
     if (last) {
       const a = byId.get(last.to.id);
       if (a) {
@@ -1882,7 +1918,9 @@ function createRouteEngine() {
     if (!fin(lat) || !fin(lon)) return null;
     const n = airportAt(lat, lon, 5);
     if (n && n.dist <= heliApKm(n.airport)) { const rk = n.dist > 2.5 ? runwayKm(n.airport, lat, lon) : null; if (rk == null || rk <= 2.5) return n; }
-    const f = fieldAt(lat, lon, 1.2); return f || null;
+    // (1.3.6: on a heliport FR24 does not list - within 400 m - else a strip within 1.2 km: whichever is nearer)
+    const h = heliportAt(lat, lon, 0.4), f = fieldAt(lat, lon, 1.2);
+    return h && (!f || h.dist <= f.dist) ? h : f || null;
   }
   // Where an aircraft close in, low and lined up is landing: the airfield straight ahead within 10 km (helicopters 3 km)
   // below a generous glide path (a 3° approach is ~170 ft per km; twice that plus 500 ft is allowed), not climbing,
@@ -2556,7 +2594,7 @@ function createRouteEngine() {
     return res;
   }
 
-  return { typeFamily, bizKin, isBizType, typeDoubt, regOfCs, surgeOf, setTables2, get T2() { return T2; }, trackState, offTrack, fieldShortName, fieldId, placeShort, placeLabels, setApproach, approachCell, approachPath, apprGroup, apprKey, trackAgree, heatNear, heatMatch, reckon, trackErr, remotePath, flowKeysOf, pgrpOf, grp6, sunElev, airData, gsAlong, minutesTo, flowAt, pathOf, pathDev, ownerKey, parseRunwayLengths, setRunwayLengths, csvLine, SQ_NOINFO, tripBin, regionOf, learnLeg, learnRow, learnCollector, addLearnedOp, odAdd: (x, y, w) => { const k = odKey(String(x).toUpperCase(), String(y).toUpperCase()), v = (OD.get(k) || 0) + w; if (v > 1e-9) OD.set(k, v); else OD.delete(k); }, odWeight: (x, y) => OD.get(odKey(String(x).toUpperCase(), String(y).toUpperCase())) || 0, odCount: () => OD.size, setAirports, setUsage, addUsage, setRunways, parseRunwaysCsv, runwayFit, setWeights, setTables, setLogit, calibrated, mergePoints, finalTo, longFinal, typeRangeKm, FEAT, groupOf, W, classify, isStepClimb, rangeKm, parseTrace, legsFromPoints, summarizeLeg, stitchLegs, chainLegs, histStats, inferOrigin, predict, privateSite, rwyImpossible, typeDesc, heliSpots, heliAirportAt, landedSum, localFlew, climbedOut, approachTo, downAndUp, landingInGap, gapEnds, slowGap, idleHole, currentLeg, circuits, mergeCircuits, setFields, fieldAt, placeAt, isField, nearbyFields, fieldCount: () => FL.length, airportAt, departureFromClimb, arrivalFromDescent, nearby, dist, brg, xtat, destPoint, angDiff, get airports() { return AP; }, byId: id => byId.get(id), byIcao: c => byIcao.get(String(c || '').toUpperCase()) };
+  return { typeFamily, bizKin, isBizType, typeDoubt, regOfCs, surgeOf, setTables2, get T2() { return T2; }, trackState, offTrack, fieldShortName, fieldId, placeShort, setHeliports, heliportAt, heliById: id => HB.get(id) || null, placeLabels, setApproach, approachCell, approachPath, apprGroup, apprKey, trackAgree, heatNear, heatMatch, reckon, trackErr, remotePath, flowKeysOf, pgrpOf, grp6, sunElev, airData, gsAlong, minutesTo, flowAt, pathOf, pathDev, ownerKey, parseRunwayLengths, setRunwayLengths, csvLine, SQ_NOINFO, tripBin, regionOf, learnLeg, learnRow, learnCollector, addLearnedOp, odAdd: (x, y, w) => { const k = odKey(String(x).toUpperCase(), String(y).toUpperCase()), v = (OD.get(k) || 0) + w; if (v > 1e-9) OD.set(k, v); else OD.delete(k); }, odWeight: (x, y) => OD.get(odKey(String(x).toUpperCase(), String(y).toUpperCase())) || 0, odCount: () => OD.size, setAirports, setUsage, addUsage, setRunways, parseRunwaysCsv, runwayFit, setWeights, setTables, setLogit, calibrated, mergePoints, finalTo, longFinal, typeRangeKm, FEAT, groupOf, W, classify, isStepClimb, rangeKm, parseTrace, legsFromPoints, summarizeLeg, stitchLegs, chainLegs, histStats, inferOrigin, predict, privateSite, rwyImpossible, typeDesc, heliSpots, heliAirportAt, landedSum, localFlew, climbedOut, approachTo, downAndUp, landingInGap, gapEnds, slowGap, idleHole, currentLeg, circuits, mergeCircuits, setFields, fieldAt, placeAt, isField, nearbyFields, fieldCount: () => FL.length, airportAt, departureFromClimb, arrivalFromDescent, nearby, dist, brg, xtat, destPoint, angDiff, get airports() { return AP; }, byId: id => byId.get(id), byIcao: c => byIcao.get(String(c || '').toUpperCase()) };
 }
 /* ==/ENGINE== */
 if (typeof module !== 'undefined') module.exports = { createRouteEngine };

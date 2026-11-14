@@ -16,7 +16,7 @@ const { createCalc } = require('./central.cjs');
     const rl = rd('runway_len.json'); if (rl) E.setRunwayLengths(rl);
     // (1.3.2: OurAirports' airports file from where the monitor reads it - its store once it has fetched one)
     const fdir = W.fieldsDir || W.dataDir;
-    if (W.datasetFile && fs.existsSync(path.join(fdir, 'oa_airports.csv'))) E.setFields(require(W.datasetFile).loadFields(fdir));
+    if (W.datasetFile && fs.existsSync(path.join(fdir, 'oa_airports.csv'))) { const ds = require(W.datasetFile); E.setFields(ds.loadFields(fdir)); if (ds.loadHeliports && E.setHeliports) E.setHeliports(ds.loadHeliports(fdir)); }
     const calc = createCalc({ E });
     const st = await calc.load({ srcDir: W.srcDir, mainDir: W.mainDir, sitesCsv: W.sitesCsv || '', learnedOps: W.learnedOps || null });
     parentPort.on('message', m => {

@@ -49,5 +49,21 @@ function loadFields(dataDir) {
   }
   return (fieldCache = rows);
 }
+// (1.3.6) its heliports, for the route engine's helicopters (engine.js setHeliports): { ident, name, city, lat, lon, alt }
+let heliCache = null;
+function loadHeliports(dataDir) {
+  if (heliCache) return heliCache;
+  const file = path.join(dataDir, 'oa_airports.csv'); if (!fs.existsSync(file)) return (heliCache = []);
+  const cells = line => { const out = []; let cur = '', q = false; for (let i = 0; i < line.length; i++) { const ch = line[i]; if (ch === '"') { if (q && line[i + 1] === '"') { cur += '"'; i++; } else q = !q; } else if (ch === ',' && !q) { out.push(cur); cur = ''; } else cur += ch; } out.push(cur); return out; };
+  const lines = fs.readFileSync(file, 'utf8').split(/\r?\n/), head = cells(lines[0]), ix = k => head.indexOf(k);
+  const [cT, cN, cLa, cLo, cE, cM, cI, cG, cId] = ['type', 'name', 'latitude_deg', 'longitude_deg', 'elevation_ft', 'municipality', 'icao_code', 'gps_code', 'ident'].map(ix);
+  const rows = [];
+  for (const l of lines.slice(1)) {
+    if (!l) continue; const r = cells(l); if (r[cT] !== 'heliport') continue;
+    const lat = +r[cLa], lon = +r[cLo]; if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+    rows.push({ lat: Math.round(lat * 1e5) / 1e5, lon: Math.round(lon * 1e5) / 1e5, alt: Math.round(+r[cE] || 0), ident: (r[cI] || r[cG] || r[cId] || '').toUpperCase().trim(), name: r[cN] || '', city: r[cM] || '' });
+  }
+  return (heliCache = rows);
+}
 const withFields = (E, dataDir) => process.env.FIELDS === '0' || typeof E.setFields !== 'function' ? 0 : E.setFields(loadFields(dataDir));
-module.exports = { aircraft, countryOfHex, HEX_COUNTRY, loadFields, withFields };
+module.exports = { aircraft, countryOfHex, HEX_COUNTRY, loadFields, loadHeliports, withFields };

@@ -15,12 +15,19 @@
   const landedOff = l => !!l && !l.to && l.ended && (l.how === 'ground' || l.how === 'touch' || l.how === 'final' || (l.how === 'gap-low' && l.endAlt != null && l.endAlt < 1500));
   // a live flight's destination good enough to show where FR24 has none: confirmed / filed, or 60% and more
   const goodPrediction = lv => !!lv && !!lv.destId && (['confirmed', 'filed', 'landed'].includes(lv.destConf) || (lv.destP || 0) >= 60);
+  // (the page's part told which of theirs the page links to - once each - so a press on one goes to its page)
+  const oaLinked = new Set();
+  function oaLinkSoon(code) { const k = String(code).toUpperCase(); if (oaLinked.has(k)) return; oaLinked.add(k); oaIsFor(k); }
   function apCells(a, conf, pct) {
     if (!a) return { mob: ' <span class="text-gray">—</span> ', desk: ' —', title: '' };
-    const code = esc((a.iata || a.icao).toLowerCase()), CODE = esc(a.iata || a.icao), city = esc(a.city || a.name);
+    // (1.3.6: one of the OurAirports airports - a field, a heliport - by its code in that list, and its code opening its
+    // page on FR24 as FR24's own do: the page made from an FR24 airport's - the page's part told which it is)
+    const oaR = oaRowOfAp(a), oaCode = oaR ? String(oaR[1]) : '';
+    if (oaCode) oaLinkSoon(oaCode);
+    const code = esc((oaCode || a.iata || a.icao).toLowerCase()), CODE = esc(oaCode || a.iata || a.icao), city = esc(a.city || a.name);
     const q = conf === 'pred' ? `<span class="tl-inf" title="predicted destination${pct ? ' (' + pct + '%)' : ''}">?</span>` : conf === 'near' || conf === 'chain' ? `<span class="tl-inf" title="${conf === 'chain' ? 'inferred from the neighbouring flight (no coverage at this end)' : 'inferred from a nearby low pass'}">?</span>` : '';
     // (an airfield FR24 does not list has no page there: its OurAirports page)
-    const link = a.field ? `href="https://ourairports.com/airports/${encodeURIComponent(a.icao)}/" target="_blank" rel="noopener noreferrer"` : `href="/data/airports/${code}" target="_self"`;
+    const link = a.field && !oaCode ? `href="https://ourairports.com/airports/${encodeURIComponent(a.icao)}/" target="_blank" rel="noopener noreferrer"` : `href="/data/airports/${code}" target="_self"`;
     return { mob: ` ${city} <a ${link} class="fbold">(${CODE}) </a>${q} `, desk: ` ${city} <a ${link} class="fs-10 fbold">(${CODE})</a>${q}`, title: esc(`${a.name}${a.field ? ' (airfield not in FR24\'s list)' : ''}, ${a.country}`) };
   }
   // one row, exactly as FR24 renders its own (responsive block for phones + the desktop cells)
@@ -648,6 +655,9 @@
     await store.kvReady;          // (the airport list and small records; the aircraft's own records are read by key)
     if (document.readyState === 'loading') await new Promise(r => document.addEventListener('DOMContentLoaded', r, { once: true }));
     const table = document.getElementById('tbl-datatable'); if (!table) return;
+    // (1.3.6: the OurAirports airports - their heliports among the route engine's places, their pages for their codes - read
+    // first: 4 s at most)
+    await Promise.race([loadOa().catch(() => false), sleep(4000)]);
     // our Live buttons open their own link; FR24's table handlers never see the click (our Play is FR24's own: FR24 plays it)
     document.addEventListener('click', ev => {
       const a = ev.target && ev.target.closest && ev.target.closest('#tbl-datatable a.tl-live'); if (!a) return;
@@ -931,6 +941,7 @@
     addStyle();
     await store.kvReady;
     if (document.readyState === 'loading') await new Promise(r => document.addEventListener('DOMContentLoaded', r, { once: true }));
+    await Promise.race([loadOa().catch(() => false), sleep(4000)]);
     const sec = document.getElementById('cnt-data-content'); if (!sec) return;
     // (FR24 lists this number itself: its rows stand, ours are not merged in - its playback's padlocked figures and its
     // rows' padlocked files filled)

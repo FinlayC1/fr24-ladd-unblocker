@@ -84,7 +84,8 @@ function createAcTypes(env) {
         e.n++;
         if (o.model) { const m = tidy(o.model); e.names.set(m, (e.names.get(m) || 0) + 1); }
         let year = +o.year || 0; if (!(year > 1900) && ageOf) { const a = ageOf(o); if (a && a.year > 1900) year = a.year; }
-        e.rows.push([reg, String(o.msn || '').slice(0, 20), year > 1900 ? year : 0, String(o.op || o.owner || '').slice(0, 60), o.hex || '']);
+        // (one line of text each while building - a fraction of the memory of an array each: 760,000 aircraft)
+        e.rows.push(reg + '\t' + String(o.msn || '').replace(/[\t\n]/g, ' ').slice(0, 20) + '\t' + (year > 1900 ? year : 0) + '\t' + String(o.op || o.owner || '').replace(/[\t\n]/g, ' ').slice(0, 60) + '\t' + (o.hex || ''));
       }, env.pause);
       // (the families: FR24's way where it has one for the type, else the type's maker - from the name most of them give)
       const fams = new Map();
@@ -104,10 +105,10 @@ function createAcTypes(env) {
         const fam = fams.get(fc);
         fam.types.push({ code: t, name: name || t, slug: t.toLowerCase(), count: e.n });
         fam.count += e.n;
-        e.rows.sort(byMsn);
-        fs.writeFileSync(path.join(dir, 't', t + '.json.tmp'), JSON.stringify(e.rows));
+        const rows = e.rows.map(l => { const f = l.split('\t'); return [f[0], f[1], +f[2] || 0, f[3], f[4]]; }); e.rows = null;
+        rows.sort(byMsn);
+        fs.writeFileSync(path.join(dir, 't', t + '.json.tmp'), JSON.stringify(rows));
         fs.renameSync(path.join(dir, 't', t + '.json.tmp'), path.join(dir, 't', t + '.json'));
-        e.rows = null;
         if (++k % 50 === 0 && env.pause) await env.pause();
       }
       const families = [...fams.values()].filter(f => f.types.length).sort((a, b) => b.count - a.count);

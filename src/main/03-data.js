@@ -418,15 +418,25 @@
   function sitesSoon() { siteLab = null; if (siteSaveT) return; siteSaveT = setTimeout(() => { siteSaveT = 0; store.kvSet('sites2', siteBk()); pushSites(); }, 3000); }
   // ---- (1.3) every OurAirports airport FR24 does not list (closed ones aside) - the monitor's list (oaap.cjs: the route
   // engine's own ids), kept here a week - given to the page for FR24's airport list, its map, boards and panel
-  const oa = { rows: null, ids: new Set(), byId: new Map(), byCode: new Map(), grid: new Map(), sig: '', loading: null };
+  const oa = { rows: null, ids: new Set(), byId: new Map(), byCode: new Map(), byIdent: new Map(), grid: new Map(), sig: '', loading: null };
   const oaKnown = id => id >= 1e7 && oa.ids.has(id);
   function oaSet(c) {
-    oa.rows = c.rows; oa.sig = String(c.n || c.rows.length) + '.' + (c.at || 0); oa.ids = new Set(); oa.byId = new Map(); oa.byCode = new Map();
+    oa.rows = c.rows; oa.sig = String(c.n || c.rows.length) + '.' + (c.at || 0); oa.ids = new Set(); oa.byId = new Map(); oa.byCode = new Map(); oa.byIdent = new Map();
     oa.grid = new Map();
     for (const r of c.rows) if (Array.isArray(r) && r[0] >= 1e7) {
-      oa.ids.add(r[0]); oa.byId.set(r[0], r); oa.byCode.set(String(r[1]).toUpperCase(), r[0]);
+      oa.ids.add(r[0]); oa.byId.set(r[0], r); oa.byCode.set(String(r[1]).toUpperCase(), r[0]); oa.byIdent.set(String(r[2]).toUpperCase(), r[0]);
       const k = oaCell(r[6], r[7]); let g = oa.grid.get(k); if (!g) oa.grid.set(k, g = []); g.push(r);
     }
+    // (1.3.6) its heliports for the route engine: a helicopter down on one has landed there (engine.js setHeliports) -
+    // M-SKTO's landings at Axis Business Park's helipad were "-" in its log and playback
+    try { ENGINE.setHeliports(c.rows.filter(r => Array.isArray(r) && r[9] === 'H').map(r => ({ id: r[0], ident: r[2], code: r[1], name: r[3], city: r[4], lat: r[6], lon: r[7], alt: r[8] }))); } catch (e) { log('heliports', String(e && e.message || e)); }
+  }
+  // (1.3.6) the list's row of an airport the engine names - one of the list's own, or a field the engine knows by its
+  // ident: its code there is what its page goes by
+  function oaRowOfAp(a) {
+    if (!a || !oa.rows) return null;
+    const id = oa.byId.has(a.id) ? a.id : a.field || a.heliport ? oa.byIdent.get(String(a.icao || a.code || '').toUpperCase()) : null;
+    return id ? oa.byId.get(id) || null : null;
   }
   // (1.3.4) the airports of the list by where they are: a 0.1° grid
   const oaCell = (lat, lon) => Math.floor(lat * 10) * 10000 + Math.floor(lon * 10);
@@ -760,6 +770,9 @@
     await sliced(all, ([h, v]) => { const r = pubIdRow(h, v); if (r) rows.push(r); if (rows.length >= 1500) { postToPage('pubIds', { rows }); rows = []; } }, { ms: 8 });
     if (rows.length) postToPage('pubIds', { rows });
   }
+  // (1.3.6) a serial number from FR24's page title of an aircraft: "<reg> - <model> [<serial>] - Flightradar24"; none for
+  // "N/A" or anything that is not a serial number's form
+  function msnOfTitle(t) { const m = String(t || '').replace(/&#0?39;|&amp;/g, ' ').match(/\[([A-Za-z0-9][A-Za-z0-9 .\/-]{0,19})\]/); const v = m ? clean(m[1]) : ''; return v && !isNA(v) ? v : ''; }
   // `bg`: prefetch for aircraft on screen - registry databases only (the photo site is left alone), low priority
   function publicIdentity(hex, reg, opts) {
     hex = String(hex || '').toLowerCase(); if (!/^[0-9a-f]{6}$/.test(hex)) return Promise.resolve(null);
@@ -775,7 +788,10 @@
     const msnDue = regDue && !hx.msn && !!hx.ownerFailAt;
     // (1.1.1: and the monitor not asked about it lately - it has every aircraft of the world's databases and registers)
     const monDue = monUp() && now() - (hx.monOwnAt || 0) > 6 * 3600e3 && !(hx.msn && hx.year > 1900 && shownOwner(hx, hx.cs));
-    if (hx.pubAt && now() - hx.pubAt < 30 * 864e5 && (bg || hx.msn || hx.pubFull) && !ownerDue && !msnDue && !monDue) return Promise.resolve(hx);
+    // (1.3.6: an aircraft opened with its serial number still not known - T7-EZZ's: no register of San Marino's is asked,
+    // and the first look found none - looked for again a day later, not a month: FR24's own list of it, JetPhotos)
+    const snDue = !bg && !hx.msn && !!(reg || hx.reg) && now() - (hx.msnTryAt || 0) > 864e5;
+    if (hx.pubAt && now() - hx.pubAt < 30 * 864e5 && (bg || hx.msn || hx.pubFull) && !ownerDue && !msnDue && !monDue && !snDue) return Promise.resolve(hx);
     if (pubJobs.has(hex)) return pubJobs.get(hex);
     const job = (async () => {
       const seed = seedFromArea(hex);
@@ -795,10 +811,16 @@
       const r = { hex, reg: reg || hx.reg || seed.reg || '', faaAt: ownerDue ? 0 : hx.faaAt || 0 };
       // the serial number of a non-US airframe is only on JetPhotos: asked in parallel, for the aircraft opened
       const jpJob = !bg && r.reg && !/^N\d/i.test(r.reg) && !hx.msn ? fetchJetphotos(r.reg).catch(() => null) : Promise.resolve(null);
-      const [idn, jp] = await Promise.all([fetchIdentity(r, !bg, bg).catch(() => ({})), jpJob]);
-      const out = { reg: r.reg || idn.reg || '', msn: hx.msn || idn.msn || (jp && jp.msn) || '', year: (hx.year > 1900 && !hx.yearEst ? hx.year : 0) || idn.year || hx.year || seed.year || 0, owner: (ownerName(hx.owner) ? hx.owner : '') || idn.owner || seed.owner || hx.owner || '', ownerCity: hx.ownerCity || idn.ownerCity || '', country: hx.country || idn.country || '', countryId: hx.countryId || idn.countryId || 0, type: hx.type || idn.type || seed.type || '', desc: hx.desc || idn.desc || seed.desc || (jp && jp.typeName) || '' };
+      // (1.3.6: and FR24's own list of the registration - its aircraft's serial number there: FR24 padlocks it in the panel,
+      // not in its list. Asked only for one opened: FR24 counts every request against one limit)
+      const fr24Sn = !bg && r.reg && !hx.msn ? fetchFr24Photos(r.reg, true).then(x => clean(x && x.info && x.info.serialNo), () => '') : Promise.resolve('');
+      // (and FR24's own page of the registration, whose title gives it - "M-PORT - Bombardier Global 5000 [9868]" - the page
+      // the log is drawn on, read for its pictures already)
+      const pageSn = !bg && r.reg && !hx.msn ? fr24AircraftHtml(r.reg).then(html => msnOfTitle((String(html).match(/<title[^>]*>([^<]*)<\/title>/i) || [])[1]), () => '') : Promise.resolve('');
+      const [idn, jp, fsn, psn] = await Promise.all([fetchIdentity(r, !bg, bg).catch(() => ({})), jpJob, fr24Sn, pageSn]);
+      const out = { reg: r.reg || idn.reg || '', msn: hx.msn || idn.msn || fsn || psn || (jp && jp.msn) || '', year: (hx.year > 1900 && !hx.yearEst ? hx.year : 0) || idn.year || hx.year || seed.year || 0, owner: (ownerName(hx.owner) ? hx.owner : '') || idn.owner || seed.owner || hx.owner || '', ownerCity: hx.ownerCity || idn.ownerCity || '', country: hx.country || idn.country || '', countryId: hx.countryId || idn.countryId || 0, type: hx.type || idn.type || seed.type || '', desc: hx.desc || idn.desc || seed.desc || (jp && jp.typeName) || '' };
       if (!out.year && !bg) { try { await fetchTrace(hex, '', { priority: true }); } catch (e) { /* not flying today */ } const m = traceMeta.get(hex); if (m && m.year) out.year = m.year; }
-      out.pubAt = now(); if (idn.regAnswered || !idn.regFailed) { out.ownerAskedAt = now(); out.ownerFailAt = 0; } else out.ownerFailAt = now(); if (!bg) out.pubFull = true; if (r.faaAt) out.faaAt = r.faaAt;
+      out.pubAt = now(); if (idn.regAnswered || !idn.regFailed) { out.ownerAskedAt = now(); out.ownerFailAt = 0; } else out.ownerFailAt = now(); if (!bg) { out.pubFull = true; if (!hx.msn) out.msnTryAt = now(); } if (r.faaAt) out.faaAt = r.faaAt;
       // (a register's year over the monitor's estimate)
       if (out.year && out.year === idn.year && hx.yearEst) { out.yearEst = false; out.yearHow = ''; }
       const merged = store.mergeHex(hex, out); pushPubIds([hex]);
@@ -1732,6 +1754,23 @@
     }).catch(e => log('today from disk', e));
   }
   // opts.priority: the selected aircraft (first in line, retried within seconds); opts.bg: background prefetch
+  // (1.3.6) the evening before of a flight in the air at midnight UTC: that flight alone from yesterday's file - back to
+  // where it was on the ground, or to a half-hour unheard (the day's flights before it are yesterday's, not today's).
+  // Asked once a day for each aircraft (a day gone by is not rewritten; one with no answer asked again 10 minutes on),
+  // not at each of today's file's re-reads - adsb.lol is asked as little as can be
+  const eveCache = new Map();   // hex -> { d0, pts, both, failAt }
+  async function eveningBefore(hex, d0, opts) {
+    const c = eveCache.get(hex), both = !!opts.priority;
+    if (c && c.d0 === d0 && (c.both || !both) && (!c.failAt || now() - c.failAt < 10 * 60e3)) return c.pts;
+    const o2 = { priority: both, bg: !both, idle: !!opts.idle };
+    const yes = await Promise.all((both ? ['lol', 'apl'] : ['lol']).map(id => readTrace(id, hex, dayStr((d0 - 1) * 1000), o2).catch(() => ({ state: 'err', pts: [] }))));
+    const ypts = mergeNets(yes.filter(r => r.state === 'ok').map(r => ({ pts: (r.pts || []).filter(q => q.t < d0 && q.t > d0 - 12 * 3600) })));
+    let k = ypts.length - 1, pts = [];
+    if (k >= 0 && d0 - ypts[k].t < 1800) { while (k > 0 && !ypts[k].gnd && ypts[k].t - ypts[k - 1].t < 1800) k--; pts = ypts.slice(k); }
+    if (!eveCache.has(hex) && eveCache.size >= 400) eveCache.delete(eveCache.keys().next().value);
+    eveCache.set(hex, { d0, pts, both, failAt: yes.some(r => r.state === 'ok' || r.state === 'none') ? 0 : now() });
+    return pts;
+  }
   async function loadToday(hex, maxAgeMs, opts) {
     opts = opts || {};
     if (!todayCache.has(hex) && !todayWarmed.has(hex)) await warmToday([hex]);
@@ -1747,7 +1786,15 @@
       // (TheAirTraffic's "no file" is not an answer: it hears less of the world than adsb.lol - an aircraft not there may well
       // have flown)
       if (!res.some(r => r.state === 'ok' || (r.state === 'none' && r.id !== 'tat'))) throw new Error(res.map(r => r.net + ': ' + (r.err || r.state)).join('; '));
-      const pts = mergeNets(res);
+      let pts = mergeNets(res);
+      // (1.3.6) a flight begun before midnight UTC - today's file opening with it in the air: the evening before from
+      // yesterday's file, so its take-off is in its track. N915ML, off from Sumter at 23:21Z, was "took off from CUB"
+      // once the day had turned: its climb was in yesterday's file, its log's last leg cut off by that day's end)
+      const d0 = Math.floor(now() / 864e5) * 86400;
+      if (pts.length && pts[0].t - d0 < 1200 && !pts[0].gnd && (pts[0].alt == null || pts[0].alt > 300)) {
+        const ev = await eveningBefore(hex, d0, opts);
+        if (ev.length) pts = ENGINE.mergePoints(ev, pts);
+      }
       const cls0 = ENGINE.classify(acOfHex(hex)), heli = cls0 === 'heli', patrol = cls0 === 'fighter' || cls0 === 'milheavy';
       const ac0 = acOfHex(hex), legs = ENGINE.legsFromPoints(pts, { heli, patrol, cls: cls0, type: ac0.type, rangeKm: ENGINE.typeRangeKm(ac0) });   // (no dataEnd: today's file is rewritten now and then - it can end where the aircraft is still flying: HLE81 "landed at Gloucester" passing over it)
       const out = { at: now(), pts, lastPt: pts.length ? pts[pts.length - 1] : null, legs, sums: summarize(legs, hex).map(l => Object.assign(l, { day: dayStr(now()) })), both: res.length > 1, nets: res.map(r => r.net + ': ' + (r.state === 'err' || r.state === 'wall' ? r.err : r.state)) };
@@ -2150,12 +2197,12 @@
   }
   function onAcDir(d) {
     const key = String(d && d.key || '').slice(0, 40);
-    loadAcTypes().then(ok => postToPage('acDir', { key, families: ok && acx.idx ? acx.idx.families : null, at: ok && acx.idx ? acx.idx.at : 0 }));
+    loadAcTypes().then(ok => postToPage('acDirGot', { key, families: ok && acx.idx ? acx.idx.families : null, at: ok && acx.idx ? acx.idx.at : 0 }));
   }
   // (a page of one: type GLEX or family GLOBAL, page n - the monitor's answer as it is, or none)
   function onAcPage(d) {
     const key = String(d && d.key || '').slice(0, 80), kind = d && d.kind === 'family' ? 'family' : 'type', code = String(d && d.code || '').toUpperCase(), pg = Math.max(1, Math.min(5000, Math.floor(+(d && d.page)) || 1));
-    if (!/^[A-Z0-9]{2,12}$/.test(code)) { postToPage('acPage', { key, page: null }); return; }
+    if (!/^[A-Z0-9]{2,12}$/.test(code)) { postToPage('acPageGot', { key, page: null }); return; }
     monGet('/actype?' + kind + '=' + encodeURIComponent(code) + '&page=' + pg, { timeout: 15000 })
-      .then(j => postToPage('acPage', { key, page: j && Array.isArray(j.rows) ? j : null }), () => postToPage('acPage', { key, page: null }));
+      .then(j => postToPage('acPageGot', { key, page: j && Array.isArray(j.rows) ? j : null }), () => postToPage('acPageGot', { key, page: null }));
   }

@@ -4,6 +4,44 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 
 1.0.0 is the first release. The versions before it are the betas, labelled B: B22.31.12 is version 22.31.12.
 
+## [1.3.6] - 2026-11-14
+
+### In short
+- **FR24's aircraft directory** (flightradar24.com/data/aircraft) now lists the Bombardier Globals, Gulfstreams, Hawkers and the rest as 1.3.5 meant to. 1.3.5 showed no difference for two reasons:
+  - **The monitor** built its list of types only six hours after a restart (it waited for the aircraft database's next round when memory was short). It now builds it within a minute or two of starting, looks again every 10 minutes until it has, and needs less memory to do it.
+  - **The page and the userscript** answered each other's answers: the same message name was used both ways, so each answer was asked again, without end. The airport lists from 1.3.4 had the same fault. Each answer now has its own name.
+- **FR24's lists are built with the page**:
+  - The aircraft directory and the airport lists (the countries' counts, a country's list, a state's) come up with the OurAirports airports and the added aircraft types already in, from what was kept the last time.
+  - A list never opened before is held back until they are in (5 seconds at most). The UK's list was slow because each of its 1,500 airports was written to the browser's storage one by one; that is gone.
+- **An OurAirports airport's page never shows another airport first**: the page is hidden until FR24's app has drawn it (FR24's server draws the page it is made from - Liverpool's, Blackpool's - before its app starts).
+- **Empty code tag**: the empty red box after an OurAirports code in FR24's airport lists (an airport with no ICAO code) is gone.
+- **Airport window**: an OurAirports airport with an ICAO code but no IATA code keeps FR24's "IATA code" field ("N/A" in it), as FR24 shows its own; only one with neither is shown under "OurAirports code".
+- **Bookmarks**:
+  - An OurAirports airport's line shows its code once - "GB-1368", not "GB-1368 / GB-1368".
+  - Its weather is filled in from the monitor (live at the airport), where it said "Weather is currently not available".
+- **Logs and playback at heliports**: a helicopter that comes down on an OurAirports heliport has landed there. M-SKTO's landings on Axis Business Park's helipad were "-" in its log and playback. Names are simpler: "Axis Business Park Helipad" is "Axis Business Park".
+- **Log page codes**: an OurAirports airfield's or heliport's code on a log page opens its airport page on FR24 (it opened OurAirports' site, or nothing).
+- **Confirm destination**: the airport search there finds the OurAirports airports too, by code or name.
+- **Serial numbers**: T7-EZZ's (and any other's) was not searched for again. An aircraft opened once was taken as looked up for 30 days, serial number or not, and no register of San Marino's is asked. An aircraft opened with no serial number is now looked for again a day later: FR24's own list of the registration and FR24's own page of it (its title gives the serial number: "M-PORT - Bombardier Global 5000 [9868]") are asked as well as JetPhotos.
+- **Departures across midnight UTC**: N915ML, off from Sumter at 23:21Z on 13 Nov, was shown "took off from CUB, out of ADS-B coverage". Two things went wrong once the day had turned:
+  - **Its track**: today's file began with it in the air, and its climb out of Sumter was in the day before's. A flight in the air at midnight now has the evening before put in front of it.
+  - **Its log**: the flight before it, on the 12th, was cut off by that day's end at 23:59:50, still at 8,725 ft west of Columbia, and closed "near CUB" - it had flown on and landed at Sumter. A last leg cut off by a day's end, never seen landing, is no longer taken as where the aircraft last landed. With both, it is "first seen climbing through 2,600 ft, 10 km from SUM".
+
+### Fixed
+- **The message loop** (`src/main/03-data.js`, `src/main/07-boot.js`, `src/page.js`): the userscript's answers are `oaDirGot`, `acDirGot` and `acPageGot`. A test checks that no message name is handled on both sides.
+- **The type list's timing and memory** (`monitor/actypes.cjs`, `monitor/monitor.cjs`): built in a loop of its own every 10 minutes until it is current, once 160 MB is free; each aircraft kept as one line of text while building.
+- **Lists built as the page loads** (`src/page.js`): the directory from the additions kept (`acDirFastPage`), the airport lists from the last answer kept per country and state - the last 8 (`dirFastPage`) - and the countries' counts. What is added is marked (`tl`, `tlN`, `tlAdd`), so it is taken back out before being added again: the page as it loaded, then the newer answer, never twice.
+- **The page hidden until built** (`veilOn`): an OurAirports airport's page and an added aircraft family's or type's when made as they load; a list never seen before until its additions are in.
+- **Their rows from a list** are no longer each written to the browser's storage; one is kept when its link is pressed.
+- **Heliports in the route engine** (`src/engine.js` `setHeliports`, `heliportAt`): kept apart from the engine's airports and fields, so used only where a helicopter is down or lifting off: on one within 400 m, before a strip within 1.2 km. Each has the OurAirports list's own id, so the browser names it and opens its page. Set by the userscript from its OurAirports list, by the monitor from its own, by its calculation worker from the file.
+- **Short names** (`fieldShortName`, the engine's and the page part's): "Helipad", "Heli pad", "Helistop", "Helicopter landing site" and "HLS" taken off the end, as "Heliport" was.
+- **Departures across midnight** (`src/main/03-data.js` `loadToday`, `src/engine.js` `inferOrigin`): today's file opening with the aircraft in the air within 20 minutes of midnight - the flight it is on from the day before's file (back to where it was on the ground, or a half-hour unheard), asked once a day for each aircraft (`eveningBefore`; one with no answer asked again 10 minutes on), not at each re-read of today's; a last leg not seen to end, its last point within 3 minutes of midnight UTC (`cutAtMidnight`), not used as where it last landed. The monitor's log joins such a leg to the next day's piece when it builds that day, as before.
+- **Bookmark weather** (`mxBmOaWx`): FR24's bookmarks answer for an OurAirports airport has no weather; the monitor's, in FR24's form, is put in (Clear, Cloudy, Fog, Rain, Snow, Thunderstorm - FR24's words, so FR24 draws its icon).
+
+### Tests
+- `test/unit_136.cjs` (28 checks): the message names; the engine's heliports (Axis Business Park's helipad) and short names; N915ML's departure across midnight (from Sumter; never from its cut-off leg's guess, CUB; a landing seen still stands; the evening before, that flight alone, the day before's file asked once a day); the directory and the airport lists built as they load, never added twice; the page hidden until built; the IATA field; the bookmarks' code line and weather.
+- `test/unit_132.cjs`, `test/unit_134.cjs`, `test/unit_135.cjs`: updated to the window's fields and the answers' new names.
+
 ## [1.3.5] - 2026-11-13
 
 ### In short
