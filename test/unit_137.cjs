@@ -200,8 +200,9 @@ const until = async (f, ms) => { const t = Date.now(); while (Date.now() - t < m
 
   // ---- 8. what the build gives --------------------------------------------------------------------------------------
   { const man = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'dist', 'extension', 'manifest.json'), 'utf8'));
+    const connects = new Set(SRC.split('\n').map(l => l.match(/^\/\/ @connect\s+(\S+)\s*$/)).filter(Boolean).map(m => m[1]));
     check('the extension may see FR24\'s own site - its background never saw FR24\'s server send a typed OurAirports airport\'s address (/data/airports/egow) or an added type\'s on to its list without it', man.host_permissions.includes('https://www.flightradar24.com/*') && man.host_permissions.includes('https://flightradar24.com/*'));
-    check('... and the FAA\'s two addresses of the Pacific tracks, as the userscript may', ['pilotweb.nas.faa.gov', 'notams.aim.faa.gov'].every(h => man.host_permissions.includes('https://' + h + '/*') && new RegExp('@connect\\s+' + h.replace(/\./g, '\\.')).test(SRC)));
+    check('... and the FAA\'s two addresses of the Pacific tracks, as the userscript may', ['pilotweb.nas.faa.gov', 'notams.aim.faa.gov'].every(h => man.host_permissions.includes('https://' + h + '/*') && connects.has(h)), [...connects].filter(c => /faa/.test(c)));
   }
 
   console.log(fails ? `\n${fails} failed` : '\nall passed');
