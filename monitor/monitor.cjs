@@ -2748,7 +2748,7 @@ function answer(u, nowS, ctx) {
   if (p === '/status') { const st = Object.assign({ v: 3, data: 'adsb.lol (ODbL)', since: stats.since, public: PUBLIC, ver: MON_VER, commit: MON_COMMIT }, monStatus()); if (!admin) delete st.areas; else if (TOKEN) st.controls = controls(); return st; }
   if (p === '/near') return nearAnswer(+q('lat'), +q('lon'), +q('r'));
   // (1.3.5) a page of a type's aircraft (type=GLEX) or of a family's (family=GLOBAL), for FR24's aircraft directory
-  if (p === '/actype') return ACT.page({ type: q('type'), family: q('family'), page: q('page'), per: q('per') });
+  if (p === '/actype') return ACT.page({ type: q('type'), family: q('family'), page: q('page'), per: q('per'), regs: q('regs') });
   if (p === '/tel') return telAnswer(hexList(q('hex'), 100), +(q('lat') || NaN), +(q('lon') || NaN));
   if (p === '/names') return { list: names.get(String(q('ids') || '').split(',').slice(0, 2000), +q('t') || 0) };
   // (the flights of a day, as kept: derived from adsb.lol's data, offered under the same licence - the ODbL)

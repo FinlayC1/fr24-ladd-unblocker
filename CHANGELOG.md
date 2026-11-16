@@ -4,6 +4,58 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 
 1.0.0 is the first release. The versions before it are the betas, labelled B: B22.31.12 is version 22.31.12.
 
+## [1.3.7] - 2026-11-16
+
+### In short
+- **Recent flights** in the aircraft panel are filled again for LADD, blocked and military aircraft. FR24's build of mid-November asks a new address for an aircraft's recent flights (www.flightradar24.com/api/v2/flights in place of common/v2/flight/list.json), with the same question from the same caller, and the script only knew the old one. Each row's airports are given in that build's new form: FR24 looks each one up by its id, OurAirports heliports and fields included.
+- **Clicking an airport pin**: an OurAirports airport's pin said "Cannot load the airport data". FR24's new build opens a pin by the airport's id, not its code, and its own lookup by id never reached the one that knows the OurAirports airports.
+- **FR24's airport list** moved to a new address too (/api/v2/airports). The OurAirports airports are added there, and one FR24 now lists itself (its list keeps airports with only an ICAO code now) is never added a second time.
+- **The aircraft directory, production lists and their padlocks**:
+  - **The directory FR24's server sends** (its own page, not its app's: the one this browser gets) now has the families and types FR24 leaves out: Bombardier Global, Gulfstream, Hawker, Piper, Cirrus and the rest, about 2,000 types in all. They sit among FR24's own rows in its alphabetical order, and their types are added to a family FR24 already has. 1.3.5 and 1.3.6 changed only FR24's app's page, which this browser never got.
+  - **Their pages** (a family's, a type's: /data/aircraft/bombardier-global/glex) are made from one of FR24's own production list pages. They show the aircraft in production order, 50 a page: serial number, registration, owner, year built and age, a photo link.
+  - **FR24's own production lists**: the padlocked "FIRST FLIGHT (AGE)" column is filled with each aircraft's year built and age.
+  - **FR24's app's directory** (the page some browsers get) was not drawn again once the families were added: it groups families by maker, and the added ones had none. Each now has its maker, FR24's own where it has one, so Bombardier Global sits with Bombardier.
+  - **The monitor's makers are named properly**: "De Havilland", not "The"; "Boeing Vertol", not "BOEINGVERTOL"; ATR, BAe, Britten-Norman. A type whose usual name gives no maker is listed under the maker its other names give, else under "Other": no type is left out.
+- **Typing an OurAirports airport's address** (flightradar24.com/data/airports/egow) or an added type's: FR24's server sends the browser on to its airport list, and the extension is meant to see where from and make the page. It never could: it had no permission on FR24's own site, only on api.flightradar24.com. It now has it. This adds no new permission prompt, as its scripts already run there.
+- **Pacific tracks**: the monitor had none. The FAA's NOTAM Search refuses servers in data centres, and its old DINS page is gone. The monitor now asks the FAA's PilotWeb page of the Pacific tracks first (the FAA's own link to them), and NOTAM Search as its own page asks; why each failed is in its /status (wxmap.pac). When the monitor still has none, the browser asks the FAA itself, through the userscript, and keeps them half an hour.
+- **Heliports in logs**:
+  - **Legs already in a log**: they were made before the route engine knew OurAirports' heliports, so they now get them as the log is put together. M-SKTO's 5 Nov landing on Axis Business Park's helipad and its next take-off from it were both "-"; they read GB-1368 now (61 of its 181 legs have a heliport or field).
+  - **A helicopter last heard on or by one**: a helicopter lost low on a heliport (within 600 m, below 700 ft) landed there. One last heard low and slow heading for one within 3 km is shown landing there as a guess ("near"), as is one first heard low near one going away from it. G-WAPA, last heard at 300 ft 1.9 km short of Greenbank Helipad, landed there. Its ends that only passed a heliport stay as they were.
+
+### Fixed
+- **Recent flights** (`src/page.js`): `REGLIST_RE` takes `/api/v<n>/flights?` (with `fetchBy=reg`) beside `common/v<n>/flight/list.json`. `listRowsFor` gives the rows' airports as `{ id, type, code }` there (`listApCompact`), FR24's build resolving each by `byId`. An answer of FR24's in no shape known, with something in it, is left exactly as it is (`listUnknown`): the rows of an ordinary aircraft are never replaced. `airportObj` (`src/main/04-routes.js`) gives each airport its id.
+- **Airport lookup** (`mxPatchCore`): FR24's `byCodeOrId` lookup is a copy of its own object's methods (`{...p, ...t(p)}`), so its number branch called the unpatched `byId`. The wrapper now answers a number from the OurAirports and landing-site tables (`oaOf`) when FR24's own has none.
+- **Airport list** (`LIST_RE`, `patchList`): `/api/v<n>/airports` handled as `/mobile/airports/format/4` was. FR24's codes are noted from the list itself, and an OurAirports row of one of them is left out (`oaDupe`).
+- **FR24's app's directory** (`acMaker`, `acMakers`): `manufacturer` set on each added family, in `acMerge` and in `acMergeAdd` (1.3.6's kept additions had none). FR24's `AircraftFamiliesTable` and grid make each group's id from `manufacturer.toLowerCase()`.
+- **FR24's server's directory and production lists** (`acLegDir`, `acLegPage`, `acLegBoot`, `acLegTick`):
+  - The families are read from `#list-aircraft table.data-table`, the additions are put in as FR24's own rows (`tr[data-tl]`, the label's `rowspan` and the family total adjusted), and the same answer again changes nothing.
+  - A page of an added family or type is made from FR24's own type page (`tl.ac.ref` now has `legacy`; `acPageReq` makes a family's page from the type page too).
+  - Typed, the page FR24's server has none of is sent on to that page.
+  - The page is hidden until it is built, 5 s at most.
+- **FR24's padlocked first flights** (`src/main/03-data.js` `prodListTick`, `acAgesOf`): the columns are found by their headings ("REGISTRATION", "FIRST FLIGHT (AGE)"), and only a cell with no figure in it is filled. Registrations are asked of the monitor's new `/actype?type=&regs=` 200 at a time and kept.
+- **Monitor `actypes.cjs`**: `makerOf` drops a leading "The" and takes a word with a figure in it for a model. It keeps hyphens, joins "B & F", and spells known makers (`MAKER_NAMES`), with `TWO_WORD` adding DG, MD, Dyn, Raj, Fly, Max and NZ. A type's maker is taken from its other names, else "Other". The index version is now 2, so it is built again once. `page()` takes `regs`.
+- **Extension** (`build.mjs`): `host_permissions` include `https://www.flightradar24.com/*` and `https://flightradar24.com/*`, so `webRequest.onBeforeRedirect` sees FR24's server's redirects (the content scripts already ran there).
+- **Pacific tracks**:
+  - **Monitor** (`monitor/wxmap.cjs`): PilotWeb (`PILOTWEB_PAC`) first, then NOTAM Search with `Origin`, `Referer` and `X-Requested-With`, then DINS. Each source's failure is in `status().pac`.
+  - **Page** (`mxPacots`, `mxPacFaa`, `mxPacParse`, as the monitor's `pacParse`): PilotWeb, then `notams:KZAK|RJJJ|PAZA:<offset>` through the userscript (`onMxGet`: a fixed POST to NOTAM Search, only those three centres, 30 at a time, 600 at most). They are kept in `tl.pac` for 30 minutes, and none are asked again within 10.
+  - **Userscript** (`src/header.js`): `@connect pilotweb.nas.faa.gov` and `notams.aim.faa.gov`.
+- **Heliports in logs** (`src/engine.js`):
+  - **`heliportNear`**: within 3 km and 1,200 ft, under 100 kt coming in (140 going out), the track within 50° of the line to the pad, or within 1.5 km when the track is not known.
+  - **`endpoint`**: a helicopter's low end is at a heliport within 600 m or a strip within 1.2 km, below 700 ft, and its low start near one going away.
+  - **`legsFromPoints`**: a helicopter lost low heading for a heliport is landing there.
+  - **`chainLegs`**: a helicopter's unnamed ends are named on every log as it is put together. The track comes from the leg's path where the leg has none (60°, 2 km), and a guessed end is named only when its next flight is more than 10 minutes on. `chainLegs` now looks heliports up as well as airports and fields (`apOf`), since its one-stop step would have read a heliport end as no airport.
+
+### Tests
+- New `test/unit_137.cjs` (35 checks), added to the suite and CI. It covers:
+  - M-SKTO's and G-WAPA's real kept legs, and a leg lost on the helipad made anew
+  - the monitor's makers and the page by registrations
+  - recent flights at the new address, an unknown answer left alone, the old address as before
+  - FR24's lookup by id built as its build builds it, and its new airport list
+  - the app's directory makers
+  - FR24's server's directory and type page, built from the page FR24 sends (its own markup), kept and applied as the page loads, and its padlocked first flights
+  - the Pacific tracks through the browser, and the extension's permissions
+- Checked in Playwright on FR24's own pages: the directory and an A319 production list as FR24's server sent them, and its app's directory component from its current build.
+
 ## [1.3.6] - 2026-11-14
 
 ### In short

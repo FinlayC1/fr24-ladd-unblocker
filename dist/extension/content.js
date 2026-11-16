@@ -48,7 +48,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
 // ==UserScript==
 // @name         Flightradar24 LADD / N-A Unblocker (feed-level)
 // @namespace    tweeks.io
-// @version      1.3.6
+// @version      1.3.7
 // @description  Identifies every LADD / N/A / blocked military aircraft on Flightradar24 from public ADS-B, and injects callsign, registration, operator, age, country, MSN, squawk, vertical speed, GPS altitude, airspeeds, wind, photos, a reasoned origin/destination with a wind-corrected ETA (also for ordinary flights FR24 shows as N/A - military, private, GA, helicopters, with private landing sites; learned from 63 days of every aircraft worldwide, with live weather and closures), airport-board entries and a rebuilt 7-month flight log straight into FR24's own data - so it all renders like normal FR24 traffic.
 // @author       Finlay Clarke
 // @updateURL    https://raw.githubusercontent.com/FinlayC1/fr24-ladd-unblocker/main/dist/fr24-ladd-unblocker.user.js
@@ -70,6 +70,8 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
 // @connect      mesonet.agron.iastate.edu
 // @connect      api.open-meteo.com
 // @connect      nms.aim.faa.gov
+// @connect      pilotweb.nas.faa.gov
+// @connect      notams.aim.faa.gov
 // @connect      external-api.faa.gov
 // @connect      opensky-network.org
 // @connect      api.adsbdb.com
@@ -145,7 +147,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "1.3.6";
+    var BRIDGE_V = "1.3.7";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed but the
@@ -183,8 +185,11 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
         reqLog.push((new Date().toISOString().slice(11, 19)) + ' ' + how + ' ' + (method || 'GET') + ' ' + url.replace(/^https?:\/\//, '').replace(/([?&]token=)[^&#]*/gi, '$1…').slice(0, 200)); if (reqLog.length > 60) reqLog.shift(); } catch (e) { /* ignore */ }
     }
     // FR24's list of an aircraft's flights ("Recent <reg> flights"): asked of api.flightradar24.com/common/v1 before, of
-    // www.flightradar24.com/common/v2 now (with the session's token) - any FR24 host, any version, by registration
-    var REGLIST_RE = /(?:^|flightradar24\.com)\/common\/v\d+\/flight\/list\.json\?/i;
+    // www.flightradar24.com/common/v2 then (with the session's token) - any FR24 host, any version, by registration.
+    // (1.3.7) FR24's build of mid-November asks www.flightradar24.com/api/v2/flights - the same question (query, fetchBy,
+    // filterBy, limit, page, timestamp, token) from the same caller: its blocked and military aircraft's lists, filled
+    // here from the log, were empty again
+    var REGLIST_RE = /(?:^|flightradar24\.com)\/(?:common\/v\d+\/flight\/list\.json|api\/v\d+\/flights)\?/i;
     // (its answer's list: { result: { response: { data, item, page, aircraftInfo } } } - and, should the new version
     // answer without the wrapping, the same object at the top or under `response`)
     function listRespOf(j) {
@@ -194,6 +199,9 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       if ('data' in j && ('aircraftInfo' in j || 'item' in j || 'page' in j)) return j;
       return null;
     }
+    // (1.3.7) an answer with something in it, in no shape known - not an error's ({ message }, { error }, { errors }): FR24's
+    // own, left as it is
+    function listUnknown(j) { if (Array.isArray(j)) return j.length > 0; return !!j && typeof j === 'object' && Object.keys(j).length > 0 && !('error' in j) && !('errors' in j) && !('message' in j && Object.keys(j).length <= 3); }
     // (what an answer is made of - its keys, three deep, no values: readable in stats.lastList when it is in no shape known)
     function shapeOf(v, d) {
       if (Array.isArray(v)) return v.length ? [shapeOf(v[0], d)] : [];
@@ -1253,8 +1261,10 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
         try {
           var j = typeof raw === 'string' ? (raw ? JSON.parse(raw) : null) : raw, resp = listRespOf(j), h = hist.get(reg);
           stats.lastList = { reg: reg, at: Date.now(), via: 'xhr', url: listUrlOf(url), status: xhr.status, fr24: resp ? (Array.isArray(resp.data) ? resp.data.length : 0) : -1, ours: h && h.data ? h.data.length : 0, shape: resp ? null : shapeOf(j, 0) };
-          if (!(resp && Array.isArray(resp.data) && resp.data.length > 1) && h && h.data && h.data.length > 1) {
-            var o = resp ? j : listShell(reg, url); fillList(resp || o.result.response, h);
+          // (1.3.7: an answer of FR24's in a shape not known here left as it is - listUnknown)
+          if (!resp && xhr.status >= 200 && xhr.status < 300 && listUnknown(j)) stats.lastList.left = true;
+          else if (!(resp && Array.isArray(resp.data) && resp.data.length > 1) && h && h.data && h.data.length > 1) {
+            var o = resp ? j : listShell(reg, url); fillList(resp || o.result.response, h, url);
             out = typeof raw === 'string' ? JSON.stringify(o) : o;
           }
         } catch (e) { out = raw; }
@@ -2705,6 +2715,17 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     // types it lacks, the rest added after its own - most aircraft first. What was added is marked - a family of theirs tl,
     // a type of theirs tl, a family of FR24's given types tlAdd - so FR24's own list is always had back first (acStrip):
     // the page built with them as it loaded, then the monitor's newer list)
+    // (1.3.7) The maker each family is listed under. FR24's directory of mid-November groups its families by maker
+    // (family.manufacturer) and makes each group's id from it - one without one stopped the page being drawn again: the
+    // families added were in its data and never on the page. A product line of a maker's (the monitor's "Bombardier
+    // Global", "Cessna Citation", "Hawker and Beechjet") under that maker; any other family is named after its maker
+    // already; FR24's own way of writing a maker it has ("Bombardier", "Embraer") so they are in one group with its own
+    var AC_LINES = /^(GLOBAL|CHALLENGER|LEARJET|FALCON|CITATION|PHENOM|LEGACY|HAWKER|KINGAIR|BONANZA|TBM|HONDAJET)$/;
+    function acMakers(fams) { var m = new Map(); (fams || []).forEach(function (f) { var s = f && typeof f.manufacturer === 'string' ? f.manufacturer.trim() : ''; if (s) m.set(s.toLowerCase(), s); }); return m; }
+    function acMaker(f, makers) {
+      var name = String(f.name || f.code || '').trim(), mk = AC_LINES.test(String(f.code || '').toUpperCase()) ? name.split(' ')[0] : name;
+      return (makers && makers.get(mk.toLowerCase())) || mk || String(f.code || '?');
+    }
     function acStrip(fams) {
       return fams.filter(function (f) { return f && !f.tl; }).map(function (f) {
         if (!f.tlAdd) return f;
@@ -2712,7 +2733,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       });
     }
     function acMerge(fams, ours) {
-      var fr24 = acStrip(fams), have = new Set(), byCode = new Map(), slugs = new Set(), add = [];
+      var fr24 = acStrip(fams), have = new Set(), byCode = new Map(), slugs = new Set(), add = [], makers = acMakers(fr24);
       fr24.forEach(function (f) { byCode.set(String(f.code).toUpperCase(), f); slugs.add(String(f.slug).toLowerCase()); (f.types || []).forEach(function (t) { if (t && t.code) have.add(String(t.code).toUpperCase()); }); });
       var out = fr24.slice(), extra = [];
       ours.forEach(function (f) {
@@ -2725,25 +2746,25 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
           add.push({ code: mine.code, name: mine.name, slug: String(mine.slug), fr24: true, count: n, types: types });
         } else {
           var slug = slugs.has(f.slug) ? 'tl-' + f.slug : f.slug;
-          extra.push({ code: f.code, name: String(f.name || f.code), slug: slug, count: n, types: types, photo: null, tl: 1 });
+          extra.push({ code: f.code, name: String(f.name || f.code), slug: slug, count: n, types: types, photo: null, manufacturer: acMaker(f, makers), tl: 1 });
         }
       });
       // (theirs after FR24's own, most aircraft first - the additions kept in the same order, so the page built with them
       // as it loads is the one the monitor's list makes)
       extra.sort(function (a, b) { return b.count - a.count; });
-      extra.forEach(function (f) { add.push({ code: f.code, name: f.name, slug: f.slug, count: f.count, types: f.types }); });
+      extra.forEach(function (f) { add.push({ code: f.code, name: f.name, slug: f.slug, count: f.count, types: f.types, manufacturer: f.manufacturer }); });
       return { families: out.concat(extra), add: add };
     }
     // (the same from the additions kept from the last time - the page built with them as it loads, before the monitor
     // is asked: its families with those added, FR24's own as the page has them)
     function acMergeAdd(fams, add) {
-      var out = acStrip(fams), byCode = new Map(), extra = [];
+      var out = acStrip(fams), byCode = new Map(), extra = [], makers = acMakers(out);
       out.forEach(function (f, i) { byCode.set(String(f.code).toUpperCase(), i); });
       add.forEach(function (a) {
         if (!a || !Array.isArray(a.types) || !a.types.length) return;
         var types = a.types.map(function (t) { return Object.assign({}, t, { tl: 1 }); }), n = types.reduce(function (s, t) { return s + (+t.count || 0); }, 0);
         if (a.fr24) { var i = byCode.has(String(a.code).toUpperCase()) ? byCode.get(String(a.code).toUpperCase()) : -1; if (i < 0) return; var f = out[i]; out[i] = Object.assign({}, f, { count: (f.count || 0) + n, types: (f.types || []).concat(types), tlAdd: n }); }
-        else if (!byCode.has(String(a.code).toUpperCase())) extra.push({ code: a.code, name: a.name, slug: a.slug, count: n, types: types, photo: null, tl: 1 });
+        else if (!byCode.has(String(a.code).toUpperCase())) extra.push({ code: a.code, name: a.name, slug: a.slug, count: n, types: types, photo: null, manufacturer: acMaker(a, makers), tl: 1 });
       });
       return out.concat(extra);
     }
@@ -2766,7 +2787,8 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       else if (f.fr24) return null;   // (FR24's own family: its page is FR24's, its list of types given theirs - acTick)
       var own = '/data/aircraft/' + f.slug + (t ? '/' + t.slug : '');
       return { kind: t ? 'type' : 'family', fam: f, type: t, page: pg, path: own, key: (t ? 't.' + t.code : 'f.' + f.code) + '.' + pg,
-        refUrl: '/data/aircraft/' + (t ? ref.typeFam + '/' + ref.type : ref.fam) + '?tl-ac=' + encodeURIComponent(own) + (pg > 1 ? '&page=' + pg : '') };
+        // (1.3.7: on FR24's server's own pages a family's is made from its type page too - the one whose markup is known)
+        refUrl: '/data/aircraft/' + (t || ref.legacy ? ref.typeFam + '/' + ref.type : ref.fam) + '?tl-ac=' + encodeURIComponent(own) + (pg > 1 ? '&page=' + pg : '') };
     }
     // (the monitor's page of it: asked once, kept - the last 30 - so the way back, or a second look, is at once)
     function acPgKept(key) { try { var o = JSON.parse(lsGet(AC_PG) || '{}'); var e = o && Object.prototype.hasOwnProperty.call(o, key) ? o[key] : null; return e && Date.now() - e.at < 7 * 864e5 && Array.isArray(e.d.rows) ? e.d : null; } catch (e2) { return null; } }
@@ -2857,7 +2879,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     }
     function acTick() {
       if (!optOn('on') || !/^\/data\/aircraft(\/|$)/i.test(location.pathname)) return;
-      var gp = mxGp(), pg = gp && gp.$page, p = pg && pg.props; if (!p) return;
+      var gp = mxGp(), pg = gp && gp.$page, p = pg && pg.props; if (!p) { try { acLegTick(); } catch (e) { stats.errors++; stats.lastError = String(e); } return; }
       try {
         if (pg.component === 'Data/Aircraft' && Array.isArray(p.families)) {
           var base = acStrip(p.families);
@@ -2896,6 +2918,136 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       if (!optOn('on') || !d || typeof d.path !== 'string' || !/^\/data\/aircraft\//i.test(d.path)) return;
       var q = acPageReq(d.path); if (q) acNav(q.refUrl);
     }
+    // ---- (1.3.7) FR24's directory and production lists as its server makes them - not its app's pages: the ones it sends
+    // some browsers (/data/aircraft: a table of families, each with its types; /data/aircraft/a32s/a319: a type's aircraft
+    // all on one page). 1.3.5 and 1.3.6 changed only its app's pages - these never had a family added. The same families
+    // and types added, in FR24's own rows; their pages made from one of FR24's own type pages, as its app's are
+    var acTxt = function (el) { return String(el ? el.textContent : '').replace(/\s+/g, ' ').trim(); };
+    function hx(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+    var acLegSig = '', acLegHide = null;
+    function acLegTable() { return document.querySelector('#list-aircraft table.data-table'); }
+    // (its families from its rows - a family's first row its label, code and total; then a row a type)
+    function acLegFams(tb) {
+      var fams = [], f = null, num = function (el) { return parseInt(acTxt(el).replace(/\D/g, ''), 10) || 0; };
+      [].forEach.call(tb.querySelectorAll('tr'), function (tr) {
+        if (tr.getAttribute('data-tl')) return;
+        var lab = tr.querySelector('label.aircraft-family'), a = tr.querySelector('a[href*="/data/aircraft/"]'), n = tr.querySelector('td.text-right'), h = a ? a.getAttribute('href') || '' : '';
+        var mf = h.match(/\/data\/aircraft\/([a-z0-9-]+)\/?$/i), mt = h.match(/\/data\/aircraft\/([a-z0-9-]+)\/([a-z0-9-]+)\/?$/i);
+        if (lab && mf) { f = { code: acTxt(a), name: acTxt(lab), slug: mf[1].toLowerCase(), count: num(n), types: [], tr: tr }; fams.push(f); }
+        else if (f && mt) f.types.push({ code: acTxt(a).toUpperCase(), slug: mt[2].toLowerCase(), count: num(n), tr: tr });
+      });
+      return fams;
+    }
+    function acLegRows(fam, types, own) {
+      var h = '';
+      if (!own) h += '<tr class="border-top" data-tl="1"><td rowspan="' + (types.length + 1) + '"><label class="aircraft-family">' + hx(fam.name) + '</label></td><td> <strong><a href="/data/aircraft/' + hx(fam.slug) + '" title="Aircraft family code">' + hx(fam.code) + '</a></strong></td><td class="text-right"><strong><span title="Total number of aircraft for this family" class="cursor-help"> ' + (+fam.count || 0) + ' </span></strong></td></tr>';
+      types.forEach(function (t) { h += '<tr data-tl="1"><td> <a href="/data/aircraft/' + hx(fam.slug) + '/' + hx(t.slug) + '" title="' + hx(t.name || t.code) + '"> ' + hx(t.code) + ' </a></td><td class="text-right"><span title="Total number of ' + hx(t.code) + ' aircraft" class="cursor-help"> ' + (+t.count || 0) + ' </span></td></tr>'; });
+      if (!own) h += '<tr data-tl="1"><td colspan="3">&nbsp;</td></tr>';
+      return h;
+    }
+    // (the directory: theirs put in - the monitor's list when it is in (theirs), else the additions kept from the last time)
+    function acLegDir(theirs) {
+      var tb = acLegTable(); if (!tb) return false;
+      var own = acLegFams(tb); if (own.length < 5) return false;
+      // (FR24's type page to make theirs from: the family with the most aircraft, its first type - its own markup)
+      var rf = null; own.forEach(function (f) { if (f.types.length && f.slug && (!rf || f.count > rf.count)) rf = f; });
+      if (rf) { var ref = { fam: rf.slug, typeFam: rf.slug, type: rf.types[0].slug, legacy: 1 }, was = acRefGet(); if (!was || was.fam !== ref.fam || was.type !== ref.type || !was.legacy) lsSet(AC_REF, JSON.stringify(ref)); }
+      var add;
+      if (theirs) { add = acMerge(own.map(function (f) { return { code: f.code, name: f.name, slug: f.slug, count: f.count, types: f.types.map(function (t) { return { code: t.code, slug: t.slug, count: t.count }; }) }; }), theirs).add; acAdd = { at: Date.now(), fams: add }; acAddSaved = true; lsSet(AC_ADD, JSON.stringify(acAdd)); }
+      else { var k = acAddGet(); if (!k || !k.fams.length) return false; add = k.fams; }
+      var sig = add.map(function (a) { return a.code + ':' + a.types.length; }).join(',');
+      if (sig === acLegSig && tb.querySelector('tr[data-tl]')) return true;
+      // (put in afresh: what was put in before taken out, FR24's own as it sent them)
+      [].forEach.call(tb.querySelectorAll('tr[data-tl]'), function (tr) { tr.remove(); });
+      own.forEach(function (f) { var td = f.tr.querySelector('td[rowspan]'), n = f.tr.querySelector('td.text-right span'); if (td && td.getAttribute('data-tl-rs')) td.setAttribute('rowspan', td.getAttribute('data-tl-rs')); if (n && n.getAttribute('data-tl-n')) n.textContent = ' ' + n.getAttribute('data-tl-n') + ' '; });
+      var body = tb.tBodies[0] || tb;
+      add.filter(function (a) { return a.fr24; }).forEach(function (a) {
+        var f = null; own.forEach(function (x) { if (!f && x.code.toUpperCase() === String(a.code).toUpperCase()) f = x; }); if (!f || !a.types.length) return;
+        (f.types.length ? f.types[f.types.length - 1].tr : f.tr).insertAdjacentHTML('afterend', acLegRows(f, a.types, true));
+        var td = f.tr.querySelector('td[rowspan]'), n = f.tr.querySelector('td.text-right span');
+        if (td) { if (!td.getAttribute('data-tl-rs')) td.setAttribute('data-tl-rs', td.getAttribute('rowspan') || '1'); td.setAttribute('rowspan', String((+td.getAttribute('data-tl-rs') || 1) + a.types.length)); }
+        if (n) { if (!n.getAttribute('data-tl-n')) n.setAttribute('data-tl-n', String(f.count)); n.textContent = ' ' + (f.count + (+a.count || 0)) + ' '; }
+      });
+      // (theirs among FR24's in its order - by name, as its list is)
+      add.filter(function (a) { return !a.fr24 && a.types.length; }).sort(function (x, y) { return x.name < y.name ? -1 : x.name > y.name ? 1 : 0; }).forEach(function (a) {
+        var before = null; own.forEach(function (f) { if (!before && f.name > a.name) before = f; });
+        if (before) before.tr.insertAdjacentHTML('beforebegin', acLegRows(a, a.types, false)); else body.insertAdjacentHTML('beforeend', acLegRows(a, a.types, false));
+      });
+      acLegSig = sig; stats.acDir = (stats.acDir || 0) + 1;
+      return true;
+    }
+    // (a page of theirs, made from FR24's type page: its title, total, crumbs and table theirs - the monitor's aircraft of
+    // it, 50 a page - and the address theirs)
+    var acLegKey = '';
+    function acLegPage() {
+      var q = acPageReq(location.href); if (!q) return false;
+      var tb = document.querySelector('#cnt-list-aircraft table.data-table'); if (!tb || !tb.tBodies[0]) return false;
+      if (acLegKey === q.key) return true;
+      acLegKey = q.key;
+      try { if (location.pathname + location.search !== q.path + (q.page > 1 ? '?page=' + q.page : '')) history.replaceState(history.state, '', q.path + (q.page > 1 ? '?page=' + q.page : '')); } catch (e) { /* the address as it is */ }
+      var fam = q.fam, t = q.type, title = t ? (t.name || t.code) + ' (' + t.code + ') production list' : fam.name + ' production list';
+      document.title = title + ' - Flight tracker | Flightradar24';
+      var h1 = document.querySelector('#cnt-subpage-title h1'), h3 = document.querySelector('#cnt-subpage-title h3');
+      if (h1) h1.textContent = 'Production lists - ' + fam.name + (t ? ' - ' + t.code : '');
+      var crumbs = document.querySelectorAll('.breadcrumbs__list-item-name');
+      if (crumbs.length >= 2) {
+        var last = crumbs[crumbs.length - 1], prev = crumbs[crumbs.length - 2], pa = prev.closest('a');
+        if (t) { last.textContent = ' ' + t.code + ' '; prev.textContent = ' ' + fam.name + ' '; if (pa) { pa.setAttribute('href', '/data/aircraft/' + fam.slug); pa.setAttribute('itemid', '/data/aircraft/' + fam.slug); } }
+        else { last.textContent = ' ' + fam.name + ' '; var li = prev.closest('li'), sp = li && li.nextElementSibling; if (li) li.remove(); if (sp && sp.tagName === 'SPAN') sp.remove(); }
+      }
+      var head = tb.tHead && tb.tHead.rows[0];
+      if (head && !t && !head.querySelector('th[data-tl]')) { var ths = head.cells; if (ths.length > 2) ths[1].insertAdjacentHTML('afterend', '<th class="sortable w-80" data-tl="1">TYPE</th>'); }
+      var body = tb.tBodies[0];
+      body.innerHTML = '<tr data-tl="1"><td colspan="6" class="text-center">Loading the aircraft of ' + hx(t ? t.code : fam.name) + '…</td></tr>';
+      acAskPage(q).then(function (d) {
+        if (acLegKey !== q.key) return;
+        if (!d) { body.innerHTML = '<tr data-tl="1"><td colspan="6" class="text-center">The list is not available just now - the page loaded again will ask for it again.</td></tr>'; acLegShow(); return; }
+        var nowY = new Date().getUTCFullYear(), h = '';
+        d.rows.forEach(function (r) {
+          var reg = String(r[0] || ''), y = +r[2] || 0, age = y > 1900 ? Math.max(0, nowY - y) : null, tc = String(r[5] || (t && t.code) || '');
+          var ts = null; (fam.types || []).forEach(function (x) { if (!ts && x.code === tc) ts = x.slug; });
+          h += '<tr data-tl="1"><td> ' + hx(r[1] || '') + ' </td> <td><a class="regLinks" target="_self" href="/data/aircraft/' + hx(reg.toLowerCase()) + '"> ' + hx(reg) + ' </a></td>' +
+            (t ? '' : '<td>' + (ts ? '<a href="/data/aircraft/' + hx(fam.slug) + '/' + hx(ts) + '"> ' + hx(tc) + ' </a>' : hx(tc)) + '</td>') +
+            '<td> ' + hx(r[3] || '') + ' </td> <td>' + (y > 1900 ? y + ' (' + (age === 0 ? 'new' : age + (age === 1 ? ' year' : ' years')) + ')' : '') + '</td> <td class="text-center"><a href="https://www.jetphotos.com/registration/' + hx(encodeURIComponent(reg)) + '" target="_blank" rel="noopener"><i class="fa fa-camera"></i></a></td></tr>';
+        });
+        body.innerHTML = h || '<tr data-tl="1"><td colspan="6" class="text-center">None known.</td></tr>';
+        if (h3) h3.textContent = 'Total number of aircraft: ' + (d.total || 0);
+        // (its pages: 50 aircraft a page)
+        var nav = document.getElementById('tl-ac-pages'); if (nav) nav.remove();
+        if (d.lastPage > 1) {
+          var link = function (n, label) { return '<a href="' + hx(q.path + (n > 1 ? '?page=' + n : '')) + '" style="margin:0 6px">' + label + '</a>'; };
+          tb.insertAdjacentHTML('afterend', '<div id="tl-ac-pages" class="text-center" style="margin:12px 0">' + (d.page > 1 ? link(d.page - 1, '&laquo; Previous') : '') + '<span style="margin:0 6px">Page ' + d.page + ' of ' + d.lastPage + '</span>' + (d.page < d.lastPage ? link(d.page + 1, 'Next &raquo;') : '') + '</div>');
+        }
+        acLegShow();
+      });
+      return true;
+    }
+    function acLegShow() { if (acLegHide) { try { acLegHide.remove(); } catch (e) { /* gone */ } acLegHide = null; } }
+    // (as the page loads: hidden until it is built - 5 s at most; the address of one of theirs FR24's server has no page
+    // of: to the page it is made from)
+    function acLegBoot() {
+      if (!optOn('on') || !/^\/data\/aircraft(\/|$)/i.test(location.pathname)) return;
+      var q = acPageReq(location.href), dir = /^\/data\/aircraft\/?$/i.test(location.pathname);
+      if (!q && !(dir && acAddGet())) return;
+      try { acLegHide = document.createElement('style'); acLegHide.textContent = '#list-aircraft,#cnt-list-aircraft,#cnt-subpage-title,.breadcrumbs__list-item-name{visibility:hidden!important}'; (document.head || document.documentElement).appendChild(acLegHide); } catch (e) { acLegHide = null; }
+      oSetTimeout(acLegShow, 5000);
+      var go = function () {
+        // (the directory: built from what was kept, then shown - FR24's app's, or one with nothing to put in, at once)
+        if (dir) { acLegDir(null); acLegShow(); return; }
+        if (document.querySelector('#app[data-page]')) { acLegShow(); return; }   // (FR24's app's page: acFastPage)
+        if (!acLegPage()) { acLegShow(); if (!document.querySelector('#cnt-list-aircraft, #list-aircraft') && !new URL(location.href).searchParams.get('tl-ac')) { try { acNav(q.refUrl); } catch (e) { /* stays */ } } }
+      };
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', go, { once: true }); else go();
+    }
+    // (the directory, once the monitor's list is in: FR24's table with it - looked at with acTick)
+    function acLegTick() {
+      if (!/^\/data\/aircraft\/?$/i.test(location.pathname) || !acLegTable()) return;
+      var a = acAsked.get('idx');
+      if (!a) { acAsked.set('idx', { at: Date.now() }); post('acDir', { key: 'idx' }); return; }
+      if (!a.families) { if (Date.now() - a.at > 30000) acAsked.delete('idx'); return; }
+      if (acLegDir(a.families)) acLegShow();
+    }
+    try { acLegBoot(); } catch (e) { stats.errors++; stats.lastError = String(e); }
     // (a link to one of theirs - FR24's search on the page, its cards, a list's next page: to the page of FR24's it is made
     // from, so a load of it, in this tab or another, is made theirs as it loads)
     function acLinkPressed(ev) {
@@ -2988,8 +3140,11 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       if (kind === 'airlines') j.rows.forEach(function (r) { var l = r && LOGO_ADD[r.id]; if (l && !(r.metadata && r.metadata.images)) r.metadata = { images: { logotypes: { default: { file: { dimensions: l.dimensions, name: r.id + '.png', size: 0, source: l.source, type: 'PNG' } } } } }; });
       else {
         var have = {}; j.rows.forEach(function (r) { if (r) { have[r.id] = true; if (r.id < 9000000) fr24Refs.set(r.id, r); } });
+        // (1.3.7: FR24's list now has its airports with an ICAO code alone too - an OurAirports one of the same code is
+        // FR24's own, never added beside it)
+        noteFr24Codes(j.rows.filter(function (r) { return r && r.id < 9000000; }));
         siteRows.forEach(function (r) { if (r && r.id && !have[r.id]) j.rows.push(r); });
-        if (oaRows) oaRows.forEach(function (r) { if (Array.isArray(r) && r[0] >= 1e7 && !have[r[0]]) j.rows.push(oaFr24Row(r, refOf(r[5]))); });
+        if (oaRows) oaRows.forEach(function (r) { if (Array.isArray(r) && r[0] >= 1e7 && !have[r[0]] && !oaDupe(r)) j.rows.push(oaFr24Row(r, refOf(r[5]))); });
       }
       lsSet('tl.list.' + kind, listSig(kind));
       return true;
@@ -3075,7 +3230,9 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       try { st.airports = add.length ? oaBase.concat(add) : oaBase; } catch (e) { stats.errors++; stats.lastError = String(e); }
     }
     setInterval(function () { if (oaRows && oaBase) oaMap(); }, 1000);
-    var LIST_RE = /\/mobile\/(?:airlines\?format=2|airports\/format\/4)\b/;
+    // (1.3.7: FR24's build of mid-November asks for its airports at /api/v2/airports - the same list, { version, rows },
+    // the same rows; its ICAO-only airports kept in it now)
+    var LIST_RE = /\/mobile\/(?:airlines\?format=2|airports\/format\/4)\b|\/api\/v\d+\/airports(?:$|[?#])/;
     function listFetch(self, args, url) {
       var kind = /airlines/.test(url) ? 'airlines' : 'airports', a = [].slice.call(args);
       // (a list FR24 takes to be up to date, while what is added to it is not: the whole list asked for)
@@ -3856,8 +4013,25 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     }
     setInterval(routesTick, 300);
     // FR24's answer to its registration list, its flights the log's (the first, the flight on screen, hidden by FR24)
-    function fillList(resp, h) {
-      resp.data = h.data.slice(0, 1 + Math.max(4, Number((resp.item && resp.item.limit) || 5)));
+    // (1.3.7) FR24's new address (api/v2/flights) answers each row's airports as { id, type, code } - its build looks each
+    // up by its id in its table of airports (this script's own among them), the code shown where it has none: the rows
+    // given in that form there, as they were at the old one
+    function listApCompact(ap) {
+      if (!ap || typeof ap !== 'object') return null;
+      if (typeof ap.code === 'string' || (ap.code == null && 'type' in ap)) return ap;
+      var c = ap.code || {}, ia = c.iata || null, ic = c.icao || null;
+      return { id: fin(ap.id) ? ap.id : null, type: ia ? 'iata' : ic ? 'icao' : null, code: ia || ic || null };
+    }
+    function listRowsFor(url, rows) {
+      if (!/\/api\/v\d+\/flights\?/i.test(String(url || ''))) return rows;
+      return rows.map(function (r) {
+        if (!r || !r.airport) return r;
+        var o = Object.assign({}, r); o.airport = { origin: listApCompact(r.airport.origin), destination: listApCompact(r.airport.destination), real: listApCompact(r.airport.real) };
+        return o;
+      });
+    }
+    function fillList(resp, h, url) {
+      resp.data = listRowsFor(url, h.data.slice(0, 1 + Math.max(4, Number((resp.item && resp.item.limit) || 5))));
       resp.item = Object.assign({}, resp.item, { current: resp.data.length });
       resp.page = Object.assign({ current: 1 }, resp.page, { more: h.data.length > resp.data.length });
       stats.lists++;
@@ -3940,20 +4114,25 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
           // Most OurAirports codes are neither ("AE-0002", "00AL"): looked up by id from the list when FR24 finds none
           else if (typeof v.byCodeOrId === 'function' && typeof v.byId === 'function' && typeof v.byIATA === 'function' && typeof v.byICAO === 'function' && !v.byCodeOrId.__tl) {
             var ownLook = v.byCodeOrId, byIdF = v.byId;
-            var look = function (c) {
-              return Promise.resolve(ownLook.apply(this, arguments)).then(function (a) {
-                if (a || typeof c !== 'string' || !oaByCode.size) return a;
-                var r = oaByCode.get(c.toLowerCase()); if (!r) return a;
-                var keep = function (o) { oaStoreKeep(pinStore('airports'), o); oaShown = '~'; oaMapSoon(); return o; };
-                return Promise.resolve(byIdF.call(v, r[0])).then(function (b) { return keep(b || oaStoreRow(r)); }, function () { return keep(oaStoreRow(r)); });
-              });
-            };
-            look.__tl = true; v.byCodeOrId = look; mx.oaLookup = (mx.oaLookup || 0) + 1;
             // (1.3.4) and by id - FR24's aircraft panel and its playback look a flight's airports up so (scheduleInfo's
             // originId / destinationId): M-SKTO's landings at Axis Business Park's helipad were "-" - by IATA and by ICAO
             // code too; the landing places learned likewise. FR24's own answer first, always
             var ownById = v.byId, ownIata = v.byIATA, ownIcao = v.byICAO;
             var oaOf = function (n) { n = Number(n); if (n >= 1e7 && oaById && oaById.has(n)) return oaStoreRow(oaById.get(n)); if (n > 9000000 && n < 1e7) { for (var i = 0; i < siteRows.length; i++) if (siteRows[i] && siteRows[i].id === n && isFinite(siteRows[i].lat)) return storeForm(siteRows[i]); } return null; };
+            var keep = function (o) { if (o) { oaStoreKeep(pinStore('airports'), o); oaShown = '~'; oaMapSoon(); } return o; };
+            var look = function (c) {
+              return Promise.resolve(ownLook.apply(this, arguments)).then(function (a) {
+                if (a) return a;
+                // (1.3.7: by its id - FR24's build of mid-November opens a pin by its airport's id, not its code, and its
+                // own lookup by code or id asks its own table by id, not this one: every OurAirports pin was "Cannot
+                // load the airport data")
+                if (typeof c === 'number') return keep(oaOf(c)) || a;
+                if (typeof c !== 'string' || !oaByCode.size) return a;
+                var r = oaByCode.get(c.toLowerCase()); if (!r) return a;
+                return Promise.resolve(byIdF.call(v, r[0])).then(function (b) { return keep(b || oaStoreRow(r)); }, function () { return keep(oaStoreRow(r)); });
+              });
+            };
+            look.__tl = true; v.byCodeOrId = look; mx.oaLookup = (mx.oaLookup || 0) + 1;
             // (FR24's own object of it where its database has one - by its id - else one of that form)
             var byCode = function (c) { var r = typeof c === 'string' && oaByCode.size ? oaByCode.get(c.toLowerCase()) : null; if (!r) return null; return Promise.resolve(ownById.call(v, r[0])).then(function (b) { return b || oaStoreRow(r); }, function () { return oaStoreRow(r); }); };
             v.byId = function (id) { return Promise.resolve(ownById.apply(this, arguments)).then(function (a) { return a || oaOf(id) || a; }, function (e) { var o = oaOf(id); if (o) return o; throw e; }); };
@@ -4674,12 +4853,70 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     // Oakland, Fukuoka and Anchorage (wxmap.cjs pacParse) - in FR24's own answer or in the one made here; none: the NAT's
     // as they were
     var mxPac = { at: 0, o: null };
-    function mxPacots() {
-      if (mxPac.o && Date.now() - mxPac.at < 10 * 60000) return Promise.resolve(mxPac.o);
-      return mxMon('/wx/pacots', false).then(function (t) { var o = JSON.parse(t), now = Date.now(), out = {};
-        Object.keys(o || {}).forEach(function (k) { var x = o[k]; if (/^PAC-/.test(k) && x && x.p && Object.keys(x.p).length >= 2 && !(x.until && Date.parse(x.until) < now)) out[k] = x; });
-        mxPac = { at: Date.now(), o: out }; return out; }).catch(function () { return mxPac.o || {}; });
+    // (1.3.7) the tracks still in force, of a set as the monitor or the parser below gives them
+    function mxPacLive(o) {
+      var now = Date.now(), out = {};
+      Object.keys(o || {}).forEach(function (k) { var x = o[k]; if (/^PAC-/.test(k) && x && x.p && Object.keys(x.p).length >= 2 && !(x.until && Date.parse(x.until) < now)) out[k] = x; });
+      return out;
     }
+    function mxPacots() {
+      if (mxPac.o && Date.now() - mxPac.at < 10 * 60000 && Object.keys(mxPac.o).length) return Promise.resolve(mxPac.o);
+      return mxMon('/wx/pacots', false).then(function (t) { var out = mxPacLive(JSON.parse(t)); if (!Object.keys(out).length) throw new Error('none'); return out; })
+        // (1.3.7: the monitor with none - the FAA's NOTAM Search refuses servers in data centres: the monitor's never had
+        // them - the FAA's own messages asked from this browser through the userscript, kept half an hour)
+        .catch(function () { return mxPacFaa(); })
+        .then(function (out) { if (Object.keys(out).length) mxPac = { at: Date.now(), o: out }; return out; }, function () { return mxPac.o || {}; });
+    }
+    // (1.3.7) The day's Track Definition Messages (TDM) of Oakland, Fukuoka and Anchorage, read as the monitor reads them
+    // (monitor/wxmap.cjs pacParse): its track (letters westbound, numbers eastbound), its times (YYMMDDHHMM from / until),
+    // the positions of its route (40N150W, 4130N15000W) - the named fixes at its ends left out, as the NAT's are
+    function mxPacPoint(w) {
+      var c = String(w).match(/^(\d{2})(\d{2})?([NS])(\d{3})(\d{2})?([EW])$/); if (!c) return null;
+      var lat = (+c[1] + (+c[2] || 0) / 60) * (c[3] === 'S' ? -1 : 1), lon = (+c[4] + (+c[5] || 0) / 60) * (c[6] === 'W' ? -1 : 1);
+      return lat <= 90 && Math.abs(lon) <= 180 ? { lat: lat, lon: lon, name: w } : null;
+    }
+    function mxPacTime(s) { var m = String(s).match(/^(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})$/); return m ? Date.UTC(2000 + +m[1], +m[2] - 1, +m[3], +m[4], +m[5]) : NaN; }
+    function mxPacParse(text, out, nowMs) {
+      out = out || {}; nowMs = nowMs || Date.now();
+      var t = String(text || '').replace(/<[^>]+>/g, '\n').replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/\r/g, '');
+      var re = /TDM\s+TRK\s+([A-Z0-9]{1,2})\s+(\d{12})?([\s\S]*?)(?=TDM\s+TRK\s|$)/g, m;
+      while ((m = re.exec(t))) {
+        var id = m[1], body = m[3], times = body.match(/(\d{10})\s+(\d{10})/), from = times ? mxPacTime(times[1]) : NaN, until = times ? mxPacTime(times[2]) : NaN;
+        if (isFinite(until) && until < nowMs) continue;
+        var route = body.replace(/^[\s\S]*?\d{10}\s+\d{10}/, '').split(/\b(?:RTS|RMK)\//)[0], pts = {}, n = 0;
+        route.split(/[\s)]+/).forEach(function (w) { var p = mxPacPoint(w); if (p) pts[n++] = p; });
+        if (n < 2) continue;
+        for (var k = 1; k < n; k++) { while (pts[k].lon - pts[k - 1].lon > 180) pts[k].lon -= 360; while (pts[k].lon - pts[k - 1].lon < -180) pts[k].lon += 360; }
+        var key = 'PAC-' + id, prev = out[key];
+        if (prev && prev.at >= (from || 0)) continue;
+        out[key] = { n: id, d: /^\d+$/.test(id) ? 'EAST' : 'WEST', p: pts, from: isFinite(from) ? new Date(from).toISOString() : '', until: isFinite(until) ? new Date(until).toISOString() : '', at: from || 0, pac: 1 };
+      }
+      return out;
+    }
+    // (FAA PilotWeb's page of the Pacific tracks - the FAA's own link to them - else NOTAM Search's messages of the three
+    // oceanic centres; asked at most every 10 minutes when neither answers)
+    var mxPacAsked = 0;
+    function mxPacFaa() {
+      try { var kept = JSON.parse(lsGet('tl.pac') || 'null'); if (kept && Date.now() - kept.at < 30 * 60000) { var ko = mxPacLive(kept.o); if (Object.keys(ko).length) return Promise.resolve(ko); } } catch (e) { /* none kept */ }
+      if (Date.now() - mxPacAsked < 10 * 60000) return Promise.resolve({});
+      mxPacAsked = Date.now();
+      var keep = function (o) { o = mxPacLive(o); if (Object.keys(o).length) lsSet('tl.pac', JSON.stringify({ at: Date.now(), o: o })); return o; };
+      return mxGet(MX_PILOTWEB_PAC, false, 40000).then(function (t) { var o = mxPacParse(t); if (!Object.keys(o).length) throw new Error('no tracks'); return keep(o); })
+        .catch(function () {
+          var out = {}, locs = ['KZAK', 'RJJJ', 'PAZA'];
+          // (each centre's messages a page of 30 at a time, as many as it has - 600 at most)
+          var one = function (i, off) {
+            if (i >= locs.length) return Promise.resolve(out);
+            return mxGet('notams:' + locs[i] + ':' + off, false, 40000).then(function (t) {
+              var j = JSON.parse(t), total = Number(j && j.totalNotamCount) || 0;
+              (j && Array.isArray(j.notamList) ? j.notamList : []).forEach(function (x) { var s = String((x && (x.icaoMessage || x.traditionalMessage)) || ''); if (/TDM\s+TRK/.test(s)) mxPacParse(s, out); });
+              return off + 30 < Math.min(total, 600) ? one(i, off + 30) : one(i + 1, 0);
+            }, function () { return one(i + 1, 0); });
+          };
+          return one(0, 0).then(keep);
+        });
+    }
+    var MX_PILOTWEB_PAC = 'https://pilotweb.nas.faa.gov/PilotWeb/noticesAction.do?queryType=PACIFICTRACKS&formatType=ICAO';
     function mxTracksPac(r) {
       if (!r || !r.ok) return r;
       return Promise.all([r.clone().json().catch(function () { return null; }), mxPacots()]).then(function (x) {
@@ -6093,6 +6330,13 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
           return p.then(function (res) {
             return res.clone().json().then(function (j) { return j; }, function () { return null; }).then(function (j) {
               var resp = listRespOf(j);
+              // (1.3.7: an answer of FR24's, read, in a shape not known here - its new address may one day answer in a
+              // shape of its own: left as FR24 gave it, so no aircraft's list is ever made worse here. Its shape is in
+              // stats.lastList)
+              if (!resp && res.ok && listUnknown(j)) {
+                stats.lastList = { reg: reg, at: Date.now(), via: 'fetch', url: listUrlOf(url), status: res.status, fr24: -1, ours: null, shape: shapeOf(j, 0), left: true };
+                return res;
+              }
               // (FR24's own rows of flights that never took off have no flight id, and its dropdown keeps a row open by
               // that id: every such row opened and closed together, stuck open - ZZ504's two "Estimated dep" SCARB54s.
               // Each gets one of its own)
@@ -6109,7 +6353,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
                 stats.lastList.ours = h && h.data ? h.data.length : 0;
                 if (!h || !h.data || h.data.length < 2) return res;
                 var out = resp ? j : listShell(reg, url);
-                fillList(resp || out.result.response, h);
+                fillList(resp || out.result.response, h, url);
                 return jsonResponse(res.ok ? res : null, out);
               });
             });
@@ -6579,7 +6823,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       else if (d.__tweeksLadd === 'hello') post('ready', { oaWant: oaWant, stats: stats, feedReady: !!feedHeaders, hdr: feedHdrPublic(), v: BRIDGE_V });
     });
     window[NS] = { resolved: resolved, routes: routes, naRecs: naRecs, naRoutes: naRoutes, telem: telem, hist: hist, lastPos: lastPos, photoCache: photoCache, psCache: psCache, stats: stats, fetchPhotos: fetchPhotos, hello: function () { post('ready', { oaWant: oaWant, stats: stats, feedReady: !!feedHeaders, v: BRIDGE_V }); }, v: BRIDGE_V };
-    if (window.__tlTestHook) try { window.__tlTestHook({ csOf: csOf, patchTopFlights: patchTopFlights, onTopGot: onTopGot, topNames: topNames, fillFlightList: fillFlightList, routeRows: routeRows, liveDestFix: liveDestFix, hist: hist, preloaded: function () { return preloaded; }, parse: parse, photoFits: photoFits, makerOf: makerOf, patchFollow: patchFollow, patchFlightMsg: patchFlightMsg, pushFollow: pushFollow, followSt: function () { return followSt; }, setFollowSt: function (s) { followSt = s; }, shownPhotos: shownPhotos, photoCache: photoCache, FOLLOW: FOLLOW, DETAILS: DETAILS, fLen: fLen, fStr: fStr, fVar: fVar, patchFlight: patchFlight, patchLiveFeed: patchLiveFeed, fr24Named: fr24Named, psState: function () { return { q: psQ.length, busy: psBusy, last: psLast, blockedFor: Math.max(0, psBlockedUntil - Date.now()), pri: Array.from(psPri), jobs: photoJobs.size, head: psQ.slice(0, 3).map(function (j) { return j.hex; }) }; }, acceptPubTel: acceptPubTel, pubTelFor: pubTelFor, fillNativeCard: fillNativeCard, regsOfCallsign: regsOfCallsign, categoryOf: categoryOf, placeShort: placeShort, nativeFill: nativeFill, natInfo: natInfo, addArch: addArch, acceptBoardArch: acceptBoardArch, telem: telem, b64Encode: b64Encode, b64DecodeInto: b64DecodeInto, frameHeader: frameHeader, concat: concat, varintInt32: varintInt32, PLAYBACK: PLAYBACK, patchPlayback: patchPlayback, patchPlaybackRequest: patchPlaybackRequest, pbRoutes: pbRoutes, pbTelAt: pbTelAt, setPbTrace: function (t) { pbTrace = t; }, patchList: patchList, acceptSites: acceptSites, listSig: listSig, mergeRoutes: mergeRoutes, applyRoutes: applyRoutes, routesAdd: routesAdd, applyAirport: applyAirport, applyBoardPage: applyBoardPage, applyStats: applyStats, mergeFlights: mergeFlights, apData: apData, telAt: telAt, noteTelem: noteTelem, pbTraceOf: function () { return pbTrace; }, logoOf: logoOf, archDetail: archDetail, tsOf: tsOf, noteAirportJson: noteAirportJson, rwyOf: rwyOf, rwyPanel: rwyPanel, panelTick: panelTick, panelData: panelData, promoSlots: promoSlots, acceptAirportPanel: acceptAirportPanel, unlockRunways: unlockRunways, mvRows: mvRows, mvKept: mvKept, dayOf: dayOf, pbPanelTick: pbPanelTick, logoFix: logoFix, liveEntries: liveEntries, pbPos: pbPos, unlockFeed: unlockFeed, derivedVs: derivedVs, altHist: altHist, acceptAir: acceptAir, airCache: airCache, flushAir: flushAir, airWant: function () { return airWant; }, lastPos: lastPos, resolved: resolved, stats: stats, pbFind: pbFind, inBar: inBar, pbBlk: pbBlk, cardInfo: cardInfo, boardRowsSeen: boardRowsSeen, archById: archById, placeBoard: placeBoard, stopBoardHold: stopBoardHold, needBoardArch: needBoardArch, mx: mx, mxPatchCore: mxPatchCore, mxAuth: mxAuth, mxNatList: mxNatList, mxTrackOk: mxTrackOk, stripRestriction: stripRestriction, mxBmMerge: mxBmMerge, mxBmItem: mxBmItem, mxMonTile: mxMonTile, mxMonOr: mxMonOr, mxPinVer: mxPinVer, mxAirportHistory: mxAirportHistory, mxHistItems: mxHistItems, mxTrackFile: mxTrackFile, mxDataTick: mxDataTick, mxPbProps: mxPbProps, mxPbShow: mxPbShow, mxPbStandIn: mxPbStandIn, mxPbReadAt: mxPbReadAt, mxPbStand: mxPbStand, mxBoardRwy: mxBoardRwy, reqIdOf: reqIdOf, mxPbOpen: mxPbOpen, mxPbTake: mxPbTake, setNav: function (f) { mxNav = f; }, mxPbAway: mxPbAway, mxLegacyPbJson: mxLegacyPbJson, mxLegacyPb: mxLegacyPb, mxPbFlags: mxPbFlags, mxPbSynId: mxPbSynId, mxPbParam: mxPbParam, setPbWanted: function (v) { mxPbWanted = v; }, mxPlans: function () { return mxPlans; }, mxLiveRunways: mxLiveRunways, mxRwy: mxRwy, mxSetApply: mxSetApply, mxSetNote: mxSetNote, mxSetKept: mxSetKept, mxLastClicked: mxLastClicked, mxLcList: mxLcList, onLcClick: onLcClick, mxLcFill: mxLcFill, cardRwy: cardRwy, naEndsFill: naEndsFill, onEndsGot: onEndsGot, naEnds: naEnds, boardWant: boardWant, mxLegacyImages: mxLegacyImages, rwyInUse: rwyInUse, windOfText: windOfText, mxRwyAirport: mxRwyAirport, mxRwyByHex: mxRwyByHex, mxRowHex: mxRowHex, mxDataEnds: mxDataEnds, rwyUsePanel: rwyUsePanel, apWxPanel: apWxPanel, apWxData: apWxData, apWxOf: apWxOf, mxApWxAdd: mxApWxAdd, vsNoLock: vsNoLock, statsUsage: statsUsage, statsMoves: statsMoves, apDataOf: apDataOf, acceptOa: acceptOa, oaAirportJson: oaAirportJson, oaMap: oaMap, oaRefs: fr24Refs, setOaBase: function (b) { oaBase = b; oaShown = 'x'; }, oaStoreRow: oaStoreRow, setViewBox: function (b) { viewBox = b; }, oaView: oaView, sunTimes: sunTimes, tzText: tzText, panelCodeFields: panelCodeFields, oaLinkPressed: oaLinkPressed, oaRefHref: oaRefHref, acceptOaOne: acceptOaOne, oaLost: function () { return oaLost; }, acceptOaFrom: acceptOaFrom, oaCodeLine: oaCodeLine, noteFr24Codes: noteFr24Codes, oaDupe: oaDupe, dirTick: dirTick, acceptOaDir: acceptOaDir, searchMerge: searchMerge, apSearchMerge: apSearchMerge, oaMatchRows: oaMatchRows, oaOneGet: oaOneGet, oaFillTables: oaFillTables, refOf: refOf, fieldShortName: fieldShortName, closestMerge: closestMerge, heliText: heliText, oaFast: function () { return oaFast; }, setOaNav: function (f) { oaNav = f; }, oaWantNow: function () { return oaWant; }, oaApi: oaApi, oaPageReq: oaPageReq, oaPageOf: oaPageOf, acMerge: acMerge, acStrip: acStrip, acMergeAdd: acMergeAdd, acSig: acSig, acDirFastPage: acDirFastPage, dirFastPage: dirFastPage, dirApply: dirApply, dirKeyOf: dirKeyOf, veilOn: veilOn, veilOff: veilOff, mxBmOaWx: mxBmOaWx, apWxFr24: apWxFr24, bmCodesTick: bmCodesTick, oaIataMode: oaIataMode, acPageReq: acPageReq, acPageOf: acPageOf, acPaginator: acPaginator, acTick: acTick, acceptAcDir: acceptAcDir, acceptAcPage: acceptAcPage, acAskPage: acAskPage, acLinkPressed: acLinkPressed, acceptAcFrom: acceptAcFrom, setAcNav: function (f) { acNav = f; }, acAddGet: acAddGet, acRefGet: acRefGet, statsUnlock: statsUnlock, onApWxGot: onApWxGot, mxStat: function () { return mx; }, mxTracksPac: mxTracksPac, setPac: function (o) { mxPac = { at: Date.now(), o: o }; }, rwyUseData: rwyUseData, rwyUseWant: rwyUseWant, cardRwyFill: cardRwyFill, rwyUseKept: rwyUseKept, mxLcTick: mxLcTick, mxBmMax: mxBmMax, mxNatParse: mxNatParse, mxAirsigList: mxAirsigList, mxStations: mxStations, mxLightning: mxLightning, mxLx: mxLx, mxFetch: mxFetch, mxWxText: mxWxText, mxWxKind: mxWxKind, mxCsv: mxCsv, patchLiveFeedRequest: patchLiveFeedRequest, mxCats: mxCats, mxOp: mxOp, mxLevels: mxLevels, mxNearest: mxNearest, MX_ICE: MX_ICE, MX_TURB: MX_TURB, mxWafsUrl: mxWafsUrl, routes: routes, setCurFollow: function (id) { curFollowId = id; } }); } catch (e) { /* ignore */ }
+    if (window.__tlTestHook) try { window.__tlTestHook({ csOf: csOf, patchTopFlights: patchTopFlights, onTopGot: onTopGot, topNames: topNames, fillFlightList: fillFlightList, routeRows: routeRows, liveDestFix: liveDestFix, hist: hist, preloaded: function () { return preloaded; }, parse: parse, photoFits: photoFits, makerOf: makerOf, patchFollow: patchFollow, patchFlightMsg: patchFlightMsg, pushFollow: pushFollow, followSt: function () { return followSt; }, setFollowSt: function (s) { followSt = s; }, shownPhotos: shownPhotos, photoCache: photoCache, FOLLOW: FOLLOW, DETAILS: DETAILS, fLen: fLen, fStr: fStr, fVar: fVar, patchFlight: patchFlight, patchLiveFeed: patchLiveFeed, fr24Named: fr24Named, psState: function () { return { q: psQ.length, busy: psBusy, last: psLast, blockedFor: Math.max(0, psBlockedUntil - Date.now()), pri: Array.from(psPri), jobs: photoJobs.size, head: psQ.slice(0, 3).map(function (j) { return j.hex; }) }; }, acceptPubTel: acceptPubTel, pubTelFor: pubTelFor, fillNativeCard: fillNativeCard, regsOfCallsign: regsOfCallsign, categoryOf: categoryOf, placeShort: placeShort, nativeFill: nativeFill, natInfo: natInfo, addArch: addArch, acceptBoardArch: acceptBoardArch, telem: telem, b64Encode: b64Encode, b64DecodeInto: b64DecodeInto, frameHeader: frameHeader, concat: concat, varintInt32: varintInt32, PLAYBACK: PLAYBACK, patchPlayback: patchPlayback, patchPlaybackRequest: patchPlaybackRequest, pbRoutes: pbRoutes, pbTelAt: pbTelAt, setPbTrace: function (t) { pbTrace = t; }, patchList: patchList, acceptSites: acceptSites, listSig: listSig, mergeRoutes: mergeRoutes, applyRoutes: applyRoutes, routesAdd: routesAdd, applyAirport: applyAirport, applyBoardPage: applyBoardPage, applyStats: applyStats, mergeFlights: mergeFlights, apData: apData, telAt: telAt, noteTelem: noteTelem, pbTraceOf: function () { return pbTrace; }, logoOf: logoOf, archDetail: archDetail, tsOf: tsOf, noteAirportJson: noteAirportJson, rwyOf: rwyOf, rwyPanel: rwyPanel, panelTick: panelTick, panelData: panelData, promoSlots: promoSlots, acceptAirportPanel: acceptAirportPanel, unlockRunways: unlockRunways, mvRows: mvRows, mvKept: mvKept, dayOf: dayOf, pbPanelTick: pbPanelTick, logoFix: logoFix, liveEntries: liveEntries, pbPos: pbPos, unlockFeed: unlockFeed, derivedVs: derivedVs, altHist: altHist, acceptAir: acceptAir, airCache: airCache, flushAir: flushAir, airWant: function () { return airWant; }, lastPos: lastPos, resolved: resolved, stats: stats, pbFind: pbFind, inBar: inBar, pbBlk: pbBlk, cardInfo: cardInfo, boardRowsSeen: boardRowsSeen, archById: archById, placeBoard: placeBoard, stopBoardHold: stopBoardHold, needBoardArch: needBoardArch, mx: mx, mxPatchCore: mxPatchCore, mxAuth: mxAuth, mxNatList: mxNatList, mxTrackOk: mxTrackOk, stripRestriction: stripRestriction, mxBmMerge: mxBmMerge, mxBmItem: mxBmItem, mxMonTile: mxMonTile, mxMonOr: mxMonOr, mxPinVer: mxPinVer, mxAirportHistory: mxAirportHistory, mxHistItems: mxHistItems, mxTrackFile: mxTrackFile, mxDataTick: mxDataTick, mxPbProps: mxPbProps, mxPbShow: mxPbShow, mxPbStandIn: mxPbStandIn, mxPbReadAt: mxPbReadAt, mxPbStand: mxPbStand, mxBoardRwy: mxBoardRwy, reqIdOf: reqIdOf, mxPbOpen: mxPbOpen, mxPbTake: mxPbTake, setNav: function (f) { mxNav = f; }, mxPbAway: mxPbAway, mxLegacyPbJson: mxLegacyPbJson, mxLegacyPb: mxLegacyPb, mxPbFlags: mxPbFlags, mxPbSynId: mxPbSynId, mxPbParam: mxPbParam, setPbWanted: function (v) { mxPbWanted = v; }, mxPlans: function () { return mxPlans; }, mxLiveRunways: mxLiveRunways, mxRwy: mxRwy, mxSetApply: mxSetApply, mxSetNote: mxSetNote, mxSetKept: mxSetKept, mxLastClicked: mxLastClicked, mxLcList: mxLcList, onLcClick: onLcClick, mxLcFill: mxLcFill, cardRwy: cardRwy, naEndsFill: naEndsFill, onEndsGot: onEndsGot, naEnds: naEnds, boardWant: boardWant, mxLegacyImages: mxLegacyImages, rwyInUse: rwyInUse, windOfText: windOfText, mxRwyAirport: mxRwyAirport, mxRwyByHex: mxRwyByHex, mxRowHex: mxRowHex, mxDataEnds: mxDataEnds, rwyUsePanel: rwyUsePanel, apWxPanel: apWxPanel, apWxData: apWxData, apWxOf: apWxOf, mxApWxAdd: mxApWxAdd, vsNoLock: vsNoLock, statsUsage: statsUsage, statsMoves: statsMoves, apDataOf: apDataOf, acceptOa: acceptOa, oaAirportJson: oaAirportJson, oaMap: oaMap, oaRefs: fr24Refs, setOaBase: function (b) { oaBase = b; oaShown = 'x'; }, oaStoreRow: oaStoreRow, setViewBox: function (b) { viewBox = b; }, oaView: oaView, sunTimes: sunTimes, tzText: tzText, panelCodeFields: panelCodeFields, oaLinkPressed: oaLinkPressed, oaRefHref: oaRefHref, acceptOaOne: acceptOaOne, oaLost: function () { return oaLost; }, acceptOaFrom: acceptOaFrom, oaCodeLine: oaCodeLine, noteFr24Codes: noteFr24Codes, oaDupe: oaDupe, dirTick: dirTick, acceptOaDir: acceptOaDir, searchMerge: searchMerge, apSearchMerge: apSearchMerge, oaMatchRows: oaMatchRows, oaOneGet: oaOneGet, oaFillTables: oaFillTables, refOf: refOf, fieldShortName: fieldShortName, closestMerge: closestMerge, heliText: heliText, oaFast: function () { return oaFast; }, setOaNav: function (f) { oaNav = f; }, oaWantNow: function () { return oaWant; }, oaApi: oaApi, oaPageReq: oaPageReq, oaPageOf: oaPageOf, acMerge: acMerge, acStrip: acStrip, acMergeAdd: acMergeAdd, acSig: acSig, acDirFastPage: acDirFastPage, dirFastPage: dirFastPage, dirApply: dirApply, dirKeyOf: dirKeyOf, veilOn: veilOn, veilOff: veilOff, mxBmOaWx: mxBmOaWx, apWxFr24: apWxFr24, bmCodesTick: bmCodesTick, oaIataMode: oaIataMode, acPageReq: acPageReq, acPageOf: acPageOf, acPaginator: acPaginator, acTick: acTick, acceptAcDir: acceptAcDir, acceptAcPage: acceptAcPage, acAskPage: acAskPage, acLinkPressed: acLinkPressed, acceptAcFrom: acceptAcFrom, setAcNav: function (f) { acNav = f; }, acAddGet: acAddGet, acRefGet: acRefGet, statsUnlock: statsUnlock, onApWxGot: onApWxGot, mxStat: function () { return mx; }, mxTracksPac: mxTracksPac, mxPacParse: mxPacParse, mxPacots: mxPacots, acLegDir: acLegDir, acLegPage: acLegPage, acLegTick: acLegTick, acMaker: acMaker, acMakers: acMakers, patchListFor: patchList, listRowsFor: listRowsFor, listApCompact: listApCompact, listUnknown: listUnknown, setPac: function (o) { mxPac = { at: Date.now(), o: o }; }, rwyUseData: rwyUseData, rwyUseWant: rwyUseWant, cardRwyFill: cardRwyFill, rwyUseKept: rwyUseKept, mxLcTick: mxLcTick, mxBmMax: mxBmMax, mxNatParse: mxNatParse, mxAirsigList: mxAirsigList, mxStations: mxStations, mxLightning: mxLightning, mxLx: mxLx, mxFetch: mxFetch, mxWxText: mxWxText, mxWxKind: mxWxKind, mxCsv: mxCsv, patchLiveFeedRequest: patchLiveFeedRequest, mxCats: mxCats, mxOp: mxOp, mxLevels: mxLevels, mxNearest: mxNearest, MX_ICE: MX_ICE, MX_TURB: MX_TURB, mxWafsUrl: mxWafsUrl, routes: routes, setCurFollow: function (id) { curFollowId = id; } }); } catch (e) { /* ignore */ }
     post('ready', { oaWant: oaWant, stats: stats, feedReady: false, v: BRIDGE_V });
   }
 
@@ -6958,6 +7202,23 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
         const k = cellKey(a.lat, a.lon); (hgrid.get(k) || hgrid.set(k, []).get(k)).push(a);
       }
       return HL.length;
+    }
+    // (1.3.7) The heliport a helicopter was first or last heard low near, out of coverage the rest of the way: within 3 km and
+    // 1,200 ft of it, under 100 kt, going away from it (a take-off) or towards it (a landing) - its track on the line to the
+    // pad within 50°; within 1.5 km where its track is not known; any way within 600 m. G-WAPA, home at Greenbank Helipad
+    // (Maghull), first heard at 500 ft 1.2 km off it and last heard at 300 ft 1.9 km off it: no heliport in its log
+    // (tol: how far off its track may point - 50°, or 60° for a track worked out from a kept leg's path, a few minutes long;
+    // far: within how far of one with no track known - 1.5 km, 2 km for a kept leg's end. Faster than 100 kt coming in, 140
+    // going out - a helicopter gathers speed as it climbs away - is not near one)
+    function heliportNear(lat, lon, alt, trk, gs, away, tol, far) {
+      if (!HL.length || !fin(lat) || !fin(lon) || !fin(alt) || (fin(gs) && gs > (away ? 140 : 100))) return null;
+      let best = null;
+      nearbyIn(hgrid, lat, lon, 3, (a, d) => {
+        if (alt - a.alt > 1200) return;
+        if (d > 0.6) { if (!fin(trk)) { if (d > (far || 1.5)) return; } else if (angDiff(trk, away ? brg(a.lat, a.lon, lat, lon) : brg(lat, lon, a.lat, a.lon)) > (tol || 50)) return; }
+        if (!best || d < best.dist) best = { airport: a, dist: d };
+      });
+      return best;
     }
     // (the heliport a helicopter is on: within km - a pad is small, so the net is tight)
     function heliportAt(lat, lon, km, opts) {
@@ -7596,6 +7857,9 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
         if (!fa && lightCls && quiet && !last.gnd && last.alt != null && !(last.gs > (heli ? 90 : 110))) {
           const nf = fieldAt(last.lat, last.lon, heli ? 4 : 5, { alt: last.alt, maxAgl: 1200 });
           if (nf && (!near || nf.dist < near.dist)) near = nf;
+          // (1.3.7: a helicopter's, a heliport it was heading for - G-WAPA lost at 300 ft 1.9 km short of Greenbank Helipad)
+          const nh = heli ? heliportNear(last.lat, last.lon, last.alt, last.trk, last.gs, false) : null;
+          if (nh && (!near || nh.dist < near.dist)) near = nh;
         }
         if (fa) { cur.finalAp = fa; close(last, 'final'); } else if (near) { cur.lostAp = near.airport; close(last, 'lost-low'); } else close(last, 'open');
       }
@@ -7708,7 +7972,14 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       }
       if (p.alt == null) return null;
       // (first seen low by a strip FR24 does not list: lifted from there - G-DGFD out of Enstone)
-      if (heliT) { const low = airportAt(p.lat, p.lon, 3, { alt: p.alt, maxAgl: 1000 }) || (isStart ? heliportAt(p.lat, p.lon, 1, { alt: p.alt, maxAgl: 1000 }) || fieldAt(p.lat, p.lon, 3, { alt: p.alt, maxAgl: 1000 }) : null); return low ? { airport: low.airport, conf: 'low', dist: low.dist } : null; }
+      // (1.3.7: and last heard low on one - within 600 m of a heliport, 1.2 km of a strip, under 700 ft: down there. M-SKTO,
+      // lost at -375 ft on Axis Business Park's helipad, had no landing in its log; else first heard low near one, going away)
+      if (heliT) {
+        const low = airportAt(p.lat, p.lon, 3, { alt: p.alt, maxAgl: 1000 }) || (isStart ? heliportAt(p.lat, p.lon, 1, { alt: p.alt, maxAgl: 1000 }) || fieldAt(p.lat, p.lon, 3, { alt: p.alt, maxAgl: 1000 }) : heliportAt(p.lat, p.lon, 0.6, { alt: p.alt, maxAgl: 700 }) || fieldAt(p.lat, p.lon, 1.2, { alt: p.alt, maxAgl: 700 }));
+        if (low) return { airport: low.airport, conf: 'low', dist: low.dist };
+        const hn = isStart ? heliportNear(p.lat, p.lon, p.alt, p.trk, p.gs, true) : null;
+        return hn ? { airport: hn.airport, conf: 'near', dist: hn.dist } : null;
+      }
       const lowA = airportAt(p.lat, p.lon, 9, { alt: p.alt, maxAgl: 1800, mil: ctx && ctx.mil }), lowF = fieldAt(p.lat, p.lon, 3, { alt: p.alt, maxAgl: 1000 });
       const low = lowF && (!lowA || lowF.dist < lowA.dist) ? lowF : lowA;
       if (low) return { airport: low.airport, conf: 'low', dist: low.dist };
@@ -7816,18 +8087,54 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     // flights' own type, where they carry one)
     function chainLegs(legs, ctx) {
       const out = legs.slice().sort((a, b) => a.tStart - b.tStart);
+      // (an end's place: an airport, a field - or, 1.3.7, a heliport, which only a helicopter's ends are)
+      const apOf = id => byId.get(id) || HB.get(id);
       if (!ctx || !ctx.cls) { const ty = (out.find(l => l && l.type) || {}).type; ctx = ty ? { cls: classify({ type: ty }), type: ty } : null; }
+      // (1.3.7) A helicopter's ends left unnamed when its legs were made - before the engine knew OurAirports' heliports (1.3.6),
+      // or since, as it now names them: named here, as every log is put together, so the logs kept from before have them too.
+      // Down, or lost low, on one (summarizeLeg's endpoint): there; lost low and slow heading for one, with its next flight
+      // over ten minutes on: there, a guess (near); first heard low near one going away from it: from there, a guess. M-SKTO
+      // lost at -375 ft on Axis Business Park's helipad on 5 Nov, its next take-off from it - both "-" in its log
+      if (ctx && (ctx.cls === 'heli' || ctx.grp === 'heli') && HL.length) {
+        const ref = (n, conf) => ({ id: n.airport.id, code: n.airport.code, conf });
+        // (a kept leg's track at an end, where it has none: from its path - [minutes from its start, lat, lon, alt] - the point
+        // nearest that end within ten minutes of it)
+        const pathTrk = (l, atEnd) => {
+          const p = Array.isArray(l.path) ? l.path.filter(q => Array.isArray(q) && fin(q[0]) && fin(q[1]) && fin(q[2])) : [];
+          if (!p.length) return null;
+          const q = atEnd ? p[p.length - 1] : p[0], tq = l.tStart + q[0] * 60;
+          if (atEnd ? !(l.tEnd - tq >= 30 && l.tEnd - tq <= 600) : !(tq - l.tStart >= 30 && tq - l.tStart <= 600)) return null;
+          return atEnd ? brg(q[1], q[2], l.endLat, l.endLon) : brg(l.startLat, l.startLon, q[1], q[2]);
+        };
+        const trkOf = (l, atEnd) => { const t = atEnd ? l.endTrk : l.startTrk; return fin(t) ? { t, tol: 50 } : { t: pathTrk(l, atEnd), tol: 60 }; };
+        for (let i = 0; i < out.length; i++) {
+          const l = out[i]; if (!l) continue;
+          let to = null, from = null;
+          if (!l.to && fin(l.endLat) && fin(l.endLon)) {
+            const downs = l.how === 'ground' || l.how === 'touch', low = fin(l.endAlt) && l.endAlt < 700 && l.ended && /^(gap-low|gap-land|final|lost-low)$/.test(l.how || '');
+            const n = downs || low ? heliAirportAt(l.endLat, l.endLon) || (low ? heliportAt(l.endLat, l.endLon, 0.6, { alt: l.endAlt, maxAgl: 700 }) : null) : null;
+            if (n) to = ref(n, downs ? 'ground' : 'low');
+            else if (!downs && fin(l.endAlt) && /^(gap-low|lost-low|open)$/.test(l.how || '') && (i + 1 < out.length ? out[i + 1].tStart - l.tEnd > 600 : l.ended)) { const k = trkOf(l, true), h = heliportNear(l.endLat, l.endLon, l.endAlt, k.t, l.endGs, false, k.tol, 2); if (h) to = ref(h, 'near'); }
+          }
+          if (!l.from && fin(l.startLat) && fin(l.startLon) && (i === 0 || l.tStart - out[i - 1].tEnd > 600)) {
+            const n = l.startedOnGround || (fin(l.startAlt) && l.startAlt < 700) ? heliAirportAt(l.startLat, l.startLon) || (fin(l.startAlt) ? heliportAt(l.startLat, l.startLon, 1, { alt: l.startAlt, maxAgl: 1000 }) : null) : null;
+            if (n) from = ref(n, l.startedOnGround ? 'ground' : 'low');
+            else if (!l.startedOnGround && fin(l.startAlt)) { const k = trkOf(l, false), h = heliportNear(l.startLat, l.startLon, l.startAlt, k.t, l.startGs, true, k.tol, 2); if (h) from = ref(h, 'near'); }
+          }
+          if (to || from) out[i] = Object.assign({}, l, to ? { to } : null, from ? { from } : null);
+        }
+      }
       const reach = (lat, lon, a, h) => !a || !fin(lat) || dist(lat, lon, a.lat, a.lon) <= Math.max(120, Math.abs(h) * 950);
       for (let i = 0; i < out.length - 1; i++) {
         const a = out[i], b = out[i + 1], gapH = (b.tStart - a.tEnd) / 3600;
         if (!(gapH >= -0.05) || gapH > 72) continue;
-        if (!a.to && b.from && (a.ended || gapH > 0.5)) { const ap = byId.get(b.from.id); if (reach(a.endLat, a.endLon, ap, gapH + 1)) { a.to = Object.assign({}, b.from, { conf: 'chain' }); if (!a.tOn) { const e = fieldTimeOfSum(a, ap, false); if (e && e.t < b.tStart) { a.tOn = e.t; a.tOnEst = e.est; } } } }
+        if (!a.to && b.from && (a.ended || gapH > 0.5)) { const ap = apOf(b.from.id); if (reach(a.endLat, a.endLon, ap, gapH + 1)) { a.to = Object.assign({}, b.from, { conf: 'chain' }); if (!a.tOn) { const e = fieldTimeOfSum(a, ap, false); if (e && e.t < b.tStart) { a.tOn = e.t; a.tOnEst = e.est; } } } }
         // (and over a guess from the climb alone, when the flight before it was seen landing: D-CLUB, down at Toulon at 12:59,
         // first heard an hour later climbing through 5,000 ft, was "from Quarante" in its log)
         // (a departure only guessed - near a field, or low over one within 25 km of where it had just landed - is that landing)
-        const nearTo = () => { const x = byId.get(a.to.id), y = byId.get(b.from.id); return !!x && !!y && dist(x.lat, x.lon, y.lat, y.lon) <= 25; };
+        const nearTo = () => { const x = apOf(a.to.id), y = apOf(b.from.id); return !!x && !!y && dist(x.lat, x.lon, y.lat, y.lon) <= 25; };
         const weakFrom = !!b.from && !b.startedOnGround && a.ended && !!a.to && ['ground', 'low'].includes(a.to.conf) && gapH < 8 && a.to.id !== b.from.id && (b.from.conf === 'near' || (b.from.conf === 'low' && gapH < 12 && nearTo()));
-        if ((!b.from || weakFrom) && a.to) { const ap = byId.get(a.to.id); if (reach(b.startLat, b.startLon, ap, gapH + 1)) { b.from = Object.assign({}, a.to, { conf: 'chain' }); if (!b.tOff) { const e = fieldTimeOfSum(b, ap, true); if (e && e.t > a.tEnd) { b.tOff = e.t; b.tOffEst = e.est; } } } }
+        if ((!b.from || weakFrom) && a.to) { const ap = apOf(a.to.id); if (reach(b.startLat, b.startLon, ap, gapH + 1)) { b.from = Object.assign({}, a.to, { conf: 'chain' }); if (!b.tOff) { const e = fieldTimeOfSum(b, ap, true); if (e && e.t > a.tEnd) { b.tOff = e.t; b.tOffEst = e.est; } } } }
         // (Not done: a landing guessed between a piece lost coming down at a day's end and the next day's first heard climbing -
         // landingInGap across the night. Tried in 1.0.1 on 3,143 real stops of business jets and airliners with both ends cut
         // out of coverage: right 25% of the time, a neighbouring field 43% (Teterboro read as Newark, Zurich as a strip beside
@@ -7846,8 +8153,8 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
         if (guessed(a.to) && guessed(b.from) && (a.to || b.from) && !b.startedOnGround && gapH >= 0.15 && gapH < 8 && fin(a.endAlt) && a.endAlt < 15000 && fin(b.startAlt) && b.startAlt < 22000 && fin(a.endLat) && fin(b.startLat)) {
           const pe = { lat: a.endLat, lon: a.endLon, alt: a.endAlt, trk: a.endTrk }, ps = { lat: b.startLat, lon: b.startLon, alt: b.startAlt, trk: b.startTrk };
           const FLOOR = -3.5, orFloor = v => v == null ? FLOOR : Math.max(FLOOR, v);
-          const sepA = a.to ? orFloor(descentFit(pe, byId.get(a.to.id), ctx)) : FLOOR, sepB = b.from ? orFloor(climbFit(ps, byId.get(b.from.id), ctx)) : FLOOR;
-          const A = a.to && byId.get(a.to.id), sbA = A ? climbFit(ps, A, ctx) : null;
+          const sepA = a.to ? orFloor(descentFit(pe, apOf(a.to.id), ctx)) : FLOOR, sepB = b.from ? orFloor(climbFit(ps, apOf(b.from.id), ctx)) : FLOOR;
+          const A = a.to && apOf(a.to.id), sbA = A ? climbFit(ps, A, ctx) : null;
           let best = null;
           if (A && sbA != null && sbA >= sepB - 3) { if (!b.from || b.from.id !== A.id) best = { ap: A, on: null, off: fieldTimeOfSum(b, A, true) }; }
           else {
@@ -7870,11 +8177,11 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
         // (1.0.2) and a landing guessed from the descent before a take-off seen from a field it could have been coming down
         // to: that field (the take-off seen - on its runway, or low over it - is the stronger word)
         if (a.to && a.to.conf === 'near' && b.from && b.from.id !== a.to.id && (b.startedOnGround || ['ground', 'low'].includes(b.from.conf)) && gapH >= 0.15 && gapH < 8) {
-          const ap = byId.get(b.from.id), sa = ap && fin(a.endAlt) ? descentFit({ lat: a.endLat, lon: a.endLon, alt: a.endAlt, trk: a.endTrk }, ap, null) : null;
+          const ap = apOf(b.from.id), sa = ap && fin(a.endAlt) ? descentFit({ lat: a.endLat, lon: a.endLon, alt: a.endAlt, trk: a.endTrk }, ap, null) : null;
           if (sa != null && sa > -3.5) { a.to = Object.assign({}, b.from, { conf: 'chain' }); if (!a.tOn || a.tOnEst) { const e = fieldTimeOfSum(a, ap, false); if (e && e.t < b.tStart) { a.tOn = e.t; a.tOnEst = e.est; } } }
         }
         // (an end known but its time not: the way left from the last point heard)
-        if (a.to && !a.tOn) { const ap = byId.get(a.to.id), e = ap && fieldTimeOfSum(a, ap, false); if (e && e.t < b.tStart) { a.tOn = e.t; a.tOnEst = e.est; } }
+        if (a.to && !a.tOn) { const ap = apOf(a.to.id), e = ap && fieldTimeOfSum(a, ap, false); if (e && e.t < b.tStart) { a.tOn = e.t; a.tOnEst = e.est; } }
       }
       return out;
     }
@@ -9346,7 +9653,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '1.3.6';
+  const VERSION = '1.3.7';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
@@ -13394,6 +13701,60 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     const key = String(d && d.key || '').slice(0, 40);
     loadAcTypes().then(ok => postToPage('acDirGot', { key, families: ok && acx.idx ? acx.idx.families : null, at: ok && acx.idx ? acx.idx.at : 0 }));
   }
+  // (1.3.7) the serial numbers and years built of the registrations on a page of FR24's own production list - padlocked
+  // there for a free account - by type: { REG: [msn, year] }
+  const acAgeOf = new Map();   // REG -> [msn, year] (asked: [] when the monitor has none)
+  async function acAgesOf(byType) {
+    const out = {};
+    for (const [type, regs] of Object.entries(byType || {})) {
+      if (!/^[A-Z0-9]{2,4}$/.test(type)) continue;
+      const want = [...new Set((regs || []).map(r => String(r).toUpperCase()).filter(r => /^[A-Z0-9-]{2,10}$/.test(r)))].slice(0, 3000), ask = want.filter(r => !acAgeOf.has(r));
+      // (200 at a time, as the monitor takes them: FR24's list of a type is all on one page - 1,110 A319s)
+      for (let i = 0; i < ask.length; i += 200) {
+        const part = ask.slice(i, i + 200), j = await monGet('/actype?type=' + type + '&regs=' + encodeURIComponent(part.join(',')), { timeout: 15000 }).catch(() => null);
+        if (!j || !Array.isArray(j.rows)) break;
+        part.forEach(r => acAgeOf.set(r, [])); for (const r of j.rows) acAgeOf.set(String(r[0]).toUpperCase(), [String(r[1] || ''), +r[2] || 0]);
+      }
+      for (const r of want) { const v = acAgeOf.get(r); if (v && v.length) out[r] = v; }
+    }
+    if (acAgeOf.size > 5000) acAgeOf.clear();
+    return out;
+  }
+  // (1.3.7) FR24's production list of a type as its server makes it - its own page, not its app's (/data/aircraft/a32s/a319,
+  // "FIRST FLIGHT (AGE)" padlocked for a free account): each padlocked or empty cell of that column filled - the year the
+  // aircraft was built and its age, from the monitor's aircraft database. Its columns found by their headings, so the rest
+  // of FR24's page is as it made it
+  let prodWait = 0;
+  async function prodListTick() {
+    if (prodWait > now() || !opt.on) return;
+    const m = location.pathname.match(/^\/data\/aircraft\/([a-z0-9-]{1,60})\/([a-z0-9-]{1,10})\/?$/i); if (!m) return;
+    if (document.querySelector('#app[data-page]')) return;   // (FR24's app's own page of it: not this one)
+    const type = m[2].toUpperCase(); if (!/^[A-Z0-9]{2,4}$/.test(type)) return;
+    const cells = [];
+    for (const tb of document.querySelectorAll('table')) {
+      const hr = tb.querySelector('thead tr') || tb.querySelector('tr'); if (!hr) continue;
+      const hs = [...hr.children].map(c => clean(c.textContent).toUpperCase());
+      const iR = hs.findIndex(h => /^REG/.test(h)), iF = hs.findIndex(h => /FIRST FLIGHT|\bAGE\b/.test(h));
+      if (iR < 0 || iF < 0) continue;
+      for (const tr of tb.querySelectorAll('tr')) {
+        if (tr === hr || tr.getAttribute('data-tl')) continue;   // (and none of the page part's own rows: theirs)
+        const td = tr.children; if (td.length <= Math.max(iR, iF)) continue;
+        const reg = clean(td[iR].textContent).toUpperCase(), fc = td[iF];
+        if (!/^[A-Z0-9-]{2,10}$/.test(reg) || fc.dataset.tlAge || /\d/.test(fc.textContent)) continue;
+        cells.push({ reg, fc });
+      }
+    }
+    if (!cells.length) return;
+    prodWait = now() + 60000;   // (one question at a time; none for a minute after one the monitor did not answer)
+    const rows = await acAgesOf({ [type]: cells.map(c => c.reg) }).catch(() => null); if (!rows) return;
+    prodWait = 0;
+    const nowY = new Date().getUTCFullYear();
+    for (const c of cells) {
+      const v = rows[c.reg]; if (!v || !(v[1] > 1900)) continue;
+      const age = Math.max(0, nowY - v[1]);
+      c.fc.textContent = v[1] + ' (' + (age === 0 ? 'new' : age + (age === 1 ? ' year' : ' years')) + ')'; c.fc.dataset.tlAge = '1'; c.fc.title = 'Year built, from public aircraft registers';
+    }
+  }
   // (a page of one: type GLEX or family GLOBAL, page n - the monitor's answer as it is, or none)
   function onAcPage(d) {
     const key = String(d && d.key || '').slice(0, 80), kind = d && d.kind === 'family' ? 'family' : 'type', code = String(d && d.code || '').toUpperCase(), pg = Math.max(1, Math.min(5000, Math.floor(+(d && d.page)) || 1));
@@ -14647,7 +15008,9 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     if (!a) return null;
     const tz = a.timezone || { name: 'UTC', offset: a.tz || 0, abbr: 'UTC', abbrName: null, isDst: false };
     const iso = (() => { const c = HEX_BLOCKS.find(b => b[2] === a.country); return c ? c[3] : ''; })();
-    return { name: a.name, code: { iata: a.iata || null, icao: a.icao || null }, position: { latitude: a.lat, longitude: a.lon, country: { name: a.country, code: iso, id: a.countryId || countryIdByName.get(String(a.country).toUpperCase()) || 0 }, region: { city: a.city } }, timezone: tz, visible: true };
+    // (1.3.7: its id too - FR24's build of mid-November has a row's airports as { id, type, code } and looks each up by
+    // its id; the page part gives its rows in that form when FR24 asks so - listRowsFor)
+    return { id: Number.isFinite(a.id) ? a.id : null, name: a.name, code: { iata: a.iata || null, icao: a.icao || null }, position: { latitude: a.lat, longitude: a.lon, country: { name: a.country, code: iso, id: a.countryId || countryIdByName.get(String(a.country).toUpperCase()) || 0 }, region: { city: a.city } }, timezone: tz, visible: true };
   }
   function flightListEntry(l, rec, i) {
     const from = l.from ? apById(l.from.id) : null, to = l.to ? apById(l.to.id) : null;
@@ -17646,7 +18009,8 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // The page part draws FR24's weather layers, current weather, AIRMETs/SIGMETs and oceanic tracks from free sources it
   // cannot reach itself (other sites; pictures): each asked for here - only from those sources, six at a time per site -
   // and handed back as it came (a picture as its bytes).
-  const MX_SOURCES = /^https:\/\/(view\.eumetsat\.int|gibs\.earthdata\.nasa\.gov|api\.rainviewer\.com|tilecache\.rainviewer\.com|mesonet\.agron\.iastate\.edu|api\.open-meteo\.com|aviationweather\.gov|nms\.aim\.faa\.gov)\//;
+  // (1.3.7: and FAA PilotWeb's page of the Pacific tracks - the FAA's own link to them)
+  const MX_SOURCES = /^https:\/\/(view\.eumetsat\.int|gibs\.earthdata\.nasa\.gov|api\.rainviewer\.com|tilecache\.rainviewer\.com|mesonet\.agron\.iastate\.edu|api\.open-meteo\.com|aviationweather\.gov|nms\.aim\.faa\.gov|pilotweb\.nas\.faa\.gov\/PilotWeb\/noticesAction\.do\?queryType=PACIFICTRACKS)/;
   const mxLanes = new Map();
   // (1.2.1: the monitor, where every layer is built ready - "mon:/wx/..." asked of the monitor in use, with its secret if
   // one is set; a dozen at a time, one server answering from what it keeps)
@@ -17665,10 +18029,21 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       const c = monCheck(); if (c) c.then(go, go); else go();
       return;
     }
+    // (1.3.7) the FAA's NOTAM Search, its messages of one of the three Pacific oceanic centres - the day's Pacific tracks
+    // where the monitor has none (NOTAM Search refuses servers in data centres; this browser it answers). Only that
+    // question, of only those three: the page names the centre and nothing else
+    // (a page of 30 at a time, as the monitor asks: its offset a multiple of 30, 600 at most)
+    const nm = url.match(/^notams:(KZAK|RJJJ|PAZA)(?::(\d{1,3}))?$/), off = nm ? Number(nm[2] || 0) : 0;
+    if (nm) {
+      if (!gm || off % 30 || off > 600) { postToPage('mxGot', { rid, status: 0 }); return; }
+      mxSend(gm, rid, 'https://notams.aim.faa.gov/notamSearch/search', 'notams.aim.faa.gov', false, { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json, text/plain, */*', 'X-Requested-With': 'XMLHttpRequest' },
+        'searchType=0&designatorsForLocation=' + nm[1] + '&offset=' + off + '&notamsOnly=false');
+      return;
+    }
     if (!MX_SOURCES.test(url) || !gm) { postToPage('mxGot', { rid, status: 0 }); return; }
     mxSend(gm, rid, url, new URL(url).host, d.bin, null);
   }
-  function mxSend(gm, rid, url, host, bin, extra) {
+  function mxSend(gm, rid, url, host, bin, extra, body) {
     const d = { bin };
     if (!mxLanes.has(host)) mxLanes.set(host, { busy: 0, q: [] });
     mxLanes.get(host).q.push(done => {
@@ -17677,7 +18052,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       // (a request the userscript manager drops without a word: given up after half a minute, so its lane is free again)
       const guard = setTimeout(() => end(0), 30000);
       try {
-        gm({ method: 'GET', url, timeout: 25000, responseType: d.bin ? 'arraybuffer' : 'text', headers: Object.assign({ Accept: d.bin ? 'image/png,image/*;q=0.9,*/*;q=0.5' : 'application/json,text/plain;q=0.9,*/*;q=0.5' }, extra || {}),
+        gm({ method: body != null ? 'POST' : 'GET', url, data: body != null ? body : undefined, timeout: 25000, responseType: d.bin ? 'arraybuffer' : 'text', headers: Object.assign({ Accept: d.bin ? 'image/png,image/*;q=0.9,*/*;q=0.5' : 'application/json,text/plain;q=0.9,*/*;q=0.5' }, extra || {}),
           onload: r => end(Number(r.status) || 0, d.bin ? r.response : (r.responseText != null ? r.responseText : r.response)),
           onerror: () => end(0), ontimeout: () => end(0), onabort: () => end(0) });
       } catch (e) { end(0); }
@@ -18725,7 +19100,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // (the version whose "what's new" was put away, and the one whose dot on the button the window was opened for)
   const UB_SEEN_KEY = 'tweeks.fr24.ladd.seenver', UB_DOT_KEY = 'tweeks.fr24.ladd.dotver';
   // (the newest CHANGELOG section's headlines, written in by build.mjs: { v, items })
-  const UB_WHATS_NEW = {"v":"1.3.6","items":["**FR24's aircraft directory** (flightradar24.com/data/aircraft) now lists the Bombardier Globals, Gulfstreams, Hawkers and the rest as 1.3.5 meant to. 1.3.5 showed no difference for two reasons:","**FR24's lists are built with the page**:","**An OurAirports airport's page never shows another airport first**: the page is hidden until FR24's app has drawn it (FR24's server draws the page it is made from - Liverpool's, Blackpool's - before its app starts).","**Empty code tag**: the empty red box after an OurAirports code in FR24's airport lists (an airport with no ICAO code) is gone.","**Airport window**: an OurAirports airport with an ICAO code but no IATA code keeps FR24's \"IATA code\" field (\"N/A\" in it), as FR24 shows its own; only one with neither is shown under \"OurAirports code\".","**Bookmarks**:"]};
+  const UB_WHATS_NEW = {"v":"1.3.7","items":["**Recent flights** in the aircraft panel are filled again for LADD, blocked and military aircraft. FR24's build of mid-November asks a new address for an aircraft's recent flights (www.flightradar24.com/api/v2/flights in place of common/v2/flight/list.json), with the same question from the same caller, and the script only knew the old one. Each row's airports are given in that build's new form: FR24 looks each one up by its id, OurAirports heliports and fields included.","**Clicking an airport pin**: an OurAirports airport's pin said \"Cannot load the airport data\". FR24's new build opens a pin by the airport's id, not its code, and its own lookup by id never reached the one that knows the OurAirports airports.","**FR24's airport list** moved to a new address too (/api/v2/airports). The OurAirports airports are added there, and one FR24 now lists itself (its list keeps airports with only an ICAO code now) is never added a second time.","**The aircraft directory, production lists and their padlocks**:","**Typing an OurAirports airport's address** (flightradar24.com/data/airports/egow) or an added type's: FR24's server sends the browser on to its airport list, and the extension is meant to see where from and make the page. It never could: it had no permission on FR24's own site, only on api.flightradar24.com. It now has it. This adds no new permission prompt, as its scripts already run there.","**Pacific tracks**: the monitor had none. The FAA's NOTAM Search refuses servers in data centres, and its old DINS page is gone. The monitor now asks the FAA's PilotWeb page of the Pacific tracks first (the FAA's own link to them), and NOTAM Search as its own page asks; why each failed is in its /status (wxmap.pac). When the monitor still has none, the browser asks the FAA itself, through the userscript, and keeps them half an hour."]};
   // (an aircraft with an open padlock: FR24's outline style - 24 grid, 1.5 stroke in the text colour)
   const UB_ICON = '<svg data-tl-ub-icon="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
   const UB_X = '<svg viewBox="0 0 14 14" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5l11 11M12.5 1.5l-11 11"/></svg>';
@@ -20247,6 +20622,8 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   if (isAircraftPage) {
     installBridge();
     if (opt.acPages) bootAircraftPage().catch(e => log('aircraft page', e));
+    // (1.3.7: a type's production list - FR24's server's page - its padlocked first flights (ages) filled)
+    if (/^\/data\/aircraft\/[^/]+\/[^/]+/i.test(location.pathname)) setInterval(() => { prodListTick().catch(e => log('production list', String(e && e.message || e))); }, 1500);
   } else if (isFlightPage) {
     installBridge();
     if (opt.acPages) bootFlightPage().catch(e => log('flight page', e));

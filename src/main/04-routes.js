@@ -1243,7 +1243,9 @@
     if (!a) return null;
     const tz = a.timezone || { name: 'UTC', offset: a.tz || 0, abbr: 'UTC', abbrName: null, isDst: false };
     const iso = (() => { const c = HEX_BLOCKS.find(b => b[2] === a.country); return c ? c[3] : ''; })();
-    return { name: a.name, code: { iata: a.iata || null, icao: a.icao || null }, position: { latitude: a.lat, longitude: a.lon, country: { name: a.country, code: iso, id: a.countryId || countryIdByName.get(String(a.country).toUpperCase()) || 0 }, region: { city: a.city } }, timezone: tz, visible: true };
+    // (1.3.7: its id too - FR24's build of mid-November has a row's airports as { id, type, code } and looks each up by
+    // its id; the page part gives its rows in that form when FR24 asks so - listRowsFor)
+    return { id: Number.isFinite(a.id) ? a.id : null, name: a.name, code: { iata: a.iata || null, icao: a.icao || null }, position: { latitude: a.lat, longitude: a.lon, country: { name: a.country, code: iso, id: a.countryId || countryIdByName.get(String(a.country).toUpperCase()) || 0 }, region: { city: a.city } }, timezone: tz, visible: true };
   }
   function flightListEntry(l, rec, i) {
     const from = l.from ? apById(l.from.id) : null, to = l.to ? apById(l.to.id) : null;

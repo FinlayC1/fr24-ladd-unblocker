@@ -81,7 +81,10 @@ const manifest = {
   author: meta('author').trim(),
   icons: { 16: 'icons/16.png', 48: 'icons/48.png', 128: 'icons/128.png' },
   background: { service_worker: 'background.js' },
-  host_permissions: [...new Set(hosts.flatMap(hostPerm))],
+  // (1.3.7: FR24's own site too - the pages the content scripts already run on, so no new permission to grant: without it
+  // the background never saw FR24's server send a typed OurAirports airport's or added aircraft type's address on to its
+  // list (webRequest sees only the hosts an extension holds), and that page was never made)
+  host_permissions: [...new Set(['https://www.flightradar24.com/*', 'https://flightradar24.com/*'].concat(hosts.flatMap(hostPerm)))],
   // (a monitor of the user's own, at any https address: asked for when it is set, on grant.html)
   optional_host_permissions: ['https://*/*'],
   // (1.3.4: to see FR24's server send an OurAirports airport's page on to its airport search - background.js; only seen)
