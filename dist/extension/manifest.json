@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "FR24 LADD Unblocker",
-  "version": "1.3.6",
+  "version": "1.3.7",
   "description": "Names blocked (LADD) and N/A aircraft on Flightradar24 from public ADS-B, with routes, predicted destinations and flight history.",
   "author": "Finlay Clarke",
   "icons": {
@@ -13,6 +13,8 @@
     "service_worker": "background.js"
   },
   "host_permissions": [
+    "https://www.flightradar24.com/*",
+    "https://flightradar24.com/*",
     "https://api.adsb.lol/*",
     "https://adsb.lol/*",
     "https://globe.adsb.lol/*",
@@ -28,6 +30,8 @@
     "https://mesonet.agron.iastate.edu/*",
     "https://api.open-meteo.com/*",
     "https://nms.aim.faa.gov/*",
+    "https://pilotweb.nas.faa.gov/*",
+    "https://notams.aim.faa.gov/*",
     "https://external-api.faa.gov/*",
     "https://opensky-network.org/*",
     "https://api.adsbdb.com/*",

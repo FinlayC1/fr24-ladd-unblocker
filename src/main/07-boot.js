@@ -362,6 +362,8 @@
   if (isAircraftPage) {
     installBridge();
     if (opt.acPages) bootAircraftPage().catch(e => log('aircraft page', e));
+    // (1.3.7: a type's production list - FR24's server's page - its padlocked first flights (ages) filled)
+    if (/^\/data\/aircraft\/[^/]+\/[^/]+/i.test(location.pathname)) setInterval(() => { prodListTick().catch(e => log('production list', String(e && e.message || e))); }, 1500);
   } else if (isFlightPage) {
     installBridge();
     if (opt.acPages) bootFlightPage().catch(e => log('flight page', e));

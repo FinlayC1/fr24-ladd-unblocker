@@ -11,7 +11,8 @@
 const fs = require('fs');
 const path = require('path');
 
-const V = 1, MIN_TYPE = 3, PER_PAGE = 50;
+// (1.3.7: 2 - the makers named anew: the index built again once)
+const V = 2, MIN_TYPE = 3, PER_PAGE = 50;
 // (ICAO's designators that are not a type of aircraft: gliders, balloons, microlights, drones, ground vehicles...)
 const NOT_TYPES = new Set(['ZZZZ', 'GND', 'GLID', 'BALL', 'ULAC', 'GYRO', 'UHEL', 'SHIP', 'PARA', 'DRON', 'UAV', 'TWR', 'SERV', 'EMER', 'GLIM', 'PRCH', 'SONX', 'ECHO', 'FOX', 'GLAS', 'MT', 'ZZZ', 'TEST']);
 // FR24's families for the types it leaves out - by maker and line, its own way ("Bombardier Global", the types in it):
@@ -46,11 +47,30 @@ function tidy(s) {
 }
 // (the maker, from a type's name: its first word - or two, where the first is only part of it: North American, Air Tractor,
 // De Havilland - not where the second is the model: "American AA-5")
-const TWO_WORD = new Set(['NORTH', 'AIR', 'DE', 'BRITISH', 'GENERAL', 'GREAT', 'CUB', 'AIRPLANE', 'BEST', 'JUST', 'LOCKHEED', 'MCDONNELL', 'AMERICAN', 'AERO', 'PROGRESSIVE', 'FLIGHT', 'EPIC', 'TL', 'BRM', 'SCHEIBE', 'HAWKER']);
+const TWO_WORD = new Set(['NORTH', 'AIR', 'DE', 'BRITISH', 'GENERAL', 'GREAT', 'CUB', 'AIRPLANE', 'BEST', 'JUST', 'LOCKHEED', 'MCDONNELL', 'AMERICAN', 'AERO', 'PROGRESSIVE', 'FLIGHT', 'EPIC', 'TL', 'BRM', 'SCHEIBE', 'HAWKER',
+  // (1.3.7)
+  'DG', 'MD', 'DYN', 'RAJ', 'FLY', 'MAX', 'NZ']);
+// (1.3.7) makers as they write themselves - "ATR", "BAe", "Britten-Norman" - where the databases' capitals or initials
+// make them otherwise ("Atr", "BRITTEN-NORMAN", "C.e.a.")
+const MAKER_NAMES = new Map(Object.entries({ ATR: 'ATR', MBB: 'MBB', EAA: 'EAA', BAE: 'BAe', NHI: 'NHIndustries', FFA: 'FFA', CEA: 'CEA', IAR: 'IAR', OMF: 'OMF', ELA: 'ELA', SAI: 'SAI', SAN: 'SAN', PZL: 'PZL', CASA: 'CASA', IAI: 'IAI', HAL: 'HAL', KAI: 'KAI', AIDC: 'AIDC', SOCATA: 'Socata',
+  'PZL-MIELEC': 'PZL-Mielec', 'PZL-OKECIE': 'PZL-Okecie', 'PZL-SWIDNIK': 'PZL-Swidnik', 'SIAI-MARCHETTI': 'SIAI-Marchetti', 'BOEING-VERTOL': 'Boeing Vertol', 'BELL-BOEING': 'Bell Boeing', 'BRITTEN-NORMAN': 'Britten-Norman',
+  'DASSAULT-DORNIER': 'Dassault-Dornier', 'ICA-BRASOV': 'ICA-Brasov', 'MD HELICOPTERS': 'MD Helicopters', 'MCDONNELL DOUGLAS': 'McDonnell Douglas', 'DG FLUGZEUGBAU': 'DG Flugzeugbau', 'DYN AERO': "Dyn'Aero", 'NZ AEROSPACE': 'NZ Aerospace', 'B&F': 'B&F' }));
 function makerOf(name) {
-  const w = String(name || '').split(' ').filter(Boolean), a = (w[0] || '').replace(/[^A-Za-z]/g, '');
-  if (!a) return '';
-  return TWO_WORD.has(a.toUpperCase()) && /^[A-Za-z]{2,}$/.test(w[1] || '') ? a + ' ' + w[1] : a;
+  let w = String(name || '').split(' ').filter(Boolean);
+  // (1.3.7: "The De Havilland Aircraft Of Canada": its maker the words after "The")
+  if (w.length > 1 && /^the$/i.test(w[0])) w = w.slice(1);
+  let w0 = w[0] || '';
+  // (1.3.7: a model's designation, not a maker - "MD-88", "KR-2", "RQ-7B", "F.8L Falco": a word with a figure in it)
+  if (/\d/.test(w0)) return '';
+  // ("B & F Funk": both letters)
+  if (w[1] === '&' && w[2] && !/\d/.test(w[2])) { w0 = w0 + '&' + w[2]; w = [w0].concat(w.slice(3)); }
+  const a = w0.replace(/[^A-Za-z&-]/g, '').replace(/^[-&]+|[-&]+$/g, '');
+  if (a.replace(/[^A-Za-z]/g, '').length < 2) return '';
+  let m = TWO_WORD.has(a.toUpperCase()) && /^[A-Za-z]{2,}$/.test(w[1] || '') ? a + ' ' + w[1] : a;
+  const fixed = MAKER_NAMES.get(m.toUpperCase()); if (fixed) return fixed;
+  // (hyphenated in capitals - "SCHEMPP-HIRTH": each part as a name)
+  if (/-/.test(m) && m === m.toUpperCase()) m = m.split('-').map(p => p ? p[0] + p.slice(1).toLowerCase() : p).join('-');
+  return m;
 }
 const slugOf = s => String(s || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
 const typeOk = t => /^[A-Z0-9]{2,4}$/.test(t) && !NOT_TYPES.has(t);
@@ -97,8 +117,11 @@ function createAcTypes(env) {
         let name = '', best = 0; e.names.forEach((c, m) => { if (c > best) { best = c; name = m; } });
         let fc = TYPE_FAMILY.get(t);
         if (!fc) {
-          const maker = makerOf(name);
-          if (!maker) continue;   // (no name given at all: nothing to list it by)
+          // (1.3.7: its maker from the name most of them give - else from the others, most given first: AT72's "ATR-72-202"
+          // names no maker, its "Atr Atr 72-212A" does; none at all: under "Other", so every type is listed)
+          let maker = makerOf(name);
+          if (!maker) { const alt = [...e.names.entries()].sort((x, y) => y[1] - x[1]); for (const [m] of alt) { maker = makerOf(m); if (maker) break; } }
+          if (!maker) maker = 'Other';
           fc = maker.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 12);
           if (!fams.has(fc)) fams.set(fc, { code: fc, name: maker, slug: slugOf(maker), count: 0, types: [] });
         }
@@ -142,6 +165,11 @@ function createAcTypes(env) {
       rows.sort(byMsn);
     }
     if (!rows) return null;
+    // (1.3.7: the rows of the registrations asked for - a page of FR24's own list, its padlocked ages filled - all at once)
+    if (q.regs) {
+      const want = new Set(String(q.regs).toUpperCase().split(',').map(s => s.trim()).filter(s => /^[A-Z0-9-]{2,10}$/.test(s)).slice(0, 200));
+      return { code, total: rows.length, rows: rows.filter(r => want.has(String(r[0]).toUpperCase())) };
+    }
     let ages = 0, aged = 0; rows.forEach(r => { if (r[2] > 1900) { ages += nowY - r[2]; aged++; } });
     const last = Math.max(1, Math.ceil(rows.length / per)), pg = Math.max(1, Math.min(last, Math.floor(+q.page) || 1));
     return { code, total: rows.length, averageAge: aged ? Math.round(ages / aged * 10) / 10 : null, page: pg, lastPage: last, perPage: per, rows: rows.slice((pg - 1) * per, pg * per) };

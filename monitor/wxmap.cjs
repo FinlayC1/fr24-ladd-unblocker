@@ -32,6 +32,8 @@ const RAINVIEWER = 'https://api.rainviewer.com/public/weather-maps.json';
 const NEXRAD = 'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q-900913/';
 const AWC = 'https://aviationweather.gov';
 const NAT = 'https://nms.aim.faa.gov/datanat/nat.json';
+// (1.3.7) the Pacific tracks as FAA PilotWeb gives them - the FAA's flight information page's own link to them
+const PILOTWEB_PAC = 'https://pilotweb.nas.faa.gov/PilotWeb/noticesAction.do?queryType=PACIFICTRACKS&formatType=ICAO';
 const NOMADS = 'https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_1p00.pl';
 // pressure levels (hPa) the browser's wind layer reads between, and the WAFS pictures it draws from
 const LEVELS = [1000, 975, 950, 925, 900, 850, 800, 700, 600, 500, 400, 300, 250, 200, 150, 100];
@@ -410,23 +412,32 @@ function createWxMap(env) {
     // (every 30 minutes at most - the messages come out twice a day)
     if (!mirrors.pacots || now() - mirrors.pacots.at >= 30 * 60000) {
       const out = {}, nowMs = now(), why = [];
-      try {
-        for (const loc of ['KZAK', 'RJJJ', 'PAZA']) {
-          for (let off = 0, total = 1; off < total && off < 600; off += 30) {
-            stats.upstream++;
-            const r = await fetchFn('https://notams.aim.faa.gov/notamSearch/search', { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' }, UA),
-              body: 'searchType=0&designatorsForLocation=' + loc + '&offset=' + off + '&notamsOnly=false', signal: AbortSignal.timeout(60000) });
-            if (!r.ok) throw new Error('HTTP ' + r.status + ' NOTAM Search');
-            const j = JSON.parse(Buffer.from(await r.arrayBuffer()).toString('utf8'));
-            total = +j.totalNotamCount || 0; pacFromSearch(j, out, nowMs);
-            await sleep(gapMs);
-          }
-        }
-      } catch (e) { why.push(String(e && e.message || e)); }
+      // (1.3.7: FAA PilotWeb's page of the Pacific tracks first - the link the FAA's flight information page gives for
+      // them; NOTAM Search, which refuses many servers in data centres - this one's had none since 1.3 - asked as its own
+      // page asks; the old DINS page last. Why each failed: status' wxmap.pac)
+      try { pacParse((await get(PILOTWEB_PAC, { timeout: 60000 })).toString('utf8'), out, nowMs); if (!Object.keys(out).length) throw new Error('no tracks on its page'); }
+      catch (e) { why.push('PilotWeb: ' + String(e && e.message || e)); }
       if (!Object.keys(out).length) {
-        try { pacParse((await get('https://www.notams.faa.gov/dinsQueryWeb/advancedNotamMapAction.do?queryType=pacificTracks&actionType=advancedNOTAMFunctions', { timeout: 60000 })).toString('utf8'), out, nowMs); }
-        catch (e) { why.push(String(e && e.message || e)); }
+        try {
+          for (const loc of ['KZAK', 'RJJJ', 'PAZA']) {
+            for (let off = 0, total = 1; off < total && off < 600; off += 30) {
+              stats.upstream++;
+              const r = await fetchFn('https://notams.aim.faa.gov/notamSearch/search', { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json, text/plain, */*', 'X-Requested-With': 'XMLHttpRequest', Origin: 'https://notams.aim.faa.gov', Referer: 'https://notams.aim.faa.gov/notamSearch/nsapp.html' }, UA),
+                body: 'searchType=0&designatorsForLocation=' + loc + '&offset=' + off + '&notamsOnly=false', signal: AbortSignal.timeout(60000) });
+              if (!r.ok) throw new Error('HTTP ' + r.status);
+              const j = JSON.parse(Buffer.from(await r.arrayBuffer()).toString('utf8'));
+              total = +j.totalNotamCount || 0; pacFromSearch(j, out, nowMs);
+              await sleep(gapMs);
+            }
+          }
+          if (!Object.keys(out).length) throw new Error('no tracks in its messages');
+        } catch (e) { why.push('NOTAM Search: ' + String(e && e.message || e)); }
       }
+      if (!Object.keys(out).length) {
+        try { pacParse((await get('https://www.notams.faa.gov/dinsQueryWeb/advancedNotamMapAction.do?queryType=pacificTracks&actionType=advancedNOTAMFunctions', { timeout: 60000 })).toString('utf8'), out, nowMs); if (!Object.keys(out).length) throw new Error('no tracks on its page'); }
+        catch (e) { why.push('DINS: ' + String(e && e.message || e)); }
+      }
+      stats.pac = { at: new Date(nowMs).toISOString(), n: Object.keys(out).length, why: why.join('; ').slice(0, 400) };
       if (Object.keys(out).length) { const body = Buffer.from(JSON.stringify(out)); mirrors.pacots = { at: now(), type: 'application/json', body, gz: zlib.gzipSync(body) }; }
       else {
         fail('pacots', new Error(why.join('; ') || 'no Pacific tracks in the FAA\'s messages'));
@@ -511,7 +522,7 @@ function createWxMap(env) {
   }
   function status() {
     const age = t => (t ? Math.round((now() - t) / 60000) : null);
-    return { cloud: { ver: P.cloud.ver, tiles: P.cloud.tiles.size, ageMin: age(P.cloud.at), src: P.cloud.src }, precip: { ver: P.precip.ver, tiles: P.precip.tiles.size, ageMin: age(P.precip.at) }, radar: { ver: P.radar.ver, kept: P.radar.tiles.size }, naradar: { ver: P.naradar.ver, kept: P.naradar.tiles.size }, wafs: { run: wafs.run ? new Date(wafs.run).toISOString() : null, files: wafs.files.size }, wind: { run: wind.run ? new Date(wind.run).toISOString() : null, grids: wind.grids.size }, mirrors: Object.fromEntries(Object.entries(mirrors).map(([k, v]) => [k, v ? age(v.at) : null])), jobs: stats.jobs, served: stats.served, upstream: stats.upstream, fails: stats.fails, lastErr: stats.lastErr };
+    return { cloud: { ver: P.cloud.ver, tiles: P.cloud.tiles.size, ageMin: age(P.cloud.at), src: P.cloud.src }, precip: { ver: P.precip.ver, tiles: P.precip.tiles.size, ageMin: age(P.precip.at) }, radar: { ver: P.radar.ver, kept: P.radar.tiles.size }, naradar: { ver: P.naradar.ver, kept: P.naradar.tiles.size }, wafs: { run: wafs.run ? new Date(wafs.run).toISOString() : null, files: wafs.files.size }, wind: { run: wind.run ? new Date(wind.run).toISOString() : null, grids: wind.grids.size }, mirrors: Object.fromEntries(Object.entries(mirrors).map(([k, v]) => [k, v ? age(v.at) : null])), jobs: stats.jobs, served: stats.served, upstream: stats.upstream, fails: stats.fails, lastErr: stats.lastErr, pac: stats.pac || null };
   }
   return { pump, handle, meta, status, stats, P, wind, wafs, mirrors, due };
 }

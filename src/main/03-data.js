@@ -2199,6 +2199,60 @@
     const key = String(d && d.key || '').slice(0, 40);
     loadAcTypes().then(ok => postToPage('acDirGot', { key, families: ok && acx.idx ? acx.idx.families : null, at: ok && acx.idx ? acx.idx.at : 0 }));
   }
+  // (1.3.7) the serial numbers and years built of the registrations on a page of FR24's own production list - padlocked
+  // there for a free account - by type: { REG: [msn, year] }
+  const acAgeOf = new Map();   // REG -> [msn, year] (asked: [] when the monitor has none)
+  async function acAgesOf(byType) {
+    const out = {};
+    for (const [type, regs] of Object.entries(byType || {})) {
+      if (!/^[A-Z0-9]{2,4}$/.test(type)) continue;
+      const want = [...new Set((regs || []).map(r => String(r).toUpperCase()).filter(r => /^[A-Z0-9-]{2,10}$/.test(r)))].slice(0, 3000), ask = want.filter(r => !acAgeOf.has(r));
+      // (200 at a time, as the monitor takes them: FR24's list of a type is all on one page - 1,110 A319s)
+      for (let i = 0; i < ask.length; i += 200) {
+        const part = ask.slice(i, i + 200), j = await monGet('/actype?type=' + type + '&regs=' + encodeURIComponent(part.join(',')), { timeout: 15000 }).catch(() => null);
+        if (!j || !Array.isArray(j.rows)) break;
+        part.forEach(r => acAgeOf.set(r, [])); for (const r of j.rows) acAgeOf.set(String(r[0]).toUpperCase(), [String(r[1] || ''), +r[2] || 0]);
+      }
+      for (const r of want) { const v = acAgeOf.get(r); if (v && v.length) out[r] = v; }
+    }
+    if (acAgeOf.size > 5000) acAgeOf.clear();
+    return out;
+  }
+  // (1.3.7) FR24's production list of a type as its server makes it - its own page, not its app's (/data/aircraft/a32s/a319,
+  // "FIRST FLIGHT (AGE)" padlocked for a free account): each padlocked or empty cell of that column filled - the year the
+  // aircraft was built and its age, from the monitor's aircraft database. Its columns found by their headings, so the rest
+  // of FR24's page is as it made it
+  let prodWait = 0;
+  async function prodListTick() {
+    if (prodWait > now() || !opt.on) return;
+    const m = location.pathname.match(/^\/data\/aircraft\/([a-z0-9-]{1,60})\/([a-z0-9-]{1,10})\/?$/i); if (!m) return;
+    if (document.querySelector('#app[data-page]')) return;   // (FR24's app's own page of it: not this one)
+    const type = m[2].toUpperCase(); if (!/^[A-Z0-9]{2,4}$/.test(type)) return;
+    const cells = [];
+    for (const tb of document.querySelectorAll('table')) {
+      const hr = tb.querySelector('thead tr') || tb.querySelector('tr'); if (!hr) continue;
+      const hs = [...hr.children].map(c => clean(c.textContent).toUpperCase());
+      const iR = hs.findIndex(h => /^REG/.test(h)), iF = hs.findIndex(h => /FIRST FLIGHT|\bAGE\b/.test(h));
+      if (iR < 0 || iF < 0) continue;
+      for (const tr of tb.querySelectorAll('tr')) {
+        if (tr === hr || tr.getAttribute('data-tl')) continue;   // (and none of the page part's own rows: theirs)
+        const td = tr.children; if (td.length <= Math.max(iR, iF)) continue;
+        const reg = clean(td[iR].textContent).toUpperCase(), fc = td[iF];
+        if (!/^[A-Z0-9-]{2,10}$/.test(reg) || fc.dataset.tlAge || /\d/.test(fc.textContent)) continue;
+        cells.push({ reg, fc });
+      }
+    }
+    if (!cells.length) return;
+    prodWait = now() + 60000;   // (one question at a time; none for a minute after one the monitor did not answer)
+    const rows = await acAgesOf({ [type]: cells.map(c => c.reg) }).catch(() => null); if (!rows) return;
+    prodWait = 0;
+    const nowY = new Date().getUTCFullYear();
+    for (const c of cells) {
+      const v = rows[c.reg]; if (!v || !(v[1] > 1900)) continue;
+      const age = Math.max(0, nowY - v[1]);
+      c.fc.textContent = v[1] + ' (' + (age === 0 ? 'new' : age + (age === 1 ? ' year' : ' years')) + ')'; c.fc.dataset.tlAge = '1'; c.fc.title = 'Year built, from public aircraft registers';
+    }
+  }
   // (a page of one: type GLEX or family GLOBAL, page n - the monitor's answer as it is, or none)
   function onAcPage(d) {
     const key = String(d && d.key || '').slice(0, 80), kind = d && d.kind === 'family' ? 'family' : 'type', code = String(d && d.code || '').toUpperCase(), pg = Math.max(1, Math.min(5000, Math.floor(+(d && d.page)) || 1));

@@ -373,6 +373,23 @@ function createRouteEngine() {
     }
     return HL.length;
   }
+  // (1.3.7) The heliport a helicopter was first or last heard low near, out of coverage the rest of the way: within 3 km and
+  // 1,200 ft of it, under 100 kt, going away from it (a take-off) or towards it (a landing) - its track on the line to the
+  // pad within 50°; within 1.5 km where its track is not known; any way within 600 m. G-WAPA, home at Greenbank Helipad
+  // (Maghull), first heard at 500 ft 1.2 km off it and last heard at 300 ft 1.9 km off it: no heliport in its log
+  // (tol: how far off its track may point - 50°, or 60° for a track worked out from a kept leg's path, a few minutes long;
+  // far: within how far of one with no track known - 1.5 km, 2 km for a kept leg's end. Faster than 100 kt coming in, 140
+  // going out - a helicopter gathers speed as it climbs away - is not near one)
+  function heliportNear(lat, lon, alt, trk, gs, away, tol, far) {
+    if (!HL.length || !fin(lat) || !fin(lon) || !fin(alt) || (fin(gs) && gs > (away ? 140 : 100))) return null;
+    let best = null;
+    nearbyIn(hgrid, lat, lon, 3, (a, d) => {
+      if (alt - a.alt > 1200) return;
+      if (d > 0.6) { if (!fin(trk)) { if (d > (far || 1.5)) return; } else if (angDiff(trk, away ? brg(a.lat, a.lon, lat, lon) : brg(lat, lon, a.lat, a.lon)) > (tol || 50)) return; }
+      if (!best || d < best.dist) best = { airport: a, dist: d };
+    });
+    return best;
+  }
   // (the heliport a helicopter is on: within km - a pad is small, so the net is tight)
   function heliportAt(lat, lon, km, opts) {
     if (!HL.length || !fin(lat) || !fin(lon)) return null;
@@ -1010,6 +1027,9 @@ function createRouteEngine() {
       if (!fa && lightCls && quiet && !last.gnd && last.alt != null && !(last.gs > (heli ? 90 : 110))) {
         const nf = fieldAt(last.lat, last.lon, heli ? 4 : 5, { alt: last.alt, maxAgl: 1200 });
         if (nf && (!near || nf.dist < near.dist)) near = nf;
+        // (1.3.7: a helicopter's, a heliport it was heading for - G-WAPA lost at 300 ft 1.9 km short of Greenbank Helipad)
+        const nh = heli ? heliportNear(last.lat, last.lon, last.alt, last.trk, last.gs, false) : null;
+        if (nh && (!near || nh.dist < near.dist)) near = nh;
       }
       if (fa) { cur.finalAp = fa; close(last, 'final'); } else if (near) { cur.lostAp = near.airport; close(last, 'lost-low'); } else close(last, 'open');
     }
@@ -1122,7 +1142,14 @@ function createRouteEngine() {
     }
     if (p.alt == null) return null;
     // (first seen low by a strip FR24 does not list: lifted from there - G-DGFD out of Enstone)
-    if (heliT) { const low = airportAt(p.lat, p.lon, 3, { alt: p.alt, maxAgl: 1000 }) || (isStart ? heliportAt(p.lat, p.lon, 1, { alt: p.alt, maxAgl: 1000 }) || fieldAt(p.lat, p.lon, 3, { alt: p.alt, maxAgl: 1000 }) : null); return low ? { airport: low.airport, conf: 'low', dist: low.dist } : null; }
+    // (1.3.7: and last heard low on one - within 600 m of a heliport, 1.2 km of a strip, under 700 ft: down there. M-SKTO,
+    // lost at -375 ft on Axis Business Park's helipad, had no landing in its log; else first heard low near one, going away)
+    if (heliT) {
+      const low = airportAt(p.lat, p.lon, 3, { alt: p.alt, maxAgl: 1000 }) || (isStart ? heliportAt(p.lat, p.lon, 1, { alt: p.alt, maxAgl: 1000 }) || fieldAt(p.lat, p.lon, 3, { alt: p.alt, maxAgl: 1000 }) : heliportAt(p.lat, p.lon, 0.6, { alt: p.alt, maxAgl: 700 }) || fieldAt(p.lat, p.lon, 1.2, { alt: p.alt, maxAgl: 700 }));
+      if (low) return { airport: low.airport, conf: 'low', dist: low.dist };
+      const hn = isStart ? heliportNear(p.lat, p.lon, p.alt, p.trk, p.gs, true) : null;
+      return hn ? { airport: hn.airport, conf: 'near', dist: hn.dist } : null;
+    }
     const lowA = airportAt(p.lat, p.lon, 9, { alt: p.alt, maxAgl: 1800, mil: ctx && ctx.mil }), lowF = fieldAt(p.lat, p.lon, 3, { alt: p.alt, maxAgl: 1000 });
     const low = lowF && (!lowA || lowF.dist < lowA.dist) ? lowF : lowA;
     if (low) return { airport: low.airport, conf: 'low', dist: low.dist };
@@ -1230,18 +1257,54 @@ function createRouteEngine() {
   // flights' own type, where they carry one)
   function chainLegs(legs, ctx) {
     const out = legs.slice().sort((a, b) => a.tStart - b.tStart);
+    // (an end's place: an airport, a field - or, 1.3.7, a heliport, which only a helicopter's ends are)
+    const apOf = id => byId.get(id) || HB.get(id);
     if (!ctx || !ctx.cls) { const ty = (out.find(l => l && l.type) || {}).type; ctx = ty ? { cls: classify({ type: ty }), type: ty } : null; }
+    // (1.3.7) A helicopter's ends left unnamed when its legs were made - before the engine knew OurAirports' heliports (1.3.6),
+    // or since, as it now names them: named here, as every log is put together, so the logs kept from before have them too.
+    // Down, or lost low, on one (summarizeLeg's endpoint): there; lost low and slow heading for one, with its next flight
+    // over ten minutes on: there, a guess (near); first heard low near one going away from it: from there, a guess. M-SKTO
+    // lost at -375 ft on Axis Business Park's helipad on 5 Nov, its next take-off from it - both "-" in its log
+    if (ctx && (ctx.cls === 'heli' || ctx.grp === 'heli') && HL.length) {
+      const ref = (n, conf) => ({ id: n.airport.id, code: n.airport.code, conf });
+      // (a kept leg's track at an end, where it has none: from its path - [minutes from its start, lat, lon, alt] - the point
+      // nearest that end within ten minutes of it)
+      const pathTrk = (l, atEnd) => {
+        const p = Array.isArray(l.path) ? l.path.filter(q => Array.isArray(q) && fin(q[0]) && fin(q[1]) && fin(q[2])) : [];
+        if (!p.length) return null;
+        const q = atEnd ? p[p.length - 1] : p[0], tq = l.tStart + q[0] * 60;
+        if (atEnd ? !(l.tEnd - tq >= 30 && l.tEnd - tq <= 600) : !(tq - l.tStart >= 30 && tq - l.tStart <= 600)) return null;
+        return atEnd ? brg(q[1], q[2], l.endLat, l.endLon) : brg(l.startLat, l.startLon, q[1], q[2]);
+      };
+      const trkOf = (l, atEnd) => { const t = atEnd ? l.endTrk : l.startTrk; return fin(t) ? { t, tol: 50 } : { t: pathTrk(l, atEnd), tol: 60 }; };
+      for (let i = 0; i < out.length; i++) {
+        const l = out[i]; if (!l) continue;
+        let to = null, from = null;
+        if (!l.to && fin(l.endLat) && fin(l.endLon)) {
+          const downs = l.how === 'ground' || l.how === 'touch', low = fin(l.endAlt) && l.endAlt < 700 && l.ended && /^(gap-low|gap-land|final|lost-low)$/.test(l.how || '');
+          const n = downs || low ? heliAirportAt(l.endLat, l.endLon) || (low ? heliportAt(l.endLat, l.endLon, 0.6, { alt: l.endAlt, maxAgl: 700 }) : null) : null;
+          if (n) to = ref(n, downs ? 'ground' : 'low');
+          else if (!downs && fin(l.endAlt) && /^(gap-low|lost-low|open)$/.test(l.how || '') && (i + 1 < out.length ? out[i + 1].tStart - l.tEnd > 600 : l.ended)) { const k = trkOf(l, true), h = heliportNear(l.endLat, l.endLon, l.endAlt, k.t, l.endGs, false, k.tol, 2); if (h) to = ref(h, 'near'); }
+        }
+        if (!l.from && fin(l.startLat) && fin(l.startLon) && (i === 0 || l.tStart - out[i - 1].tEnd > 600)) {
+          const n = l.startedOnGround || (fin(l.startAlt) && l.startAlt < 700) ? heliAirportAt(l.startLat, l.startLon) || (fin(l.startAlt) ? heliportAt(l.startLat, l.startLon, 1, { alt: l.startAlt, maxAgl: 1000 }) : null) : null;
+          if (n) from = ref(n, l.startedOnGround ? 'ground' : 'low');
+          else if (!l.startedOnGround && fin(l.startAlt)) { const k = trkOf(l, false), h = heliportNear(l.startLat, l.startLon, l.startAlt, k.t, l.startGs, true, k.tol, 2); if (h) from = ref(h, 'near'); }
+        }
+        if (to || from) out[i] = Object.assign({}, l, to ? { to } : null, from ? { from } : null);
+      }
+    }
     const reach = (lat, lon, a, h) => !a || !fin(lat) || dist(lat, lon, a.lat, a.lon) <= Math.max(120, Math.abs(h) * 950);
     for (let i = 0; i < out.length - 1; i++) {
       const a = out[i], b = out[i + 1], gapH = (b.tStart - a.tEnd) / 3600;
       if (!(gapH >= -0.05) || gapH > 72) continue;
-      if (!a.to && b.from && (a.ended || gapH > 0.5)) { const ap = byId.get(b.from.id); if (reach(a.endLat, a.endLon, ap, gapH + 1)) { a.to = Object.assign({}, b.from, { conf: 'chain' }); if (!a.tOn) { const e = fieldTimeOfSum(a, ap, false); if (e && e.t < b.tStart) { a.tOn = e.t; a.tOnEst = e.est; } } } }
+      if (!a.to && b.from && (a.ended || gapH > 0.5)) { const ap = apOf(b.from.id); if (reach(a.endLat, a.endLon, ap, gapH + 1)) { a.to = Object.assign({}, b.from, { conf: 'chain' }); if (!a.tOn) { const e = fieldTimeOfSum(a, ap, false); if (e && e.t < b.tStart) { a.tOn = e.t; a.tOnEst = e.est; } } } }
       // (and over a guess from the climb alone, when the flight before it was seen landing: D-CLUB, down at Toulon at 12:59,
       // first heard an hour later climbing through 5,000 ft, was "from Quarante" in its log)
       // (a departure only guessed - near a field, or low over one within 25 km of where it had just landed - is that landing)
-      const nearTo = () => { const x = byId.get(a.to.id), y = byId.get(b.from.id); return !!x && !!y && dist(x.lat, x.lon, y.lat, y.lon) <= 25; };
+      const nearTo = () => { const x = apOf(a.to.id), y = apOf(b.from.id); return !!x && !!y && dist(x.lat, x.lon, y.lat, y.lon) <= 25; };
       const weakFrom = !!b.from && !b.startedOnGround && a.ended && !!a.to && ['ground', 'low'].includes(a.to.conf) && gapH < 8 && a.to.id !== b.from.id && (b.from.conf === 'near' || (b.from.conf === 'low' && gapH < 12 && nearTo()));
-      if ((!b.from || weakFrom) && a.to) { const ap = byId.get(a.to.id); if (reach(b.startLat, b.startLon, ap, gapH + 1)) { b.from = Object.assign({}, a.to, { conf: 'chain' }); if (!b.tOff) { const e = fieldTimeOfSum(b, ap, true); if (e && e.t > a.tEnd) { b.tOff = e.t; b.tOffEst = e.est; } } } }
+      if ((!b.from || weakFrom) && a.to) { const ap = apOf(a.to.id); if (reach(b.startLat, b.startLon, ap, gapH + 1)) { b.from = Object.assign({}, a.to, { conf: 'chain' }); if (!b.tOff) { const e = fieldTimeOfSum(b, ap, true); if (e && e.t > a.tEnd) { b.tOff = e.t; b.tOffEst = e.est; } } } }
       // (Not done: a landing guessed between a piece lost coming down at a day's end and the next day's first heard climbing -
       // landingInGap across the night. Tried in 1.0.1 on 3,143 real stops of business jets and airliners with both ends cut
       // out of coverage: right 25% of the time, a neighbouring field 43% (Teterboro read as Newark, Zurich as a strip beside
@@ -1260,8 +1323,8 @@ function createRouteEngine() {
       if (guessed(a.to) && guessed(b.from) && (a.to || b.from) && !b.startedOnGround && gapH >= 0.15 && gapH < 8 && fin(a.endAlt) && a.endAlt < 15000 && fin(b.startAlt) && b.startAlt < 22000 && fin(a.endLat) && fin(b.startLat)) {
         const pe = { lat: a.endLat, lon: a.endLon, alt: a.endAlt, trk: a.endTrk }, ps = { lat: b.startLat, lon: b.startLon, alt: b.startAlt, trk: b.startTrk };
         const FLOOR = -3.5, orFloor = v => v == null ? FLOOR : Math.max(FLOOR, v);
-        const sepA = a.to ? orFloor(descentFit(pe, byId.get(a.to.id), ctx)) : FLOOR, sepB = b.from ? orFloor(climbFit(ps, byId.get(b.from.id), ctx)) : FLOOR;
-        const A = a.to && byId.get(a.to.id), sbA = A ? climbFit(ps, A, ctx) : null;
+        const sepA = a.to ? orFloor(descentFit(pe, apOf(a.to.id), ctx)) : FLOOR, sepB = b.from ? orFloor(climbFit(ps, apOf(b.from.id), ctx)) : FLOOR;
+        const A = a.to && apOf(a.to.id), sbA = A ? climbFit(ps, A, ctx) : null;
         let best = null;
         if (A && sbA != null && sbA >= sepB - 3) { if (!b.from || b.from.id !== A.id) best = { ap: A, on: null, off: fieldTimeOfSum(b, A, true) }; }
         else {
@@ -1284,11 +1347,11 @@ function createRouteEngine() {
       // (1.0.2) and a landing guessed from the descent before a take-off seen from a field it could have been coming down
       // to: that field (the take-off seen - on its runway, or low over it - is the stronger word)
       if (a.to && a.to.conf === 'near' && b.from && b.from.id !== a.to.id && (b.startedOnGround || ['ground', 'low'].includes(b.from.conf)) && gapH >= 0.15 && gapH < 8) {
-        const ap = byId.get(b.from.id), sa = ap && fin(a.endAlt) ? descentFit({ lat: a.endLat, lon: a.endLon, alt: a.endAlt, trk: a.endTrk }, ap, null) : null;
+        const ap = apOf(b.from.id), sa = ap && fin(a.endAlt) ? descentFit({ lat: a.endLat, lon: a.endLon, alt: a.endAlt, trk: a.endTrk }, ap, null) : null;
         if (sa != null && sa > -3.5) { a.to = Object.assign({}, b.from, { conf: 'chain' }); if (!a.tOn || a.tOnEst) { const e = fieldTimeOfSum(a, ap, false); if (e && e.t < b.tStart) { a.tOn = e.t; a.tOnEst = e.est; } } }
       }
       // (an end known but its time not: the way left from the last point heard)
-      if (a.to && !a.tOn) { const ap = byId.get(a.to.id), e = ap && fieldTimeOfSum(a, ap, false); if (e && e.t < b.tStart) { a.tOn = e.t; a.tOnEst = e.est; } }
+      if (a.to && !a.tOn) { const ap = apOf(a.to.id), e = ap && fieldTimeOfSum(a, ap, false); if (e && e.t < b.tStart) { a.tOn = e.t; a.tOnEst = e.est; } }
     }
     return out;
   }
