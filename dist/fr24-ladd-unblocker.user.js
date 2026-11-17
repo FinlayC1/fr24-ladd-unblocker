@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Flightradar24 LADD / N-A Unblocker (feed-level)
 // @namespace    tweeks.io
-// @version      1.3.7
+// @version      1.3.8
 // @description  Identifies every LADD / N/A / blocked military aircraft on Flightradar24 from public ADS-B, and injects callsign, registration, operator, age, country, MSN, squawk, vertical speed, GPS altitude, airspeeds, wind, photos, a reasoned origin/destination with a wind-corrected ETA (also for ordinary flights FR24 shows as N/A - military, private, GA, helicopters, with private landing sites; learned from 63 days of every aircraft worldwide, with live weather and closures), airport-board entries and a rebuilt 7-month flight log straight into FR24's own data - so it all renders like normal FR24 traffic.
 // @author       Finlay Clarke
 // @updateURL    https://raw.githubusercontent.com/FinlayC1/fr24-ladd-unblocker/main/dist/fr24-ladd-unblocker.user.js
@@ -100,7 +100,7 @@
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "1.3.7";
+    var BRIDGE_V = "1.3.8";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed but the
@@ -9528,10 +9528,13 @@
     function ginfoPick(list, mark) { const rows = (Array.isArray(list) ? list : []).filter(x => x && String(x.Mark || '').toUpperCase() === mark); return rows.find(x => x.RegistrationStatus === 'R') || rows[0] || null; }
     function ginfoParse(j, hit) {
       if (!j || typeof j !== 'object') return null;
-      const ow = (Array.isArray(j.RegisteredAircraftOwners) ? j.RegisteredAircraftOwners : [])[0] || {}, ad = j.AircraftDetails || {}, aoc = j.AircraftOperatedByAocHolder || {};
+      const ow = (Array.isArray(j.RegisteredAircraftOwners) ? j.RegisteredAircraftOwners : [])[0] || {}, ad = j.AircraftDetails || {}, aoc = j.AircraftOperatedByAocHolder || {}, rd = j.RegistrationDetails || {};
       const str = v => typeof v === 'string' ? clean(v) : '';
       const out = { owner: str(aoc.OperatorTrandingAs) || str(aoc.OperatorName) || str(ow.TradingAs) || str(ow.RegisteredOwner), msn: str(ad.SerialNumber), year: Number(ad.YearBuild) || 0, hex: str(ad.ICAO24BitAircraftAddress && ad.ICAO24BitAircraftAddress.Hex).toLowerCase(), registered: !!hit && hit.RegistrationStatus === 'R' };
-      return out.owner || out.msn ? out : null;
+      // (1.3.8: the entry is the airframe's, whatever mark it is under now: an old mark's search finds it de-registered ("D"),
+      // its entry gives the mark it is registered under today - G-NMCF, the AS355 HLL01 flies, G-UBET since February 2024)
+      const mk = str(rd.Mark).toUpperCase(); if (/^[A-Z0-9]{4}$/.test(mk) && /^registered$/i.test(str(rd.Status))) out.mark = 'G-' + mk;
+      return out.owner || out.msn || out.mark ? out : null;
     }
     function ginfo(reg, o) {
       const mark = String(reg || '').toUpperCase().replace(/^G-?/, '');
@@ -9580,7 +9583,9 @@
       const iomFor = reg => iom(reg, q).then(f => { out.regAnswered = true; if (f && (!f.hex || f.hex === lc)) { out.iomOwner = f.owner; if (f.msn) out.msn = out.msn || f.msn; if (f.year && !out.year) out.year = f.year; if (f.owner) out.ownerCity = out.ownerCity || 'Isle of Man'; } }).catch(e => { out.regFailed = true; log('iom register', reg, String(e.message || e)); });
       const iomNow = rec.reg && /^M-/i.test(rec.reg) ? iomFor(rec.reg) : null;
       // (and the UK's G-INFO for G- marks: hexdb and adsbdb say only "Private" for most of them)
-      const ukFor = reg => ginfo(reg, q).then(f => { out.regAnswered = true; if (f && (!f.hex || f.hex === lc)) { out.ukOwner = f.owner; if (f.msn) out.msn = out.msn || f.msn; if (f.year && !out.year) out.year = f.year; } }).catch(e => { out.regFailed = true; log('g-info', reg, String(e.message || e)); });
+      // (1.3.8: a mark the register has de-registered, its airframe - this transponder, by the register's own record of it -
+      // registered under another today: that one is its registration; the databases' copies may lag years)
+      const ukFor = reg => ginfo(reg, q).then(f => { out.regAnswered = true; if (f && (!f.hex || f.hex === lc)) { out.ukOwner = f.owner; if (f.msn) out.msn = out.msn || f.msn; if (f.year && !out.year) out.year = f.year; if (f.mark && f.hex === lc && f.mark !== String(reg).toUpperCase()) out.regNow = f.mark; } }).catch(e => { out.regFailed = true; log('g-info', reg, String(e.message || e)); });
       const ukNow = rec.reg && /^G-/i.test(rec.reg) ? ukFor(rec.reg) : null;
       // (and the Swiss register for HB- marks)
       const chFor = reg => bazl(reg, q).then(f => { out.regAnswered = true; if (f && (!f.hex || f.hex === lc)) { out.chOwner = f.owner; if (f.msn) out.msn = out.msn || f.msn; if (f.year && !out.year) out.year = f.year; } }).catch(e => { out.regFailed = true; log('swiss register', reg, String(e.message || e)); });
@@ -9595,6 +9600,8 @@
       if (!chNow && reg && /^HB-/i.test(reg)) { await chFor(reg); out.owner = out.chOwner || out.owner; }
       // (the owner as a register has it - not a database's copy)
       if (out.faaOwner || out.iomOwner || out.ukOwner || out.chOwner) out.ownerReg = true;
+      // (1.3.8: the register's mark of today over the old one asked with: regWas the old)
+      if (out.regNow) { out.regWas = String(rec.reg || '').toUpperCase(); out.reg = out.regNow; delete out.regNow; }
       for (const k of ['reg2', 'type2', 'desc2', 'owner2', 'faaOwner', 'iomOwner', 'ukOwner', 'chOwner']) delete out[k];
       return out;
     }
@@ -9606,7 +9613,7 @@
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '1.3.7';
+  const VERSION = '1.3.8';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
@@ -10727,7 +10734,7 @@
   const srvIds = { rows: new Map(), since: 0, at: 0, busy: false, scanOk: false, pushed: new Set() };
   function srvRec(r) {
     if (r[5] & 7) noteDbFlags(String(r[1] || '').toLowerCase(), (r[5] & 1 ? 8 : 0) | (r[5] & 2 ? 1 : 0) | (r[5] & 4 ? 4 : 0));
-    const rec = { id: r[0], hex: String(r[1] || '').toLowerCase(), cs: r[4] || '', reg: r[2] || hexNNumber(r[1]) || '', type: r[3] || '', ladd: !!(r[5] & 1), mil: !!(r[5] & 2), pia: !!(r[5] & 4),
+    const rec = { id: r[0], hex: String(r[1] || '').toLowerCase(), cs: r[4] || '', reg: curReg(r[1], r[2] || hexNNumber(r[1]) || ''), type: r[3] || '', ladd: !!(r[5] & 1), mil: !!(r[5] & 2), pia: !!(r[5] & 4),
       src: 'monitor', sources: ['monitor (' + (r[6] || 'named') + ')'], matchedAt: (r[7] || nowS()) * 1000, verifiedAt: now(), srv: true };
     // (1.2.6: the monitor's parked rule is as provisional as this browser's: confirmed, or replaced, by what is heard)
     if (r[6] === 'parked') rec.prov = 'parked';
@@ -11053,7 +11060,7 @@
     // (1.2.3) FR24's own type code where FR24 gives one - what its panel shows - the databases' only where it has none
     // (N999YX: FR24's GLF6, ADS-B's GLEX)
     const type = clean(f.type) || sx.fr24Type || c.type || '';
-    const rec = { id: f.id, hex: c.hex.toLowerCase(), cs: c.cs || '', reg: c.reg || f.reg || hexNNumber(c.hex), type, fr24Type: f.type || '', aggType: c.type || '', desc: c.desc || '', owner: c.owner || '', year: c.year || 0, src: c.src, sources: used, dist: Math.round(m.d * 100) / 100, matchedAt: now(), verifiedAt: now(), ladd: !!(c.ladd || sx.ladd), pia: !!(c.pia || sx.pia), mil: !!(c.mil || sx.mil), cat: c.cat || '', gnd: c.gnd, squawk: c.squawk || 0 };
+    const rec = { id: f.id, hex: c.hex.toLowerCase(), cs: c.cs || '', reg: curReg(c.hex, c.reg || f.reg || hexNNumber(c.hex)), type, fr24Type: f.type || '', aggType: c.type || '', desc: c.desc || '', owner: c.owner || '', year: c.year || 0, src: c.src, sources: used, dist: Math.round(m.d * 100) / 100, matchedAt: now(), verifiedAt: now(), ladd: !!(c.ladd || sx.ladd), pia: !!(c.pia || sx.pia), mil: !!(c.mil || sx.mil), cat: c.cat || '', gnd: c.gnd, squawk: c.squawk || 0 };
     hydrate(rec);
     const rc = regCountry(rec.reg), ctry = rc || countryOfHex(rec.hex); if (ctry) { rec.country = rc ? rc.name : rec.country || ctry.name; rec.countryIso = ctry.iso; if (!rec.countryId || rc) rec.countryId = countryIdOf(ctry.iso, ctry.name) || rec.countryId; }
     telemetry.set(f.id, telemOf(c));
@@ -11102,7 +11109,15 @@
     for (const k of ['ladd', 'pia', 'mil']) if (hx[k] || rec[k]) out[k] = true;
     return out;
   }
-  const HYDRATE = ['reg', 'type', 'desc', 'owner', 'ownerCity', 'msn', 'year', 'operatorId', 'operatorIcao', 'operatorName', 'fr24Equip', 'fr24At', 'faaAt', 'idAt', 'ownerAskedAt', 'ownerFailAt', 'pubAt', 'countryId', 'country', 'cat', 'photos', 'photoAt', 'photoLevel', 'photoV', 'jpFailAt'];
+  const HYDRATE = ['reg', 'type', 'desc', 'owner', 'ownerCity', 'msn', 'year', 'operatorId', 'operatorIcao', 'operatorName', 'fr24Equip', 'fr24At', 'faaAt', 'idAt', 'ownerAskedAt', 'ownerFailAt', 'pubAt', 'countryId', 'country', 'cat', 'photos', 'photoAt', 'photoLevel', 'photoV', 'jpFailAt', 'regCheckAt'];
+  // (1.3.8) An airframe's mark as its register has it today, over the old one the aggregators' database still gives for
+  // its transponder (407D94: G-NMCF in tar1090-db, adsb.lol's and airplanes.live's - G-UBET since February 2024 by G-INFO).
+  // Once the register has said so (03-data enrich), the old mark heard again is the new one; a third mark is taken as heard
+  // (and checked again)
+  function curReg(hex, reg) {
+    const hx = hex ? store.getHex(String(hex).toLowerCase()) : null, r = String(reg || '').toUpperCase();
+    return hx && hx.regOld && hx.reg && r === hx.regOld ? hx.reg : reg;
+  }
   function hydrate(rec) {
     const hx = rec && rec.hex ? store.getHex(rec.hex) : null; if (!hx) return rec;
     { const a = rec.photos || [], b = hx.photos || [];
@@ -12205,7 +12220,7 @@
   // area cache): registration, type, description, owner and build year - no request needed.
   function seedFromArea(hex) {
     const c = areaCache.get(hex); if (!c) return {};
-    const s = {}; if (c.reg) s.reg = c.reg; if (c.type) s.type = c.type; if (c.desc) s.desc = c.desc; if (c.owner) s.owner = c.owner; if (c.year > 1930) s.year = c.year; if (c.cat) s.cat = c.cat; if (c.mil) s.mil = true;
+    const s = {}; if (c.reg) s.reg = curReg(hex, c.reg); if (c.type) s.type = c.type; if (c.desc) s.desc = c.desc; if (c.owner) s.owner = c.owner; if (c.year > 1930) s.year = c.year; if (c.cat) s.cat = c.cat; if (c.mil) s.mil = true;
     return s;
   }
   // What is known of ordinary aircraft goes to the page, which puts it in FR24's own first frame of them - their name over
@@ -12347,7 +12362,7 @@
     if (p) syncPanelSoon();
   }
   function persist(rec) {
-    store.mergeHex(rec.hex, { reg: rec.reg, type: rec.type, desc: rec.desc, owner: rec.owner, ownerCity: rec.ownerCity, country: rec.country, countryId: rec.countryId, msn: rec.msn, year: rec.year, yearEst: rec.yearEst, yearHow: rec.yearHow, photos: rec.photos, photoAt: rec.photoAt, photoLevel: rec.photoLevel, photoV: rec.photoV, jpFailAt: rec.jpFailAt || 0, operatorId: rec.operatorId, operatorIcao: rec.operatorIcao, operatorName: rec.operatorName, fr24Equip: rec.fr24Equip, fr24At: rec.fr24At, faaAt: rec.faaAt, idAt: rec.idAt, ownerAskedAt: rec.ownerAskedAt, ownerFailAt: rec.ownerFailAt, cat: rec.cat, mil: rec.mil });
+    store.mergeHex(rec.hex, { reg: rec.reg, regOld: rec.regOld || '', regCheckAt: rec.regCheckAt || 0, type: rec.type, desc: rec.desc, owner: rec.owner, ownerCity: rec.ownerCity, country: rec.country, countryId: rec.countryId, msn: rec.msn, year: rec.year, yearEst: rec.yearEst, yearHow: rec.yearHow, photos: rec.photos, photoAt: rec.photoAt, photoLevel: rec.photoLevel, photoV: rec.photoV, jpFailAt: rec.jpFailAt || 0, operatorId: rec.operatorId, operatorIcao: rec.operatorIcao, operatorName: rec.operatorName, fr24Equip: rec.fr24Equip, fr24At: rec.fr24At, faaAt: rec.faaAt, idAt: rec.idAt, ownerAskedAt: rec.ownerAskedAt, ownerFailAt: rec.ownerFailAt, cat: rec.cat, mil: rec.mil });
     if (rec.id) store.setId(rec.id, rec);
     if (rec.id) pushToPage([rec]);
     syncPanelSoon();
@@ -12638,6 +12653,8 @@
     const [, reg, type, desc, owner, ownerCity, country, countryIso, msn, year, opId, opIcao, opName, at, ok, withheld] = r;
     let ch = false;
     const fill = (k, v) => { if (v && typeof v === 'string' && (!rec[k] || (k === 'owner' && !ownerName(rec.owner)))) { rec[k] = v; ch = true; } };
+    // (1.3.8: the register's mark of today where it replaced the old one this record still has)
+    if (typeof r[18] === 'string' && r[18] && reg && String(rec.reg || '').toUpperCase() === r[18].toUpperCase() && reg.toUpperCase() !== r[18].toUpperCase()) { rec.regOld = r[18].toUpperCase(); rec.reg = reg.toUpperCase(); rec.photoLevel = 0; rec.fr24At = 0; ch = true; }
     fill('reg', reg); fill('type', type); fill('desc', desc); fill('owner', owner); fill('ownerCity', ownerCity); fill('msn', msn);
     // (1.2.1: a year the monitor worked out - from serial numbers, the operator's fleet, the type - kept as an estimate)
     if (year > 1900 && (!rec.year || (rec.yearEst && !r[16]))) { rec.year = year; rec.yearEst = r[16] === 1; rec.yearHow = r[17] || ''; ch = true; }
@@ -12696,12 +12713,22 @@
     // Isle of Man's, the FAA's. HLL01, G-NMCF: its registration, type and country all known from the aggregators, so the
     // registers were never asked and the panel had no name - G-INFO has its AOC operator, Kingmoor Aviation. Once a day.)
     const ownerDue = !shownOwner(rec, rec.cs) && /^(G-|M-|HB-|N\d)/i.test(rec.reg || '') && now() - (rec.ownerAskedAt || 0) > 864e5 && now() - (rec.ownerFailAt || 0) > 5 * 60000;
-    if (ownerDue || ((!rec.reg || !rec.type || !rec.countryId || (/^N\d/.test(rec.reg || '') && !rec.faaAt)) && (now() - (rec.idAt || 0) > 3 * 864e5 || (!rec.reg && currentId() === rec.id && now() - (rec.idAt || 0) > 600000)))) {
+    // (1.3.8: and a UK mark's register asked once a week whatever else is known: the aircraft may be under another mark now
+    // - its transponder keeps its address. HLL01 was named G-NMCF, de-registered in 2024: G-UBET)
+    const regDue = /^G-/i.test(rec.reg || '') && now() - (rec.regCheckAt || 0) > 7 * 864e5 && now() - (rec.ownerFailAt || 0) > 5 * 60000;
+    if (ownerDue || regDue || ((!rec.reg || !rec.type || !rec.countryId || (/^N\d/.test(rec.reg || '') && !rec.faaAt)) && (now() - (rec.idAt || 0) > 3 * 864e5 || (!rec.reg && currentId() === rec.id && now() - (rec.idAt || 0) > 600000)))) {
       rec.idAt = now(); changed = true;
       if (ownerDue && /^N\d/i.test(rec.reg)) rec.faaAt = 0;
       const idn = await fetchIdentity(rec, currentId() === rec.id);
       // (asked: done for the day when a register answered - a refused or failed request is tried again in 5 minutes)
       if (ownerDue) { if (idn.regAnswered || !idn.regFailed) { rec.ownerAskedAt = now(); rec.ownerFailAt = 0; } else rec.ownerFailAt = now(); }
+      if (regDue) { if (idn.regAnswered) rec.regCheckAt = now(); else rec.ownerFailAt = now(); }
+      // (1.3.8: the register's mark of today for the old one it was asked with: the aircraft renamed - its pictures looked for
+      // again under it, FR24's record of it asked again)
+      if (idn.regWas && idn.reg && idn.reg !== String(rec.reg || '').toUpperCase() && String(rec.reg || '').toUpperCase() === idn.regWas) {
+        log('registration of today', rec.hex, idn.regWas, '->', idn.reg);
+        rec.regOld = idn.regWas; rec.reg = idn.reg; rec.photoLevel = 0; rec.fr24At = 0; rec.regTried = false; changed = true;
+      }
       for (const k of ['reg', 'type', 'desc', 'owner', 'ownerCity', 'country', 'countryIso', 'countryId', 'msn', 'year']) if ((!rec[k] || (k === 'owner' && !ownerName(rec.owner))) && idn[k] && idn[k] !== rec[k]) { rec[k] = idn[k]; changed = true; }
       if (rec.faaAt) changed = true;
       ownerToMonitor(rec, idn);
@@ -14163,7 +14190,9 @@
       setD(finalAp, 'confirmed', finalWhy(finalAp)); r.destP = 100;
     } else if (softPlan && apById(softPlan.destId)) {
       // (1.3.1) the arrival information it asked for in flight: 97 flights in 100 land there (a day of the world's messages)
-      setD(apById(softPlan.destId), 'likely', datalinkWhy(softPlan)); r.destP = 95;
+      // (1.3.8: the route usually flown under its callsign, where it took off from that route's airport and heads for the
+      // other: 98 in 100 as tried on flights whose own messages named theirs - shown as 90)
+      setD(apById(softPlan.destId), 'likely', datalinkWhy(softPlan)); r.destP = (softPlan.kinds || []).every(k => k === 'csdb') ? 90 : 95;
     } else if (top) {
       // shown as 100% only when it is confirmed - descending into it, close, with nothing else left; otherwise at most 99%
       const sure = top.p >= 0.995 && top.dist < 80 && (r.phase === 'descent' || (fin(pos.alt) && pos.alt - top.airport.alt < 6000));
@@ -14562,16 +14591,31 @@
   // counts only for a flight known to have left its origin. A report that says where the aircraft was is taken only
   // when that is where it was. Arrival information (ATIS) asked for in flight is its destination 97 times in 100 - shown
   // as likely, not as a plan.
-  const DL_PRE = ['fpn', 'fpl', 'filed', 'alert', 'pdc', 'dcl', 'oooi'], DL_NOTICE = ['fpl', 'filed', 'alert', 'pdc', 'dcl'];
+  // (1.3.8: 'atn' - the flight plan its avionics gave air traffic control, with its logon to a control centre's datalink
+  // or a CPDLC route clearance: sent before the flight or during it)
+  // ('csdb': the route an open callsign database gives for its callsign - an airline's flight FR24 has not matched: never
+  // more than likely, and only where it agrees with where the aircraft is and the airport it left)
+  // ('gate': its load sheet, final weights, delay, sent at the gate before the flight it is about to fly)
+  const DL_PRE = ['fpn', 'fpl', 'filed', 'alert', 'pdc', 'dcl', 'oooi', 'atn', 'gate'], DL_NOTICE = ['fpl', 'filed', 'alert', 'pdc', 'dcl', 'gate'];
+  // (1.3.8: out of the gate and off, the gate's messages: of the flight about to leave - sent two hours, three, before it
+  // at most; a plan may be filed half a day before)
+  const DL_NEAR = { oooi: 7200, gate: 10800 };
   function datalinkPlan(id, rec, hex, pos, legStart, oAp) {
     const hx = hex ? store.getHex(hex) || {} : {}, reg = rec.reg || hx.reg;
     // (1.3.1: and what the aircraft's data radio gave by its 24-bit address - a registration is not needed for those)
     const rs = reg || hex ? datalinkRoutes(reg || '', () => scheduleReplan(id, 50), hex) : null; if (!rs || !rs.length) return null;
+    // (1.3.8: a callsign database's route only where nothing the aircraft sent or was sent names one for this flight)
+    let csdb = null;
     for (let i = rs.length - 1; i >= 0; i--) {
       const x = rs[i], kinds = x.kinds || [], D = ENGINE.byIcao(x.d), O = x.o ? ENGINE.byIcao(x.o) : oAp || null; if (!D || (x.o && !O) || (O && O.id === D.id)) continue;
+      if (csdb && kinds.every(k => k === 'csdb')) continue;
       if (x.t > pos.t + 600 || x.t < legStart - 12 * 3600) continue;
-      const inFlight = x.t >= legStart - 600, pre = kinds.some(k => DL_PRE.includes(k)), soft = kinds.length > 0 && kinds.every(k => k === 'atis');
+      const inFlight = x.t >= legStart - 600, pre = kinds.some(k => DL_PRE.includes(k)), soft = kinds.length > 0 && kinds.every(k => k === 'atis' || k === 'csdb');
       if (!inFlight && !pre) continue;                                     // (a report from an earlier flight)
+      if (!inFlight && kinds.every(k => DL_NEAR[k]) && x.t < legStart - Math.max(...kinds.map(k => DL_NEAR[k]))) continue;
+      // (1.3.8: one from before this flight whose destination the aircraft has since left again - flown: A to B, B to A, then
+      // A to C - the plan of A to B is not this flight's)
+      if (!inFlight && rs.some(y => y.o && y.o === x.d && y.t > x.t && y.t < legStart - 600 && !(y.kinds || []).every(k => k === 'csdb'))) continue;
       // (where it said it was, said in the last twenty minutes: where it is - else another's message, or an old one)
       if (x.at && Math.abs(pos.t - x.t) <= 1200 && ENGINE.dist(x.at[0], x.at[1], pos.lat, pos.lon) > 400) continue;
       if (!x.o) {
@@ -14588,13 +14632,25 @@
         if (!oAp && (x.first || x.t) > legStart + 900 && kinds.every(k => DL_NOTICE.includes(k))) continue;
       }
       if (O) { const dOD = ENGINE.dist(O.lat, O.lon, D.lat, D.lon), dOP = ENGINE.dist(O.lat, O.lon, pos.lat, pos.lon), dPD = ENGINE.dist(pos.lat, pos.lon, D.lat, D.lon); if (dOP + dPD > dOD * 1.25 + 150) continue; }   // (nowhere near the way there)
-      return { originId: x.o ? O.id : 0, destId: D.id, datalink: true, at: x.t, kinds, num: x.cs || '', soft };
+      const p = { originId: x.o ? O.id : 0, destId: D.id, datalink: true, at: x.t, kinds, num: x.cs || '', soft };
+      if (kinds.length && kinds.every(k => k === 'csdb')) {
+        // (what a callsign database gives is this flight's route half the time - 103 of 209 airline flights whose own
+        // messages named theirs, 17 Nov. Taken only from the airport this flight took off from (93 in 100 right), on the
+        // way there (95) and heading for it (98: the track within 30 degrees of it, more than 60 km out))
+        if (!oAp || !x.o) continue;
+        const dOD = ENGINE.dist(O.lat, O.lon, D.lat, D.lon), dOP = ENGINE.dist(O.lat, O.lon, pos.lat, pos.lon), dPD = ENGINE.dist(pos.lat, pos.lon, D.lat, D.lon);
+        if (dOP + dPD > dOD * 1.1 + 50) continue;
+        if (dPD > 60 && !(fin(pos.trk) && ENGINE.angDiff(pos.trk, ENGINE.brg(pos.lat, pos.lon, D.lat, D.lon)) <= 30)) continue;
+        csdb = p; continue;
+      }
+      return p;
     }
-    return null;
+    return csdb;
   }
   const DL_WHAT = { fpn: 'flight plan uplinked to it', pos: 'its position reports', fpl: 'its filed flight plan', filed: 'its filed flight plan', alert: 'its flight-plan alerts', pdc: 'its departure clearance', eta: 'its arrival estimate', rep: 'its position reports',
-    rpt: 'its reports', oooi: 'its out / off report', dcl: 'its departure clearance', ocl: 'its oceanic clearance', dq: 'the descent winds it asked for', xid: 'the destination its data radio gives', atis: 'the arrival information (ATIS) it asked for' };
-  const datalinkWhy = p => { const k = (p.kinds || [])[0], d = new Date((p.at || 0) * 1000); return `${DL_WHAT[k] || 'its own flight plan'} (datalink, ${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}Z)`; };
+    rpt: 'its reports', oooi: 'its out / off report', dcl: 'its departure clearance', ocl: 'its oceanic clearance', dq: 'the descent winds it asked for', xid: 'the destination its data radio gives', atis: 'the arrival information (ATIS) it asked for', atn: 'the flight plan its avionics gave air traffic control', csdb: 'the route usually flown under its callsign', gate: 'its pre-departure messages' };
+  const datalinkWhy = p => { const k = (p.kinds || [])[0], d = new Date((p.at || 0) * 1000); if (k === 'csdb') return DL_WHAT.csdb + (p.num ? ' ' + p.num : '');
+    return `${DL_WHAT[k] || 'its own flight plan'} (datalink, ${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}Z)`; };
   // ==/ROUTE-DL==
   function schedPlan(id) {
     if (live.has(id)) return null;
@@ -16219,6 +16275,8 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     // (one of ours that a better answer may still replace: a private site, an inferred airport)
     const weak = el => !!el && el.classList.contains('tl-filled') && Number(el.dataset.tlRank || 0) < 3;
     let n = 0;
+    // (1.3.8: every flight's take-off FR24 lists - which of them comes next after a flight)
+    const allAtd = [...tbody.querySelectorAll('tr.data-row:not(.tl-adsb-row):not(.tl-live-row)')].filter(r => r.children.length >= 12).map(r => Number(r.children[8].dataset.timestamp) || Number(r.dataset.timestamp) || 0).filter(t => t > 0);
     for (const tr of tbody.querySelectorAll('tr.data-row:not(.tl-adsb-row):not(.tl-live-row)')) {
       const c = tr.children; if (c.length < 12) continue;
       const fromTd = c[3], toTd = c[4], durTd = c[6], atdTd = c[8], stateTd = c[10], statusTd = c[11];
@@ -16249,8 +16307,13 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       // coverage is one ADS-B leg "Liverpool -> Blackpool" but two FR24 flights, the first landing at 16:42). Only an
       // ADS-B end after FR24's landing is another flight's: FR24 calls it landed well after touchdown (N87VS down at
       // Woodvale 10:30, its track ending 10:33, "Landed 10:44").
+      // (1.3.8: but where FR24 lists no flight leaving before that ADS-B end, FR24 only lost it - its "Landed" is where its
+      // track stopped: G-RESH, 14 Nov, St. Athan - Caernarfon, lost by FR24 at 2,600 ft over Snowdonia at 17:31, "Landed
+      // 17:31"; the public track has it on to Caernarfon, down at 18:02, its next flight at 18:19 - its row "Caernarfon?"
+      // from that next flight, and "-" in its playback)
       const frLanded = landedRow ? Number(statusTd.dataset.timestamp) || 0 : 0, legEnd = l ? (l.tOn || l.tEnd) : 0;
-      const endAgrees = !frLanded || !legEnd || legEnd <= frLanded + 600;
+      const nextAtd = allAtd.filter(t => t > atd + 60).reduce((m, t) => Math.min(m, t), Infinity);
+      const endAgrees = !frLanded || !legEnd || legEnd <= frLanded + 600 || (!!l && l.ended && legEnd < nextAtd - 300);
       if (l && putCells(fromTd, 'FROM', cellsOf(l.from, l.startedOnGround), 'from')) n++;
       if (l && endAgrees && putCells(toTd, 'TO', cellsOf(l.to, landedOff(l)), 'to')) n++;
       if (isLive && goodPrediction(lv)) {
@@ -19053,7 +19116,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // (the version whose "what's new" was put away, and the one whose dot on the button the window was opened for)
   const UB_SEEN_KEY = 'tweeks.fr24.ladd.seenver', UB_DOT_KEY = 'tweeks.fr24.ladd.dotver';
   // (the newest CHANGELOG section's headlines, written in by build.mjs: { v, items })
-  const UB_WHATS_NEW = {"v":"1.3.7","items":["**Recent flights** in the aircraft panel are filled again for LADD, blocked and military aircraft. FR24's build of mid-November asks a new address for an aircraft's recent flights (www.flightradar24.com/api/v2/flights in place of common/v2/flight/list.json), with the same question from the same caller, and the script only knew the old one. Each row's airports are given in that build's new form: FR24 looks each one up by its id, OurAirports heliports and fields included.","**Clicking an airport pin**: an OurAirports airport's pin said \"Cannot load the airport data\". FR24's new build opens a pin by the airport's id, not its code, and its own lookup by id never reached the one that knows the OurAirports airports.","**FR24's airport list** moved to a new address too (/api/v2/airports). The OurAirports airports are added there, and one FR24 now lists itself (its list keeps airports with only an ICAO code now) is never added a second time.","**The aircraft directory, production lists and their padlocks**:","**Typing an OurAirports airport's address** (flightradar24.com/data/airports/egow) or an added type's: FR24's server sends the browser on to its airport list, and the extension is meant to see where from and make the page. It never could: it had no permission on FR24's own site, only on api.flightradar24.com. It now has it. This adds no new permission prompt, as its scripts already run there.","**Pacific tracks**: the monitor had none. The FAA's NOTAM Search refuses servers in data centres, and its old DINS page is gone. The monitor now asks the FAA's PilotWeb page of the Pacific tracks first (the FAA's own link to them), and NOTAM Search as its own page asks; why each failed is in its /status (wxmap.pac). When the monitor still has none, the browser asks the FAA itself, through the userscript, and keeps them half an hour."]};
+  const UB_WHATS_NEW = {"v":"1.3.8","items":["**Many more flight plans from datalink.** On a sample of 9,034 real messages from every aircraft Airframes heard on 17 Nov, routes read went from 624 (267 aircraft) to 2,988 (881 aircraft). Each new kind of message was checked against the other messages of the same flight: 2,672 routes from 788 aircraft, no disagreement. Newly read:","**The whole Airframes stream searched.** Before, the monitor only asked Airframes about aircraft one at a time. It now also searches every aircraft's messages of these kinds as Airframes hears them, about three requests a minute. One test pass read 2,349 messages and 652 routes for 390 aircraft in ten seconds. The Airframes allowance goes from 12 to 20 requests a minute; Airframes allows 60.","**An airline's flight FR24 has no destination for** gets the route usually flown under its callsign, from adsbdb.com (else hexdb.io). These databases are right only half the time (103 of 209 flights checked against the aircraft's own messages), so the route is shown as \"likely, 90%\". It is used only when the aircraft took off from that route's airport and is heading for its destination, which was right 98 times in 100. A route from the aircraft's own messages always comes first.","**Fewer wrong plans:**","**Registration of today:** an aircraft is no longer named by an old registration the aggregators' database still gives for its transponder. HLL01 (407D94) was G-NMCF, which the UK register de-registered in February 2024; it has been G-UBET since. For a UK aircraft the script now asks G-INFO once a week. When G-INFO says the old mark is de-registered and the same transponder's airframe is registered under another, that mark is used from then on.","**G-RESH's log and playback:** on 14 Nov it flew St. Athan to Caernarfon. FR24 lost it hovering over Snowdonia and wrote \"Landed 17:31\"; its public track goes on to land at Caernarfon at 18:02. The row showed \"Caernarfon?\", copied from its next flight, and its playback showed \"-\". When FR24 lists no other flight leaving before the public track lands, that landing is now this flight's: Caernarfon, in the row and in the playback."]};
   // (an aircraft with an open padlock: FR24's outline style - 24 grid, 1.5 stroke in the text colour)
   const UB_ICON = '<svg data-tl-ub-icon="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
   const UB_X = '<svg viewBox="0 0 14 14" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5l11 11M12.5 1.5l-11 11"/></svg>';
@@ -20476,7 +20539,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   const SNAP_MAX = 600000;    // characters (~1.2 MB): localStorage is ~5 MB per site and FR24 keeps its own settings there too
   const FLIGHT_KEYS = ['hex', 'cs', 'reg', 'type', 'fr24Type', 'aggType', 'desc', 'cat', 'mil', 'ladd', 'pia', 'owner', 'ownerCity', 'msn', 'year', 'operatorId', 'operatorIcao', 'operatorName', 'fr24Equip', 'countryId', 'country', 'countryIso', 'squawk', 'src', 'matchedAt', 'verifiedAt', 'origin', 'faaAt', 'fr24At', 'pubAt', 'photoAt', 'photoLevel', 'photoV', 'regTried'];
   const AREA_KEYS = ['hex', 'cs', 'reg', 'type', 'desc', 'owner', 'year', 'lat', 'lon', 'alt', 'gnd', 'gs', 'trk', 'ageS', 'receivedAt', 'dbFlags', 'ladd', 'pia', 'mil', 'src', 'cat', 'sq', 'squawk', 'emergency', 'vs', 'agps', 'ias', 'tas', 'mach', 'oat', 'wd', 'ws', 'mcp', 'fms'];
-  const HEX_KEYS = ['reg', 'type', 'fr24Type', 'desc', 'owner', 'ownerCity', 'msn', 'year', 'operatorId', 'operatorIcao', 'operatorName', 'fr24Equip', 'countryId', 'country', 'cat', 'mil', 'ladd', 'pia', 'photoAt', 'photoLevel', 'photoV', 'faaAt', 'fr24At', 'idAt', 'ownerAskedAt', 'ownerFailAt', 'pubAt', 'pubFull', 'savedAt'];
+  const HEX_KEYS = ['reg', 'regOld', 'regCheckAt', 'type', 'fr24Type', 'desc', 'owner', 'ownerCity', 'msn', 'year', 'operatorId', 'operatorIcao', 'operatorName', 'fr24Equip', 'countryId', 'country', 'cat', 'mil', 'ladd', 'pia', 'photoAt', 'photoLevel', 'photoV', 'faaAt', 'fr24At', 'idAt', 'ownerAskedAt', 'ownerFailAt', 'pubAt', 'pubFull', 'savedAt'];
   const pick = (src, keys, out) => { for (const k of keys) { const v = src[k]; if (v != null && v !== '' && v !== 0 && v !== false) out[k] = v; } return out; };
   function buildSnapshot() {
     const t = now(), vc = viewCenter, cands = [];

@@ -750,7 +750,7 @@
   // area cache): registration, type, description, owner and build year - no request needed.
   function seedFromArea(hex) {
     const c = areaCache.get(hex); if (!c) return {};
-    const s = {}; if (c.reg) s.reg = c.reg; if (c.type) s.type = c.type; if (c.desc) s.desc = c.desc; if (c.owner) s.owner = c.owner; if (c.year > 1930) s.year = c.year; if (c.cat) s.cat = c.cat; if (c.mil) s.mil = true;
+    const s = {}; if (c.reg) s.reg = curReg(hex, c.reg); if (c.type) s.type = c.type; if (c.desc) s.desc = c.desc; if (c.owner) s.owner = c.owner; if (c.year > 1930) s.year = c.year; if (c.cat) s.cat = c.cat; if (c.mil) s.mil = true;
     return s;
   }
   // What is known of ordinary aircraft goes to the page, which puts it in FR24's own first frame of them - their name over
@@ -892,7 +892,7 @@
     if (p) syncPanelSoon();
   }
   function persist(rec) {
-    store.mergeHex(rec.hex, { reg: rec.reg, type: rec.type, desc: rec.desc, owner: rec.owner, ownerCity: rec.ownerCity, country: rec.country, countryId: rec.countryId, msn: rec.msn, year: rec.year, yearEst: rec.yearEst, yearHow: rec.yearHow, photos: rec.photos, photoAt: rec.photoAt, photoLevel: rec.photoLevel, photoV: rec.photoV, jpFailAt: rec.jpFailAt || 0, operatorId: rec.operatorId, operatorIcao: rec.operatorIcao, operatorName: rec.operatorName, fr24Equip: rec.fr24Equip, fr24At: rec.fr24At, faaAt: rec.faaAt, idAt: rec.idAt, ownerAskedAt: rec.ownerAskedAt, ownerFailAt: rec.ownerFailAt, cat: rec.cat, mil: rec.mil });
+    store.mergeHex(rec.hex, { reg: rec.reg, regOld: rec.regOld || '', regCheckAt: rec.regCheckAt || 0, type: rec.type, desc: rec.desc, owner: rec.owner, ownerCity: rec.ownerCity, country: rec.country, countryId: rec.countryId, msn: rec.msn, year: rec.year, yearEst: rec.yearEst, yearHow: rec.yearHow, photos: rec.photos, photoAt: rec.photoAt, photoLevel: rec.photoLevel, photoV: rec.photoV, jpFailAt: rec.jpFailAt || 0, operatorId: rec.operatorId, operatorIcao: rec.operatorIcao, operatorName: rec.operatorName, fr24Equip: rec.fr24Equip, fr24At: rec.fr24At, faaAt: rec.faaAt, idAt: rec.idAt, ownerAskedAt: rec.ownerAskedAt, ownerFailAt: rec.ownerFailAt, cat: rec.cat, mil: rec.mil });
     if (rec.id) store.setId(rec.id, rec);
     if (rec.id) pushToPage([rec]);
     syncPanelSoon();
@@ -1183,6 +1183,8 @@
     const [, reg, type, desc, owner, ownerCity, country, countryIso, msn, year, opId, opIcao, opName, at, ok, withheld] = r;
     let ch = false;
     const fill = (k, v) => { if (v && typeof v === 'string' && (!rec[k] || (k === 'owner' && !ownerName(rec.owner)))) { rec[k] = v; ch = true; } };
+    // (1.3.8: the register's mark of today where it replaced the old one this record still has)
+    if (typeof r[18] === 'string' && r[18] && reg && String(rec.reg || '').toUpperCase() === r[18].toUpperCase() && reg.toUpperCase() !== r[18].toUpperCase()) { rec.regOld = r[18].toUpperCase(); rec.reg = reg.toUpperCase(); rec.photoLevel = 0; rec.fr24At = 0; ch = true; }
     fill('reg', reg); fill('type', type); fill('desc', desc); fill('owner', owner); fill('ownerCity', ownerCity); fill('msn', msn);
     // (1.2.1: a year the monitor worked out - from serial numbers, the operator's fleet, the type - kept as an estimate)
     if (year > 1900 && (!rec.year || (rec.yearEst && !r[16]))) { rec.year = year; rec.yearEst = r[16] === 1; rec.yearHow = r[17] || ''; ch = true; }
@@ -1241,12 +1243,22 @@
     // Isle of Man's, the FAA's. HLL01, G-NMCF: its registration, type and country all known from the aggregators, so the
     // registers were never asked and the panel had no name - G-INFO has its AOC operator, Kingmoor Aviation. Once a day.)
     const ownerDue = !shownOwner(rec, rec.cs) && /^(G-|M-|HB-|N\d)/i.test(rec.reg || '') && now() - (rec.ownerAskedAt || 0) > 864e5 && now() - (rec.ownerFailAt || 0) > 5 * 60000;
-    if (ownerDue || ((!rec.reg || !rec.type || !rec.countryId || (/^N\d/.test(rec.reg || '') && !rec.faaAt)) && (now() - (rec.idAt || 0) > 3 * 864e5 || (!rec.reg && currentId() === rec.id && now() - (rec.idAt || 0) > 600000)))) {
+    // (1.3.8: and a UK mark's register asked once a week whatever else is known: the aircraft may be under another mark now
+    // - its transponder keeps its address. HLL01 was named G-NMCF, de-registered in 2024: G-UBET)
+    const regDue = /^G-/i.test(rec.reg || '') && now() - (rec.regCheckAt || 0) > 7 * 864e5 && now() - (rec.ownerFailAt || 0) > 5 * 60000;
+    if (ownerDue || regDue || ((!rec.reg || !rec.type || !rec.countryId || (/^N\d/.test(rec.reg || '') && !rec.faaAt)) && (now() - (rec.idAt || 0) > 3 * 864e5 || (!rec.reg && currentId() === rec.id && now() - (rec.idAt || 0) > 600000)))) {
       rec.idAt = now(); changed = true;
       if (ownerDue && /^N\d/i.test(rec.reg)) rec.faaAt = 0;
       const idn = await fetchIdentity(rec, currentId() === rec.id);
       // (asked: done for the day when a register answered - a refused or failed request is tried again in 5 minutes)
       if (ownerDue) { if (idn.regAnswered || !idn.regFailed) { rec.ownerAskedAt = now(); rec.ownerFailAt = 0; } else rec.ownerFailAt = now(); }
+      if (regDue) { if (idn.regAnswered) rec.regCheckAt = now(); else rec.ownerFailAt = now(); }
+      // (1.3.8: the register's mark of today for the old one it was asked with: the aircraft renamed - its pictures looked for
+      // again under it, FR24's record of it asked again)
+      if (idn.regWas && idn.reg && idn.reg !== String(rec.reg || '').toUpperCase() && String(rec.reg || '').toUpperCase() === idn.regWas) {
+        log('registration of today', rec.hex, idn.regWas, '->', idn.reg);
+        rec.regOld = idn.regWas; rec.reg = idn.reg; rec.photoLevel = 0; rec.fr24At = 0; rec.regTried = false; changed = true;
+      }
       for (const k of ['reg', 'type', 'desc', 'owner', 'ownerCity', 'country', 'countryIso', 'countryId', 'msn', 'year']) if ((!rec[k] || (k === 'owner' && !ownerName(rec.owner))) && idn[k] && idn[k] !== rec[k]) { rec[k] = idn[k]; changed = true; }
       if (rec.faaAt) changed = true;
       ownerToMonitor(rec, idn);

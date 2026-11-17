@@ -16,9 +16,12 @@ const FAA = {
   N1848T: '<table><tr><td data-label="Serial Number">680A-0123</td><td data-label="Mfr Year">2015</td></tr><tr><td data-label="Name">BLUE SKY HOLDINGS LLC</td><td data-label="Street">1 SECRET ROAD</td><td data-label="City">WILMINGTON</td><td data-label="State">DELAWARE</td><td data-label="Country">US</td></tr><tr><td data-label="Mode S Code (Base 16 / Hex)">A1B2C3</td></tr></table>',
   N77PX: '<table><tr><td data-label="Serial Number">None</td><td data-label="A/W Date">03/14/2009</td></tr><tr><td data-label="Name">REGISTRATION PENDING</td></tr><tr><td data-label="Name"><b>APPLICANT</b> OSPREY JET LEASING LLC</td></tr></table>'
 };
-const GINFO = { search: { WAPA: [{ Mark: 'WAPA', RegistrationStatus: 'D', AircraftID: 1 }, { Mark: 'WAPA', RegistrationStatus: 'R', AircraftID: 2 }], NMCF: [{ Mark: 'NMCF', RegistrationStatus: 'R', AircraftID: 3 }] },
+const GINFO = { search: { WAPA: [{ Mark: 'WAPA', RegistrationStatus: 'D', AircraftID: 1 }, { Mark: 'WAPA', RegistrationStatus: 'R', AircraftID: 2 }], NMCF: [{ Mark: 'NMCF', RegistrationStatus: 'R', AircraftID: 3 }],
+  // (1.3.8: G-INFO as it answers today for 407D94's old mark - de-registered, the airframe G-UBET since February 2024)
+  OLDM: [{ Mark: 'OLDM', RegistrationStatus: 'D', AircraftID: 71591 }], UBET: [{ Mark: 'UBET', RegistrationStatus: 'R', AircraftID: 71591 }] },
   details: { 2: { RegisteredAircraftOwners: [{ RegisteredOwner: 'JOHN SMITH', TradingAs: '' }], AircraftDetails: { SerialNumber: '13001', YearBuild: 2004, ICAO24BitAircraftAddress: { Hex: '40624A' } }, AircraftOperatedByAocHolder: null },
-    3: { RegisteredAircraftOwners: [{ RegisteredOwner: 'SOMEONE ELSE LTD' }], AircraftDetails: { SerialNumber: '9', YearBuild: 2010, ICAO24BitAircraftAddress: { Hex: '43C0FF' } }, AircraftOperatedByAocHolder: { OperatorName: 'KINGMOOR AVIATION LTD' } } } };
+    3: { RegisteredAircraftOwners: [{ RegisteredOwner: 'SOMEONE ELSE LTD' }], AircraftDetails: { SerialNumber: '9', YearBuild: 2010, ICAO24BitAircraftAddress: { Hex: '43C0FF' } }, AircraftOperatedByAocHolder: { OperatorName: 'KINGMOOR AVIATION LTD' } },
+    71591: { RegistrationDetails: { Mark: 'UBET', Status: 'Registered' }, AircraftDetails: { SerialNumber: '5601', YearBuild: 1996, ICAO24BitAircraftAddress: { Hex: '407D94' } }, AircraftOperatedByAocHolder: { OperatorName: 'KINGMOOR AVIATION LTD' } } } };
 const IOM = { list: '<tr><td><a href="/register/77/view">M-WJBA</a></td></tr>', view: '<div><label class="l">Registered Owners</label>\n <span class="v">Ballycastle Aviation Limited, A N Other</span></div><div><label>Serial Number</label><span>680A0466</span></div><div><label>Mode S Number</label><span>43EAC1</span></div><div><label>Registered</label><span>01/02/2016</span></div><div><label>Previous International Registration</label><span>New</span></div>' };
 const BAZL = [{ registration: 'HB-JNA', ownerOperators: [{ holderCategory: { categoryNames: { en: 'Main Owner' } }, ownerOperator: 'Some Bank AG' }, { holderCategory: { categoryNames: { en: 'Main Operator' } }, ownerOperator: 'Swiss International Air Lines Ltd.' }], details: { serialNumber: '62701', yearOfManufacture: 2016, aircraftAddresses: { hex: '4B1801' } } }];
 const HEXDB = { A1B2C3: { Registration: 'N1848T', ICAOTypeCode: 'C68A', Manufacturer: 'Cessna', Type: 'Citation Latitude', RegisteredOwners: 'Private' }, '40624A': { Registration: 'G-WAPA', ICAOTypeCode: 'R44', Manufacturer: 'Robinson', Type: 'R44', RegisteredOwners: 'Private' }, ABCDEF: { Registration: '', ICAOTypeCode: 'GLF6', RegisteredOwners: 'Gulfstream Owner Trust' }, A0B0C0: { Registration: 'N77PX', ICAOTypeCode: 'GLF5' } };
@@ -54,6 +57,11 @@ const ask = async (url, o) => { const [st, body] = answer(url, o || {}); if (st 
   check('... an entry with another airframe\'s Mode S: its owner not taken (the register still answered)', !uk2.owner && uk2.regAnswered === true, uk2);
   const uk3 = R.parse.ginfo(GINFO.details[3], GINFO.search.NMCF[0]);
   check('... an AOC holder: the operator over the owner', uk3.owner === 'KINGMOOR AVIATION LTD' && uk3.registered === true, uk3);
+  // (1.3.8) a mark the register has de-registered, the airframe - this transponder - under another today
+  const ren = await R.identity({ hex: '407d94', reg: 'G-OLDM' });
+  check('(1.3.8) a de-registered UK mark, its airframe (this very transponder, by the register) registered under another today: that one, the old one said', ren.reg === 'G-UBET' && ren.regWas === 'G-OLDM' && ren.owner === 'KINGMOOR AVIATION LTD' && ren.msn === '5601', ren);
+  const same = await R.identity({ hex: '407d94', reg: 'G-UBET' }), other = await R.identity({ hex: '400002', reg: 'G-OLDM' });
+  check('... asked with the mark of today: nothing to change; another transponder\'s airframe: never renamed', !same.regWas && !other.regWas && other.reg !== 'G-UBET', { same, other });
   const im = await R.identity({ hex: '43eac1', reg: 'M-WJBA' });
   check('Isle of Man (M-): the first registered owner, serial number, registered new = built that year, "Isle of Man"', im.owner === 'Ballycastle Aviation Limited' && im.msn === '680A0466' && im.year === 2016 && im.ownerCity === 'Isle of Man' && im.countryIso === 'IM', im);
   const ch = await R.identity({ hex: '4b1801', reg: 'HB-JNA' });

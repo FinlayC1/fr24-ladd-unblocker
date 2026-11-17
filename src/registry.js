@@ -82,10 +82,13 @@ function createRegistry(ask, opts) {
   function ginfoPick(list, mark) { const rows = (Array.isArray(list) ? list : []).filter(x => x && String(x.Mark || '').toUpperCase() === mark); return rows.find(x => x.RegistrationStatus === 'R') || rows[0] || null; }
   function ginfoParse(j, hit) {
     if (!j || typeof j !== 'object') return null;
-    const ow = (Array.isArray(j.RegisteredAircraftOwners) ? j.RegisteredAircraftOwners : [])[0] || {}, ad = j.AircraftDetails || {}, aoc = j.AircraftOperatedByAocHolder || {};
+    const ow = (Array.isArray(j.RegisteredAircraftOwners) ? j.RegisteredAircraftOwners : [])[0] || {}, ad = j.AircraftDetails || {}, aoc = j.AircraftOperatedByAocHolder || {}, rd = j.RegistrationDetails || {};
     const str = v => typeof v === 'string' ? clean(v) : '';
     const out = { owner: str(aoc.OperatorTrandingAs) || str(aoc.OperatorName) || str(ow.TradingAs) || str(ow.RegisteredOwner), msn: str(ad.SerialNumber), year: Number(ad.YearBuild) || 0, hex: str(ad.ICAO24BitAircraftAddress && ad.ICAO24BitAircraftAddress.Hex).toLowerCase(), registered: !!hit && hit.RegistrationStatus === 'R' };
-    return out.owner || out.msn ? out : null;
+    // (1.3.8: the entry is the airframe's, whatever mark it is under now: an old mark's search finds it de-registered ("D"),
+    // its entry gives the mark it is registered under today - G-NMCF, the AS355 HLL01 flies, G-UBET since February 2024)
+    const mk = str(rd.Mark).toUpperCase(); if (/^[A-Z0-9]{4}$/.test(mk) && /^registered$/i.test(str(rd.Status))) out.mark = 'G-' + mk;
+    return out.owner || out.msn || out.mark ? out : null;
   }
   function ginfo(reg, o) {
     const mark = String(reg || '').toUpperCase().replace(/^G-?/, '');
@@ -134,7 +137,9 @@ function createRegistry(ask, opts) {
     const iomFor = reg => iom(reg, q).then(f => { out.regAnswered = true; if (f && (!f.hex || f.hex === lc)) { out.iomOwner = f.owner; if (f.msn) out.msn = out.msn || f.msn; if (f.year && !out.year) out.year = f.year; if (f.owner) out.ownerCity = out.ownerCity || 'Isle of Man'; } }).catch(e => { out.regFailed = true; log('iom register', reg, String(e.message || e)); });
     const iomNow = rec.reg && /^M-/i.test(rec.reg) ? iomFor(rec.reg) : null;
     // (and the UK's G-INFO for G- marks: hexdb and adsbdb say only "Private" for most of them)
-    const ukFor = reg => ginfo(reg, q).then(f => { out.regAnswered = true; if (f && (!f.hex || f.hex === lc)) { out.ukOwner = f.owner; if (f.msn) out.msn = out.msn || f.msn; if (f.year && !out.year) out.year = f.year; } }).catch(e => { out.regFailed = true; log('g-info', reg, String(e.message || e)); });
+    // (1.3.8: a mark the register has de-registered, its airframe - this transponder, by the register's own record of it -
+    // registered under another today: that one is its registration; the databases' copies may lag years)
+    const ukFor = reg => ginfo(reg, q).then(f => { out.regAnswered = true; if (f && (!f.hex || f.hex === lc)) { out.ukOwner = f.owner; if (f.msn) out.msn = out.msn || f.msn; if (f.year && !out.year) out.year = f.year; if (f.mark && f.hex === lc && f.mark !== String(reg).toUpperCase()) out.regNow = f.mark; } }).catch(e => { out.regFailed = true; log('g-info', reg, String(e.message || e)); });
     const ukNow = rec.reg && /^G-/i.test(rec.reg) ? ukFor(rec.reg) : null;
     // (and the Swiss register for HB- marks)
     const chFor = reg => bazl(reg, q).then(f => { out.regAnswered = true; if (f && (!f.hex || f.hex === lc)) { out.chOwner = f.owner; if (f.msn) out.msn = out.msn || f.msn; if (f.year && !out.year) out.year = f.year; } }).catch(e => { out.regFailed = true; log('swiss register', reg, String(e.message || e)); });
@@ -149,6 +154,8 @@ function createRegistry(ask, opts) {
     if (!chNow && reg && /^HB-/i.test(reg)) { await chFor(reg); out.owner = out.chOwner || out.owner; }
     // (the owner as a register has it - not a database's copy)
     if (out.faaOwner || out.iomOwner || out.ukOwner || out.chOwner) out.ownerReg = true;
+    // (1.3.8: the register's mark of today over the old one asked with: regWas the old)
+    if (out.regNow) { out.regWas = String(rec.reg || '').toUpperCase(); out.reg = out.regNow; delete out.regNow; }
     for (const k of ['reg2', 'type2', 'desc2', 'owner2', 'faaOwner', 'iomOwner', 'ukOwner', 'chOwner']) delete out[k];
     return out;
   }

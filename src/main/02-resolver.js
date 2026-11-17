@@ -507,7 +507,7 @@
   const srvIds = { rows: new Map(), since: 0, at: 0, busy: false, scanOk: false, pushed: new Set() };
   function srvRec(r) {
     if (r[5] & 7) noteDbFlags(String(r[1] || '').toLowerCase(), (r[5] & 1 ? 8 : 0) | (r[5] & 2 ? 1 : 0) | (r[5] & 4 ? 4 : 0));
-    const rec = { id: r[0], hex: String(r[1] || '').toLowerCase(), cs: r[4] || '', reg: r[2] || hexNNumber(r[1]) || '', type: r[3] || '', ladd: !!(r[5] & 1), mil: !!(r[5] & 2), pia: !!(r[5] & 4),
+    const rec = { id: r[0], hex: String(r[1] || '').toLowerCase(), cs: r[4] || '', reg: curReg(r[1], r[2] || hexNNumber(r[1]) || ''), type: r[3] || '', ladd: !!(r[5] & 1), mil: !!(r[5] & 2), pia: !!(r[5] & 4),
       src: 'monitor', sources: ['monitor (' + (r[6] || 'named') + ')'], matchedAt: (r[7] || nowS()) * 1000, verifiedAt: now(), srv: true };
     // (1.2.6: the monitor's parked rule is as provisional as this browser's: confirmed, or replaced, by what is heard)
     if (r[6] === 'parked') rec.prov = 'parked';
@@ -833,7 +833,7 @@
     // (1.2.3) FR24's own type code where FR24 gives one - what its panel shows - the databases' only where it has none
     // (N999YX: FR24's GLF6, ADS-B's GLEX)
     const type = clean(f.type) || sx.fr24Type || c.type || '';
-    const rec = { id: f.id, hex: c.hex.toLowerCase(), cs: c.cs || '', reg: c.reg || f.reg || hexNNumber(c.hex), type, fr24Type: f.type || '', aggType: c.type || '', desc: c.desc || '', owner: c.owner || '', year: c.year || 0, src: c.src, sources: used, dist: Math.round(m.d * 100) / 100, matchedAt: now(), verifiedAt: now(), ladd: !!(c.ladd || sx.ladd), pia: !!(c.pia || sx.pia), mil: !!(c.mil || sx.mil), cat: c.cat || '', gnd: c.gnd, squawk: c.squawk || 0 };
+    const rec = { id: f.id, hex: c.hex.toLowerCase(), cs: c.cs || '', reg: curReg(c.hex, c.reg || f.reg || hexNNumber(c.hex)), type, fr24Type: f.type || '', aggType: c.type || '', desc: c.desc || '', owner: c.owner || '', year: c.year || 0, src: c.src, sources: used, dist: Math.round(m.d * 100) / 100, matchedAt: now(), verifiedAt: now(), ladd: !!(c.ladd || sx.ladd), pia: !!(c.pia || sx.pia), mil: !!(c.mil || sx.mil), cat: c.cat || '', gnd: c.gnd, squawk: c.squawk || 0 };
     hydrate(rec);
     const rc = regCountry(rec.reg), ctry = rc || countryOfHex(rec.hex); if (ctry) { rec.country = rc ? rc.name : rec.country || ctry.name; rec.countryIso = ctry.iso; if (!rec.countryId || rc) rec.countryId = countryIdOf(ctry.iso, ctry.name) || rec.countryId; }
     telemetry.set(f.id, telemOf(c));
@@ -882,7 +882,15 @@
     for (const k of ['ladd', 'pia', 'mil']) if (hx[k] || rec[k]) out[k] = true;
     return out;
   }
-  const HYDRATE = ['reg', 'type', 'desc', 'owner', 'ownerCity', 'msn', 'year', 'operatorId', 'operatorIcao', 'operatorName', 'fr24Equip', 'fr24At', 'faaAt', 'idAt', 'ownerAskedAt', 'ownerFailAt', 'pubAt', 'countryId', 'country', 'cat', 'photos', 'photoAt', 'photoLevel', 'photoV', 'jpFailAt'];
+  const HYDRATE = ['reg', 'type', 'desc', 'owner', 'ownerCity', 'msn', 'year', 'operatorId', 'operatorIcao', 'operatorName', 'fr24Equip', 'fr24At', 'faaAt', 'idAt', 'ownerAskedAt', 'ownerFailAt', 'pubAt', 'countryId', 'country', 'cat', 'photos', 'photoAt', 'photoLevel', 'photoV', 'jpFailAt', 'regCheckAt'];
+  // (1.3.8) An airframe's mark as its register has it today, over the old one the aggregators' database still gives for
+  // its transponder (407D94: G-NMCF in tar1090-db, adsb.lol's and airplanes.live's - G-UBET since February 2024 by G-INFO).
+  // Once the register has said so (03-data enrich), the old mark heard again is the new one; a third mark is taken as heard
+  // (and checked again)
+  function curReg(hex, reg) {
+    const hx = hex ? store.getHex(String(hex).toLowerCase()) : null, r = String(reg || '').toUpperCase();
+    return hx && hx.regOld && hx.reg && r === hx.regOld ? hx.reg : reg;
+  }
   function hydrate(rec) {
     const hx = rec && rec.hex ? store.getHex(rec.hex) : null; if (!hx) return rec;
     { const a = rec.photos || [], b = hx.photos || [];

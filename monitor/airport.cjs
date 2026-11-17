@@ -41,11 +41,29 @@ function createAirportInfo(env) {
     endsMemo.set(icao, out); if (endsMemo.size > 3000) endsMemo.delete(endsMemo.keys().next().value);
     return out;
   }
+  // (1.3.8) Positions that came without a track or a speed - some sources give none (M-ARNZ's take-off from Farnborough on
+  // 16 Nov, its roll heard with no track: no runway, "N/A" on Walney's board): each worked out from its neighbour, a minute
+  // and a half apart at most and 100 m away at least. Copies - the caller's positions are left as they are
+  function withTracks(pts) {
+    if (!pts.some(p => p && (!fin(p.trk) || !fin(p.gs)))) return pts;
+    const out = pts.map(p => Object.assign({}, p));
+    for (let i = 0; i < out.length; i++) {
+      const p = out[i], q = out[i - 1], r = out[i + 1];
+      if (!fin(p.lat) || !fin(p.lon)) continue;
+      // (from the one before it; the first, from the one after)
+      const o = q && fin(q.lat) && p.t - q.t > 0 && p.t - q.t <= 90 ? [q, p] : r && fin(r.lat) && r.t - p.t > 0 && r.t - p.t <= 90 ? [p, r] : null; if (!o) continue;
+      const km = E.dist(o[0].lat, o[0].lon, o[1].lat, o[1].lon), dt = o[1].t - o[0].t;
+      if (!fin(p.trk) && km >= 0.1) p.trk = E.brg(o[0].lat, o[0].lon, o[1].lat, o[1].lon);
+      if (!fin(p.gs)) p.gs = km / dt * 3600 / 1.852;
+    }
+    return out;
+  }
   // The runway a flight used at airport ap: landing (its last positions) or taking off (its first). pts: the flight's
   // positions in time order { t, lat, lon, alt (null on the ground), gnd, trk }.
   function runwayOf(ap, pts, landing) {
     if (!ap || !ap.icao || !Array.isArray(pts) || !pts.length) return null;
     const ends = endsOf(ap.icao); if (!ends.length) return null;
+    pts = withTracks(pts);
     const elev = fin(ap.alt) ? ap.alt : 0;
     // (the positions near the field: within 25 km, below 5,000 ft over it, from seven minutes before the last position in
     // the air to the roll-out - or from the take-off roll to two and a half minutes after the first position in the air:
