@@ -211,6 +211,8 @@
     // (one of ours that a better answer may still replace: a private site, an inferred airport)
     const weak = el => !!el && el.classList.contains('tl-filled') && Number(el.dataset.tlRank || 0) < 3;
     let n = 0;
+    // (1.3.8: every flight's take-off FR24 lists - which of them comes next after a flight)
+    const allAtd = [...tbody.querySelectorAll('tr.data-row:not(.tl-adsb-row):not(.tl-live-row)')].filter(r => r.children.length >= 12).map(r => Number(r.children[8].dataset.timestamp) || Number(r.dataset.timestamp) || 0).filter(t => t > 0);
     for (const tr of tbody.querySelectorAll('tr.data-row:not(.tl-adsb-row):not(.tl-live-row)')) {
       const c = tr.children; if (c.length < 12) continue;
       const fromTd = c[3], toTd = c[4], durTd = c[6], atdTd = c[8], stateTd = c[10], statusTd = c[11];
@@ -241,8 +243,13 @@
       // coverage is one ADS-B leg "Liverpool -> Blackpool" but two FR24 flights, the first landing at 16:42). Only an
       // ADS-B end after FR24's landing is another flight's: FR24 calls it landed well after touchdown (N87VS down at
       // Woodvale 10:30, its track ending 10:33, "Landed 10:44").
+      // (1.3.8: but where FR24 lists no flight leaving before that ADS-B end, FR24 only lost it - its "Landed" is where its
+      // track stopped: G-RESH, 14 Nov, St. Athan - Caernarfon, lost by FR24 at 2,600 ft over Snowdonia at 17:31, "Landed
+      // 17:31"; the public track has it on to Caernarfon, down at 18:02, its next flight at 18:19 - its row "Caernarfon?"
+      // from that next flight, and "-" in its playback)
       const frLanded = landedRow ? Number(statusTd.dataset.timestamp) || 0 : 0, legEnd = l ? (l.tOn || l.tEnd) : 0;
-      const endAgrees = !frLanded || !legEnd || legEnd <= frLanded + 600;
+      const nextAtd = allAtd.filter(t => t > atd + 60).reduce((m, t) => Math.min(m, t), Infinity);
+      const endAgrees = !frLanded || !legEnd || legEnd <= frLanded + 600 || (!!l && l.ended && legEnd < nextAtd - 300);
       if (l && putCells(fromTd, 'FROM', cellsOf(l.from, l.startedOnGround), 'from')) n++;
       if (l && endAgrees && putCells(toTd, 'TO', cellsOf(l.to, landedOff(l)), 'to')) n++;
       if (isLive && goodPrediction(lv)) {

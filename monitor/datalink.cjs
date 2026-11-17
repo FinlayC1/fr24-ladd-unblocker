@@ -36,13 +36,15 @@ const PATTERNS = [
   // flight-planning service: "FLIGHT PLAN A0214 (KVNY - KSAC) FOR TAIL N711WK IS AVAILABLE"
   ['fpl', /FLIGHT PLAN [A-Z0-9]+ \(([A-Z]{4}) - ([A-Z]{4})\) FOR TAIL/],
   // "FPL# E9024 KBFI-KPHX FOR N86HD HAS BEEN FILED FOR A 1940Z DEPARTURE ON 22 OCTOBER 2026"
-  ['filed', /FPL# ?[A-Z0-9]+ ([A-Z]{4})-([A-Z]{4}) FOR [A-Z0-9-]+ HAS BEEN FILED(?: FOR A (\d{4})Z DEPARTURE)?/],
+  // (1.3.8: the registration with the callsign after it - "FOR 763239/SPAR89", "FOR N212LF/EJM3" - read too)
+  ['filed', /FPL# ?[A-Z0-9]+ ([A-Z]{4})-([A-Z]{4}) FOR [A-Z0-9-]+(?:\/[A-Z0-9-]+)? HAS BEEN FILED(?: FOR A (\d{4})Z DEPARTURE)?/],
   // satcom flight-plan alerts: "YOUR FLIGHT PLAN E5520 KDJT-KUGN HAS BEEN EVALUATED"
   ['alert', /YOUR FLIGHT PLAN [A-Z0-9]+ ([A-Z]{4})-([A-Z]{4}) /],
   // pre-departure clearance: "PDC EJA678)\r\nKDJT-KJWN)" - the departure and destination line after it
   ['pdc', /\bPDC\b[\s\S]{0,40}?\b([A-Z]{4})-([A-Z]{4})\b/],
   // estimated time of arrival report: "ETA221759,KMEM,KBRO,"
-  ['eta', /^ETA\d{6},([A-Z]{4}),([A-Z]{4}),/],
+  // (1.3.8: and with the time alone - "ETA0641,ZSPD,EGKK, 33746")
+  ['eta', /^ETA(?:\d{6}|\d{4}),([A-Z]{4}),([A-Z]{4}),/],
   // E-jets and others: "96,E,29.297,-96.379,20994,*****,KCRP,KIAH,"
   ['rep', /^\d{2},[A-Z],-?\d+\.\d+,-?\d+\.\d+,\s*\d+,[^,]*,([A-Z]{4}),([A-Z]{4}),/]
   // (not read: operations messages - "OPSCTL 0321/21 KHVN/KFLL" - name the leg as scheduled; checked against the flights
@@ -56,21 +58,32 @@ const PATTERNS = [
 //   [kind, pattern, form] - 'od' origin then destination; 'do' destination then origin; 'd' the destination alone (said
 //   in flight: the aircraft's own, or its controller's); 'atis' an airport whose arrival information it asked for or was sent
 const POSF = '[NS] ?\\d[\\d.]* ?,? ?[EW] ?\\d[\\d.]*';
+// (1.3.8: the ARINC 620 reports, by what each is: from the air - its position, its estimate, weather asked for, in range,
+// maintenance - or of the gate before it (delay, dispatch, weight and balance); its out and off; on and in, of a flight
+// landed. One not here is not read)
+const MU_KIND = { POSRPT: 'pos', POSWX: 'pos', ETA: 'pos', ETARP: 'pos', WXRQ: 'rpt', INRANG: 'rpt', OPNORM: 'rpt', MTCRP: 'rpt', WXLIDO: 'rpt', MOVERP: 'rpt', RMPSRV: 'rpt',
+  ONRP: 'rpt', INRP: 'rpt', OFFRP: 'oooi', OUTRP: 'oooi', DEPDLA: 'gate', DSPTCH: 'gate', WTBAL: 'gate' };
+// (KLM's: its load sheet before the flight; the others - its maintenance log, its estimate, weather - from the air)
+const KL_KIND = { LDA: 'gate', AML: 'rpt', NML: 'rpt', RST: 'rpt', ETA: 'rpt', WXR: 'rpt', KOI: 'rpt' };
+// (an out / off report that also gives the flight's on or in time: of a flight landed - no plan for the one after)
 const MORE = [
   // reports with a position, then where from and where to (ETA, TOC, TOD, TWX, ATI, MSG ...: "00ETA03,N31148W082322,390,KAPF,KLZU,1110,1655,1740,004.1")
   ['rpt', new RegExp('(?:^|[^A-Z])(?!POS|SPN)[A-Z]{2,4}0\\d,(' + POSF + '),[^,]*,([A-Z]{4}),([A-Z]{4}),(?:(\\d{4}),(\\d{4}),)?'), 'od-pos'],
   // out of the gate, off, on, in: "OFF02,N28261W081196,KMCO,KGGG,1110,1625,1819,014.0"
   ['oooi', new RegExp('(?:^|[^A-Z])(?:OUT|OFF|ON|IN)0\\d,(' + POSF + '),([A-Z]{4}),([A-Z]{4}),(?:(\\d{4}),(\\d{4}),)?'), 'od-pos'],
   // the flight-planning service's notice (NetJets' GDFS): "FLIGHT PLAN #E5106,\r\nKAUS-KPHX IS NOW\r\nAVAILABLE FOR RECALL"
-  ['fpl', /FLIGHT PLAN #?[A-Z0-9]+,?\s+([A-Z]{4})-([A-Z]{4}) IS NOW\s+AVAILABLE/, 'od'],
+  // (1.3.8: and with its time of departure, the lines broken anywhere: "FLIGHT PLAN #D3211,\r\nLSZH-LQSA 1115Z ETD, IS\r\nNOW AVAILABLE")
+  ['fpl', /FLIGHT PLAN #?[A-Z0-9]+,?\s+([A-Z]{4})-([A-Z]{4})(?:\s+(\d{4})Z ETD,?)?\s+IS\s+NOW\s+AVAILABLE/, 'od-std'],
   // "PDC AVAILABLE FOR:\r\nKAUS - KMKE\r\nETD: 2000Z"
   ['pdc', /PDC AVAILABLE FOR:\s*([A-Z]{4}) - ([A-Z]{4})\s+ETD: ?(\d{4})Z/, 'od-std'],
   // "MSG/RX10-NOV-26 1715Z PDC N914MC/RXKLIT-KSOP/RX-ATC CLEARANCE-"
   ['pdc', /\bPDC [A-Z0-9-]+\/RX([A-Z]{4})-([A-Z]{4})\/RX/, 'od'],
   // departure clearance by datalink (Europe, Canada ...): "/BHXDCXA.DC1/CLD 0556 261110 EGBB PDC 033\r\nRYR97XJ CLRD TO GCRR OFF 15"
-  ['dcl', /\.DC1\/C[LD][DA] (\d{4}) (\d{6}) ([A-Z]{4})\s+PDC \d+\s+\S+ CLRD TO ([A-Z]{4})\b/, 'od-clr'],
+  // (1.3.8: its lines broken after "PDC" too - Amsterdam's, Barcelona's: "EHAM PDC\r\n 265\r\nCND2Q CLRD TO HEGN" - none was read)
+  ['dcl', /\.DC1\/C[LD][DA] (\d{4}) (\d{6}) ([A-Z]{4})\s+PDC\s+\d+\s+\S+\s+CLRD TO ([A-Z]{4})\b/, 'od-clr'],
   // Australia: "PDC 100120 JST565 A320 YBBN 0205 CLEARED TO YMML VIA"
-  ['dcl', /\bPDC(?: UPLINK)? (?:\d{6} )?[A-Z0-9]{2,8} [A-Z0-9]{2,4} ([A-Z]{4}) \d{4}\s+CLEARED TO ([A-Z]{4}) VIA/, 'od'],
+  // (1.3.8: New Zealand's too, its fields on lines of their own: "PDC PDC 170725 ANZ148 A21N YBBN 0810 CLEARED TO NZAA VIA")
+  ['dcl', /\bPDC(?:\s+UPLINK)?\s+(?:\d{6}\s+)?[A-Z0-9]{2,8}\s+[A-Z0-9]{2,4}\s+([A-Z]{4})\s+\d{4}\s+CLEARED TO ([A-Z]{4})\s+VIA/, 'od'],
   // the US clearance sent for reference with a CPDLC one: "AAL2013 KDCA\r\nB738/L P0059 /AN N939NN\r\n673 FL400\r\nCLEARED TO KMIA AIRPORT"
   ['dcl', /\b[A-Z0-9]{2,8} ([A-Z]{4})\s+[A-Z0-9]{2,5}\/[A-Z] P\d{4}[\s\S]{0,60}?CLEARED TO ([A-Z]{4}) AIRPORT/, 'od'],
   // "DA EGNX/DS LEAL/OFF 0627"
@@ -79,7 +92,8 @@ const MORE = [
   // aircraft - where it came from (NetJets and others, label 10, every ten minutes):
   //   "/N30.336/W098.165/10/0.73/008/230/KDAL/0049/0050/00028/DITSY/CHRLY/0024/FRSTI/0029/KSAT/"
   ['pos', /^\/([NS]\d{2}\.\d{3}\/[EW]\d{3}\.\d{3})\/\d{1,2}\/\d\.\d\d\/\d{3}\/\d{3}\/([A-Z]{4})\/(\d{4})\/[^/]*\/[^/]*\/[^/]*\/[^/]*\/(\d{4}|-{4})\/[^/]*\/(\d{4}|-{4})\/(?:([A-Z]{4})\/)?\s*$/, 'do-pos10'],
-  // out of the gate and off (labels QP, QQ - the airlines' form, M-PORT's too): "EGGPEGJB0855", "KDCAKORD00500329"
+  // out of the gate and off (labels QP, QQ - the airlines' form, M-PORT's too): "EGGPEGJB0855", "KDCAKORD00500329" (on and
+  // in - QR, QS - not read: a flight landed)
   ['oooi', /^([A-Z]{4})([A-Z]{4})(\d{4})/, 'od-q'],
   // oceanic clearance: "/PIKCLYA.OC1/CLA 0356 261110 EGGX CLRNCE 898\r\nQQE247 CLRD TO KIAD VIA VENER"
   ['ocl', /\.OC1\/CL[AX] (\d{4}) (\d{6}) [A-Z]{4}\s+CLRNCE \d+\s+\S+ CLRD TO ([A-Z]{4}) VIA/, 'd-clr'],
@@ -88,8 +102,104 @@ const MORE = [
   // the arrival information (ATIS) sent to it: "/HDQGLXH.TI2/KLAS ARR ATIS M" ...
   ['atis', /\.TI\d\/([A-Z]{4}) ARR ATIS /, 'atis'],
   // ... or asked for by it (label B9: "/KTEB.TI2/024KTEBA3FBD" - A: arrival, C: arrival, kept up to date)
-  ['atis', /^\/([A-Z]{4})\.TI\d\/\d{3}\1[AC]/, 'atis-b9']
+  ['atis', /^\/([A-Z]{4})\.TI\d\/\d{3}\1[AC]/, 'atis-b9'],
+  // ---- (1.3.8) more of the forms the links carry: each found in a sample of every aircraft's messages Airframes had heard in
+  // the hour (17 Nov 2026: 3,800 messages of 40 forms), each one naming the route the flight it came from was flying
+  // ARINC 620 reports (labels 80, 83, 5U, 27): "3N01 POSRPT UAE654 /17 OMDB/VCBI .A6-EXI POS N234057E0572516", "3402 ETA
+  // 1481/ OMDB/VTSG .A6-FMW", "1101 OFFRP 06LW/17 LGAV/EGKK .SX-NAQ /OUT 0711/OFF 0734", "01 WXRQ 041X/17 EGHH/GCTS .G-JZHH",
+  // "SVA3N03 POSRPT 0596/17/17 OERK/OMDB HZ-ASU /POS" - the flight it is on in its first line; what it is says when it was
+  // sent (MU_KIND): from the air, at the gate before the flight, on the way out; one not known not read
+  ['', /^\s*(?:[A-Z]{3})?[0-9A-Z]{2}\d{0,2}[ \t]+(?<typ>[A-Z]{2,7})(?:[ \t]+|\/)[^.\n]{0,30}?\/\s*\d{0,2}\s*(?<o>[A-Z]{4})\/(?<d>[A-Z]{4})[ \t]*\.{0,2}[A-Z0-9-]{2,10}(?=[\s/]|$)/, 'g', null, MU_KIND],
+  // ... and its operations message - only once it has taken off (its OFF time in it: "3A01 OPSCTL 0622/17 CYHM/CYHZ .C-FFPA
+  // OUT0650 OFF0709 ETA0858"); one before take-off names the leg as scheduled, not always the one flown
+  ['oooi', /^\s*\d[A-Z0-9]\d{2} OPSCTL\s+[A-Z0-9]{0,9}\/\d{2} ([A-Z]{4})\/([A-Z]{4}) \.[A-Z0-9-]{2,10}\b[\s\S]{0,60}?\bOFF ?\d{4}/, 'od'],
+  // the engine and performance reports of Airbus aircraft (label H1): "/CCVH-VFD,NOV17,073550,YBBN,YMAV,0635/" - its time to
+  // the second, its departure and its destination
+  // (and "/C1N579UW,NOV17,072526,KDFW,KSEA,2647/", "/CCN386FR,NOV17,KSFO,KLAS,4156/" - some with no time)
+  ['rpt', /\/C[C1][A-Z0-9-]{2,10},[A-Z]{3}\d{2},(?:(\d{4})\d{2},)?([A-Z]{4}),([A-Z]{4}),/, 'od-rep'],
+  // reports of several airlines (labels 10 - 13): "EGLL,EBBR,17NOV26,0735,080124 N 51.231,E 1.054", "LSZH,HTKJ,17NOV26,0735"
+  ['rpt', /^([A-Z]{4}),([A-Z]{4}),\d{2}[A-Z]{3}\d{2},(\d{4})\b/, 'od-l1x'],
+  // "000322072LOWW,EDDH,0735,0805,N 52.715,E 11.766,30" (label 1L)
+  ['rpt', /^\d{9}([A-Z]{4}),([A-Z]{4}),\d{4},\d{4},[NS] ?\d/, 'od'],
+  // top of descent: "TOD01,ETD596,LLBG,OMAA,17NOV26,0758,OMAA31R", "TOD02 ETD379/17170732VRMMOMAA 0803,OMAA 31R"
+  ['rpt', /\bTOD\d\d,[A-Z0-9]+\s*,([A-Z]{4}),([A-Z]{4}),\d{2}[A-Z]{3}\d{2},\d{4}/, 'od'],
+  // take-off report: "TOL01,17NOV26,EY,917,OMAA,EHAM,16NOV26,2359"
+  ['oooi', /\bTOL0\d,\d{2}[A-Z]{3}\d{2},[A-Z0-9]{2},\s*[A-Z0-9]+,([A-Z]{4}),([A-Z]{4}),\d{2}[A-Z]{3}\d{2},\d{4}/, 'od'],
+  ['rpt', /\bTOD0\d [A-Z0-9]+\/\d{6,8}([A-Z]{4})([A-Z]{4}) \d{4},/, 'od'],
+  // "/AY1411/ETA01/171126/EFHK/EDDF/EDFH/", "/AY1331/OFF01/171126/EFHK/EGLL/EGKK/" (Finnair and others)
+  ['rpt', /\/ETA0\d\/\d{6}\/([A-Z]{4})\/([A-Z]{4}) ?\//, 'od'],
+  ['oooi', /\/(?:OUT|OFF|ON|IN)0\d\/\d{6}\/([A-Z]{4})\/([A-Z]{4}) ?\//, 'od'],
+  // "ORG VHHH,DES ZSQD,UTC070701,N 25.086,E118.799,ALT 35128" (label 16: Chinese airlines and others) - where it was, when
+  ['pos', /\bORG ([A-Z]{4}),DES ([A-Z]{4}),UTC(\d{4})\d{2},([NS] ?\d{1,2}\.\d+),([EW] ?\d{1,3}\.\d+),/, 'od-org'],
+  // "V09CA032/OFFRP/ESSA/ESGG/17/0734/ETA0823/", "OFF02 KSFO,KBWI,0647,30.7"
+  ['oooi', /\/(?:OFFRP|ONRP|INRP)\/([A-Z]{4})\/([A-Z]{4})\/\d{2}\/\d{4}\//, 'od'],
+  ['oooi', /(?:^|[^A-Z])(?:OUT|OFF|ON|IN)0\d ([A-Z]{4}),([A-Z]{4}),\d{4},/, 'od'],
+  // JetBlue's reports (labels 43, 44): "/FB 0107/AD KBOS/N4222.1,W07100.9,0000000,ATI03,KIAH,KBOS,," - from and to; "/AD KLAX/"
+  // alone: where it is going
+  ['rpt', /,(?:ATI|INR|INA)0\d,([A-Z]{4}),([A-Z]{4}),/, 'od'],
+  ['rpt', /^\s*\/FB \d{4}\/AD ([A-Z]{4})\//, 'd'],
+  // a position, then its destination last (label 21): "POSN 32.729W116.838, 71,073518,5738,24235, 22, 6,074230,KSAN"
+  ['pos', /^POSN [NS]?\d{1,2}\.\d+[EW]\d{1,3}\.\d+,[^,]*,\d{6},[^,]*,[^,]*,[^,]*,[^,]*,\d{6},([A-Z]{4})\s*$/, 'd'],
+  // Alaska's and others' (label 33): "27,B,17NOV26,073439,+44.810,-122.634,35996,9567,KSNA,KPAE,KPAE,17,16R/-"
+  ['rpt', /^\d{2},[A-Z],\d{2}[A-Z]{3}\d{2},(\d{4})\d{2},([+-]\d{1,2}\.\d+),([+-]\d{1,3}\.\d+),\d+,\d+,([A-Z]{4}),([A-Z]{4}),/, 'od-33'],
+  // Frontier's (label 4A): "065536,1711,.N386FR,FFT3581,KSNA,KSFO,1,0655,RT0,LT0,"
+  ['rpt', /^\d{6},\d{4},\.[A-Z0-9-]{2,10},[A-Z0-9]*,([A-Z]{4}),([A-Z]{4}),/, 'od'],
+  // landing data asked for (label 5Z): "/B6 LDG DATA REQ / KSAN KSFO 16 073431 KSFO R28R"
+  ['rpt', /^\/[A-Z0-9]{2} [A-Z0-9 ]{2,30}\/ ([A-Z]{4}) ([A-Z]{4}) \d{2} (\d{4})\d{2}\b/, 'od-rep5z'],
+  // a whole ICAO flight plan sent to the aircraft (a dispatcher's or a planning service's): "(FPL-N212LF-IG -C25B/L-SDGW/S
+  // -KSDL1400 -N0480F450 FTHLS6 ... -KOFP0215 KRIC ..." - read only in that form, every field where it belongs
+  ['fpl', /\(FPL-[A-Z0-9]{2,8}-[IVYZ][SNGMX]\s*-(?:\d{0,2})?[A-Z0-9]{2,4}\/[LMHJ]\s*-\S+\s*-([A-Z]{4})\d{4}\s*-[NKM]\d{3,4}[\s\S]{0,2000}?\s-([A-Z]{4})\d{4}\b/, 'od'],
+  // ---- (1.3.8) and more again, from a second sample (9,034 messages, 17 Nov): the reports the engines, the maintenance
+  // computers and the performance monitors send from the air, each with the flight's two airports in its heading -
+  //   Rolls-Royce engines' (H1): "SB0122BA_C-FIUV CYYZEGLL653 51599-", "EB0032AA_ G-ZBJB VOBLEGLL 77", "ABS001DA_ EGSSEFRO 52"
+  //   (the registration's letters at times spaced out: "ABS001DA_S   YG  EPWALFPG335")
+  ['rpt', /^[A-Z]{2,3}\d{3,4}[A-Z]{2}_[A-Z0-9 -]{0,16}?(?<=[\s_])(?<o>[A-Z]{4})(?<d>[A-Z]{4})\d{0,3}\s/, 'g'],
+  //   Boeing's of the same (737s): "ABS026AA_N37318,B737N37-1261117,UA    ,KSFO,KLAX,1795,BCG2E-S200-0009"
+  ['rpt', /^(?:#DFB)?[A-Z]{3}\d{3}[A-Z]{2}_[^\n]{0,60}?,(?<o>[A-Z]{4}),(?<d>[A-Z]{4}),\d{4},[A-Z0-9]{5}-/, 'g'],
+  //   United's: "EB0116AB_10, 31, N14001,UAL944    ,  96,171126,07:25:20,KORD,EDDF,36526" - with its time
+  ['rpt', /^(?:#DFB)?EB\d{4}[A-Z]{2}_[^\n]{0,80}?,\d{6},(?<hh>\d{2}):(?<mm>\d{2}):\d{2},(?<o>[A-Z]{4}),(?<d>[A-Z]{4}),/, 'g'],
+  //   Boeing's (Southwest and others): "++86501,N8716B,B7378MAX,261117,WN8517,KPAE,KDEN,1479,"
+  ['rpt', /^(?:#DFB)?\+\+\d{5},[A-Z0-9-]{2,8},[A-Z0-9]{2,10},\d{6},[A-Z0-9]{2,8},(?<o>[A-Z]{4}),(?<d>[A-Z]{4}),/, 'g'],
+  //   the fault reports: "EFFDE 1 17NOV26 0724 AAN791AN AAL48 KDFW/LFPG", "PLF 1 17NOV26 0753 A6-FNB FDB9RQ OTHH/OMDB", ".HL7637
+  //   17NOV26 0725 KAL012 KLAX/RKSI" - with their time
+  ['rpt', /^(?:EFFDE|PLF)\s+\d+\s+\d{2}[A-Z]{3}\d{2}\s+(?<hm>\d{4})\s+[A-Z0-9-]{2,9}\s+[A-Z0-9]{2,8}\s+(?<o>[A-Z]{4})\/(?<d>[A-Z]{4})\b/, 'g'],
+  ['rpt', /\.[A-Z0-9-]{2,7}\s+\d{2}[A-Z]{3}\d{2}\s+(?<hm>\d{4})\s+[A-Z]{3}\d{1,4}[A-Z]?\s+(?<o>[A-Z]{4})\/(?<d>[A-Z]{4})\b/, 'g'],
+  //   the performance monitors': "APM 5VN-A862 HVN51 VVTSEGLL171126000424,", "B03A APM A6-FQG FDB580 VCBIOMDB171126070033,",
+  //   "CECB-24614389ZHCCEBLG171126010203"
+  ['rpt', /APM\s+(?:\d\s*)?[A-Z0-9-]{2,8}\s+[A-Z0-9]{2,8}\s+(?<o>[A-Z]{4})(?<d>[A-Z]{4})\d{12},/, 'g'],
+  ['rpt', /^CECB-\d{8}(?<o>[A-Z]{4})(?<d>[A-Z]{4})\d{12}/, 'g'],
+  //   Airbus's own (H1): "C1,.N438DX,26NOV17,07.25.30,KSEA,EHAM,DAL142", "FLIGHT START REPORT ... C1 VH-VWU NOV17 07.25.36 YPPH
+  //   YMML 0975"
+  ['rpt', /\bC1,\.?[A-Z0-9-]{2,10},\d{2}[A-Z]{3}\d{2},(?<hh>\d{2})\.(?<mm>\d{2})\.\d{2},(?<o>[A-Z]{4}),(?<d>[A-Z]{4}),/, 'g'],
+  ['rpt', /\bC1\s+[A-Z0-9-]{2,10}\s+[A-Z]{3}\d{2}\s+(?<hh>\d{2})\.(?<mm>\d{2})\.\d{2}\s+(?<o>[A-Z]{4})\s+(?<d>[A-Z]{4})\b/, 'g'],
+  //   Boeing 767s' weather reports: "S/N R:802701 DEPART:KCVG DESTIN:KMSP"; Qantas's "RSI VH-VYC QFA478 0725 17NOV26 YMML
+  //   YSSY"; British Airways' (label 15) "FST01LSZHEGLLN50945E0007141196 ... 07440725" - its time last
+  ['rpt', /\bDEPART:\s*(?<o>[A-Z]{4})\s+DESTIN:\s*(?<d>[A-Z]{4})\b/, 'g'],
+  ['rpt', /^RSI\s+[A-Z0-9-]{2,7}\s+[A-Z0-9]{2,8}\s+(?<hm>\d{4})\s+\d{2}[A-Z]{3}\d{2}\s+(?<o>[A-Z]{4})\s+(?<d>[A-Z]{4})\b/, 'g'],
+  ['rpt', /^FST01(?<o>[A-Z]{4})(?<d>[A-Z]{4})[NS]\d[^\n]*?\s\d{4}(?<hm>\d{4})\s*$/, 'g'],
+  //   the airlines' own: flydubai's (label 80) "FDB156,OMDB,VRMM, ,1039,0392,,"; Aer Lingus' "EIN118/17NOV26/EI-LRD/KIAD/EIDW/0106";
+  //   China's "POS UTC 080220,DEP ZGSZ,DES RCTP,N 24030E120121"; Delta's "P,E,2026-11-17 07:20:28, 22267297,16NOV,5626,KLAX,KFAT,";
+  //   the landing data asked for (labels 33, 10): "331,C,... ,17,KAFW,KTOL,KTOL,25/,", "LDR01,189,D,... ,PHNL,PHOG,PHOG,02/"
+  ['rpt', /^[A-Z]{3}\d{1,4}[A-Z]?,(?<o>[A-Z]{4}),(?<d>[A-Z]{4}),\s*,\d{4},\d{4},/, 'g'],
+  ['rpt', /^\s*[A-Z]{3}[A-Z0-9]{1,5}\/\d{2}[A-Z]{3}\d{2}\/[A-Z0-9-]{2,7}\/(?<o>[A-Z]{4})\/(?<d>[A-Z]{4})\/\d{4}\s*$/, 'g'],
+  ['pos', /\bPOS UTC (?<hm>\d{4})\d{2},DEP (?<o>[A-Z]{4}),DES (?<d>[A-Z]{4}),/, 'g'],
+  ['rpt', /^P,[A-Z],\d{4}-\d{2}-\d{2}\s(?<hh>\d{2}):(?<mm>\d{2}):\d{2},\s*\d+,\d{2}[A-Z]{3},\d{1,4},(?<o>[A-Z]{4}),(?<d>[A-Z]{4}),/, 'g'],
+  ['rpt', /^(?:LDR\d{2}|\d{1,3}),[^\n]{0,120}?,(?<o>[A-Z]{4}),(?<d>[A-Z]{4}),\k<d>,\d{2}[LRC]?\//, 'g', /^(?:33|10)$/],
+  //   Brussels Airlines' (label 44): "SN2184,EGCC,EBBR,17NOV26,D," (its label 30 names the flight after - not read)
+  ['rpt', /^[A-Z0-9]{2}\d{1,4}[A-Z]?,(?<o>[A-Z]{4}),(?<d>[A-Z]{4}),\d{2}[A-Z]{3}\d{2},[A-Z],/, 'g', /^44$/],
+  //   KLM's and Transavia's: the kind, the day and time, the flight, its airports - "AML17M17072700KLM618 KBOSEHAM:",
+  //   "RST18A17072547KLM602  KLAXEHAM", "LDA31M17075642KLC1069 EHAMEGHI76999 LDS EDN01 FINAL" (a load sheet: at the gate)
+  ['', /^(?<typ>[A-Z]{3})\d{2}[A-Z]\d{2}(?<hh>\d{2})(?<mm>\d{2})\d{2}[A-Z]{3}\d[A-Z0-9]{0,4}\s+(?<o>[A-Z]{4})(?<d>[A-Z]{4})/, 'g', null, KL_KIND],
+  // the messages of the gate before a flight (kind 'gate': its load sheet, its final weights, its delay): the flight it is
+  // about to fly - United's "FINAL WEIGHTS UA0552/16 KSFO KONT SENT: 07:34:51Z" (and its dangerous goods), easyJet's (label 8D) "0005,89,0033,99,----,---,
+  // 0038,0746,EGKK,EGAA" (its departure time, then its airports), Brussels' "DEPARTURE AIRPORT LSZH / ARRIVAL AIRPORT EBBR"
+  ['gate', /(?:^|[^A-Z])FINAL (?:WEIGHTS|DANGEROUS GOODS SUMMARY)\b[\s\S]{0,60}?\s[A-Z0-9]{2,8}\/\d{2}\s+(?<o>[A-Z]{4})\s+(?<d>[A-Z]{4})\s+SENT:\s*(?<hh>\d{2}):(?<mm>\d{2})(?::\d{2})?Z/, 'g'],
+  ['gate', /^[\d-]{4},[\d-]{2,3},[\d-]{4},[\d-]{2,3},[\d-]{4},[\d-]{2,3},[\d-]{4},(?<std>\d{4}),(?<o>[A-Z]{4}),(?<d>[A-Z]{4})\b/, 'g', /^8D$/],
+  ['gate', /\bDEPARTURE AIRPORT (?<o>[A-Z]{4})\s*\/\s*ARRIVAL AIRPORT (?<d>[A-Z]{4})\b/, 'g'],
+  // United's out-off-on-in record (label RB): "/CURRENT FLT 3877 KMLB KDEN 17 /PDOOR 0710 /OUT 0718 /GSI 0718 /OFF 0734"
+  ['oooi', /\/CURRENT FLT\s+[A-Z0-9]{1,6}\s+(?<o>[A-Z]{4})\s+(?<d>[A-Z]{4})\s+\d{2}\s/, 'g']
 ];
+const LANDED = /(?:^|[^A-Z])(?:ON|IN)(?:0\d|RP)(?=[,/ ]|$)|(?:^|[^A-Z])(?:ON|IN) ?\d{4}\b/;
 // (a position as these messages write it -> [lat, lon]: "N28261W081196" (degrees and minutes to a tenth), "N 41.714,W 89.614",
 // "N30.336/W098.165" (degrees))
 function posIn(p) {
@@ -114,13 +224,19 @@ function routeOf(text, isAirport, label, t) {
     if (kind === 'pos' && t > 0) { const x = /0\d,([NS] ?\d[\d.]* ?,? ?[EW] ?\d[\d.]*),[^,]*,[A-Z]{4},[A-Z]{4},(\d{4}),(\d{4}),(\d{4})?/.exec(s); if (x) { const at = posIn(x[1]); if (at) r.at = at; r.own = minsFrom(t, x[3]); if (x[4]) r.eta = x[4]; } }
     return r;
   }
-  for (const [kind, re, form] of MORE) {
+  for (const [kind, re, form, lab, kinds] of MORE) {
     const m = re.exec(s); if (!m) continue;
     let r = null;
     if (form === 'od') r = { o: m[1], d: m[2], kind };
-    else if (form === 'od-std') r = { o: m[1], d: m[2], kind, std: m[3] };
+    else if (form === 'od-std') { r = { o: m[1], d: m[2], kind }; if (m[3]) r.std = m[3]; }
     else if (form === 'od-pos') { r = { o: m[2], d: m[3], kind }; const at = posIn(m[1]); if (at) r.at = at; if (m[5] && t > 0) r.own = minsFrom(t, m[5]); }
-    else if (form === 'od-q') { if (label !== 'QP' && label !== 'QQ') continue; r = { o: m[1], d: m[2], kind }; if (t > 0) r.own = minsFrom(t, m[3]); }
+    else if (form === 'od-q') { if (!/^Q[PQ]$/.test(label || '')) continue; r = { o: m[1], d: m[2], kind }; if (t > 0) r.own = minsFrom(t, m[3]); }
+    // (1.3.8) the time of day it was made, to the minute - its own clock (one replayed later is dropped, as for the others)
+    else if (form === 'od-rep') { r = { o: m[2], d: m[3], kind }; if (t > 0 && m[1]) r.own = minsFrom(t, m[1]); }
+    else if (form === 'od-l1x') { if (!/^1[0-3]$/.test(label || '')) continue; r = { o: m[1], d: m[2], kind }; if (t > 0) r.own = minsFrom(t, m[3]); }
+    else if (form === 'od-33') { r = { o: m[4], d: m[5], kind, at: [+m[2], +m[3]] }; if (t > 0) r.own = minsFrom(t, m[1]); }
+    else if (form === 'od-rep5z') { r = { o: m[1], d: m[2], kind }; if (t > 0) r.own = minsFrom(t, m[3]); }
+    else if (form === 'od-org') { r = { o: m[1], d: m[2], kind }; const at = posIn(m[4] + ',' + m[5]); if (at) r.at = at; if (t > 0) r.own = minsFrom(t, m[3]); }
     else if (form === 'od-clr') { r = { o: m[3], d: m[4], kind }; if (t > 0) r.own = minsFrom(t, m[1]); }
     else if (form === 'd-clr') { r = { o: '', d: m[3], kind }; if (t > 0) r.own = minsFrom(t, m[1]); }
     else if (form === 'do-pos10') {
@@ -131,7 +247,18 @@ function routeOf(text, isAirport, label, t) {
     else if (form === 'd') r = { o: '', d: m[1], kind };
     else if (form === 'atis') r = { o: '', d: m[1], kind };
     else if (form === 'atis-b9') { if (label !== 'B9') continue; r = { o: '', d: m[1], kind }; }
+    // (1.3.8) the forms by name: o, d - and where they say them, its time (hm, or hh and mm), its departure time (std),
+    // what it is (typ: the ARINC 620 and KLM forms)
+    else if (form === 'g') {
+      const g = m.groups || {}, k = kind || (kinds && g.typ ? kinds[g.typ] : '');
+      if (!k || (lab && !lab.test(label || ''))) continue;
+      r = { o: g.o, d: g.d, kind: k }; if (g.std) r.std = g.std;
+      const hm = g.hm || (g.hh && g.mm ? g.hh + g.mm : ''); if (hm && t > 0) r.own = minsFrom(t, hm);
+    }
     if (!r || r.o === r.d || (r.o && !ok(r.o)) || !ok(r.d)) continue;
+    // (1.3.8: an out / off report giving the on or in time as well - a flight already landed: a report of that flight, never
+    // a plan for the next)
+    if (r.kind === 'oooi' && LANDED.test(s)) r.kind = 'rpt';
     return r;
   }
   return null;
@@ -162,6 +289,42 @@ function xidOf(j, isAirport) {
   return { hex, t, d, at };
 }
 
+// ---- (1.3.8) the air traffic services' own datalink: where the aircraft's avionics say it is flying from and to ------------
+// Two kinds of message carry both airports as fields, decoded in the feeds' own JSON:
+//   - an ATN logon (VDL2 in Europe: every aircraft signing on to a control centre's datalink - its context management
+//     logon request - gives its flight's departure and destination airports): dumpvdl2's "departure_airport" and
+//     "destination_airport"; a CPDLC route clearance (ATN) the same
+//   - a FANS CPDLC message (over ACARS, VDL2, HFDL and satcom: the oceans, the US): a route clearance's "airport_dep" and
+//     "airport_dst", decoded by libacars
+// A line of a feed -> { reg?, hex?, t, o, d } or null: the aircraft by its registration where the message carries one,
+// else by its 24-bit address (the VDL2 link's aircraft end)
+const ATN_KEYS = [['departure_airport', 'destination_airport'], ['airport_dep', 'airport_dst']];
+function atnOf(j, isAirport) {
+  if (!j || typeof j !== 'object') return null;
+  let o = '', d = '', n = 0;
+  const walk = (v, depth) => {
+    if (!v || typeof v !== 'object' || depth > 24 || n++ > 4000 || (o && d)) return;
+    if (!Array.isArray(v)) for (const [ko, kd] of ATN_KEYS) {
+      if (typeof v[kd] === 'string' && /^[A-Z]{4}$/.test(v[kd].trim().toUpperCase())) { d = v[kd].trim().toUpperCase(); if (typeof v[ko] === 'string' && /^[A-Z]{4}$/.test(v[ko].trim().toUpperCase())) o = v[ko].trim().toUpperCase(); }
+    }
+    for (const x of Array.isArray(v) ? v : Object.values(v)) if (x && typeof x === 'object') walk(x, depth + 1);
+  };
+  walk(j, 0);
+  if (!d || o === d || (isAirport && (!isAirport(d) || (o && !isAirport(o))))) return null;
+  let t = 0, hex = '', reg = '';
+  const vd = j.vdl2, hf = j.hfdl;
+  if (vd) {
+    t = +(vd.t && vd.t.sec) || 0;
+    const a = vd.avlc || {}, ac = a.src && a.src.type === 'Aircraft' ? a.src : a.dst && a.dst.type === 'Aircraft' ? a.dst : null;
+    if (ac && /^[0-9A-F]{6}$/i.test(String(ac.addr || ''))) hex = String(ac.addr).toUpperCase();
+    reg = String(a.acars && a.acars.reg || '');
+  } else if (hf) { t = +(hf.t && hf.t.sec) || 0; const l = hf.lpdu || {}; reg = String(l.hfnpdu && l.hfnpdu.acars && l.hfnpdu.acars.reg || ''); }
+  else { t = +j.timestamp || 0; reg = String(j.tail || ''); }
+  reg = reg.replace(/^[.\s]+/, '').trim().toUpperCase(); if (!/^[A-Z0-9-]{2,10}$/.test(reg)) reg = '';
+  if (!(t > 0) || (!reg && !hex)) return null;
+  return { reg, hex, t, o, d };
+}
+
 // ---- the store: per registration, its routes of the last 36 hours, newest last ---------------------------------------
 const HAS_TEXT = /"(?:msg_)?text"\s*:\s*"[^"]/;
 function createDatalink(env) {
@@ -174,12 +337,20 @@ function createDatalink(env) {
     if (typeof r.own === 'number' && Math.abs(r.own) > 30) { stats.stale = (stats.stale || 0) + 1; return; }
     const tab = m.hex ? byHex : byReg, key = m.hex || m.reg;
     let l = tab.get(key); if (!l) tab.set(key, l = []);
-    const last = l[l.length - 1];
+    // (1.3.8: the route a callsign database gives - put again every quarter of a minute while the flight lasts: kept apart
+    // from what the aircraft's own messages say - never merged with one of them, nor one of them with it (its time is
+    // now, theirs may be an hour old) - and brought up to date where it is in the list, not added again: a callsign
+    // with a stop has two legs, one after the other)
+    if (r.kind === 'csdb') {
+      const e = l.find(x => x.kinds[0] === 'csdb' && x.o === r.o && x.d === r.d && m.t - x.t < 6 * 3600);
+      if (e) { if (m.t > e.t) { e.t = Math.round(m.t); l.sort((a, b) => a.t - b.t); } return; }
+    }
+    const last = l.filter(x => (x.kinds[0] === 'csdb') === (r.kind === 'csdb')).pop();
     // (the same route sent again - a position report every few minutes: its time moved on, once. 1.3.1: one naming only
     // where it is going is the same route as the one before to there; the origin kept, or learned, either way)
     if (last && last.d === r.d && (last.o === r.o || !last.o || !r.o) && m.t - last.t < 6 * 3600 && (last.kinds[0] === 'atis') === (r.kind === 'atis')) {
       if (!last.o && r.o) last.o = r.o;
-      if (m.t > last.t) { last.t = Math.round(m.t); if (!last.kinds.includes(r.kind)) last.kinds.push(r.kind); if (r.at) last.at = [Math.round(r.at[0] * 1000) / 1000, Math.round(r.at[1] * 1000) / 1000]; else delete last.at; if (r.eta) last.eta = r.eta; }
+      if (m.t > last.t) { last.t = Math.round(m.t); if (!last.kinds.includes(r.kind)) last.kinds.push(r.kind); if (r.at) last.at = [Math.round(r.at[0] * 1000) / 1000, Math.round(r.at[1] * 1000) / 1000]; else delete last.at; if (r.eta) last.eta = r.eta; l.sort((a, b) => a.t - b.t); }
       return;
     }
     const e = { o: r.o, d: r.d, t: Math.round(m.t), first: Math.round(m.t), kinds: [r.kind] }; if (r.std) e.std = r.std; if (m.flight) e.cs = m.flight;
@@ -209,6 +380,12 @@ function createDatalink(env) {
       const x = xidOf(jx, env.isAirport); if (!x || x.t < nowS - KEEP) return 0;
       const rx = { o: '', d: x.d, kind: 'xid' }; if (x.at) rx.at = x.at;
       stats.xid = (stats.xid || 0) + 1; add({ hex: x.hex, t: x.t }, rx); return 1;
+    }
+    // (1.3.8: an ATN logon or route clearance, a FANS CPDLC route clearance - both airports as the avionics have them)
+    if (line.indexOf('"destination_airport"') >= 0 || line.indexOf('"airport_dst"') >= 0) {
+      let ja; try { ja = JSON.parse(line); } catch (e) { return 0; }
+      const a = atnOf(ja, env.isAirport);
+      if (a && a.t >= nowS - KEEP) { stats.atn = (stats.atn || 0) + 1; add({ reg: a.reg, hex: a.reg ? '' : a.hex, t: a.t }, { o: a.o, d: a.d, kind: 'atn' }); return 1; }
     }
     // (1.3.1: a line with no message text in it is not even parsed: most lines of the VDL2 and HFDL feeds are link
     // traffic with no message at all)
@@ -247,7 +424,13 @@ function createDatalink(env) {
   }
   // (what is known of these registrations: [{ reg, routes: [{ o, d, t, first, kinds, std?, cs? }] }])
   function get(regs) { return regs.map(r => String(r || '').toUpperCase()).filter(r => byReg.has(r)).map(reg => ({ reg, routes: byReg.get(reg) })); }
-  return { ingest, ingestSlow, take, prune, get, of, stats, byReg, byHex };
+  // (1.3.8) a route from elsewhere - the one usually flown under the flight's callsign (csroute.cjs): kept as a message's
+  // is, both airports real ones -> true when it is new
+  function put(m, r) {
+    if (!m || !(m.t > 0) || (!m.reg && !m.hex) || !r || !r.d || r.o === r.d || (env.isAirport && (!env.isAirport(r.d) || (r.o && !env.isAirport(r.o))))) return false;
+    const n0 = stats.kept; add(m, r); return stats.kept > n0;
+  }
+  return { ingest, ingestSlow, take, put, prune, get, of, stats, byReg, byHex };
 }
 
 // ---- reading the open data as it is published --------------------------------------------------------------------------
@@ -269,4 +452,4 @@ async function newFiles(day, seen, get) {
 const netJson = async url => { const r = await fetch(url, { headers: UA, signal: AbortSignal.timeout(30000) }); if (r.status === 404) return null; if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); };
 const netBuf = async url => { const r = await fetch(url, { headers: { 'User-Agent': UA['User-Agent'] }, redirect: 'follow', signal: AbortSignal.timeout(120000) }); if (!r.ok) throw new Error('HTTP ' + r.status); return Buffer.from(await r.arrayBuffer()); };
 
-module.exports = { xidOf, msgOf, routeOf, PATTERNS, MORE, posIn, minsFrom, createDatalink, newFiles, zstd, netJson, netBuf, repoOf, tagOf };
+module.exports = { xidOf, atnOf, msgOf, routeOf, PATTERNS, MORE, posIn, minsFrom, createDatalink, newFiles, zstd, netJson, netBuf, repoOf, tagOf };

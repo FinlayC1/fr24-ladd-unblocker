@@ -4,6 +4,77 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 
 1.0.0 is the first release. The versions before it are the betas, labelled B: B22.31.12 is version 22.31.12.
 
+## [1.3.8] - 2026-11-17
+
+### In short
+- **Many more flight plans from datalink.** On a sample of 9,034 real messages from every aircraft Airframes heard on 17 Nov, routes read went from 624 (267 aircraft) to 2,988 (881 aircraft). Each new kind of message was checked against the other messages of the same flight: 2,672 routes from 788 aircraft, no disagreement. Newly read:
+  - every kind of ARINC 620 report: position reports, weather requests, in-range reports, maintenance reports, including those under labels 5U, 27 and 83
+  - the reports engines, maintenance computers and performance monitors send from the air (Rolls-Royce, Boeing, Airbus, fault reports and others)
+  - airlines' own forms (KLM and Transavia, flydubai, Aer Lingus, Delta, Qantas, Southwest, British Airways)
+  - messages from the gate before a flight: load sheets, final weights, delay reports
+  - the flight plan an aircraft's avionics give air traffic control when they log on to its datalink, and route clearances
+- **OpenSky as a registered user** (the owner's API client, kept in the server's secrets file, never in the repository):
+  - **Live:** OpenSky's view of the whole world is read every two minutes, and the blocked aircraft in it go into their tracks. That fills positions where adsb.lol hears nothing, take-offs included. It uses 2,880 of the 4,000 credits a day. Before, OpenSky was used only without an account, as a backup when adsb.lol's LADD list stopped answering.
+  - **The day after:** for blocked aircraft whose flights from the day before miss an end, or only have a guessed one, OpenSky's flights of that day are asked for, up to 120 a day. OpenSky's estimated airport is used only where its first or last position in the air was within 3 km of the airport and 450 m above it. It is used only for the same flight, and never over an end heard here. The browsers get these ends in the logs the monitor sends them.
+- **The whole Airframes stream searched.** Before, the monitor only asked Airframes about aircraft one at a time. It now also searches every aircraft's messages of these kinds as Airframes hears them, about three requests a minute. One test pass read 2,349 messages and 652 routes for 390 aircraft in ten seconds. The Airframes allowance goes from 12 to 20 requests a minute; Airframes allows 60.
+- **An airline's flight FR24 has no destination for** gets the route usually flown under its callsign, from adsbdb.com (else hexdb.io). These databases are right only half the time (103 of 209 flights checked against the aircraft's own messages), so the route is shown as "likely, 90%". It is used only when the aircraft took off from that route's airport and is heading for its destination, which was right 98 times in 100. A route from the aircraft's own messages always comes first.
+- **Fewer wrong plans:**
+  - A plan for a route the aircraft has since flown (A to B, then B to A) is no longer taken for its next flight from A.
+  - Out-of-the-gate reports and gate messages count only within two or three hours of take-off.
+  - A report that the flight landed (on or in) is never taken as a plan for the next flight.
+- **Registration of today:** an aircraft is no longer named by an old registration the aggregators' database still gives for its transponder. HLL01 (407D94) was G-NMCF, which the UK register de-registered in February 2024; it has been G-UBET since. For a UK aircraft the script now asks G-INFO once a week. When G-INFO says the old mark is de-registered and the same transponder's airframe is registered under another, that mark is used from then on.
+- **G-RESH's log and playback:** on 14 Nov it flew St. Athan to Caernarfon. FR24 lost it hovering over Snowdonia and wrote "Landed 17:31"; its public track goes on to land at Caernarfon at 18:02. The row showed "Caernarfon?", copied from its next flight, and its playback showed "-". When FR24 lists no other flight leaving before the public track lands, that landing is now this flight's: Caernarfon, in the row and in the playback.
+- **Farnborough runways for M-ARNZ** (16 Nov, VSB96 to Walney): the departure runway was "N/A" on Walney's board, and its landing at Farnborough had none either.
+  - The monitor now works out a missing track and speed from neighbouring positions; its take-off roll had come with no track. Checked on all eight of that day's take-offs and landings with the tracks taken out: every answer right or none at all, never a wrong runway.
+  - A flight landed and still waiting on the ground gets its landing runway too.
+  - A runway found once is kept when the flight is rebuilt from fewer positions.
+
+### Fixed
+- **Datalink forms** (`monitor/datalink.cjs`):
+  - new `MORE` entries read by named groups (form `'g'`). The ARINC 620 heading is one form, its kind chosen by its type (`MU_KIND`); KLM's heading by `KL_KIND`; a type not listed is not read.
+  - new kind `'gate'` (load sheet, final weights, delay).
+  - an out / off match that also gives an on / in time is kind `'rpt'` (`LANDED`); QR and QS stay unread, as in 1.3.1.
+  - `ETA` with a four-digit time, `TOD` with spaces before its comma.
+  - `/CC` and `/C1` Airbus reports with or without a time: `od-rep`'s time is optional, which also fixes a crash it would have caused.
+  - `atnOf`: the ATN logon's `departure_airport` / `destination_airport` (dumpvdl2) and FANS `airport_dep` / `airport_dst` (libacars), stored by registration or address as kind `'atn'`.
+- **Route store** (`add`): a callsign route (`'csdb'`) is never merged with the aircraft's own routes, in either direction. It is refreshed where it is in the list, so a callsign with a stop is not added again every 15 s. A merge re-sorts the list. `put()` is for routes from outside the messages.
+- **Route code** (`04-routes.js`, `ROUTE-DL`, run by the browser and the monitor alike):
+  - `DL_PRE` and `DL_NOTICE` include `'atn'` / `'gate'`; `DL_NEAR` sets the time limits for out / off and gate messages.
+  - a route whose destination a later route starts from, before this flight, is skipped (it was flown).
+  - a callsign route is only a fallback: the origin must be known and match, the corridor is 1.1× + 50 km, and the track must be within 30° of the destination beyond 60 km. It is shown as likely, 90%, with its own reason text.
+- **Airframes** (`monitor/airframes.cjs`): `sweep()` runs 42 searches, the most frequent first, paging back with `before_id` within the minute's allowance. Each message is read once by its Airframes id (`consume`, shared with the per-aircraft reads). Its counts are in `/status` (`airframes.sweeps`, `sweepRoutes`, …); it is switched off with `"airframesSweep": false`.
+- **Callsign routes** (`monitor/csroute.cjs`, new): adsbdb, then hexdb. Each callsign is asked once a day, at most one request every 3 s, and an hour's pause after a 429 or 403. The monitor's `csTargets` picks airliners and aircraft of unknown type in the air with no FR24 destination and no route of their own in the last three hours. Its counts are in `/status` (`csRoute`); it is switched off with `"csRoute": false`.
+- **Registration** (`src/registry.js` `ginfo` / `identity`): G-INFO's entry gives the airframe's current mark (`mark`). `identity` returns it as `reg`, with `regWas`, only for the same transponder. The browser (`enrich`) asks G-INFO weekly for G- marks (`regCheckAt`) and renames when told. `curReg` maps the old mark to the new one in `recordFromMatch`, `srvRec` and the area seed. The monitor's owner store keeps the replacement (`regWas`) and sends it as `/owners` column 18 (`applyMonOwner`).
+- **Aircraft page rows** (`06-acpage.js` `fillFr24Rows`): an ADS-B landing after FR24's "Landed" time still counts for the row when FR24 lists no take-off before it.
+- **Runways** (`monitor/airport.cjs` `withTracks`; `monitor/monitor.cjs` `legRunways`, `keepRunways`): as described above.
+- **OpenSky** (`monitor/opensky.cjs`, new):
+  - `createOpenSky`: a client-credentials token from `MON_OPENSKY_CLIENT_ID` / `MON_OPENSKY_CLIENT_SECRET`, renewed before its 30 minutes run out and once on a 401. The id and secret go only in the token request's body: never in an address, a log, an error or `/status`.
+  - each kind's credits are read from `X-Rate-Limit-Remaining`; a kind that returns 429 is paused for `X-Rate-Limit-Retry-After-Seconds`.
+  - `pollOpenSky` uses the client when it is set, in its own loop (`openskyAuthEvery`, 120 s; `0` turns it off). Without a client it behaves as before.
+  - `createOskyEnds`: `/flights/aircraft` for the day and the night after (30 credits), asked from 06:00 UTC the next day, those with most ends to fill first, 120 a day (`openskyFlightsDaily`). `fill` is applied in `histOf`; the answers are kept in `STORE/opensky.json` for 200 days.
+  - `/status` `opensky`: polls, aircraft taken, credits left, token count, and the ends asked for and filled.
+  - `deploy.sh` also checks `csroute.cjs` and `opensky.cjs` parse.
+
+### Tests
+- New `test/unit_138.cjs` (50 checks), added to the suite and CI. It covers:
+  - 55 message forms as real aircraft sent them, nine that must not be read, and on / in reports
+  - an ATN logon and a FANS clearance
+  - the store with callsign routes
+  - the Airframes sweep (order, paging, one read per message, allowance)
+  - the callsign databases (fallback, cache, gap, pause)
+  - the route code for `atn`, `gate`, out / off, flown plans and callsign routes
+  - the monitor's callsign targets and `/status`
+  - M-ARNZ's real Farnborough take-off and landing with no tracks
+  - in the browser: G-RESH's real legs and FR24 rows, and the row and playback ends; G-UBET's renaming and the old mark heard again
+  - The browser checks fail on the build without these fixes.
+- `test/unit_registry.cjs`: a de-registered UK mark renamed, the current one left alone, another transponder never renamed.
+- New `test/unit_opensky.cjs` (23 checks), added to the suite and CI, against a stand-in for OpenSky:
+  - the token and its renewal; the secret in no address, error or status
+  - each kind's credits and its pause
+  - the monitor's poll and `/status`
+  - the ends from OpenSky's flights: when, which, how close, never another flight's or over an end heard here, the day's share, kept across a restart
+  - the log the monitor serves
+
 ## [1.3.7] - 2026-11-16
 
 ### In short

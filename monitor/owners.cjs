@@ -75,6 +75,8 @@ function createOwners(env) {
   // (a lookup's answer: a register's owner over an older one - aircraft change hands - the databases' only where none)
   function fromLookup(hex, idn, t) {
     const r = db.get(hex) || {}; db.set(hex, r);
+    // (1.3.8: the register's mark of today for the old one it was asked with - regWas: the browsers told, to rename theirs)
+    { const now1 = str(idn.reg).toUpperCase(), was = str(idn.regWas).toUpperCase(); if (now1 && was && now1 !== was && (!r.reg || r.reg === was)) { r.reg = now1; r.regWas = was; } }
     for (const k of ['reg', 'type', 'desc', 'ownerCity', 'country', 'countryIso', 'msn']) { const v = str(idn[k]); if (v && !r[k]) r[k] = v; }
     if (idn.year > 1900 && idn.year < 2100 && !r.year) r.year = Math.round(idn.year);
     const o = str(idn.owner); if (named(o) && (idn.ownerReg || !r.regOwner)) { r.owner = o; r.regOwner = !!idn.ownerReg; }
@@ -148,7 +150,8 @@ function createOwners(env) {
     if (b.owner && !named(o.owner)) { o.owner = b.owner; if (b.ownerCity) o.ownerCity = b.ownerCity; }
     return o;
   }
-  function rows(hexes, opts) { const out = [], pub = !!(opts && opts.public); for (const h of hexes) { const hex = String(h || '').toLowerCase(), r = withBulk(hex, db.get(hex)); if (r) out.push(row(hex, r, pub)); } return out; }
+  // (1.3.8: [18] the old mark the register replaced, where it did)
+  function rows(hexes, opts) { const out = [], pub = !!(opts && opts.public); for (const h of hexes) { const hex = String(h || '').toLowerCase(), r = withBulk(hex, db.get(hex)); if (r) { const x = row(hex, r, pub); if (r.regWas) { while (x.length < 18) x.push(null); x[18] = r.regWas; } out.push(x); } } return out; }
   // (for the names table, which every browser gets: who it is - the owner if not a private person, the operator)
   function short(hex) { const r = db.get(hex); return r ? { owner: named(r.owner) && orgName(r.owner) ? r.owner : '', opName: r.opName || '', opId: r.opId || 0, opIcao: r.opIcao || '' } : null; }
 
@@ -157,7 +160,7 @@ function createOwners(env) {
     if (!dirty) return false;
     fs.mkdirSync(dir, { recursive: true });
     const f = path.join(dir, 'owners.json'), out = [];
-    for (const [hex, r] of db) { const o = {}; for (const k of FIELDS.concat(['at', 'ok', 'src', 'failAt', 'regOwner'])) if (r[k] != null && r[k] !== '' && r[k] !== 0 && r[k] !== false) o[k] = r[k]; out.push([hex, o]); }
+    for (const [hex, r] of db) { const o = {}; for (const k of FIELDS.concat(['at', 'ok', 'src', 'failAt', 'regOwner', 'regWas'])) if (r[k] != null && r[k] !== '' && r[k] !== 0 && r[k] !== false) o[k] = r[k]; out.push([hex, o]); }
     fs.writeFileSync(f + '.tmp', JSON.stringify({ v: 1, list: out })); fs.renameSync(f + '.tmp', f);
     dirty = false; return true;
   }
