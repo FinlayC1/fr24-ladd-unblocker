@@ -12,3 +12,6 @@ android/build/
 android/module/build/
 android/local.properties
 dist/*.apk
+# (the script as the module runs it - build.mjs writes it, the module's build copies it into the APK; CI and the release
+# build it first. Not kept in the repository: a third copy of the userscript, read by nothing from here)
+dist/mobile/
