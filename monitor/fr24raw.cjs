@@ -5,6 +5,12 @@
 //   STORE/fr24raw/YYYY-MM-DD.gzl  gzip members one after another, each time the points gathered are written a member
 //                                 for every 64 flights (a member: { "<fid hex>": { m: { hex, reg, cs, type, fn }, p: [[...], ...] }, ... })
 //   STORE/fr24raw/YYYY-MM-DD.idx  a line for each flight in each member: "<fid hex> <offset> <length>"
+// (1.3.9) A flight's points are written column by column - 'z': { n, c: [column, ...] } - each column 0 (no figure in
+// it), or [kind, values...]: 'd' whole numbers, the first as it is and each after as the step from the one before
+// (times, heights, speeds), 'f' FR24's own single-precision latitudes and longitudes, the same steps between the
+// numbers' 32-bit forms, 'r' as they are (anything else) - every figure exactly as it came, in a third of the room or
+// less (the monitor keeps every flight its scans see: some 30 million points a day). Members written before as 'p': the
+// points as lists - read as they are.
 // A point is a list in the order of COLS (a figure not given null; those at the end left off). Points are gathered as
 // they come and written every quarter of an hour (and on stop), each second of a flight once; a member goes in the file
 // of the day it is written. Held in memory: the points not written yet, the times written of the flights of the last day
@@ -13,7 +19,45 @@
 const fs = require('fs'), path = require('path'), zlib = require('zlib');
 const dayOf = t => new Date(t * 1000).toISOString().slice(0, 10);
 const fin = v => typeof v === 'number' && isFinite(v);
-const COLS = ['t', 'lat', 'lon', 'alt', 'gs', 'trk', 'vr', 'sq', 'gnd', 'altGeom', 'ias', 'tas', 'hdg', 'mcp', 'fms', 'ws', 'wd'];
+// (1.3.9: 'src' - FR24's source of the position: 0 ADS-B, 1 multilateration, 5 satellite ADS-C ...)
+const COLS = ['t', 'lat', 'lon', 'alt', 'gs', 'trk', 'vr', 'sq', 'gnd', 'altGeom', 'ias', 'tas', 'hdg', 'mcp', 'fms', 'ws', 'wd', 'src'];
+// ---- the columns' form (1.3.9) ---------------------------------------------------------------------------------------
+const F32 = new DataView(new ArrayBuffer(4));
+const bitsOf = v => { F32.setFloat32(0, v); return F32.getInt32(0); };
+const ofBits = b => { F32.setInt32(0, b); return F32.getFloat32(0); };
+const isInt = v => Number.isInteger(v) && Math.abs(v) < 2147483648 && !Object.is(v, -0);
+const isF32 = v => typeof v === 'number' && Number.isFinite(v) && Math.fround(v) === v && !Object.is(v, -0);
+function encode(rows) {
+  const n = rows.length, w = rows.reduce((m, r) => Math.max(m, r.length), 0), c = [];
+  for (let k = 0; k < w; k++) {
+    const vals = rows.map(r => (k < r.length ? r[k] : null)), have = vals.filter(v => v !== null);
+    if (!have.length) { c.push(0); continue; }
+    const kind = have.every(isInt) ? 'd' : have.every(isF32) ? 'f' : 'r', col = [kind];
+    let prev = null;
+    for (const v of vals) {
+      if (v === null || kind === 'r') { col.push(v); continue; }
+      const x = kind === 'f' ? bitsOf(v) : v; col.push(prev === null ? x : x - prev); prev = x;
+    }
+    while (col.length > 1 && col[col.length - 1] === null) col.pop();
+    c.push(col);
+  }
+  return { n, c };
+}
+function decode(z) {
+  const n = z && Number.isInteger(z.n) && z.n > 0 ? z.n : 0, cols = z && Array.isArray(z.c) ? z.c : [], rows = [];
+  for (let i = 0; i < n; i++) rows.push(new Array(cols.length).fill(null));
+  cols.forEach((col, k) => {
+    if (!Array.isArray(col) || !col.length) return;
+    const kind = col[0]; let prev = null;
+    for (let i = 0; i < n; i++) {
+      let v = i + 1 < col.length ? col[i + 1] : null;
+      if (v !== null && (kind === 'd' || kind === 'f')) { if (typeof v !== 'number') { v = null; } else { const x = prev === null ? v : prev + v; prev = x; v = kind === 'f' ? ofBits(x) : x; } }
+      rows[i][k] = v;
+    }
+  });
+  for (const r of rows) while (r.length > 3 && r[r.length - 1] === null) r.pop();
+  return rows;
+}
 const GROUP = 64;
 
 function createFr24Raw(env) {
@@ -27,7 +71,7 @@ function createFr24Raw(env) {
   // (a point as kept: the figures FR24 gave, as given - the time to the second)
   function row(p) {
     if (!p || typeof p !== 'object' || !fin(p.t) || !fin(p.lat) || !fin(p.lon) || Math.abs(p.lat) > 90 || Math.abs(p.lon) > 180) return null;
-    const r = COLS.map(k => k === 't' ? Math.round(p.t) : k === 'gnd' ? (typeof p.gnd === 'boolean' ? (p.gnd ? 1 : 0) : null) : k === 'sq' ? (typeof p.sq === 'string' && /^[0-7]{4}$/.test(p.sq) ? p.sq : null) : fin(p[k]) ? p[k] : null);
+    const r = COLS.map(k => k === 't' ? Math.round(p.t) : k === 'gnd' ? (typeof p.gnd === 'boolean' ? (p.gnd ? 1 : 0) : null) : k === 'sq' ? (typeof p.sq === 'string' && /^[0-7]{4}$/.test(p.sq) ? p.sq : null) : k === 'src' ? (Number.isInteger(p.src) && p.src >= 0 && p.src < 100 ? p.src : null) : fin(p[k]) ? p[k] : null);
     while (r.length > 3 && r[r.length - 1] === null) r.pop();
     return r;
   }
@@ -75,7 +119,7 @@ function createFr24Raw(env) {
     const out = {}, fids = []; let n = 0;
     for (const [fid, e] of pend) {
       if (!e.p.size) continue;
-      const p = [...e.p.values()].sort((a, b) => a[0] - b[0]); out[fid] = { m: e.m, p }; fids.push(fid); n += p.length;
+      const p = [...e.p.values()].sort((a, b) => a[0] - b[0]); out[fid] = { m: e.m, z: encode(p), ts: p.map(r => r[0]) }; fids.push(fid); n += p.length;
     }
     pend.clear();
     for (const [fid, x] of done) if (nowS - x.at > holdS) done.delete(fid);
@@ -85,7 +129,7 @@ function createFr24Raw(env) {
     let off = 0; try { off = fs.statSync(fileOf(d, '.gzl')).size; } catch (e) { off = 0; }
     const start = off, spans = [];
     for (let i = 0; i < fids.length; i += GROUP) {
-      const part = fids.slice(i, i + GROUP), o = {}; for (const f of part) o[f] = out[f];
+      const part = fids.slice(i, i + GROUP), o = {}; for (const f of part) o[f] = { m: out[f].m, z: out[f].z };
       const buf = zlib.gzipSync(JSON.stringify(o), { level: 6 }); bufs.push(buf);
       for (const f of part) lines.push(f + ' ' + off + ' ' + buf.length);
       spans.push([off, buf.length, part]); off += buf.length;
@@ -95,7 +139,7 @@ function createFr24Raw(env) {
       fs.appendFileSync(fileOf(d, '.gzl'), Buffer.concat(bufs));
       fs.appendFileSync(fileOf(d, '.idx'), lines.join('\n') + '\n');
       const x = idxs.get(d); if (x) for (const [o, l, part] of spans) { const i = x.spans.length; x.spans.push([o, l]); for (const f of part) (x.by.get(f) || x.by.set(f, []).get(f)).push(i); }
-      for (const f of fids) { const dn = done.get(f); done.set(f, { ts: merge(dn ? dn.ts : [], out[f].p.map(r => r[0])), at: nowS }); }
+      for (const f of fids) { const dn = done.get(f); done.set(f, { ts: merge(dn ? dn.ts : [], out[f].ts), at: nowS }); }
       stats.members += spans.length; stats.flights += fids.length; stats.written += n; stats.bytes = (stats.bytes || 0) + (off - start);
     } catch (e) { stats.err = String(e && e.message || e).slice(0, 160); if (env.log) env.log('fr24raw', d, stats.err); return 0; }
     return fids.length;
@@ -114,7 +158,7 @@ function createFr24Raw(env) {
           memo.set(key, o); if (memo.size > 12) memo.delete(memo.keys().next().value);
         }
         const f = o[fid]; if (!f) continue;
-        Object.assign(res.m, f.m || {}); for (const r of f.p || []) if (Array.isArray(r) && fin(r[0])) res.p.push(r);
+        Object.assign(res.m, f.m || {}); for (const r of f.z ? decode(f.z) : f.p || []) if (Array.isArray(r) && fin(r[0])) res.p.push(r);
       }
     } catch (e) { /* the day's file unreadable: none */ } finally { if (fd !== null) try { fs.closeSync(fd); } catch (e) { /* closed */ } }
     return res;
@@ -139,8 +183,18 @@ function createFr24Raw(env) {
     stats.pruned += n;
     return n;
   }
+  // (1.3.9) the oldest day kept, removed - a store that gives way first when the disk runs short of room: that day, or ''
+  function pruneOldest(keepFrom) {
+    let names = []; try { names = fs.readdirSync(dir); } catch (e) { return ''; }
+    const days = [...new Set(names.map(f => (/^(\d{4}-\d\d-\d\d)\.(gzl|idx)$/.exec(f) || [])[1]).filter(Boolean))].sort();
+    const d = days.find(x => !keepFrom || x < keepFrom); if (!d) return '';
+    for (const ext of ['.gzl', '.idx']) try { fs.unlinkSync(fileOf(d, ext)); } catch (e) { /* gone */ }
+    idxs.delete(d); for (const k of [...memo.keys()]) if (k.startsWith(d + ' ')) memo.delete(k);
+    stats.pruned++; stats.freed = d;
+    return d;
+  }
   // (the disk short of room: the points gathered let go, counted - nothing written is touched)
   function drop() { let n = 0; for (const e of pend.values()) n += e.p.size; pend.clear(); stats.skipped = (stats.skipped || 0) + n; return n; }
-  return { put, flush, drop, of, prune, stats, COLS, get pending() { let n = 0; for (const e of pend.values()) n += e.p.size; return n; }, get held() { return done.size; } };
+  return { put, flush, drop, of, prune, pruneOldest, stats, COLS, get pending() { let n = 0; for (const e of pend.values()) n += e.p.size; return n; }, get held() { return done.size; } };
 }
-module.exports = { createFr24Raw, COLS };
+module.exports = { createFr24Raw, COLS, encode, decode };
