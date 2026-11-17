@@ -244,6 +244,10 @@
       if (S.maskDisabled) issues.push('FR24 refused the request for the unlocked fields');
       if (S.errors > 25) issues.push(`FR24's data format may have changed (${S.errors} patch errors)`);
       if (now() - health.t0 > 90000 && !S.liveFeed && !isAircraftPage) issues.push("FR24's live feed was not recognised");
+      // (1.3.8: FR24 asking about an OurAirports airport somewhere this script does not answer - a new address of its airport
+      // API: its window may not open)
+      if (S.oaMiss > 0) issues.push(`FR24 asked about an OurAirports airport at ${S.oaMissPath || 'an address'} this script does not answer yet (${S.oaMiss}x)`);
+      if (S.oaApiNew > 0) issues.push(`FR24 asked for an OurAirports airport's ${S.oaApiNewPart || 'part'} - new to this script, answered empty`);
     }
     const panel = document.querySelector(SEL.panel);
     if (panel && currentId() != null) { const missing = ['callsign', 'registration', 'depIata', 'arrIata'].filter(k => !q(panel, SEL[k])); if (missing.length >= 2) issues.push("FR24's aircraft panel changed layout"); }

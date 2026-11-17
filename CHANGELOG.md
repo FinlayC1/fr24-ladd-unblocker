@@ -4,6 +4,42 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 
 1.0.0 is the first release. The versions before it are the betas, labelled B: B22.31.12 is version 22.31.12.
 
+## [1.3.9] - 2026-11-17
+
+### In short
+- **The monitor keeps FR24's positions of every flight its scans see.** Before, it kept them only for flights FR24 showed with no destination, and only those in the air above 500 ft. Now it keeps every position, as FR24 sent it, of every flight in:
+  - the world scan, every minute (business, general aviation, helicopters, military)
+  - the low scan, every 30 seconds: every flight in the world below 6,000 to 17,000 ft, depending on the region, so every take-off and landing, airliners included
+  - the scans of airports people are looking at
+  - a new cruise scan every 3 minutes: passenger and cargo flights, balloons, gliders and drones at every height
+
+  That is roughly 30 million positions a day (an estimate). A new compact format stores them in about 10 bytes each, against 25 before; every figure is still kept exactly. They are kept 365 days. If the disk gets down to 30 GB free, the oldest day goes first, and nothing else is ever deleted to make room. FR24's estimated positions are not kept. The cruise scan stops for a day after any sign of FR24 pushing back, so the scans that name blocked flights always come first. Playback, the KML and CSV files and the board's missing ends now read these positions for any flight, through `/fr24raw` as before.
+- **G-LFSA "Liverpool -> Manchester" and "Private Site":** on 17 Nov, Ravenair's PA-38s G-LFSA and G-RVNA reported "on the ground" for a minute or more in the middle of their flights over Cheshire and Shropshire:
+  - they were doing 44 to 75 kt, 1,400 to 2,000 ft up by GPS, at 1,700 to 4,000 ft either side, with the nearest airfield 3.9 km or more away
+  - this cut G-LFSA's local flight from Liverpool into three, and the board showed it going to Manchester
+
+  Such a run of "ground" reports is now read as flight. That applies only when every report in it is at landing-roll speed or more, the aircraft was over 1,000 ft within five minutes either side, it covered the distance between at about that speed, and no airfield is close by. A run on a field, a run with a slow report in it, or a stop still counts as a landing.
+- **G-RVNA "N/A" on Liverpool's board while flying back:** the monitor restarted (the 1.3.8 update) while G-RVNA was flying. When it heard it again, it joined the new positions to the take-off it had kept, but only once. On the next update it left a second copy, "Liverpool -> ?", open next to a "? -> Liverpool" of the same flight. It now joins every time and drops the older copy.
+- **G-NHVT "last landed at Rhedyn Coch Farm":** on 17 Nov NHV's AW169 was lost hovering at 1,150 ft and 1 kt over the Liverpool Bay platforms. The monitor put its landing at Rhedyn Coch Farm, a strip 32 km away inland, and its next take-off from Blackpool became "from Rhedyn Coch Farm, where it last landed". A helicopter lost hovering or creeping low (under 25 kt, under 2,500 ft) now came down where it was lost: at a heliport, airport or strip right there, or else at a place no list has. The landing in Blackpool afterwards was also stuck open by the restart (see G-RVNA), so it was not counted as its last landing; that is fixed too.
+- **OurAirports airports not opening again:** FR24's new build asks `/api/v2/airports/<id>` for an airport's window, where it asked `/api/v1/...` before. The script only answered v1, so an OurAirports airport's window failed ("airportsApi.airport request is not ok"). It now answers at any version of that address, by id or code, and builds the answer in the shape of FR24's latest answer for one of its own airports: any section or field FR24 adds is there, empty. An address or a part not known yet is counted and named by the health check, so the next change shows up there first.
+
+### Fixed
+- **Every scan's flights kept** (`monitor/monitor.cjs` `scanPut`, new store `fr24scan`): the world, low and airport scans and the new `cruiseRound` (services 0, 1, 6, 7, 8, in the air, `maxage` 600). Each report is put once per flight and time. Estimated positions (source 4) are counted, not kept. The settings are `fr24ScanDays` (365; `0` stops it), `fr24ScanFreeGb` (30), `fr24CruiseEvery` (180 s; `0` stops the cruise scan) and `fr24CruiseMax` (60 requests a round at most; `scanWorld`'s new `maxRequests`). The cruise scan does not run within a day of FR24's last pushback. `rawOf` reads a flight from `fr24raw`, `fr24scan` and `fr24apt` together. For the same second it takes the report with more figures and fills in the ones it lacks from the other. `/fr24raw` and the runway fit use it. `/status` `fr24.fr24Scan` reports what is kept, the cruise scan, and the days removed for room.
+- **Compact store** (`monitor/fr24raw.cjs`): members are written column by column (`z`): whole numbers as steps from the one before, FR24's single-precision positions as steps between their 32-bit forms, anything else as it is. Members written before (`p`) are read as they are. A new column, `src`, holds FR24's source of each position. `pruneOldest` removes the oldest day, never yesterday or today.
+- **"Ground" at flying speed** (`src/engine.js` `legsFromPoints`, used by the browser and the monitor): as described above. The thresholds are 40 kt (50 kt for a helicopter), 1,000 ft within 300 s either side, no FR24 airport within 5 km, no strip within 2.5 km (no heliport within 1 km for a helicopter), at most 10 minutes long, and an average of at least 0.6 of the slowest report's speed. Before, only reports over 100 kt within 15 s of a point above 1,500 ft were read this way.
+- **A helicopter lost hovering** (`src/engine.js` `heliHover`, in `summarizeLeg`): a gap landing (`gap-land`) whose last point was under 25 kt and 2,500 ft is placed at the nearest heliport (1.5 km), airport (3 km) or strip (1.5 km). If there is none, no airport is named. The take-off after such a gap is placed the same way.
+- **A flight joined after a restart** (`monitor/monitor.cjs` `carriesOn`, `buildLegs`): an open flight that already reaches past the start of the new piece is the same flight, joined again on every rebuild. Any other copy of it still open under another key, starting within it, is removed.
+- **OurAirports airports' windows** (`src/page.js`): every `/api/v1/airports/` match is now `/api/v\d+/airports/`. `oaApiTarget` takes an OurAirports id or code; FR24's own airports, its boards, search, lists and nearby pass through untouched. FR24's own answers are read for their shape only (`apShapeOf`, keys and empty values, kept in `localStorage` `tl.apShape1`), never their values. A part not known is answered in the shape learned for it, else empty, and counted (`oaApiNew`). FR24's "not found" for any address about an OurAirports id is counted with that address (`oaMiss`, `oaMissPath`). The health check names both (`06-tools.js`).
+
+### Tests
+- New `test/unit_139.cjs` (27 checks; 16 without jsdom in CI), added to the suite and CI:
+  - the airport window at v2, v3 and by code, its parts and boards, FR24's own airports untouched, the shape-mirrored answer with none of FR24's values in it, an unknown part, and a "not found" counted
+  - G-LFSA's and G-RVNA's real positions of 17 Nov, and what must stay a landing: on a runway, with a slow report, a stop
+  - G-NHVT's hover over the sea (its real positions from 15:52), and a hover by Axis Business Park's helipad
+  - G-RVNA's real positions after a restart, rebuilt as they came in, down at Liverpool and off again
+  - the scans' store: each report once, estimated positions left out, read together with the other stores, the compact form read back exactly, `/status`, the cruise scan with its cap and its pause, and the oldest day removed
+  - The engine and monitor checks fail on 1.3.8: G-NHVT comes out as "Blackpool -> GB-0479" and "GB-0479 -> Blackpool", G-RVNA as "Liverpool -> ?" open next to "? -> Liverpool".
+
 ## [1.3.8] - 2026-11-17
 
 ### In short

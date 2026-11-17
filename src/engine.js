@@ -951,6 +951,24 @@ function createRouteEngine() {
       const p = pts[i]; if (!p.gnd || !p.gnd0 || !(p.gs > 100)) continue;
       for (let j = Math.max(0, i - 4); j <= Math.min(pts.length - 1, i + 4); j++) { const q = pts[j]; if (q !== p && !q.gnd0 && q.alt != null && q.alt > 1500 && Math.abs(q.t - p.t) <= 15) { p.gnd = false; p.gnd0 = false; p.alt = q.alt; break; } }
     }
+    // (1.3.9) A run of "ground" reports at flying speed nowhere near an airfield, the aircraft heard 1,000 ft up and more
+    // within five minutes either side and covering the ground in between at about that speed: a bad air/ground bit too,
+    // not a landing. G-LFSA and G-RVNA, Ravenair's PA-38s out of Liverpool on 17 Nov, said "on the ground" for a minute or
+    // more at 44-75 kt over Cheshire - 1,400 ft by GPS, 2,300-3,000 ft either side, the nearest strip 4-5 km off: G-LFSA's
+    // local flight was logged "Liverpool -> Manchester", "Manchester -> ?" and "? -> Liverpool". (A landing slows below
+    // that on a field, and a stop there leaves the average short of it; a helicopter does not run along at 50 kt)
+    const fastGnd = heli ? 50 : 40, offField = p => !airportAt(p.lat, p.lon, 5) && !fieldAt(p.lat, p.lon, 2.5) && !(heli && heliportAt(p.lat, p.lon, 1));
+    for (let i = 0; i < pts.length; i++) {
+      if (!pts[i].gnd0) continue;
+      let j = i; while (j + 1 < pts.length && pts[j + 1].gnd0) j++;
+      const a = pts[i - 1], b = pts[j + 1], i0 = i; i = j;
+      // (the cheap tests first: a parked aircraft's day of "ground" reports goes no further than these)
+      if (!a || !b || !fin(a.alt) || !fin(b.alt) || a.alt < 1000 || b.alt < 1000 || pts[i0].t - a.t > 300 || b.t - pts[j].t > 300 || pts[j].t - pts[i0].t > 600 || !(b.t > a.t)) continue;
+      let slow = Infinity; for (let k = i0; k <= j; k++) { const g = pts[k].gs; slow = Math.min(slow, fin(g) ? g : 0); }
+      if (!(slow >= fastGnd) || dist(a.lat, a.lon, b.lat, b.lon) / ((b.t - a.t) / 3600) < 0.6 * slow * NM) continue;
+      const run = pts.slice(i0, j + 1); if (!run.every(p => !p.stale && offField(p))) continue;
+      for (const p of run) { p.gnd = false; p.gnd0 = false; p.alt = Math.round(a.alt + (b.alt - a.alt) * (p.t - a.t) / (b.t - a.t)); }
+    }
     if (heli) {
       const still = p => p.gs != null && p.gs < 3 && p.alt != null && p.alt < 400 && !p.stale;
       for (let i = 0; i < pts.length;) {
@@ -1159,6 +1177,16 @@ function createRouteEngine() {
     }
     return null;
   }
+  // (1.3.9) A helicopter lost hovering or creeping low - under 25 kt, under 2,500 ft - came down where it was lost: at a
+  // heliport, airport or strip right there, else at a place no list has (a platform, a field) - never at one tens of km
+  // off that a hole in coverage could reach. G-NHVT, NHV's AW169 out of Blackpool on 17 Nov, lost at 1,150 ft and 1 kt
+  // over the Liverpool Bay platforms, was "down at Rhedyn Coch Farm", a strip 32 km away inland, and its next take-off
+  // from Blackpool "from Rhedyn Coch Farm, where it last landed". undefined: not such a case
+  function heliHover(p, ctx) {
+    if (!W.heliTight || !p || !ctx || ctx.grp !== 'heli' || !(fin(p.gs) && p.gs < 25) || !(fin(p.alt) && p.alt < 2500)) return undefined;
+    const n = [heliportAt(p.lat, p.lon, 1.5), airportAt(p.lat, p.lon, 3), fieldAt(p.lat, p.lon, 1.5)].filter(Boolean).sort((x, y) => x.dist - y.dist)[0];
+    return n ? { airport: n.airport, conf: 'low', dist: n.dist } : null;
+  }
   function summarizeLeg(leg, ctx) {
     const pts = leg.pts;
     const descending = (() => { const l = pts[pts.length - 1]; if (!l || l.alt == null) return false; for (let i = pts.length - 2; i >= 0; i--) { if (l.t - pts[i].t >= 60) return pts[i].alt != null && pts[i].alt - l.alt > 200; } return false; })();
@@ -1170,8 +1198,9 @@ function createRouteEngine() {
     const L = iL >= 0 ? pts[iL] : null, seq = leg.startGnd && leg.start && leg.start !== pts[0] ? [leg.start].concat(pts) : pts;
     // (a light aircraft first heard coming down is often on its own field's circuit: that field stays its departure)
     const climbEnd = !!L && !descending && climbingAt(seq, seq === pts ? iL : iL + 1), descStart = !climbing && !!ctx && CLIMB_CLS.test(ctx.cls || '') && descendingAt(pts, 0);
-    const from = (leg.gapPrev && gapAp(leg.gapPrev, leg.start, leg.gapPrevInfo)) || (leg.startGnd ? endpoint(leg.start, true, true, ctx) : (climbing || (leg.start.alt != null && leg.start.alt < 4000 && !descStart)) ? endpoint(leg.start, true, false, ctx) : null);
-    let to = (leg.how === 'gap-land' && leg.gapNext && gapAp(leg.end, leg.gapNext, leg.gapInfo)) || (leg.how === 'ground' || leg.how === 'touch' ? endpoint(leg.end, false, true, ctx) : ((leg.ended || descending) && (descending || (leg.end.alt != null && leg.end.alt < 4000)) && !climbEnd ? endpoint(leg.end, false, false, ctx) : null));
+    const hovA = leg.gapPrev ? heliHover(leg.gapPrev, ctx) : undefined, hovB = leg.how === 'gap-land' ? heliHover(leg.end, ctx) : undefined;
+    const from = hovA !== undefined ? hovA : (leg.gapPrev && gapAp(leg.gapPrev, leg.start, leg.gapPrevInfo)) || (leg.startGnd ? endpoint(leg.start, true, true, ctx) : (climbing || (leg.start.alt != null && leg.start.alt < 4000 && !descStart)) ? endpoint(leg.start, true, false, ctx) : null);
+    let to = hovB !== undefined ? hovB : (leg.how === 'gap-land' && leg.gapNext && gapAp(leg.end, leg.gapNext, leg.gapInfo)) || (leg.how === 'ground' || leg.how === 'touch' ? endpoint(leg.end, false, true, ctx) : ((leg.ended || descending) && (descending || (leg.end.alt != null && leg.end.alt < 4000)) && !climbEnd ? endpoint(leg.end, false, false, ctx) : null));
     // (lost on a runway's final approach - in a hole, at the end of the data or of a day: that field, not a guess)
     if (leg.how !== 'ground' && leg.how !== 'touch' && leg.how !== 'gap-land' && (!to || to.conf !== 'ground')) {
       const fa = leg.finalAp || (L && (leg.ended || descending) && !climbEnd ? finalTo(L, { heli: !!ctx && ctx.grp === 'heli', cls: ctx && ctx.cls, type: ctx && ctx.type }) : null);

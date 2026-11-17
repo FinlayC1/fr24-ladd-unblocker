@@ -172,6 +172,8 @@ async function scanWorld(client, opts) {
   opts = Object.assign({ services: [2, 3, 4, 5, 10, 11], traffic: 2, limit: 1500, gapMs: 400, regions: SCAN_REGIONS }, opts || {});
   const byId = new Map(), work = opts.regions.map(r => ({ r, depth: 0 })), res = { requests: 0, failed: 0, err: '', serverTime: 0 };
   while (work.length) {
+    // (1.3.9: opts.maxRequests - a round asks no more than that, its busiest corners left split no further)
+    if (opts.maxRequests && res.requests + res.failed >= opts.maxRequests) { res.capped = true; break; }
     const it = work.shift();
     try {
       const a = await client.liveFeed(Object.assign({}, opts, it.r)); res.requests++;

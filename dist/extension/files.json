@@ -1,9 +1,9 @@
 {
-  "version": "1.3.8",
+  "version": "1.3.9",
   "files": {
-    "manifest.json": "8fbca04e57760af2a457120320a3b2483fb9ca0ad584875a6e1744a8c40cae51",
-    "page.js": "50d0f86ea9c7f4db0f03f068494a6e1abacf5ee8b09f0945b0f8857ee31d22da",
-    "content.js": "12f7ccfb6447cde9d735ec8b24cbccb9fa6dd3943be10476cac047891878609f",
+    "manifest.json": "dd97941f9fbcb59887afb8fe126c34235a87ac762b882eb052e90d79eaa6205c",
+    "page.js": "141d4d8ed5702ed7f4caae66b21f8b9ee0bfe0e1231953dab00c7c39aef2e621",
+    "content.js": "ae10fdc1584f2585fa8c2df289fa959f46a4be06dabf16c5b6f79e7c4e992154",
     "background.js": "bf2688ffbf79ea04d81639a014c8b3debd2effaddd8935567c7a5d4609e06eeb",
     "grant.html": "d3b38c4e3f4c14b39695b6e27c080628166a70bd0a42a9d9073f9d39155e674e",
     "grant.js": "7d89bc80209c01630890f4b004c33be7f33380d3ec756f957fb1684116e687bd",

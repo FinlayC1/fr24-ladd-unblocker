@@ -48,7 +48,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
 // ==UserScript==
 // @name         Flightradar24 LADD / N-A Unblocker (feed-level)
 // @namespace    tweeks.io
-// @version      1.3.8
+// @version      1.3.9
 // @description  Identifies every LADD / N/A / blocked military aircraft on Flightradar24 from public ADS-B, and injects callsign, registration, operator, age, country, MSN, squawk, vertical speed, GPS altitude, airspeeds, wind, photos, a reasoned origin/destination with a wind-corrected ETA (also for ordinary flights FR24 shows as N/A - military, private, GA, helicopters, with private landing sites; learned from 63 days of every aircraft worldwide, with live weather and closures), airport-board entries and a rebuilt 7-month flight log straight into FR24's own data - so it all renders like normal FR24 traffic.
 // @author       Finlay Clarke
 // @updateURL    https://raw.githubusercontent.com/FinlayC1/fr24-ladd-unblocker/main/dist/fr24-ladd-unblocker.user.js
@@ -147,7 +147,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "1.3.8";
+    var BRIDGE_V = "1.3.9";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed but the
@@ -289,7 +289,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     // every browser's does (the flights on the map with no callsign, FR24's rows of a board): reportOnly
     if (!optOn('on')) { reportOnly(); return; }
     function reportOnly() {
-      var LF = /fr24\.feed\.api\.v1\.Feed\/LiveFeed(?:$|\?)/, BOARD = /\/api\/v1\/airports\/(\d+)\/(departures|arrivals)(?:[?#]|$)/;
+      var LF = /fr24\.feed\.api\.v1\.Feed\/LiveFeed(?:$|\?)/, BOARD = /\/api\/v\d+\/airports\/(\d+)\/(departures|arrivals)(?:[?#]|$)/;
       var hdr = null;
       var hdrOf = function (h) { var o = {}; for (var k in h) if (Object.prototype.hasOwnProperty.call(h, k) && /^(fr24-[a-z0-9-]+|x-grpc-web|x-user-agent|content-type)$/i.test(k)) o[k] = String(h[k]); return o; };
       // (one LiveFeed answer: its flights with neither callsign nor registration - what the whole part reports of it)
@@ -2249,18 +2249,60 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       if (/plugin\[\]=schedule/.test(decodeURIComponent(url))) pd.schedule = { arrivals: sched(), departures: sched(), ground: sched() };
       return { result: { request: { code: c }, response: { airport: { pluginData: pd } } }, _api: { version: '1.0' } };
     }
+    // ---- (1.3.8) FR24's airport API, whatever version it is at: FR24's mid-November build moved an airport's own answer from
+    // /api/v1/airports/<id> to /api/v2/airports/<id> (its pictures and weather stayed at v1) - and every OurAirports pin was
+    // "airportsApi.airport request is not ok" again, its window shut: these answers were made for v1 only. Now: any
+    // version, any part, by id or by its code. Each answer of FR24's own for one of its airports is read for its shape
+    // (its keys and their kinds, never its values) and kept: an OurAirports airport's answer is made in that shape - what
+    // is known of it put in, everything else FR24 has added empty of its kind - so a field FR24 adds tomorrow is there. A
+    // part never seen is answered empty, and counted (oaApiNew: the health check names it); any request FR24 makes about one
+    // of them that its server answers "not found" is counted too (oaMiss)
+    var OA_API_RE = /\/api\/v\d+\/airports\/([A-Za-z0-9-]+)((?:\/[A-Za-z][A-Za-z-]*)*)\/?(?:[?#]|$)/, AP_SHAPE_KEY = 'tl.apShape1';
+    var apShapes = (function () { try { var o = JSON.parse(lsGet(AP_SHAPE_KEY) || '{}'); return o && typeof o === 'object' ? o : {}; } catch (e) { return {}; } })();
+    // (a value's shape: its keys, each value of its kind with nothing in it - lists empty; nothing of the value itself)
+    function apShapeOf(v, d) {
+      if (Array.isArray(v)) return [];
+      if (v === null || v === undefined) return null;
+      if (typeof v === 'object') { if (d > 6) return {}; var o = {}, ks = Object.keys(v).slice(0, 80); for (var i = 0; i < ks.length; i++) o[ks[i]] = apShapeOf(v[ks[i]], d + 1); return o; }
+      return typeof v === 'number' ? 0 : typeof v === 'boolean' ? false : typeof v === 'string' ? '' : null;
+    }
+    function apShapeNote(part, j) {
+      if (!j || typeof j !== 'object') return;
+      var sh = apShapeOf(j, 0), sig = JSON.stringify(sh); if (sig.length > 20000) return;
+      if (JSON.stringify(apShapes[part || '']) === sig) return;
+      apShapes[part || ''] = sh; lsSet(AP_SHAPE_KEY, JSON.stringify(apShapes)); stats.apShapes = Object.keys(apShapes).length;
+    }
+    // (ours over a shape: ours where we have it, the shape's empty values for the rest)
+    function overShape(shape, ours) {
+      if (!shape || typeof shape !== 'object' || Array.isArray(shape) || !ours || typeof ours !== 'object' || Array.isArray(ours)) return ours;
+      var o = JSON.parse(JSON.stringify(shape)); Object.keys(ours).forEach(function (k) { o[k] = overShape(o[k], ours[k]); }); return o;
+    }
+    function fr24HasCode(c) { var x = String(c || '').toLowerCase(), has = false; fr24Refs.forEach(function (a) { if (!has && ((a.iata && String(a.iata).toLowerCase() === x) || (a.icao && String(a.icao).toLowerCase() === x))) has = true; }); return has; }
+    // (the OurAirports airport an airport-API address is about - by id, or by a code FR24 does not have - and the part
+    // asked for: null when it is none of theirs. Boards are answered apart)
+    function oaApiTarget(url) {
+      var m = String(url).match(OA_API_RE); if (!m) return null;
+      var seg = m[1], part = (m[2] || '').toLowerCase(); if (/^\/(?:departures|arrivals|on-grounds)\b/.test(part)) return null;
+      var id = /^\d+$/.test(seg) ? Number(seg) : 0;
+      if (!id && oaByCode.size && !/^(search|disruptions|list|nearby)$/i.test(seg)) { var r = oaByCode.get(seg.toLowerCase()); if (r && !fr24HasCode(seg)) id = r[0]; }
+      return id >= 1e7 && oaById && oaById.has(id) ? { id: id, part: part } : null;
+    }
     function oaApi(id, part) {
       var r = oaById.get(id); if (!r) return null;
+      stats.oaApi = (stats.oaApi || 0) + 1;
       if (part === '/images') return Promise.resolve({ data: [] });
       if (part === '/disruptions') return Promise.resolve({ data: {} });
       if (part === '/weather') return apWxWait(id, 6000).then(function (w) { return { data: w ? oaWeather(w) : {} }; });
+      if (part) { stats.oaApiNew = (stats.oaApiNew || 0) + 1; stats.oaApiNewPart = part; var sh = apShapes[part]; return Promise.resolve(sh ? JSON.parse(JSON.stringify(sh)) : { data: {} }); }
       var a = oaStoreRow(r), sun = sunTimes(a.latitude, a.longitude, Date.now());
       if (oaRefs.has(r[5])) oaOneKeep(r, oaRefs.get(r[5]), refOf(r[5]));
       oaStoreKeep(pinStore('airports'), a);
       // (1.3.2: its ICAO code where it has one - or its GPS code: three or four letters and figures; its time zone as
       // words, today's sunrise and sunset there, worked out - 1.3.1 left all four "N/A")
-      return Promise.resolve({ data: { info: { id: a.id, name: a.name, iata: a.iata, icao: oaIcaoOf(r), latitude: a.latitude, longitude: a.longitude, elevation: a.altitude, timezone: a.timezoneName, countryId: a.countryId || null, faaLidCode: null, state: null, timezoneDisplay: tzText(a.timezoneName, a.timezoneCode, a.timezoneOffsetHours), sunrise: sun.rise, sunset: sun.set, satelliteImage: null, videoStream: null },
-        images: [], weather: null, stats: { summary: { airportsServed: 0, countriesServed: 0, takeoffCount: 0, landingCount: 0, totalFlights: 0 }, flights: [], busiestRoutes: [] }, runways: [] } });
+      var ours = { data: { info: { id: a.id, name: a.name, iata: a.iata, icao: oaIcaoOf(r), latitude: a.latitude, longitude: a.longitude, elevation: a.altitude, timezone: a.timezoneName, countryId: a.countryId || null, faaLidCode: null, state: null, timezoneDisplay: tzText(a.timezoneName, a.timezoneCode, a.timezoneOffsetHours), sunrise: sun.rise, sunset: sun.set, satelliteImage: null, videoStream: null },
+        images: [], weather: null, stats: { summary: { airportsServed: 0, countriesServed: 0, takeoffCount: 0, landingCount: 0, totalFlights: 0 }, flights: [], busiestRoutes: [] }, runways: [] } };
+      // (1.3.8: in the shape of FR24's own latest answer, where one has been seen)
+      return Promise.resolve(apShapes[''] ? overShape(apShapes[''], ours) : ours);
     }
     // (what kind of code an OurAirports airport is known by: its ICAO or GPS code - "EGOW", "48ID" - or only OurAirports'
     // own - "GB-0002")
@@ -6079,38 +6121,45 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
         // (1.2.0) FR24's locked map options: their weather authorization, tiles, stations, AIRMETs/SIGMETs, lightning, tracks
         var mxr = mxFetch(url, input, init); if (mxr) return mxr;
         // board detail card of a kept row (an earlier or later page): from what was kept
-        if ((m = url.match(/\/api\/v1\/airports\/(\d+)\/(arrivals|departures)\/(\d+)(?:$|[?#])/)) && Number(m[3]) >= 20000000000 && archById.has(Number(m[3]))) { stats.details++; var arK = archById.get(Number(m[3])), arA = Number(m[1]), arD = m[2]; return archDetail(arK, arA, arD).then(function (r) { return cardRwy(r, arA, arD, !!arK.own, arK.r && arK.r.hex); }); }
+        if ((m = url.match(/\/api\/v\d+\/airports\/(\d+)\/(arrivals|departures)\/(\d+)(?:$|[?#])/)) && Number(m[3]) >= 20000000000 && archById.has(Number(m[3]))) { stats.details++; var arK = archById.get(Number(m[3])), arA = Number(m[1]), arD = m[2]; return archDetail(arK, arA, arD).then(function (r) { return cardRwy(r, arA, arD, !!arK.own, arK.r && arK.r.hex); }); }
         // board detail card of a row this script added: answered locally, instantly (FR24 would say 404)
-        if ((m = url.match(/\/api\/v1\/airports\/(\d+)\/(arrivals|departures)\/(\d+)(?:$|[?#])/)) && Number(m[3]) >= 9000000000) {
+        if ((m = url.match(/\/api\/v\d+\/airports\/(\d+)\/(arrivals|departures)\/(\d+)(?:$|[?#])/)) && Number(m[3]) >= 9000000000) {
           var sid = Number(m[3]) - 9000000000, rec0 = recOf(sid), route0 = routeNow(sid) || {};
           if (rec0) { stats.details++; var sAp = Number(m[1]), sKind = m[2]; return photosWithin(rec0, 2800).then(function (ph) { return cardRwy(jsonResponse(null, boardDetailFor(sid, rec0, route0, sKind, sAp, ph)), sAp, sKind, false, rec0.hex); }); }
         }
-        if ((m = url.match(/\/api\/v1\/airports\/(\d+)\/on-grounds\/(\d+)\/aircraft-images/)) && Number(m[2]) >= 9000000000) {
+        if ((m = url.match(/\/api\/v\d+\/airports\/(\d+)\/on-grounds\/(\d+)\/aircraft-images/)) && Number(m[2]) >= 9000000000) {
           var gid = Number(m[2]) - 9000000000, grec = resolved.get(gid);
           if (grec) return photosWithin(grec, 2800).then(function (ph) { return jsonResponse(null, { data: { images: ph.slice(0, 3).map(boardImage) } }); });
         }
         if (LIST_RE.test(url)) return listFetch(this, arguments, url);
         // (1.1.5) a page of a board other than its first, its whole list kept here: answered from it, at once
-        if (optOn('boards') && (m = url.match(/\/api\/v1\/airports\/(\d+)\/(departures|arrivals)\?/))) { var kpg = keptPage(Number(m[1]), m[2], url); if (kpg) return Promise.resolve(jsonResponse(null, kpg)); }
+        if (optOn('boards') && (m = url.match(/\/api\/v\d+\/airports\/(\d+)\/(departures|arrivals)\?/))) { var kpg = keptPage(Number(m[1]), m[2], url); if (kpg) return Promise.resolve(jsonResponse(null, kpg)); }
         // (a landing place the userscript learned is no airport of FR24's: its boards, opened from its marker, answered
         // here - empty - instead of FR24's "not found")
-        if ((m = url.match(/\/api\/v1\/airports\/(\d+)\/(?:departures|arrivals|on-grounds)\b/)) && Number(m[1]) > 9000000 && Number(m[1]) < 10000000) return Promise.resolve(jsonResponse(null, { data: [], meta: { currentPage: 1, previousPage: null, nextPage: null, hasMorePreviousData: false, hasMoreNextData: false } }));
+        if ((m = url.match(/\/api\/v\d+\/airports\/(\d+)\/(?:departures|arrivals|on-grounds)\b/)) && Number(m[1]) > 9000000 && Number(m[1]) < 10000000) return Promise.resolve(jsonResponse(null, { data: [], meta: { currentPage: 1, previousPage: null, nextPage: null, hasMorePreviousData: false, hasMoreNextData: false } }));
       } catch (e) { stats.errors++; stats.lastError = String(e); }
       // (1.3: an OurAirports airport's board - FR24 has none: an empty one of FR24's form, filled below as FR24's own are -
       // the flights kept for it, those followed here)
       // (1.3.4: FR24's searches - with the OurAirports airports)
-      if (/\/api\/v1\/airports\/search\?/.test(url)) { var sap = searchFetch(this, arguments, url, 'airports'); if (sap) return sap; }
+      if (/\/api\/v\d+\/airports\/search\?/.test(url)) { var sap = searchFetch(this, arguments, url, 'airports'); if (sap) return sap; }
       // (1.3.2: by either of its addresses - api.flightradar24.com/common/v1 and, newer, www.flightradar24.com/common/v2)
       if (/\/common\/v\d+\/airport\.json\?/.test(url) && oaByCode.size) { var oaJ = oaAirportJson(url); if (oaJ) return Promise.resolve(jsonResponse(null, oaJ)); }
       // (1.3.1) An OurAirports airport's window on the map: FR24 asks its airport API for it by id - its details, pictures,
       // weather and delays - and for an airport it does not have, its server says "not found" and the window shuts
       // before it opens. Answered here in FR24's own form: the details from the list; no pictures; the weather the
       // monitor makes for it (apwx.cjs - waited for, a few seconds at most; FR24 shows "N/A" when there is none); no delays
-      var oaA = url.match(/\/api\/v1\/airports\/(\d+)(\/(?:images|weather|disruptions))?\/?(?:[?#]|$)/);
-      if (oaA && Number(oaA[1]) >= 1e7 && oaById && oaById.has(Number(oaA[1]))) { var oaAns = oaApi(Number(oaA[1]), oaA[2] || ''); if (oaAns) return oaAns.then(function (j) { return jsonResponse(null, j); }); }
-      var oaB = url.match(/\/api\/v1\/airports\/(\d+)\/(?:departures|arrivals|on-grounds)\b/), oaBoard = !!oaB && Number(oaB[1]) >= 1e7;
+      // (1.3.8: any version of the API, any part, by id or code - oaApiTarget)
+      var oaT = oaApiTarget(url);
+      if (oaT) { var oaAns = oaApi(oaT.id, oaT.part); if (oaAns) return oaAns.then(function (j) { return jsonResponse(null, j); }); }
+      var oaB = url.match(/\/api\/v\d+\/airports\/(\d+)\/(?:departures|arrivals|on-grounds)\b/), oaBoard = !!oaB && Number(oaB[1]) >= 1e7;
       var p = oaBoard ? Promise.resolve(jsonResponse(null, { data: [], meta: { currentPage: Number((url.match(/[?&]page=(-?\d+)/) || [])[1]) || 1, previousPage: null, nextPage: null, hasMorePreviousData: false, hasMoreNextData: false } })) : oFetch.apply(this, arguments);
       try {
+        // (1.3.8) FR24's own answer for one of its airports: its shape kept (apShapeNote); and FR24's "not found" for any
+        // request about an OurAirports airport - an address of its not answered here: counted, named by the health check
+        var apOwn = !oaBoard && url.match(OA_API_RE);
+        if (apOwn && /^\d+$/.test(apOwn[1]) && Number(apOwn[1]) < 9000000 && !/^\/(?:departures|arrivals|on-grounds)\b/i.test(apOwn[2] || '')) { var apPart = (apOwn[2] || '').toLowerCase(); p.then(function (res) { if (res.ok) res.clone().json().then(function (j) { apShapeNote(apPart, j); }, function () {}); }, function () {}); }
+        var oaN = oaById && oaById.size && /flightradar24\.com\//.test(url) ? url.match(/\/(\d{8,9})(?=[/?#]|$)/) : null;
+        if (oaN && oaById.has(Number(oaN[1]))) { var oaPath = url.replace(/^https?:\/\/[^/]+/, '').replace(/[?#].*$/, '').replace(/\/\d{8,9}(?=\/|$)/g, '/:id'); p.then(function (res) { if (res.status === 404) { stats.oaMiss = (stats.oaMiss || 0) + 1; stats.oaMissPath = oaPath; } }, function () {}); }
         // FR24's own airport answer (its map panel's): its runways kept for the panel's table and the airport pages
         if (/\/common\/v\d+\/airport\.json\?/.test(url) && /runways/.test(url)) { p.then(function (res) { if (res.ok) res.clone().json().then(noteAirportJson, function () {}); }, function () {}); return p; }
         // FR24's picture list of an aircraft on the ground (board card): its airport-data pictures taken out
@@ -6189,7 +6238,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
           });
         }
         // detail card of a real FR24 row for a blocked flight: fill what FR24 left empty
-        if ((m = url.match(/\/api\/v1\/airports\/(\d+)\/(arrivals|departures)\/(\d+)(?:$|[?#])/))) {
+        if ((m = url.match(/\/api\/v\d+\/airports\/(\d+)\/(arrivals|departures)\/(\d+)(?:$|[?#])/))) {
           // (an FR24 row of an earlier day, kept: its card from what was kept when FR24 no longer gives it)
           var arKept = archById.get(Number(m[3])), arAp = Number(m[1]), arKind = m[2], arRow = Number(m[3]), usedArch = false;
           return p.then(function (res) {
@@ -6227,7 +6276,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
             }, function () { return res; });
           }).then(function (out) { return cardRwy(out, arAp, arKind, usedArch && !!arKept.own, (arKept && arKept.r && arKept.r.hex) || (natInfo.get(arRow) || {}).hex || ''); });
         }
-        if (optOn('boards') && (m = url.match(/\/api\/v1\/airports\/(\d+)\/(departures|arrivals|on-grounds)\b/))) {
+        if (optOn('boards') && (m = url.match(/\/api\/v\d+\/airports\/(\d+)\/(departures|arrivals|on-grounds)\b/))) {
           var apId = Number(m[1]), kind = m[2];
           var pageM = url.match(/[?&]page=(-?\d+)/), page = pageM ? Number(pageM[1]) : 1;
           var whole = kind !== 'on-grounds' && page === 1;
@@ -7781,6 +7830,24 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
         const p = pts[i]; if (!p.gnd || !p.gnd0 || !(p.gs > 100)) continue;
         for (let j = Math.max(0, i - 4); j <= Math.min(pts.length - 1, i + 4); j++) { const q = pts[j]; if (q !== p && !q.gnd0 && q.alt != null && q.alt > 1500 && Math.abs(q.t - p.t) <= 15) { p.gnd = false; p.gnd0 = false; p.alt = q.alt; break; } }
       }
+      // (1.3.9) A run of "ground" reports at flying speed nowhere near an airfield, the aircraft heard 1,000 ft up and more
+      // within five minutes either side and covering the ground in between at about that speed: a bad air/ground bit too,
+      // not a landing. G-LFSA and G-RVNA, Ravenair's PA-38s out of Liverpool on 17 Nov, said "on the ground" for a minute or
+      // more at 44-75 kt over Cheshire - 1,400 ft by GPS, 2,300-3,000 ft either side, the nearest strip 4-5 km off: G-LFSA's
+      // local flight was logged "Liverpool -> Manchester", "Manchester -> ?" and "? -> Liverpool". (A landing slows below
+      // that on a field, and a stop there leaves the average short of it; a helicopter does not run along at 50 kt)
+      const fastGnd = heli ? 50 : 40, offField = p => !airportAt(p.lat, p.lon, 5) && !fieldAt(p.lat, p.lon, 2.5) && !(heli && heliportAt(p.lat, p.lon, 1));
+      for (let i = 0; i < pts.length; i++) {
+        if (!pts[i].gnd0) continue;
+        let j = i; while (j + 1 < pts.length && pts[j + 1].gnd0) j++;
+        const a = pts[i - 1], b = pts[j + 1], i0 = i; i = j;
+        // (the cheap tests first: a parked aircraft's day of "ground" reports goes no further than these)
+        if (!a || !b || !fin(a.alt) || !fin(b.alt) || a.alt < 1000 || b.alt < 1000 || pts[i0].t - a.t > 300 || b.t - pts[j].t > 300 || pts[j].t - pts[i0].t > 600 || !(b.t > a.t)) continue;
+        let slow = Infinity; for (let k = i0; k <= j; k++) { const g = pts[k].gs; slow = Math.min(slow, fin(g) ? g : 0); }
+        if (!(slow >= fastGnd) || dist(a.lat, a.lon, b.lat, b.lon) / ((b.t - a.t) / 3600) < 0.6 * slow * NM) continue;
+        const run = pts.slice(i0, j + 1); if (!run.every(p => !p.stale && offField(p))) continue;
+        for (const p of run) { p.gnd = false; p.gnd0 = false; p.alt = Math.round(a.alt + (b.alt - a.alt) * (p.t - a.t) / (b.t - a.t)); }
+      }
       if (heli) {
         const still = p => p.gs != null && p.gs < 3 && p.alt != null && p.alt < 400 && !p.stale;
         for (let i = 0; i < pts.length;) {
@@ -7989,6 +8056,16 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       }
       return null;
     }
+    // (1.3.9) A helicopter lost hovering or creeping low - under 25 kt, under 2,500 ft - came down where it was lost: at a
+    // heliport, airport or strip right there, else at a place no list has (a platform, a field) - never at one tens of km
+    // off that a hole in coverage could reach. G-NHVT, NHV's AW169 out of Blackpool on 17 Nov, lost at 1,150 ft and 1 kt
+    // over the Liverpool Bay platforms, was "down at Rhedyn Coch Farm", a strip 32 km away inland, and its next take-off
+    // from Blackpool "from Rhedyn Coch Farm, where it last landed". undefined: not such a case
+    function heliHover(p, ctx) {
+      if (!W.heliTight || !p || !ctx || ctx.grp !== 'heli' || !(fin(p.gs) && p.gs < 25) || !(fin(p.alt) && p.alt < 2500)) return undefined;
+      const n = [heliportAt(p.lat, p.lon, 1.5), airportAt(p.lat, p.lon, 3), fieldAt(p.lat, p.lon, 1.5)].filter(Boolean).sort((x, y) => x.dist - y.dist)[0];
+      return n ? { airport: n.airport, conf: 'low', dist: n.dist } : null;
+    }
     function summarizeLeg(leg, ctx) {
       const pts = leg.pts;
       const descending = (() => { const l = pts[pts.length - 1]; if (!l || l.alt == null) return false; for (let i = pts.length - 2; i >= 0; i--) { if (l.t - pts[i].t >= 60) return pts[i].alt != null && pts[i].alt - l.alt > 200; } return false; })();
@@ -8000,8 +8077,9 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       const L = iL >= 0 ? pts[iL] : null, seq = leg.startGnd && leg.start && leg.start !== pts[0] ? [leg.start].concat(pts) : pts;
       // (a light aircraft first heard coming down is often on its own field's circuit: that field stays its departure)
       const climbEnd = !!L && !descending && climbingAt(seq, seq === pts ? iL : iL + 1), descStart = !climbing && !!ctx && CLIMB_CLS.test(ctx.cls || '') && descendingAt(pts, 0);
-      const from = (leg.gapPrev && gapAp(leg.gapPrev, leg.start, leg.gapPrevInfo)) || (leg.startGnd ? endpoint(leg.start, true, true, ctx) : (climbing || (leg.start.alt != null && leg.start.alt < 4000 && !descStart)) ? endpoint(leg.start, true, false, ctx) : null);
-      let to = (leg.how === 'gap-land' && leg.gapNext && gapAp(leg.end, leg.gapNext, leg.gapInfo)) || (leg.how === 'ground' || leg.how === 'touch' ? endpoint(leg.end, false, true, ctx) : ((leg.ended || descending) && (descending || (leg.end.alt != null && leg.end.alt < 4000)) && !climbEnd ? endpoint(leg.end, false, false, ctx) : null));
+      const hovA = leg.gapPrev ? heliHover(leg.gapPrev, ctx) : undefined, hovB = leg.how === 'gap-land' ? heliHover(leg.end, ctx) : undefined;
+      const from = hovA !== undefined ? hovA : (leg.gapPrev && gapAp(leg.gapPrev, leg.start, leg.gapPrevInfo)) || (leg.startGnd ? endpoint(leg.start, true, true, ctx) : (climbing || (leg.start.alt != null && leg.start.alt < 4000 && !descStart)) ? endpoint(leg.start, true, false, ctx) : null);
+      let to = hovB !== undefined ? hovB : (leg.how === 'gap-land' && leg.gapNext && gapAp(leg.end, leg.gapNext, leg.gapInfo)) || (leg.how === 'ground' || leg.how === 'touch' ? endpoint(leg.end, false, true, ctx) : ((leg.ended || descending) && (descending || (leg.end.alt != null && leg.end.alt < 4000)) && !climbEnd ? endpoint(leg.end, false, false, ctx) : null));
       // (lost on a runway's final approach - in a hole, at the end of the data or of a day: that field, not a guess)
       if (leg.how !== 'ground' && leg.how !== 'touch' && leg.how !== 'gap-land' && (!to || to.conf !== 'ground')) {
         const fa = leg.finalAp || (L && (leg.ended || descending) && !climbEnd ? finalTo(L, { heli: !!ctx && ctx.grp === 'heli', cls: ctx && ctx.cls, type: ctx && ctx.type }) : null);
@@ -9660,7 +9738,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '1.3.8';
+  const VERSION = '1.3.9';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
@@ -18989,6 +19067,10 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       if (S.maskDisabled) issues.push('FR24 refused the request for the unlocked fields');
       if (S.errors > 25) issues.push(`FR24's data format may have changed (${S.errors} patch errors)`);
       if (now() - health.t0 > 90000 && !S.liveFeed && !isAircraftPage) issues.push("FR24's live feed was not recognised");
+      // (1.3.8: FR24 asking about an OurAirports airport somewhere this script does not answer - a new address of its airport
+      // API: its window may not open)
+      if (S.oaMiss > 0) issues.push(`FR24 asked about an OurAirports airport at ${S.oaMissPath || 'an address'} this script does not answer yet (${S.oaMiss}x)`);
+      if (S.oaApiNew > 0) issues.push(`FR24 asked for an OurAirports airport's ${S.oaApiNewPart || 'part'} - new to this script, answered empty`);
     }
     const panel = document.querySelector(SEL.panel);
     if (panel && currentId() != null) { const missing = ['callsign', 'registration', 'depIata', 'arrIata'].filter(k => !q(panel, SEL[k])); if (missing.length >= 2) issues.push("FR24's aircraft panel changed layout"); }
@@ -19163,7 +19245,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // (the version whose "what's new" was put away, and the one whose dot on the button the window was opened for)
   const UB_SEEN_KEY = 'tweeks.fr24.ladd.seenver', UB_DOT_KEY = 'tweeks.fr24.ladd.dotver';
   // (the newest CHANGELOG section's headlines, written in by build.mjs: { v, items })
-  const UB_WHATS_NEW = {"v":"1.3.8","items":["**Many more flight plans from datalink.** On a sample of 9,034 real messages from every aircraft Airframes heard on 17 Nov, routes read went from 624 (267 aircraft) to 2,988 (881 aircraft). Each new kind of message was checked against the other messages of the same flight: 2,672 routes from 788 aircraft, no disagreement. Newly read:","**The whole Airframes stream searched.** Before, the monitor only asked Airframes about aircraft one at a time. It now also searches every aircraft's messages of these kinds as Airframes hears them, about three requests a minute. One test pass read 2,349 messages and 652 routes for 390 aircraft in ten seconds. The Airframes allowance goes from 12 to 20 requests a minute; Airframes allows 60.","**An airline's flight FR24 has no destination for** gets the route usually flown under its callsign, from adsbdb.com (else hexdb.io). These databases are right only half the time (103 of 209 flights checked against the aircraft's own messages), so the route is shown as \"likely, 90%\". It is used only when the aircraft took off from that route's airport and is heading for its destination, which was right 98 times in 100. A route from the aircraft's own messages always comes first.","**Fewer wrong plans:**","**Registration of today:** an aircraft is no longer named by an old registration the aggregators' database still gives for its transponder. HLL01 (407D94) was G-NMCF, which the UK register de-registered in February 2024; it has been G-UBET since. For a UK aircraft the script now asks G-INFO once a week. When G-INFO says the old mark is de-registered and the same transponder's airframe is registered under another, that mark is used from then on.","**G-RESH's log and playback:** on 14 Nov it flew St. Athan to Caernarfon. FR24 lost it hovering over Snowdonia and wrote \"Landed 17:31\"; its public track goes on to land at Caernarfon at 18:02. The row showed \"Caernarfon?\", copied from its next flight, and its playback showed \"-\". When FR24 lists no other flight leaving before the public track lands, that landing is now this flight's: Caernarfon, in the row and in the playback."]};
+  const UB_WHATS_NEW = {"v":"1.3.9","items":["**The monitor keeps FR24's positions of every flight its scans see.** Before, it kept them only for flights FR24 showed with no destination, and only those in the air above 500 ft. Now it keeps every position, as FR24 sent it, of every flight in:","**G-LFSA \"Liverpool -> Manchester\" and \"Private Site\":** on 17 Nov, Ravenair's PA-38s G-LFSA and G-RVNA reported \"on the ground\" for a minute or more in the middle of their flights over Cheshire and Shropshire:","**G-RVNA \"N/A\" on Liverpool's board while flying back:** the monitor restarted (the 1.3.8 update) while G-RVNA was flying. When it heard it again, it joined the new positions to the take-off it had kept, but only once. On the next update it left a second copy, \"Liverpool -> ?\", open next to a \"? -> Liverpool\" of the same flight. It now joins every time and drops the older copy.","**G-NHVT \"last landed at Rhedyn Coch Farm\":** on 17 Nov NHV's AW169 was lost hovering at 1,150 ft and 1 kt over the Liverpool Bay platforms. The monitor put its landing at Rhedyn Coch Farm, a strip 32 km away inland, and its next take-off from Blackpool became \"from Rhedyn Coch Farm, where it last landed\". A helicopter lost hovering or creeping low (under 25 kt, under 2,500 ft) now came down where it was lost: at a heliport, airport or strip right there, or else at a place no list has. The landing in Blackpool afterwards was also stuck open by the restart (see G-RVNA), so it was not counted as its last landing; that is fixed too.","**OurAirports airports not opening again:** FR24's new build asks /api/v2/airports/<id> for an airport's window, where it asked /api/v1/... before. The script only answered v1, so an OurAirports airport's window failed (\"airportsApi.airport request is not ok\"). It now answers at any version of that address, by id or code, and builds the answer in the shape of FR24's latest answer for one of its own airports: any section or field FR24 adds is there, empty. An address or a part not known yet is counted and named by the health check, so the next change shows up there first."]};
   // (an aircraft with an open padlock: FR24's outline style - 24 grid, 1.5 stroke in the text colour)
   const UB_ICON = '<svg data-tl-ub-icon="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
   const UB_X = '<svg viewBox="0 0 14 14" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5l11 11M12.5 1.5l-11 11"/></svg>';
