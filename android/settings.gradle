@@ -1,0 +1,16 @@
+// FR24 LADD Unblocker - the LSPosed module for FR24's Android app (com.flightradar24free). Its own code only: it hooks FR24's
+// app from inside while it runs on the phone, the way the browser extension hooks FR24's website. Nothing of FR24's is in it.
+pluginManagement {
+    repositories { google(); mavenCentral(); gradlePluginPortal() }
+}
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+        // (the Xposed API, compile-only: LSPosed gives it to the module at run time)
+        maven { url 'https://api.xposed.info/' }
+    }
+}
+rootProject.name = 'fr24-ladd-module'
+include ':module'

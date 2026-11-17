@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">FR24 LADD Unblocker</string>
+    <string name="xposed_description">Shows the aircraft FR24\'s app hides (LADD, blocked, N/A) with their registration, type, operator and route - the browser extension\'s work, inside FR24\'s own app.</string>
+</resources>

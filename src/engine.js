@@ -528,11 +528,23 @@ function createRouteEngine() {
     // there, was "took off from LGW", 30 km away, over the strips beside it)
     const light = cls === 'piston' || cls === 'heli';
     let best = null;
+    // (1.3.10) Seen going down into the hole at speed, its track known: the field it came down at is ahead of it, not behind
+    // it - unless close enough to be turning in. And seen climbing out of it: the field it left is behind it. 9H-LEL, a
+    // Global 5500 lost descending through 13,800 ft on 170 degrees 70 km short of Liberia, 17 Nov, and heard again at
+    // FL430 heading north-east, was "down at Managua" - 117 km behind it, on the way to where it was heard again. (Going
+    // down: seen lower than a few minutes before, or its own vertical rate saying so - 9H-LEL's -1,568 ft/min, its point
+    // before 11 minutes earlier at FL387)
+    const descA = !!o && (o.aDesc === true || (fin(a.vr) && a.vr <= -500)), climbB = !!o && (o.bClimb === true || (fin(b.vr) && b.vr >= 500));
+    const trkA = descA && fin(a.trk) && fin(a.gs) && a.gs >= 120, trkB = climbB && fin(b.trk) && fin(b.gs) && b.gs >= 120;
     const consider = ap => {
       const da = dist(a.lat, a.lon, ap.lat, ap.lon), db = dist(ap.lat, ap.lon, b.lat, b.lon);
       if (da > reachA || db > reachB || da + db > budget || (cls && rwyImpossible(ap, cls, type))) return;
+      const offA = trkA && da > 25 ? angDiff(a.trk, brg(a.lat, a.lon, ap.lat, ap.lon)) : 0, offB = trkB && db > 25 ? 180 - angDiff(b.trk, brg(b.lat, b.lon, ap.lat, ap.lon)) : 0;
+      if (offA > 100 || offB > 100) return;
       const sz = Math.log10(1 + (ap.size || 0));
       let s = da + db - dab - (light ? Math.min(sz, 3) * 1.5 + (sz > 4.3 ? -12 : 0) : sz * 15);
+      if (offA > 60) s += da * 0.5;
+      if (offB > 60) s += db * 0.5;
       if (bClimb && !aDesc) s += 0.3 * Math.abs(db - 20 - Math.max(0, b.alt || 0) / 1000 * 4.5);
       if (aDesc && !bClimb) s += 0.3 * Math.abs(da - 20 - Math.max(0, a.alt || 0) / 1000 * 5.5);
       if (!best || s < best.s) best = { airport: ap, s, da, db };

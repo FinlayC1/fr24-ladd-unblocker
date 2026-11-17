@@ -246,6 +246,7 @@
     const hs = ENGINE.histStats(hist, pos.t);
     // (an ordinary flight: the departure airport FR24 itself shows, when it has one, stands)
     let plan = (planState.get(id) || {}).plan || schedPlan(id);
+    if (planSpent(plan, trail.gapFrom)) plan = null;
     const st = routeState.get(id) || {};
     let o0 = ENGINE.inferOrigin({ ac, pos, trail, hs, now: pos.t, plan });
     if (o0 && o0.conf === 'plan' && plan && plan.fr24) o0.note = plan.list ? `FR24's own schedule${plan.num ? ' (' + plan.num + ')' : ''}` : 'departure shown by FR24';
@@ -907,10 +908,25 @@
   const datalinkWhy = p => { const k = (p.kinds || [])[0], d = new Date((p.at || 0) * 1000); if (k === 'csdb') return DL_WHAT.csdb + (p.num ? ' ' + p.num : '');
     return `${DL_WHAT[k] || 'its own flight plan'} (datalink, ${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}Z)`; };
   // ==/ROUTE-DL==
+  // (1.3.10) A plan whose flight ended in the hole the present track began after - its destination within reach of where
+  // the aircraft was last seen before it, going down - is the flight before's: FR24 kept one id for both. 9H-LEL (EAU58L),
+  // 17 Nov: Toronto - Liberia, lost descending 70 km short of Liberia at 20:41Z, heard again at FL430 heading north-east at
+  // 22:32Z - FR24's board row for the id, Toronto -> Liberia, had it "from Toronto" and "to Liberia (flight plan)" on its
+  // way away from Liberia. (A plan back to where it began - a local flight - is left: the hole may be its own.)
+  function planSpent(plan, gapFrom) {
+    if (!plan || !plan.destId || plan.destId === plan.originId || !gapFrom || !fin(gapFrom.lat) || !fin(gapFrom.lon)) return false;
+    const pd = apById(plan.destId); if (!pd || !fin(pd.lat) || !fin(pd.lon)) return false;
+    const agl = Math.max(0, (fin(gapFrom.alt) ? gapFrom.alt : 0) - (pd.alt || 0));
+    return ENGINE.dist(gapFrom.lat, gapFrom.lon, pd.lat, pd.lon) <= 40 + agl / 1000 * 9;
+  }
   function schedPlan(id) {
     if (live.has(id)) return null;
     const s = schedOf(id) || {}, p = pubRecs.get(id), m = p && p.fr24List;
-    const o = s.o || (m && m.o) || 0, d = s.d || (m && m.d) || 0;
+    // (1.3.10: and the departure FR24's own map gives it - its LiveFeed record's route, as FR24 draws it - where its schedule
+    // has none: a private flight FR24 tracked from its take-off has no schedule. N89P, a Falcon 2000 out of San José (SJO)
+    // on 17 Nov, FR24's header saying SJO, was "from Bluefields, out of ADS-B coverage" - public ADS-B hears little there)
+    const nf = naFeed.get(id), feedFrom = nf && nf.f && nf.f.from ? airports.byIata.get(String(nf.f.from).toUpperCase()) : null;
+    const o = s.o || (m && m.o) || (feedFrom ? feedFrom.id : 0), d = s.d || (m && m.d) || 0;
     if (!(apById(o) || apById(d)) && !s.std) return null;
     return { originId: apById(o) ? o : 0, destId: apById(d) ? d : 0, fr24: true, list: !!m && !(s.o && s.d), num: s.num || (m && m.num) || '', std: s.std || (m && m.std) || 0, sta: s.sta || (m && m.sta) || 0, atd: s.atd || (m && m.atd) || 0 };
   }

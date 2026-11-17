@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- (LSPosed: the app this module is for - FR24's) -->
+    <string-array name="xposed_scope">
+        <item>com.flightradar24free</item>
+    </string-array>
+</resources>

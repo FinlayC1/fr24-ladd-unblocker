@@ -55,6 +55,15 @@ const dest = path.join(root, 'dist', 'fr24-ladd-unblocker.user.js');
 fs.writeFileSync(dest, out);
 console.log('built', dest, (out.length / 1024).toFixed(0) + ' KB', out.split('\n').length, 'lines');
 
+// ---- (1.3.10) FR24's Android app: the LSPosed module (android/) runs the same script in a page of its own inside FR24's app,
+// behind src/mobile/shim.js (what a userscript manager gives it, from the module's Java side). The module's build copies
+// this file into its APK's assets.
+const mobileJs = rd('src/mobile/shim.js') + '\n' + out;
+fs.mkdirSync(path.join(root, 'dist', 'mobile'), { recursive: true });
+fs.writeFileSync(path.join(root, 'dist', 'mobile', 'runtime.js'), mobileJs);
+fs.writeFileSync(path.join(root, 'dist', 'mobile', 'host.html'), rd('src/mobile/host.html'));
+console.log('built', path.join(root, 'dist', 'mobile', 'runtime.js'), (mobileJs.length / 1024).toFixed(0) + ' KB');
+
 // ---- the browser extension (Chrome / Edge, Manifest V3): the same script, without a userscript manager ---------------
 //   dist/extension/manifest.json  hosts = the userscript's @connect list (each as https://host/*; sslip.io with its subdomains)
 //   dist/extension/page.js        the page-world part (src/page.js), in FR24's own world at document start

@@ -4,6 +4,51 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 
 1.0.0 is the first release. The versions before it are the betas, labelled B: B22.31.12 is version 22.31.12.
 
+## [1.3.10] - 2026-11-17
+
+### In short
+- **FR24's Android app.** A first version of an LSPosed module that does the extension's work inside FR24's own app on a rooted phone: `fr24-ladd-unblocker-module.apk`, attached to each release (docs/mobile.md).
+  - **What it is.** The module is this project's code only. LSPosed loads it into the official FR24 app as it runs, and it hooks FR24's code from inside, as the extension hooks FR24's website. FR24's app is never changed on disk or redistributed.
+  - **How it works.** FR24's app gets its map, flight panel, search cards, playback and most-tracked list from the same gRPC service as its website. The module hands each of those messages to the extension's own script, which runs unchanged in a page of the module's own inside FR24's app, and FR24's app reads what the script gives back.
+  - **What it covers so far.** Blocked aircraft are named on the map, with their routes and destinations, and the flight panel is filled in. Airport boards beyond FR24's free day and recent-flights lists come next: FR24's app asks for those over its web API, not gRPC.
+  - **Finding FR24's code.** FR24's code is obfuscated and changes with each release, so the module finds where to hook it by what that code does, not by its names. It checks once per FR24 version, at its first start. If it cannot find those points, FR24's app is left exactly as it is.
+  - **What is in the APK.** This project's code only, 655 KB. It reads FR24's code with its own reader of Android's compiled-code format. On FR24 11.14.0 that reader matched an established reader (dexlib2) on all 155,117 methods that have code.
+  - **How it was tested.** FR24's app cannot run where this was built: there is no Android emulator, and FR24 blocks the build machine. So:
+    - **The script:** run exactly as the module runs it, in Chromium (Android's WebView is Chromium). There it named an unnamed flight in an FR24 feed message from the LADD list.
+    - **FR24's own code, taken from FR24 11.14.0:** it read the script's messages and held exactly what the script put in. FR24's map code then made a flight carrying the callsign, registration and aircraft type.
+    - **Not yet checked:** how FR24's app draws it on a phone. That needs your phone.
+- **9H-LEL "Toronto -> Liberia (flight plan)" flying out of Liberia:** on 17 Nov it flew Toronto to Liberia. FR24 never saw it land, so it kept one flight id for that flight and the next. The script took FR24's Toronto -> Liberia board row as the next flight's plan, and its departure as Toronto.
+  - A plan whose destination the aircraft could have landed at, in the coverage gap before its present track, now counts as the flight before's.
+  - The aircraft was last heard descending through 13,800 ft on 170 degrees, 70 km short of Liberia. Its landing in that gap was put at Managua, 117 km behind it. An aircraft seen going down into a gap at speed now lands ahead of its track, not behind it; its own vertical rate counts as seeing it go down.
+- **N89P "from Bluefields" while FR24 showed it from San José:** FR24 knew N89P took off from San José (SJO), but the flight had no schedule, and the script read FR24's departure only from a schedule. With none, it guessed from public ADS-B, which hears little there. It now also takes the departure FR24 gives the flight on its own map.
+
+### Fixed
+- **FR24's Android app** (new: `android/`, `src/mobile/`, `dist/mobile/`):
+  - `Targets.java`, `Dex.java`: the module's own dex reader (from the format's specification; no third-party code in the APK) reads FR24's APK for gRPC's `MethodDescriptor` (a constructor checking "fullMethodName", "requestMarshaller", "responseMarshaller") and its protobuf marshaller (`parse(InputStream)` reporting "Invalid protobuf byte sequence", and `stream(Object)` beside it). In FR24 11.14.0 these are `bmb` and `ptd$a.b` / `.a`. The answer is kept in FR24's data folder, keyed by FR24's APK and the module's version.
+  - `Hooks.java`: which marshaller serves which method is recorded as each descriptor is made (LiveFeed, FollowFlight, FlightDetails, Playback, TopFlights). An answer's bytes go through the script before `parse()`. A request's bytes go through after `stream()`; changed, they are read back with FR24's own `parse()` and written again with its own `stream()`, so FR24's code gets the type it expects. A failed read is handed on as the same failure.
+  - `Runtime.java`, `Net.java`: a WebView FR24 never shows, at `https://www.flightradar24.com/__fr24ladd/`, served from the module's APK. It starts with FR24's first screen and pauses in the background. Each message waits at most 2.5 s (requests 1 s); three slow ones in a row let everything pass for a minute. A message read on FR24's main thread passes as it came. If the renderer stops, Android is told it was handled, so FR24 goes on, and the page restarts (three times at most). The script's requests are made here: https only, no cookies.
+  - `src/mobile/shim.js`: what a userscript manager gives the script (`TL_MOBILE`, `GM_xmlhttpRequest` through the module, `GM_info`). It also tells the script the page is in view, and gives it frames and idle time on timers.
+  - `src/page.js` `window.__tlApp` (only where `TL_MOBILE` is set): `req` / `resp` for a bare gRPC message, through the website's own patchers. Requests are framed for them; `FollowFlight` keeps one state per flight, from the answer's own flight id.
+  - `src/main/01-core.js`: the monitor set in the module's settings (`TL_MOBILE.mon`) is used in place of the stored one.
+  - `SettingsActivity.java`: on or off, and a monitor address and secret, in LSPosed's shared settings.
+  - `build.mjs` writes `dist/mobile/runtime.js` (the shim plus the userscript) and `host.html`. CI builds the APK and keeps it with each run; the release attaches it, signed with the project's key when the repository has one (`MODULE_KEYSTORE_B64` and the other three secrets).
+- **A landing in a hole in coverage** (`src/engine.js` `landingInGap`): seen going down into the hole (or a vertical rate of -500 ft/min or below), at 120 kt or more with a track, an airport more than 100 degrees off that track and over 25 km away is not considered, and 60-100 degrees counts against it. The same applies, the other way round, to the far end seen climbing out.
+- **A plan spent in a hole** (`src/main/04-routes.js` `planSpent`): with the present track begun after a landing in a hole, a plan whose destination was within reach of where the aircraft was last seen (40 km plus 9 km per 1,000 ft) is not used. A plan back to where it began is left alone.
+- **FR24's own departure** (`04-routes.js` `schedPlan`): where neither FR24's schedule nor its registration list names an airport, the departure in the flight's LiveFeed record (`route.from`) is used.
+
+### Tests
+- New `test/unit_mobile.cjs` (8 checks), in the suite and CI (Chromium). It runs the script as the module runs it:
+  - the LiveFeed request gets type and registration
+  - an unnamed flight is named in FR24's next LiveFeed answers
+  - the flight panel's aircraft block is filled
+  - unreadable or unpatched messages come back unchanged
+- New `android/module/src/test` (9 JUnit checks), in CI:
+  - the kept hook targets, type descriptors, failed reads, monitor addresses
+  - the dex reader on a test dex of our own (`android/tools/fixture`: classes shaped like gRPC's, with a switch table and array data): the hook targets found, and every method's strings read as dexlib2 reads them
+  - with `FR24_APK` set: the same comparison on every method of a real FR24 APK (on 11.14.0, all 155,117 methods with code), and its hook targets found
+- New `android/tools/fr24check.sh` (local only, since FR24's code is FR24's): FR24's own marshaller and map code run on the script's messages, from an FR24 APK. On 11.14.0, all 11 checks passed.
+- `test/unit_139.cjs`: 9H-LEL's real positions (Liberia, not Managua), the spent plan, and N89P's departure from FR24's map, 34 checks. The 9H-LEL checks fail on 1.3.9.
+
 ## [1.3.9] - 2026-11-17
 
 ### In short

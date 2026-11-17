@@ -6,3 +6,9 @@ fr24-ladd.user.js
 .claude/
 monitor/store/
 monitor/monitor.json
+# (the LSPosed module's build: android/)
+android/.gradle/
+android/build/
+android/module/build/
+android/local.properties
+dist/*.apk
