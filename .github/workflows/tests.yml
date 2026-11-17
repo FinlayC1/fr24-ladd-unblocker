@@ -47,6 +47,7 @@ jobs:
           node test/unit_136.cjs none monitor/data > out.txt 2>&1 || { tail -30 out.txt; exit 1; }; grep -q '^FAIL' out.txt && { grep '^FAIL' out.txt; exit 1; }; echo "unit_136: $(grep -c '^PASS' out.txt) passed"
           node test/unit_137.cjs none monitor/data > out.txt 2>&1 || { tail -30 out.txt; exit 1; }; grep -q '^FAIL' out.txt && { grep '^FAIL' out.txt; exit 1; }; echo "unit_137: $(grep -c '^PASS' out.txt) passed"
           node test/unit_138.cjs none monitor/data > out.txt 2>&1 || { tail -30 out.txt; exit 1; }; grep -q '^FAIL' out.txt && { grep '^FAIL' out.txt; exit 1; }; echo "unit_138: $(grep -c '^PASS' out.txt) passed"
+          node test/unit_opensky.cjs none monitor/data > out.txt 2>&1 || { tail -30 out.txt; exit 1; }; grep -q '^FAIL' out.txt && { grep '^FAIL' out.txt; exit 1; }; echo "unit_opensky: $(grep -c '^PASS' out.txt) passed"
   # The browser extension as built, loaded in a real Chromium (Playwright's): the service worker, both worlds, requests
   # through the worker, the health check and the page that asks to allow a monitor of the user's own. And the userscript
   # in FR24's own windows, frame by frame, on a page made with Vue as FR24's is.

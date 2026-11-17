@@ -65,6 +65,7 @@ Stopping it with Ctrl+C or `systemctl stop` (SIGINT/SIGTERM) saves everything fi
 | `MON_DATA` | `monitor/data` | Airports, runways, frequencies and airfields (`airports.json`, `runways.json`, `runway_len.json`, `runway_info.json`, `freqs.json`, `oa_airports.csv`) |
 | `MON_STORE` | `monitor/store` | Where flights, state and day logs are kept |
 | `MON_ADSBX_KEY` | *(none)* | Your own ADS-B Exchange RapidAPI key, used only as a last backup. Put it in an `EnvironmentFile` readable only by root, never in the unit itself. |
+| `MON_OPENSKY_CLIENT_ID` / `MON_OPENSKY_CLIENT_SECRET` | *(none)* | (1.3.8) Your OpenSky API client (OpenSky account page, "API Client"; its `credentials.json`), for the monitor to use OpenSky as a registered user. It reads OpenSky's live view every `openskyAuthEvery` seconds and the flights of the day before (see `openskyFlightsDaily`). Keep them in an `EnvironmentFile` readable only by root. They are sent only in the body of OpenSky's token request: never logged, never in `/status`, never in an address. |
 
 ### `monitor/monitor.json` (optional)
 
@@ -79,7 +80,9 @@ Any of these can be overridden in a `monitor.json` next to `monitor.cjs` (the fi
 | `hexEvery` / `coldEvery` / `hotWindow` | `30` / `600` / `2700` | Address lookups: aircraft heard in the last `hotWindow` seconds every `hexEvery` s, the rest every `coldEvery` s |
 | `hexBatch` | `100` | Addresses per lookup request |
 | `apiPerMin` | `20` | Most adsb.lol API requests in any minute (on top of the 2 s gap) |
-| `openskyEvery` | `900` | Least seconds between OpenSky snapshots (only while adsb.lol's LADD list is silent) |
+| `openskyEvery` | `900` | Least seconds between OpenSky snapshots (only while adsb.lol's LADD list is silent), when no OpenSky API client is set |
+| `openskyAuthEvery` | `120` | (1.3.8) With an OpenSky API client: seconds between its whole-world snapshots, whatever adsb.lol does (4 credits each; 2,880 of the 4,000 a day). The blocked aircraft in them go into their tracks. `0` turns it off. `/status` `opensky` counts polls, aircraft taken and credits left. |
+| `openskyFlightsDaily` | `120` | (1.3.8) With an OpenSky API client: OpenSky's flights of the day before asked for, at most this many a day (30 credits each), for blocked aircraft whose logs miss an end. Its estimated airports fill those ends only where OpenSky heard the aircraft close to them. `/status` `opensky.ends` counts them. `0` turns it off. |
 | `adsbxDaily` | `150` | Most ADS-B Exchange requests a day (shares your RapidAPI quota with the browser) |
 | `liveMaxAge` | `300` | Seconds an aircraft stays in `/live` after its last position |
 | `closeDelayH` | `3` | Hours after midnight UTC before a day's logs are rebuilt |
@@ -345,7 +348,14 @@ This writes the systemd drop-in `fr24-monitor.service.d/checkout.conf`, which se
 
 It then restarts the service and checks that it answers. If it doesn't, the old setup is put back. Finally it adds `encode zstd gzip` to Caddy (checked with `caddy validate`, restored if rejected).
 
-**5. Optional ADS-B Exchange backup.** Keep the key out of the unit, in a root-only file:
+**5. Optional keys: ADS-B Exchange backup, OpenSky API client.** Keep them out of the unit, in a root-only file. For OpenSky, copy the `credentials.json` its account page gives to `/tmp/opensky.json` on the server; the second command below stores it without printing it. Then delete both copies of the file:
+
+```bash
+sudo install -d -m 700 /etc/fr24-monitor && sudo mkdir -p /etc/systemd/system/fr24-monitor.service.d && printf '[Service]\nEnvironmentFile=-/etc/fr24-monitor/secrets.env\n' | sudo tee /etc/systemd/system/fr24-monitor.service.d/secrets.conf >/dev/null && sudo systemctl daemon-reload
+L=$(node -e 'const j=require("/tmp/opensky.json");console.log("MON_OPENSKY_CLIENT_ID="+(j.clientId||j.client_id)+"\nMON_OPENSKY_CLIENT_SECRET="+(j.clientSecret||j.client_secret))') && printf '%s\n' "$L" | sudo tee -a /etc/fr24-monitor/secrets.env >/dev/null && sudo chmod 600 /etc/fr24-monitor/secrets.env && shred -u /tmp/opensky.json && unset L
+```
+
+The same for the ADS-B Exchange key (`MON_ADSBX_KEY`), or in a file of its own:
 
 ```bash
 sudo install -m 600 /dev/null /etc/fr24-monitor.env && sudo nano /etc/fr24-monitor.env    # add: MON_ADSBX_KEY=your-key

@@ -69,7 +69,7 @@ const limited = ip => { if (!RATE) return false; const t = Math.floor(Date.now()
 // (all of them together); liveMaxAge: seconds an aircraft stays in /live after its last position; closeDelayH: hours after
 // a day ends before its flights are rebuilt from adsb.lol's day traces (published with some delay); fullGap: the longest
 // silence (s) of the lists in a day for it to count as watched throughout
-const CFG = Object.assign({ areas: [[53.8, -2.6, 250]], laddEvery: 10, milEvery: 30, piaEvery: 120, areaEvery: 120, hexEvery: 30, coldEvery: 600, hotWindow: 2700, hexBatch: 100, backWorkers: 3, userAreas: 8, apiPerMin: 20, liveMaxAge: 300, closeDelayH: 3, fullGap: 200, apiWindowMs: 60000, openskyEvery: 900, adsbxDaily: 150, adsbxKey: process.env.MON_ADSBX_KEY || '', fr24Scan: true, fr24Every: 60, fr24Gap: 400, rwyLow: true, rwyLowEvery: 30, rwyHotEvery: 40, lookupRadius: 220, ident: {}, dest: {}, public: true, rate: 300, crowdNeed: 2, nearPerMin: 30, telMax: 30000, trackDays: 730, learnDays: 90, lolKeepDays: 40, archiveDays: 220, archiveJobs: 1, worldDays: 366, worldFreeGb: 4, central: true, centralFreeMb: 300, centralMsPerMin: 12000, datalink: true, airframes: true, airframesPerMin: 20, tatEvery: 60, tatDays: 5 }, (() => { try { return JSON.parse(fs.readFileSync(path.join(DIR, 'monitor.json'), 'utf8')); } catch (e) { return {}; } })());
+const CFG = Object.assign({ areas: [[53.8, -2.6, 250]], laddEvery: 10, milEvery: 30, piaEvery: 120, areaEvery: 120, hexEvery: 30, coldEvery: 600, hotWindow: 2700, hexBatch: 100, backWorkers: 3, userAreas: 8, apiPerMin: 20, liveMaxAge: 300, closeDelayH: 3, fullGap: 200, apiWindowMs: 60000, openskyEvery: 900, openskyAuthEvery: 120, adsbxDaily: 150, adsbxKey: process.env.MON_ADSBX_KEY || '', fr24Scan: true, fr24Every: 60, fr24Gap: 400, rwyLow: true, rwyLowEvery: 30, rwyHotEvery: 40, lookupRadius: 220, ident: {}, dest: {}, public: true, rate: 300, crowdNeed: 2, nearPerMin: 30, telMax: 30000, trackDays: 730, learnDays: 90, lolKeepDays: 40, archiveDays: 220, archiveJobs: 1, worldDays: 366, worldFreeGb: 4, central: true, centralFreeMb: 300, centralMsPerMin: 12000, datalink: true, airframes: true, airframesPerMin: 20, tatEvery: 60, tatDays: 5 }, (() => { try { return JSON.parse(fs.readFileSync(path.join(DIR, 'monitor.json'), 'utf8')); } catch (e) { return {}; } })());
 // (PUBLIC0 / RATE_ENV: as started; PUBLIC / RATE: as now - the owner's options (/admin/options, applyOptions) may change
 // both while it runs, and every use reads them as they are at the time)
 const PUBLIC0 = process.env.MON_PUBLIC ? process.env.MON_PUBLIC !== '0' : CFG.public !== false, RATE_ENV = +(process.env.MON_RATE || 0) || 0;
@@ -90,6 +90,7 @@ const { createCentral } = require('./central.cjs');
 const DL = require('./datalink.cjs');
 const { createAirframes } = require('./airframes.cjs');
 const { createCsRoute, CS_RE } = require('./csroute.cjs');
+const { createOpenSky, createOskyEnds } = require('./opensky.cjs');
 const { createProf } = require('./prof.cjs');
 const { createWaiting } = require('./waiting.cjs');
 const { createPhotos } = require('./photos.cjs'), photos = createPhotos();
@@ -1286,7 +1287,9 @@ function histOf(hex, since) {
   // now, 1 otherwise (known as blocked once - the userscript's word, the archive's LADD flag): a browser that FR24 lists no
   // flights of the aircraft to takes it as blocked on this (M-PORT, whose six-day proof read adsb.lol, which walls browsers)
   const blk = b ? (b.faa || b.fr ? 2 : 1) : 0;
-  return { hex, days, legs: served, part: Object.keys(h.part || {}).filter(d => days[d] > 0), lo: [...lo].filter(d => d in days && !(h.part && h.part[d])), fr: Object.fromEntries(Object.entries(h.fr || {}).filter(([d]) => days[d] > 0)), blk };
+  // (1.3.8: ends not heard here that OpenSky heard - its flights of those days, where asked for)
+  const servedOut = OSE.fill(hex, served);
+  return { hex, days, legs: servedOut, part: Object.keys(h.part || {}).filter(d => days[d] > 0), lo: [...lo].filter(d => d in days && !(h.part && h.part[d])), fr: Object.fromEntries(Object.entries(h.fr || {}).filter(([d]) => days[d] > 0)), blk };
 }
 // The flights of the monitor's live log (heard from the lists it polls) on the days served, that no flight of those days
 // covers - most of their time not within one (pieces of a flight cut at midnight count together). In the days' form, the
@@ -1561,15 +1564,56 @@ async function adsbxPoll(path) {
   adsbxUse.n++;
   return pollOnce(`https://${ADSBX_HOST}${path}`, 'adsbx', { 'X-RapidAPI-Key': CFG.adsbxKey, 'X-RapidAPI-Host': ADSBX_HOST });
 }
+// (1.3.8) With the owner's OpenSky API client (MON_OPENSKY_CLIENT_ID / MON_OPENSKY_CLIENT_SECRET, opensky.cjs): as a
+// registered user - 4,000 credits a day, a whole-world view 4 - asked on its own every openskyAuthEvery seconds (120: 2,880 a
+// day), whatever adsb.lol does: the blocked aircraft it hears where adsb.lol does not (its own receivers) - their take-offs
+// among them - into their tracks; a position older than one already kept is not taken (ingest)
+const OS = createOpenSky({ fetch: (u, o) => fetch(u, o), clientId: process.env.MON_OPENSKY_CLIENT_ID, clientSecret: process.env.MON_OPENSKY_CLIENT_SECRET });
+const OSK = { polls: 0, taken: 0, lastAt: 0 };
+// (1.3.8) and the ends of the blocked aircraft's flights not heard here - from OpenSky's flights of the day before (opensky.cjs
+// createOskyEnds): the days to ask for are the blocked aircraft's of yesterday and the day before whose flights heard here
+// have an end missing or only guessed, those with most first; one request every half minute at most, 120 a day ("openskyFlightsDaily")
+const OSE = createOskyEnds({ os: OS, byIcao: c => E.byIcao(c), perDay: +CFG.openskyFlightsDaily || 120 });
+const OSE_FILE = () => path.join(STORE, 'opensky.json');
+function oskyWants(nowS) {
+  const out = [], weakEnd = e => !e || e.conf === 'near' || e.conf === 'chain';
+  for (const k of [1, 2]) {
+    const d = dayOf(nowS - k * 86400), s = flew.get(d); if (!s) continue;
+    for (const hex of s) {
+      const m = blocked.has(hex) ? legs.get(hex) : null; if (!m) continue;
+      let n = 0; for (const l of m.values()) if (!l.open && dayOf(l.tStart) === d) n += (weakEnd(l.from) && !l.startedOnGround ? 1 : 0) + (weakEnd(l.to) ? 1 : 0);
+      if (n) out.push({ hex, day: d, n });
+    }
+  }
+  return out;
+}
+async function oskyEndsLoop() {
+  let k = 0;
+  for (;;) {
+    try { if (k++ % 20 === 0) OSE.want(oskyWants(Date.now() / 1000)); await OSE.round(); } catch (e) { log('OpenSky flights', String(e && e.message || e)); }
+    await sleep(30000);
+  }
+}
+function oskySave() { try { if (!OSE.days.size && !OSE.asked.size) return; const f = OSE_FILE(); fs.writeFileSync(f + '.tmp', JSON.stringify(OSE.toJSON())); fs.renameSync(f + '.tmp', f); } catch (e) { log('OpenSky flights: not saved', String(e && e.message || e)); } }
 async function pollOpenSky() {
   const host = 'opensky-network.org';
   if (Date.now() < (pause[host] || 0)) return false;
   try {
-    const r = await fetch(`https://${host}/api/states/all`, { headers: UA, signal: AbortSignal.timeout(30000) });
-    // (refused or out of credits: left alone six hours)
-    if (r.status === 401 || r.status === 403 || r.status === 429) { pause[host] = Date.now() + 6 * 3600e3; throw new Error('OpenSky HTTP ' + r.status); }
-    if (r.status !== 200) throw new Error('OpenSky HTTP ' + r.status);
-    const j = JSON.parse(await r.text()), nowS = +j.time || Date.now() / 1000;
+    let j;
+    if (OS.on) {
+      // (the client's own pauses: a kind out of credits; a token refused - its id or secret wrong - left alone half an hour)
+      let a; try { a = await OS.get('/states/all'); } catch (e) { if (/token/i.test(String(e && e.message))) pause[host] = Date.now() + 1800e3; throw e; }
+      if (!a) return false;
+      if (a.status !== 200 || !a.json) throw new Error('OpenSky: no states');
+      j = a.json;
+    } else {
+      const r = await fetch(`https://${host}/api/states/all`, { headers: UA, signal: AbortSignal.timeout(30000) });
+      // (refused or out of credits: left alone six hours)
+      if (r.status === 401 || r.status === 403 || r.status === 429) { pause[host] = Date.now() + 6 * 3600e3; throw new Error('OpenSky HTTP ' + r.status); }
+      if (r.status !== 200) throw new Error('OpenSky HTTP ' + r.status);
+      j = JSON.parse(await r.text());
+    }
+    const nowS = +j.time || Date.now() / 1000; let taken = 0;
     // (its state vectors: [icao24, callsign, country, time_position, last_contact, lon, lat, baro m, on_ground, velocity m/s,
     // track, vertical rate m/s, sensors, geo m, squawk, spi, source] - as readsb's units; the LADD flag is not OpenSky's to
     // give: an aircraft of the FAA list is marked so in the live list only, never as "seen with the flag")
@@ -1579,8 +1623,9 @@ async function pollOpenSky() {
       const fin = x => x != null && isFinite(x);
       ingest({ hex, flight: v[1] || '', r: b.reg || undefined, t: b.type || undefined, lat: v[6], lon: v[5], alt_baro: v[8] ? 'ground' : fin(v[7]) ? Math.round(v[7] * 3.28084) : undefined, alt_geom: fin(v[13]) ? Math.round(v[13] * 3.28084) : undefined, gs: fin(v[9]) ? Math.round(v[9] * 1.94384) : undefined, track: fin(v[10]) ? v[10] : undefined, baro_rate: fin(v[11]) ? Math.round(v[11] * 196.85) : undefined, squawk: v[14] || undefined, seen_pos: Math.max(0, nowS - (v[3] || nowS)) }, nowS);
       const l = live.get(hex); if (l && b.faa && l.a.dbFlags == null) l.a.dbFlags = 8;
+      taken++;
     }
-    lastOk.osky = Date.now(); stats.listPolls.osky++; stats.polls++;
+    lastOk.osky = Date.now(); stats.listPolls.osky++; stats.polls++; OSK.polls++; OSK.taken += taken; OSK.lastAt = Date.now();
     return true;
   } catch (e) { stats.fails++; stats.lastErr = String(e.message || e); return false; }
 }
@@ -1613,6 +1658,8 @@ async function pollTat(io) {
   }
 }
 async function tatLoop() { for (;;) { await pollTat().catch(() => false); await sleep(Math.max(30, +CFG.tatEvery || 60) * 1000); } }
+// (1.3.8: OpenSky as a registered user - its own loop, as TheAirTraffic's; "openskyAuthEvery": 0 in monitor.json leaves it off)
+async function oskyLoop() { for (;;) { await pollOpenSky().catch(() => false); await sleep(Math.max(90, +CFG.openskyAuthEvery || 120) * 1000); } }
 // One request at a time: the LADD list when due, then the military and PIA lists, else the next area, else the next
 // hundred blocked aircraft not on the LADD list (asked for by address - the FAA's own come with the list whenever they
 // fly), the most recently heard first
@@ -1640,7 +1687,7 @@ async function step() {
     else if (/HTTP 404/.test(stats.lastErr) && ++piaState.miss >= 3 && !piaState.off) { piaState.off = true; log('PIA list: no such endpoint, asked hourly'); }
   }
   // (adsb.lol's LADD list silent 3 minutes - rate-limited, down: OpenSky's view of the world, the blocked aircraft in it)
-  else if (n - stats.since > 180000 && (!lastOk.ladd || n - lastOk.ladd > 180000) && n - P.tO >= CFG.openskyEvery * 1000) { P.tO = n; await pollOpenSky(); }
+  else if (!OS.on && n - stats.since > 180000 && (!lastOk.ladd || n - lastOk.ladd > 180000) && n - P.tO >= CFG.openskyEvery * 1000) { P.tO = n; await pollOpenSky(); }
   else if (P.hexQ.length) await pollOnce('https://api.adsb.lol/v2/hex/' + P.hexQ.splice(0, CFG.hexBatch).join(','), 'hex');
   else if (P.areaQ.length) {
     // (every other area from adsb.fi first: each network asked half as often - the other the fallback)
@@ -2228,7 +2275,7 @@ function work(final) {
   wakeQuiet(nowS);
   for (const hex of ac.keys()) buildLegs(hex, nowS);
   prune(nowS); save(); closeDays(nowS);
-  lastRun = Math.round(nowS); saveState(); saveIdent(); saveWaiting(); crowdLearnSave(); owners.save(STORE); photos.save(STORE); names.prune(nowS); tel.prune(nowS);
+  lastRun = Math.round(nowS); saveState(); saveIdent(); saveWaiting(); crowdLearnSave(); owners.save(STORE); photos.save(STORE); OSE.prune(nowS); oskySave(); names.prune(nowS); tel.prune(nowS);
   workTail(nowS, final);
 }
 let workBusy = false;
@@ -2243,7 +2290,7 @@ async function workSlow() {
     await breathe(); prune(nowS);
     await breathe(); await saveSlow();
     closeDays(nowS);
-    for (const step of [() => { lastRun = Math.round(nowS); saveState(); }, saveIdent, saveWaiting, crowdLearnSave, () => owners.save(STORE), () => photos.save(STORE), () => names.prune(nowS), () => tel.prune(nowS)]) { await breathe(); step(); }
+    for (const step of [() => { lastRun = Math.round(nowS); saveState(); }, saveIdent, saveWaiting, crowdLearnSave, () => owners.save(STORE), () => photos.save(STORE), () => { OSE.prune(nowS); oskySave(); }, () => names.prune(nowS), () => tel.prune(nowS)]) { await breathe(); step(); }
     await breathe(); workTail(nowS, false);
   } finally { workBusy = false; }
   return true;
@@ -2609,6 +2656,7 @@ function monStatus() {
     oaap: Object.assign({}, OAAP.stats, { at: OAAP.at, store: OAAP.file !== path.join(DATA, 'oa_airports.csv') }), oarwy: Object.assign({}, OARW.stats, { known: APT.size }),
     airframes: Object.assign({}, AF.stats, { on: !!CFG.airframes && !!CFG.datalink, aircraft: AF.tails.size, stations: AF.stations.size }),
     csRoute: Object.assign({}, CSR.stats, { on: !!CFG.datalink && CFG.csRoute !== false, callsigns: CSR.cache.size }),
+    opensky: Object.assign({}, OS.stats, OSK, { ends: OSE.stats }),
     tracks: Object.assign({ days: tracks.days }, tracks.stats), playback: PB,
     waiting: { flights: waiting.size, playback: waiting.count('pb'), live: waiting.count('live'), named: waiting.stats.named, tries: waiting.stats.tries, expired: waiting.stats.expired, rounds: WAIT.rounds, lastMs: WAIT.lastMs },
     learned: learnedOut ? { ver: learnedOut.ver, from: learnedOut.from, asOf: learnedOut.asOf, days: learnedOut.days, flights: learnedOut.flights, fromBrowsers: learnedOut.crowd || 0, ops: learnedOut.ops, mb: Math.round(learnedOut.json.length / 1e5) / 10 } : null, backfillWaits: backWaits.n,
@@ -2981,6 +3029,7 @@ if (require.main === module) {
   const named = loadIdent(Date.now()); if (named) log('kept names of', named, 'FR24 flights');
   const waits = loadWaiting(Date.now()); if (waits) log(waits, 'flights not named yet, still being worked on');
   const ownersKnown = owners.load(STORE); if (ownersKnown) log('kept owners of', ownersKnown, 'aircraft');
+  try { if (fs.existsSync(OSE_FILE())) { const n = OSE.fromJSON(JSON.parse(fs.readFileSync(OSE_FILE(), 'utf8'))); if (n) log('kept OpenSky flights of', n, 'aircraft'); } } catch (e) { log('OpenSky flights: not read', String(e && e.message || e)); }
   const photosKept = photos.load(STORE, Date.now()); if (photosKept) log('kept pictures of', photosKept, 'aircraft');
   learnedLoad();
   // (half a minute after start: the server up and answering first, the memory it then has free the measure)
@@ -3041,6 +3090,8 @@ if (require.main === module) {
   }
   if (CFG.prof !== false) PROF.start().then(st => log('prof', st.on ? 'on - what the main thread is busy with, in /status (loop.prof)' : 'off - ' + st.err));
   if (+CFG.tatEvery > 0) setTimeout(tatLoop, 15000);
+  if (OS.on && CFG.openskyAuthEvery !== 0) { setTimeout(oskyLoop, 25000); log('OpenSky: as a registered user (API client set)'); }
+  if (OS.on && CFG.openskyFlightsDaily !== 0) setTimeout(oskyEndsLoop, 60000);
   if (+CFG.archiveDays > 0) for (let i = 0; i < Math.max(1, Math.min(4, +CFG.archiveJobs || 1)); i++) setTimeout(archiveLoop, i * 3000);
   fr24Loop(); identLoop(); trailLoop(); waitLoop(); rwyHotLoop(); rwyLowLoop();
   // (every blocked aircraft's owner not known yet: looked up, fifteen a minute at most, those flying now first)
@@ -3053,5 +3104,5 @@ if (require.main === module) {
   // (airports' schedules read from FR24 here, for the boards browsers open)
   setInterval(() => { BD.pump().catch(e => log('boards', String(e))); }, 5000);
 }
-module.exports = { keepRunways, ACT, acTypesBuild, oaHeliports, OAAP, OARW, OADIR, oaFieldsDir, recentLog, dayLook, APWX, AF, PROF, afTargets, CSR, csTargets, datalink, work, workSlow, saveSlow, setLadd: list => { lastLadd = { at: Date.now(), ac: list }; }, boardPlan, rwyFit, rwyKnown, rwyAnswer, rwySave, RL, rwyApAnswer, rwyApWarm, laddRwys, rwyHotRound, rwyLowRound, LOW, PACE, pace, fr24Client: () => fr24, fr24raw, fr24RawRound, wxmap, AGES, agesLearn, withAge, AC, acdbSweep, central, centralStart, centralRound, CR, SC, fleetOf, FL, naF, naTrack, selfEvidence, F24ref2: () => F24, WORLD, WS, AS, BD, boardRows, airportAnswer, apLegs, fr24Track, F24T, worldDay, worldWants, worldRoom, worldStatus, worldRecheck: () => { freeAt = 0; }, pollTat, TAT, TAT_HOST, carriesOn, liveExtra, logOf, heardPts, archBreath, memAvail, archTrace, archiveJob, indexDay, idxLookup, idxHave, archIdx, idxFile, ARC, setArcRange: f => { arcRange = f; }, surgeNow, datalink, datalinkRound, dlSeen, classifyTrace, traceGet, netSt, archiveDay, archiveState, archiveNext, archMark, archTried, archDays, archRunning, traceOf, AR, apliveTrace, HIST_V, HIST_RESET, resetHistLogs, histResetMark, get histResetN() { return histResetN; }, adminAnswer, ctl, logRing, log, MON_VER, learnCheck, learnFromCrowd, crowdLearnSave, crowdRows, LC, tracks, waiting, waitRound, waitLive, waitNamed, waitClaims, WAIT, saveWaiting, loadWaiting, pbMatch, learnedBuild, learnedDue, learnedLoad, learnedRef: () => learnedOut, liveBusy, backWaits, E, CFG, loadEngine, ingest, buildLegs, fr24Legs, fr24Leg, F24ref: () => F24, owners, ownersLoop, APT, legRunways, names, nearAnswer, telAnswer, tel, wx, pbNames, get PUBLIC() { return PUBLIC; }, get RATE() { return RATE; }, limited, tokenOk, installs, opts, optionsSet, optionsLoad, latestCheck, latestVer, helloAnswer, badge, wakeQuiet, parkedAt, boardLegs, flightsOfCs, lastHeard, legs, ac, backfillOne, backQ, blocked, markBlocked, seed, gapFill, addArea, userAreas,
+module.exports = { keepRunways, OS, OSE, OSK, oskyWants, pollOpenSky, ACT, acTypesBuild, oaHeliports, OAAP, OARW, OADIR, oaFieldsDir, recentLog, dayLook, APWX, AF, PROF, afTargets, CSR, csTargets, datalink, work, workSlow, saveSlow, setLadd: list => { lastLadd = { at: Date.now(), ac: list }; }, boardPlan, rwyFit, rwyKnown, rwyAnswer, rwySave, RL, rwyApAnswer, rwyApWarm, laddRwys, rwyHotRound, rwyLowRound, LOW, PACE, pace, fr24Client: () => fr24, fr24raw, fr24RawRound, wxmap, AGES, agesLearn, withAge, AC, acdbSweep, central, centralStart, centralRound, CR, SC, fleetOf, FL, naF, naTrack, selfEvidence, F24ref2: () => F24, WORLD, WS, AS, BD, boardRows, airportAnswer, apLegs, fr24Track, F24T, worldDay, worldWants, worldRoom, worldStatus, worldRecheck: () => { freeAt = 0; }, pollTat, TAT, TAT_HOST, carriesOn, liveExtra, logOf, heardPts, archBreath, memAvail, archTrace, archiveJob, indexDay, idxLookup, idxHave, archIdx, idxFile, ARC, setArcRange: f => { arcRange = f; }, surgeNow, datalink, datalinkRound, dlSeen, classifyTrace, traceGet, netSt, archiveDay, archiveState, archiveNext, archMark, archTried, archDays, archRunning, traceOf, AR, apliveTrace, HIST_V, HIST_RESET, resetHistLogs, histResetMark, get histResetN() { return histResetN; }, adminAnswer, ctl, logRing, log, MON_VER, learnCheck, learnFromCrowd, crowdLearnSave, crowdRows, LC, tracks, waiting, waitRound, waitLive, waitNamed, waitClaims, WAIT, saveWaiting, loadWaiting, pbMatch, learnedBuild, learnedDue, learnedLoad, learnedRef: () => learnedOut, liveBusy, backWaits, E, CFG, loadEngine, ingest, buildLegs, fr24Legs, fr24Leg, F24ref: () => F24, owners, ownersLoop, APT, legRunways, names, nearAnswer, telAnswer, tel, wx, pbNames, get PUBLIC() { return PUBLIC; }, get RATE() { return RATE; }, limited, tokenOk, installs, opts, optionsSet, optionsLoad, latestCheck, latestVer, helloAnswer, badge, wakeQuiet, parkedAt, boardLegs, flightsOfCs, lastHeard, legs, ac, backfillOne, backQ, blocked, markBlocked, seed, gapFill, addArea, userAreas,
   serve, fr24, ident, dest, F24, report, identRound, fr24Round, saveIdent, loadIdent, histUnknown, learnSince, learnWrite, diskLegs, KEEP_LADD, save, loadStore, dirtyDays, pollOpenSky, adsbxUse, live, liveList, answer, step, P, piaState, apiGet, gate, stats, lastOk, noteWatch, watch, watchedAll, flew, closeDays, histQ, histPend, histOne, histDay, histOf, histRead, histWrite, histFile, fillHist, fillAsked, queueHist, photos, nextHist, saveState, loadState, lastW, get closed() { return closed; }, set closed(v) { closed = v; }, pause };

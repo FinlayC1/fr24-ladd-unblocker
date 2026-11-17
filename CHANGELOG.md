@@ -13,6 +13,9 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
   - airlines' own forms (KLM and Transavia, flydubai, Aer Lingus, Delta, Qantas, Southwest, British Airways)
   - messages from the gate before a flight: load sheets, final weights, delay reports
   - the flight plan an aircraft's avionics give air traffic control when they log on to its datalink, and route clearances
+- **OpenSky as a registered user** (the owner's API client, kept in the server's secrets file, never in the repository):
+  - **Live:** OpenSky's view of the whole world is read every two minutes, and the blocked aircraft in it go into their tracks. That fills positions where adsb.lol hears nothing, take-offs included. It uses 2,880 of the 4,000 credits a day. Before, OpenSky was used only without an account, as a backup when adsb.lol's LADD list stopped answering.
+  - **The day after:** for blocked aircraft whose flights from the day before miss an end, or only have a guessed one, OpenSky's flights of that day are asked for, up to 120 a day. OpenSky's estimated airport is used only where its first or last position in the air was within 3 km of the airport and 450 m above it. It is used only for the same flight, and never over an end heard here. The browsers get these ends in the logs the monitor sends them.
 - **The whole Airframes stream searched.** Before, the monitor only asked Airframes about aircraft one at a time. It now also searches every aircraft's messages of these kinds as Airframes hears them, about three requests a minute. One test pass read 2,349 messages and 652 routes for 390 aircraft in ten seconds. The Airframes allowance goes from 12 to 20 requests a minute; Airframes allows 60.
 - **An airline's flight FR24 has no destination for** gets the route usually flown under its callsign, from adsbdb.com (else hexdb.io). These databases are right only half the time (103 of 209 flights checked against the aircraft's own messages), so the route is shown as "likely, 90%". It is used only when the aircraft took off from that route's airport and is heading for its destination, which was right 98 times in 100. A route from the aircraft's own messages always comes first.
 - **Fewer wrong plans:**
@@ -44,6 +47,13 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 - **Registration** (`src/registry.js` `ginfo` / `identity`): G-INFO's entry gives the airframe's current mark (`mark`). `identity` returns it as `reg`, with `regWas`, only for the same transponder. The browser (`enrich`) asks G-INFO weekly for G- marks (`regCheckAt`) and renames when told. `curReg` maps the old mark to the new one in `recordFromMatch`, `srvRec` and the area seed. The monitor's owner store keeps the replacement (`regWas`) and sends it as `/owners` column 18 (`applyMonOwner`).
 - **Aircraft page rows** (`06-acpage.js` `fillFr24Rows`): an ADS-B landing after FR24's "Landed" time still counts for the row when FR24 lists no take-off before it.
 - **Runways** (`monitor/airport.cjs` `withTracks`; `monitor/monitor.cjs` `legRunways`, `keepRunways`): as described above.
+- **OpenSky** (`monitor/opensky.cjs`, new):
+  - `createOpenSky`: a client-credentials token from `MON_OPENSKY_CLIENT_ID` / `MON_OPENSKY_CLIENT_SECRET`, renewed before its 30 minutes run out and once on a 401. The id and secret go only in the token request's body: never in an address, a log, an error or `/status`.
+  - each kind's credits are read from `X-Rate-Limit-Remaining`; a kind that returns 429 is paused for `X-Rate-Limit-Retry-After-Seconds`.
+  - `pollOpenSky` uses the client when it is set, in its own loop (`openskyAuthEvery`, 120 s; `0` turns it off). Without a client it behaves as before.
+  - `createOskyEnds`: `/flights/aircraft` for the day and the night after (30 credits), asked from 06:00 UTC the next day, those with most ends to fill first, 120 a day (`openskyFlightsDaily`). `fill` is applied in `histOf`; the answers are kept in `STORE/opensky.json` for 200 days.
+  - `/status` `opensky`: polls, aircraft taken, credits left, token count, and the ends asked for and filled.
+  - `deploy.sh` also checks `csroute.cjs` and `opensky.cjs` parse.
 
 ### Tests
 - New `test/unit_138.cjs` (50 checks), added to the suite and CI. It covers:
@@ -58,6 +68,12 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
   - in the browser: G-RESH's real legs and FR24 rows, and the row and playback ends; G-UBET's renaming and the old mark heard again
   - The browser checks fail on the build without these fixes.
 - `test/unit_registry.cjs`: a de-registered UK mark renamed, the current one left alone, another transponder never renamed.
+- New `test/unit_opensky.cjs` (23 checks), added to the suite and CI, against a stand-in for OpenSky:
+  - the token and its renewal; the secret in no address, error or status
+  - each kind's credits and its pause
+  - the monitor's poll and `/status`
+  - the ends from OpenSky's flights: when, which, how close, never another flight's or over an end heard here, the day's share, kept across a restart
+  - the log the monitor serves
 
 ## [1.3.7] - 2026-11-16
 
