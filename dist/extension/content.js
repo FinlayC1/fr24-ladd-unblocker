@@ -14482,6 +14482,17 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     r.ms = pred ? pred.ms : 0;
     return r;
   }
+  // (1.3.10) A plan whose flight ended in the hole the present track began after - its destination within reach of where
+  // the aircraft was last seen before it, going down - is the flight before's: FR24 kept one id for both. 9H-LEL (EAU58L),
+  // 17 Nov: Toronto - Liberia, lost descending 70 km short of Liberia at 20:41Z, heard again at FL430 heading north-east at
+  // 22:32Z - FR24's board row for the id, Toronto -> Liberia, had it "from Toronto" and "to Liberia (flight plan)" on its
+  // way away from Liberia. (A plan back to where it began - a local flight - is left: the hole may be its own.)
+  function planSpent(plan, gapFrom) {
+    if (!plan || !plan.destId || plan.destId === plan.originId || !gapFrom || !fin(gapFrom.lat) || !fin(gapFrom.lon)) return false;
+    const pd = apById(plan.destId); if (!pd || !fin(pd.lat) || !fin(pd.lon)) return false;
+    const agl = Math.max(0, (fin(gapFrom.alt) ? gapFrom.alt : 0) - (pd.alt || 0));
+    return ENGINE.dist(gapFrom.lat, gapFrom.lon, pd.lat, pd.lon) <= 40 + agl / 1000 * 9;
+  }
   // ==/ROUTE-CORE==
   // (1.1.0) A flight's route is the monitor's: worked out there, with the same tables for every browser, from what all of
   // them send and the monitor's own logs. Nothing is worked out here (the tables are not in the script); this browser adds
@@ -14831,17 +14842,6 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   const datalinkWhy = p => { const k = (p.kinds || [])[0], d = new Date((p.at || 0) * 1000); if (k === 'csdb') return DL_WHAT.csdb + (p.num ? ' ' + p.num : '');
     return `${DL_WHAT[k] || 'its own flight plan'} (datalink, ${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}Z)`; };
   // ==/ROUTE-DL==
-  // (1.3.10) A plan whose flight ended in the hole the present track began after - its destination within reach of where
-  // the aircraft was last seen before it, going down - is the flight before's: FR24 kept one id for both. 9H-LEL (EAU58L),
-  // 17 Nov: Toronto - Liberia, lost descending 70 km short of Liberia at 20:41Z, heard again at FL430 heading north-east at
-  // 22:32Z - FR24's board row for the id, Toronto -> Liberia, had it "from Toronto" and "to Liberia (flight plan)" on its
-  // way away from Liberia. (A plan back to where it began - a local flight - is left: the hole may be its own.)
-  function planSpent(plan, gapFrom) {
-    if (!plan || !plan.destId || plan.destId === plan.originId || !gapFrom || !fin(gapFrom.lat) || !fin(gapFrom.lon)) return false;
-    const pd = apById(plan.destId); if (!pd || !fin(pd.lat) || !fin(pd.lon)) return false;
-    const agl = Math.max(0, (fin(gapFrom.alt) ? gapFrom.alt : 0) - (pd.alt || 0));
-    return ENGINE.dist(gapFrom.lat, gapFrom.lon, pd.lat, pd.lon) <= 40 + agl / 1000 * 9;
-  }
   function schedPlan(id) {
     if (live.has(id)) return null;
     const s = schedOf(id) || {}, p = pubRecs.get(id), m = p && p.fr24List;
