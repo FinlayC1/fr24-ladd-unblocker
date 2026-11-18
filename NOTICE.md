@@ -31,4 +31,4 @@ Data derived from adsb.lol and OpenStreetMap stays under the ODbL. The shared mo
 
 ## Software
 
-The monitor and the extension use only the Node.js and browser standard libraries at run time. The development tools (`eslint`, `jsdom`, `fake-indexeddb`) are used only to build and test, under their own MIT licences, and are not distributed.
+The monitor and the extension use only the Node.js and browser standard libraries at run time. The Android module (`android/`) contains only this project's code: it is built with Gradle and the Android SDK, and tested with JUnit, org.json and dexlib2 (BSD 3-Clause), none of which are in the APK. LSPosed gives it the Xposed API at run time. The development tools (`eslint`, `jsdom`, `fake-indexeddb`) are used only to build and test, under their own MIT licences, and are not distributed.

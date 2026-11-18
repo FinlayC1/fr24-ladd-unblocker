@@ -12,6 +12,11 @@
 //     strip 32 km off (Rhedyn Coch Farm); one lost by a heliport, at it
 //   - the monitor: a flight first heard in the air after a restart, joined to its take-off - G-RVNA's real positions - one
 //     flight as it goes on, from Liverpool, down at Liverpool, and the next one; no copy left open
+//   - the route engine: a landing in a hole in coverage ahead of the aircraft going down into it, not behind - 9H-LEL lost
+//     descending 70 km short of Liberia, its real positions: Liberia, not Managua 117 km behind it
+//   - the route code (the browser): a plan whose flight ended in the hole the present track began after is the flight
+//     before's (9H-LEL's Toronto - Liberia); an ordinary flight's departure as FR24's own map gives it, where its schedule
+//     has none (N89P out of San Jose, "from Bluefields" before)
 //   - the monitor: every flight its FR24 scans see kept (fr24scan) in the column form - each report once, FR24's estimated
 //     positions not - read with the rest at /fr24raw; the airliners at cruise asked for (none after a pushback); the oldest
 //     day let go first
@@ -137,6 +142,21 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     check('... one lost hovering 330 m from Axis Business Park\'s helipad: down at it, off from it again', hp.s.length >= 2 && hp.s[0].to && hp.s[0].to.code === 'GB-1368' && hp.s[1].from && hp.s[1].from.code === 'GB-1368', hp.s.map(x => [x.from && x.from.code, x.to && x.to.code, x.how]));
   }
 
+  // ---- 5b. the route engine: a landing in a hole ahead of the aircraft, not behind it ----------------------------------
+  { // (9H-LEL, a Global 5500, 17 Nov - its real positions as the monitor kept them, from 16:00Z: off Toronto at 16:16Z, at FL450
+    // over Nicaragua, lost descending through 13,800 ft on 170 degrees at 20:41Z, 70 km short of Liberia; heard again at FL430
+    // heading north-east at 22:32Z: [s after 1794960000, lat, lon, ft | 'G', kt, track, ft/min])
+    const LEL = [[-28293,43.675,-79.6266,"G",null,null,null],[-27941,43.6894,-79.6335,"G",null,null,null],[-27822,43.6921,-79.638,"G",null,null,null],[-27813,43.6895,-79.6418,0,null,null,null],[-27701,43.6273,-79.7125,4500,null,null,null],[-27576,43.4723,-79.734,10000,null,null,null],[-27510,43.3671,-79.7487,12100,null,null,null],[-26716,41.6738,-79.9391,34000,null,null,null],[-25890,39.6991,-80.0186,43000,null,null,null],[-25170,38.0137,-80.2117,43000,null,null,null],[-24450,36.3554,-80.4296,43000,null,null,null],[-23782,34.8159,-80.7177,43000,null,null,null],[-23125,33.3507,-81.0107,43000,null,null,null],[-22410,31.7782,-81.2141,43000,null,null,null],[-21748,30.3157,-81.0928,43000,null,null,null],[-21085,28.8635,-80.9431,43000,null,null,null],[-20348,27.2985,-80.5606,43000,null,null,null],[-19520,25.5193,-80.7683,43000,null,null,null],[-18675,23.7448,-80.9127,43000,null,null,null],[-17960,22.3055,-81.256,44800,null,null,null],[-16902,20.3713,-82.2551,45000,null,null,null],[-15822,18.3703,-83.272,45000,null,null,null],[-14622,16.264,-84.2887,45000,null,null,null],[-13477,14.1685,-85.2792,45000,null,null,null],[-12823,12.9404,-85.8428,45000,null,null,null],[-12703,12.709,-85.9389,43800,null,null,null],[-12582,12.4778,-86.0347,38800,null,null,null],[-12578,12.472182,-86.037019,38675,449,202.11,-2528],[-11896,11.128326,-85.878091,13800,380.3,170.46,-1568],[-5225,13.109024,-84.52663,42975,508.6,28.03,-192],[-3807,16.072906,-82.893147,43000,506.1,28.44,32],[-3796,16.096436,-82.879992,43000,506.1,28.44,-64]];
+    const D = 1794960000, tr = LEL.map(r => [D + r[0], r[1], r[2], r[3] === 'G' ? 'ground' : r[3], r[4], r[5], 0, r[6]]);
+    const w = run(tr, 'heavybiz', 'GL5T'), LIR = E.byIcao('MRLB'), MGA = E.byIcao('MNMG'), YYZ = E.byIcao('CYYZ');
+    check('9H-LEL lost going down 70 km short of Liberia on 170 degrees, heard again climbing away north-east: "Toronto -> Liberia", then off from Liberia - not Managua, 117 km behind it', w.s.length === 2 && w.s[0].from && w.s[0].from.id === YYZ.id && w.s[0].to && w.s[0].to.id === LIR.id && w.s[1].from && w.s[1].from.id === LIR.id, w.s.map(x => [x.from && x.from.code, x.to && x.to.code]));
+    const pts = E.parseTrace({ timestamp: 0, trace: tr }), a = pts.find(p => p.t === D - 11896), b = pts.find(p => p.t === D - 5225);
+    const g1 = E.landingInGap(a, b, { cls: 'heavybiz', type: 'GL5T', aDesc: false, bClimb: false });
+    check('... the departure after the hole (the route code\'s "took off from ..., out of ADS-B coverage"): Liberia - its own descent rate saying it was going down, its last point before eleven minutes earlier', !!g1 && g1.airport.id === LIR.id, g1 && g1.airport.code);
+    const g0 = E.landingInGap(Object.assign({}, a, { vr: null }), b, { cls: 'heavybiz', type: 'GL5T', aDesc: false, bClimb: false });
+    check('... with no sign at all that it was going down, as before (where it went is not known from its heading then)', !!g0 && g0.airport.id === MGA.id, g0 && g0.airport.code);
+  }
+
   // ---- 6. the monitor: a flight first heard in the air after a restart --------------------------------------------------
   const M = require('../monitor/monitor.cjs'); M.loadEngine();
   { const ML = M.E.byIcao('EGGP'), hex = '402195', key = l => Math.round((l.tOff || l.tStart) / 600);
@@ -195,6 +215,36 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     for (const d of ['2026-01-02', '2026-01-03']) { fs.writeFileSync(path.join(dir, d + '.gzl'), 'x'); fs.writeFileSync(path.join(dir, d + '.idx'), ''); }
     const a = M.fr24scan.pruneOldest('2026-01-03'), b = M.fr24scan.pruneOldest('2026-01-03');
     check('the disk short of room: the scans\' oldest day removed, one at a time - none on or after the day given', a === '2026-01-02' && b === '' && !fs.existsSync(path.join(dir, '2026-01-02.gzl')) && fs.existsSync(path.join(dir, '2026-01-03.gzl')), { a, b });
+  }
+  // ---- 9. the route code, in the browser: a plan spent in a hole; FR24's own departure for an N/A flight --------------
+  { let JSDOM = null, FIDB = null; try { ({ JSDOM } = require(path.join(NM, 'jsdom'))); FIDB = require(path.join(NM, 'fake-indexeddb')); } catch (e) { console.log('(skipped the browser: no jsdom)'); }
+    const DIST = path.join(__dirname, '..', 'dist', 'fr24-ladd-unblocker.user.js');
+    if (JSDOM && fs.existsSync(DIST)) {
+      const AIRPORTS = fs.readFileSync(path.join(DATA, 'airports.json'), 'utf8'), SRC = fs.readFileSync(DIST, 'utf8');
+      const win = new JSDOM('<!doctype html><html><head></head><body><div id="app"></div></body></html>', { url: 'https://www.flightradar24.com/13.1,-84.5/7', runScripts: 'dangerously', pretendToBeVisual: true }).window;
+      win.indexedDB = new FIDB.IDBFactory(); win.IDBKeyRange = FIDB.IDBKeyRange; win.Response = Response; win.Headers = Headers; win.AbortController = AbortController; win.Blob = Blob;
+      win.BroadcastChannel = function () { return { postMessage() {}, close() {}, addEventListener() {}, set onmessage(f) {} }; };
+      win.caches = { open: async () => ({ match: async () => undefined, put: async () => {}, keys: async () => [], delete: async () => false }) };
+      const answer = u => /flightradar24\.com\/mobile\/airports\/format/.test(u) ? [200, AIRPORTS] : [404, ''];
+      win.fetch = input => { let u = typeof input === 'string' ? input : input.url; if (u.startsWith('/')) u = 'https://www.flightradar24.com' + u; const a = answer(u); return Promise.resolve(new Response(a[1] || '', { status: a[0] })); };
+      win.GM_xmlhttpRequest = o => { const a = answer(o.url); setTimeout(() => o.onload && o.onload({ status: a[0], responseText: a[1], response: a[1] }), 2); return { abort() {} }; };
+      win.unsafeWindow = win; win.GM_notification = () => {}; win.console.log = () => {}; win.console.debug = () => {};
+      win.eval(SRC);
+      const L = win.__tweeksLadd; for (let i = 0; i < 3000 && !(L && L.engine.airports.length > 5000); i++) await sleep(20);
+      const ap = c => L.engine.byIcao(c), LIR = ap('MRLB'), YYZ = ap('CYYZ'), SJO = ap('MROC');
+      // (where 9H-LEL was last seen before the hole its present track began after: 20:41:44Z, 13,800 ft)
+      const gapFrom = { t: 1794948104, lat: 11.128326, lon: -85.878091, alt: 13800, gs: 380, trk: 170 };
+      check('a plan whose flight ended in the hole the present track began after - its destination within reach of where it was going down: the flight before\'s (9H-LEL\'s Toronto -> Liberia, FR24\'s board row for the one id it kept)', L.planSpent({ originId: YYZ.id, destId: LIR.id, fr24: true }, gapFrom) === true);
+      check('... not this flight\'s own plan from there, nor a local flight\'s, nor any with no hole before the track, nor one for a field out of reach', L.planSpent({ originId: LIR.id, destId: YYZ.id }, gapFrom) === false && L.planSpent({ originId: LIR.id, destId: LIR.id }, gapFrom) === false && L.planSpent({ originId: YYZ.id, destId: LIR.id }, null) === false && L.planSpent({ originId: LIR.id, destId: SJO.id }, Object.assign({}, gapFrom, { alt: 0, lat: 13.5, lon: -84.0 })) === false);
+      // (N89P, a Falcon 2000 out of San Jose on 17 Nov, no schedule: FR24's map gives its departure in its LiveFeed record)
+      const id = 0x3d22aa01;
+      L.noteNa([{ id, lat: 12.9, lon: -84.8, alt: 37675, spd: 431, trk: 9, ts: Math.floor(Date.now() / 1000), gnd: false, cs: 'N89P', reg: 'N89P', type: 'F2TH', hex: 0xac4440, from: 'SJO' }], Date.now());
+      const sp = L.schedPlan(id);
+      check('an ordinary flight FR24 shows from San Jose with no destination and no schedule (N89P): its departure from FR24\'s own map - a plan from FR24, so above any guess of the route code\'s (it was "from Bluefields, out of ADS-B coverage")', !!sp && sp.originId === SJO.id && sp.fr24 === true && !sp.destId, sp);
+      L.noteNa([{ id: id + 1, lat: 12.9, lon: -84.8, alt: 37675, spd: 431, trk: 9, ts: Math.floor(Date.now() / 1000), gnd: false, cs: 'N89Q', reg: 'N89Q', type: 'F2TH', hex: 0xac4441, from: '' }], Date.now());
+      check('... one FR24 gives no departure for: none from here (the route code works it out, as before)', L.schedPlan(id + 1) === null);
+      win.close();
+    }
   }
   console.log(fails ? `\n${fails} failed` : '\nall passed');
   process.exit(fails ? 1 : 0);

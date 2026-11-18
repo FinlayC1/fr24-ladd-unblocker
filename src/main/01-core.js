@@ -1,7 +1,7 @@
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '1.3.9';
+  const VERSION = '1.3.10';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
@@ -498,7 +498,8 @@
   const MON_DEFAULTS = [MON_DEFAULT_URL];
   const monAddr = u => { u = String(u || '').trim(); while (u.endsWith('/')) u = u.slice(0, -1); return u.startsWith('https://') && u.length > 9 && !/[/\s]/.test(u.slice(8)) ? u : ''; };
   // (kv monRemote: { url, token } set here, { off: true } turned off; nothing set - the public monitor, no secret)
-  const monRemote = () => { try { const r = store.kvGet('monRemote') || {}; if (r.off) return null; const url = monAddr(r.url) || MON_DEFAULT_URL; return { url, token: url === monAddr(r.url) ? String(r.token || '') : '', dflt: !monAddr(r.url) }; } catch (_) { return { url: MON_DEFAULT_URL, token: '', dflt: true }; } };
+  // (1.3.10: in FR24's Android app, the monitor set in the module's own settings, when one is: TL_MOBILE.mon)
+  const monRemote = () => { try { const mm = typeof TL_MOBILE === 'object' && TL_MOBILE && TL_MOBILE.mon && typeof TL_MOBILE.mon === 'object' ? TL_MOBILE.mon : null; const r = (mm && (mm.url || mm.off) ? mm : store.kvGet('monRemote')) || {}; if (r.off) return null; const url = monAddr(r.url) || MON_DEFAULT_URL; return { url, token: url === monAddr(r.url) ? String(r.token || '') : '', dflt: !monAddr(r.url) }; } catch (_) { return { url: MON_DEFAULT_URL, token: '', dflt: true }; } };
   // (with the owner's secret: it; without: which script is asking - not a secret, the monitor's request counts by version)
   const monAuth = r => r && r.token ? { 'X-Monitor-Token': r.token } : { 'X-Monitor-Client': 'fr24-ladd/' + VERSION };
   let monBase = '', monErr = '';   // (monErr: why the monitor was not used at the last check - shown beside it)

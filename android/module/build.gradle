@@ -1,0 +1,76 @@
+plugins {
+    id 'com.android.application'
+}
+
+// (the version: the project's own, package.json - the module, the extension and the userscript are released together)
+def pkgVersion = new groovy.json.JsonSlurper().parse(file('../../package.json')).version as String
+def vParts = pkgVersion.tokenize('.').collect { it as int }
+def vCode = vParts[0] * 10000 + vParts[1] * 100 + vParts[2]
+
+android {
+    namespace 'io.github.finlayc1.fr24ladd'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'io.github.finlayc1.fr24ladd'
+        // (FR24's app needs Android 10 at least)
+        minSdk 29
+        targetSdk 35
+        versionCode vCode
+        versionName pkgVersion
+        buildConfigField 'String', 'FR24_PACKAGE', '"com.flightradar24free"'
+    }
+
+    // (release builds signed with the key in these variables, when CI has it; otherwise the debug key - see docs/mobile.md)
+    signingConfigs {
+        release {
+            def ks = System.getenv('MODULE_KEYSTORE')
+            if (ks) {
+                storeFile file(ks)
+                storePassword System.getenv('MODULE_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('MODULE_KEY_ALIAS')
+                keyPassword System.getenv('MODULE_KEY_PASSWORD')
+            }
+        }
+    }
+    buildTypes {
+        release {
+            // (no shrinking: LSPosed finds the entry class by its name, and the page calls the bridge's methods by theirs)
+            minifyEnabled false
+            signingConfig System.getenv('MODULE_KEYSTORE') ? signingConfigs.release : signingConfigs.debug
+        }
+    }
+    buildFeatures { buildConfig true }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    // (the script the module runs inside FR24's app: build.mjs's dist/mobile, copied in at build time)
+    sourceSets { main { assets.srcDirs += ['build/generated/web'] } }
+    packaging {
+        resources { excludes += ['META-INF/LICENSE*', 'META-INF/NOTICE*', 'META-INF/*.kotlin_module'] }
+    }
+    testOptions { unitTests.returnDefaultValues = true }
+    lint { abortOnError false }
+}
+
+def copyWeb = tasks.register('copyWeb', Copy) {
+    from('../../dist/mobile') { include 'runtime.js', 'host.html' }
+    into layout.buildDirectory.dir('generated/web/web')
+    doFirst {
+        if (!file('../../dist/mobile/runtime.js').exists()) throw new GradleException('dist/mobile/runtime.js is missing: run "node build.mjs" in the repository first')
+    }
+}
+tasks.named('preBuild') { dependsOn copyWeb }
+
+dependencies {
+    compileOnly 'de.robv.android.xposed:api:82'
+    // (nothing else in the APK: the module's own code only - FR24's code is read with its own dex reader, Dex.java)
+    testImplementation 'junit:junit:4.13.2'
+    // (dexlib2 for the tests only: the module's reader checked against it, on FR24's APK when FR24_APK is set)
+    testImplementation 'com.android.tools.smali:smali-dexlib2:3.0.9'
+    // (Android's org.json is a stub on a computer: the real one for the tests)
+    testImplementation 'org.json:json:20250517'
+    // (the Xposed API on the tests' class path too: the hooks' own class is loaded by them)
+    testImplementation 'de.robv.android.xposed:api:82'
+}

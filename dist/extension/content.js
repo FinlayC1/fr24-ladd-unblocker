@@ -48,7 +48,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
 // ==UserScript==
 // @name         Flightradar24 LADD / N-A Unblocker (feed-level)
 // @namespace    tweeks.io
-// @version      1.3.9
+// @version      1.3.10
 // @description  Identifies every LADD / N/A / blocked military aircraft on Flightradar24 from public ADS-B, and injects callsign, registration, operator, age, country, MSN, squawk, vertical speed, GPS altitude, airspeeds, wind, photos, a reasoned origin/destination with a wind-corrected ETA (also for ordinary flights FR24 shows as N/A - military, private, GA, helicopters, with private landing sites; learned from 63 days of every aircraft worldwide, with live weather and closures), airport-board entries and a rebuilt 7-month flight log straight into FR24's own data - so it all renders like normal FR24 traffic.
 // @author       Finlay Clarke
 // @updateURL    https://raw.githubusercontent.com/FinlayC1/fr24-ladd-unblocker/main/dist/fr24-ladd-unblocker.user.js
@@ -147,7 +147,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "1.3.9";
+    var BRIDGE_V = "1.3.10";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed but the
@@ -6871,6 +6871,46 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       else if (d.__tweeksLadd === 'opts') { if (d.opts && typeof d.opts === 'object') opts = d.opts; }
       else if (d.__tweeksLadd === 'hello') post('ready', { oaWant: oaWant, stats: stats, feedReady: !!feedHeaders, hdr: feedHdrPublic(), v: BRIDGE_V });
     });
+    // ---- (1.3.10) FR24's Android app ---------------------------------------------------------------------------------
+    // The module (android/) runs this script in a page of its own inside FR24's app, and hands FR24's gRPC messages here as
+    // the app's own code reads and writes them - each the bare message, where the website's come framed: the same patching
+    // as the website's, on the same messages. req(method, bytes): a request on its way out; resp(method, bytes): an answer
+    // before FR24's code reads it. Each gives the bytes back changed or as they came; never throws.
+    if (window.TL_MOBILE) window.__tlApp = (function () {
+      var follows = new Map(), lastReq = {};
+      var framed = function (b) { return concat([frameHeader(0, b.length), b]); };
+      var unframed = function (u) { if (!u || u.length < 5 || u[0] !== 0) return null; var len = ((u[1] << 24) | (u[2] << 16) | (u[3] << 8) | u[4]) >>> 0; return 5 + len <= u.length ? u.subarray(5, 5 + len) : null; };
+      // (a flight's answer names its flight: ExtendedFlightInfo's field 1 - FollowFlight's 5, FlightDetails' 4)
+      var efiId = function (b, F) { try { var f = find(parse(b), F.efi); return f && f.wt === 2 ? numOf(parse(f.val), 1) : 0; } catch (e) { return 0; } };
+      function req(method, b) {
+        try {
+          var fb = framed(b), out = fb;
+          if (method === 'LiveFeed') { out = patchLiveFeedRequest(fb); stats.mobileReq = (stats.mobileReq || 0) + 1; }
+          else if (method === 'FollowFlight' || method === 'FlightDetails') {
+            var id = followIdFromBody(fb); lastReq[method] = { id: id };
+            if (method === 'FollowFlight') { stats.follow++; curFollowId = id; post('follow', { id: id }); follows.set(id, { id: id }); if (follows.size > 24) follows.delete(follows.keys().next().value); }
+            else stats.flightDetails++;
+            out = stripRestriction(fb);
+          } else if (method === 'Playback') { lastReq.Playback = { ts: tsOf(fb) }; out = patchPlaybackRequest(fb); }
+          if (out === fb) return b;
+          return unframed(bodyBytes(out)) || b;
+        } catch (e) { stats.errors++; stats.lastError = String(e); return b; }
+      }
+      function resp(method, b) {
+        try {
+          if (method === 'LiveFeed') return patchLiveFeed(b, false);
+          if (method === 'TopFlights') return patchTopFlights(b);
+          if (method === 'Playback') return patchPlayback(b, (lastReq.Playback || {}).ts || 0);
+          if (method === 'FollowFlight' || method === 'FlightDetails') {
+            var F = method === 'FollowFlight' ? FOLLOW : DETAILS, id = efiId(b, F) || (lastReq[method] || {}).id || 0, st;
+            if (F.follow) { st = follows.get(id); if (!st) { st = { id: id }; follows.set(id, st); } } else st = { id: id };
+            return patchFlightMsg(b, st, F);
+          }
+        } catch (e) { stats.errors++; stats.lastError = String(e); }
+        return b;
+      }
+      return { req: req, resp: resp, stats: function () { return stats; }, v: 1 };
+    })();
     window[NS] = { resolved: resolved, routes: routes, naRecs: naRecs, naRoutes: naRoutes, telem: telem, hist: hist, lastPos: lastPos, photoCache: photoCache, psCache: psCache, stats: stats, fetchPhotos: fetchPhotos, hello: function () { post('ready', { oaWant: oaWant, stats: stats, feedReady: !!feedHeaders, v: BRIDGE_V }); }, v: BRIDGE_V };
     if (window.__tlTestHook) try { window.__tlTestHook({ csOf: csOf, patchTopFlights: patchTopFlights, onTopGot: onTopGot, topNames: topNames, fillFlightList: fillFlightList, routeRows: routeRows, liveDestFix: liveDestFix, hist: hist, preloaded: function () { return preloaded; }, parse: parse, photoFits: photoFits, makerOf: makerOf, patchFollow: patchFollow, patchFlightMsg: patchFlightMsg, pushFollow: pushFollow, followSt: function () { return followSt; }, setFollowSt: function (s) { followSt = s; }, shownPhotos: shownPhotos, photoCache: photoCache, FOLLOW: FOLLOW, DETAILS: DETAILS, fLen: fLen, fStr: fStr, fVar: fVar, patchFlight: patchFlight, patchLiveFeed: patchLiveFeed, fr24Named: fr24Named, psState: function () { return { q: psQ.length, busy: psBusy, last: psLast, blockedFor: Math.max(0, psBlockedUntil - Date.now()), pri: Array.from(psPri), jobs: photoJobs.size, head: psQ.slice(0, 3).map(function (j) { return j.hex; }) }; }, acceptPubTel: acceptPubTel, pubTelFor: pubTelFor, fillNativeCard: fillNativeCard, regsOfCallsign: regsOfCallsign, categoryOf: categoryOf, placeShort: placeShort, nativeFill: nativeFill, natInfo: natInfo, addArch: addArch, acceptBoardArch: acceptBoardArch, telem: telem, b64Encode: b64Encode, b64DecodeInto: b64DecodeInto, frameHeader: frameHeader, concat: concat, varintInt32: varintInt32, PLAYBACK: PLAYBACK, patchPlayback: patchPlayback, patchPlaybackRequest: patchPlaybackRequest, pbRoutes: pbRoutes, pbTelAt: pbTelAt, setPbTrace: function (t) { pbTrace = t; }, patchList: patchList, acceptSites: acceptSites, listSig: listSig, mergeRoutes: mergeRoutes, applyRoutes: applyRoutes, routesAdd: routesAdd, applyAirport: applyAirport, applyBoardPage: applyBoardPage, applyStats: applyStats, mergeFlights: mergeFlights, apData: apData, telAt: telAt, noteTelem: noteTelem, pbTraceOf: function () { return pbTrace; }, logoOf: logoOf, archDetail: archDetail, tsOf: tsOf, noteAirportJson: noteAirportJson, rwyOf: rwyOf, rwyPanel: rwyPanel, panelTick: panelTick, panelData: panelData, promoSlots: promoSlots, acceptAirportPanel: acceptAirportPanel, unlockRunways: unlockRunways, mvRows: mvRows, mvKept: mvKept, dayOf: dayOf, pbPanelTick: pbPanelTick, logoFix: logoFix, liveEntries: liveEntries, pbPos: pbPos, unlockFeed: unlockFeed, derivedVs: derivedVs, altHist: altHist, acceptAir: acceptAir, airCache: airCache, flushAir: flushAir, airWant: function () { return airWant; }, lastPos: lastPos, resolved: resolved, stats: stats, pbFind: pbFind, inBar: inBar, pbBlk: pbBlk, cardInfo: cardInfo, boardRowsSeen: boardRowsSeen, archById: archById, placeBoard: placeBoard, stopBoardHold: stopBoardHold, needBoardArch: needBoardArch, mx: mx, mxPatchCore: mxPatchCore, mxAuth: mxAuth, mxNatList: mxNatList, mxTrackOk: mxTrackOk, stripRestriction: stripRestriction, mxBmMerge: mxBmMerge, mxBmItem: mxBmItem, mxMonTile: mxMonTile, mxMonOr: mxMonOr, mxPinVer: mxPinVer, mxAirportHistory: mxAirportHistory, mxHistItems: mxHistItems, mxTrackFile: mxTrackFile, mxDataTick: mxDataTick, mxPbProps: mxPbProps, mxPbShow: mxPbShow, mxPbStandIn: mxPbStandIn, mxPbReadAt: mxPbReadAt, mxPbStand: mxPbStand, mxBoardRwy: mxBoardRwy, reqIdOf: reqIdOf, mxPbOpen: mxPbOpen, mxPbTake: mxPbTake, setNav: function (f) { mxNav = f; }, mxPbAway: mxPbAway, mxLegacyPbJson: mxLegacyPbJson, mxLegacyPb: mxLegacyPb, mxPbFlags: mxPbFlags, mxPbSynId: mxPbSynId, mxPbParam: mxPbParam, setPbWanted: function (v) { mxPbWanted = v; }, mxPlans: function () { return mxPlans; }, mxLiveRunways: mxLiveRunways, mxRwy: mxRwy, mxSetApply: mxSetApply, mxSetNote: mxSetNote, mxSetKept: mxSetKept, mxLastClicked: mxLastClicked, mxLcList: mxLcList, onLcClick: onLcClick, mxLcFill: mxLcFill, cardRwy: cardRwy, naEndsFill: naEndsFill, onEndsGot: onEndsGot, naEnds: naEnds, boardWant: boardWant, mxLegacyImages: mxLegacyImages, rwyInUse: rwyInUse, windOfText: windOfText, mxRwyAirport: mxRwyAirport, mxRwyByHex: mxRwyByHex, mxRowHex: mxRowHex, mxDataEnds: mxDataEnds, rwyUsePanel: rwyUsePanel, apWxPanel: apWxPanel, apWxData: apWxData, apWxOf: apWxOf, mxApWxAdd: mxApWxAdd, vsNoLock: vsNoLock, statsUsage: statsUsage, statsMoves: statsMoves, apDataOf: apDataOf, acceptOa: acceptOa, oaAirportJson: oaAirportJson, oaMap: oaMap, oaRefs: fr24Refs, setOaBase: function (b) { oaBase = b; oaShown = 'x'; }, oaStoreRow: oaStoreRow, setViewBox: function (b) { viewBox = b; }, oaView: oaView, sunTimes: sunTimes, tzText: tzText, panelCodeFields: panelCodeFields, oaLinkPressed: oaLinkPressed, oaRefHref: oaRefHref, acceptOaOne: acceptOaOne, oaLost: function () { return oaLost; }, acceptOaFrom: acceptOaFrom, oaCodeLine: oaCodeLine, noteFr24Codes: noteFr24Codes, oaDupe: oaDupe, dirTick: dirTick, acceptOaDir: acceptOaDir, searchMerge: searchMerge, apSearchMerge: apSearchMerge, oaMatchRows: oaMatchRows, oaOneGet: oaOneGet, oaFillTables: oaFillTables, refOf: refOf, fieldShortName: fieldShortName, closestMerge: closestMerge, heliText: heliText, oaFast: function () { return oaFast; }, setOaNav: function (f) { oaNav = f; }, oaWantNow: function () { return oaWant; }, oaApi: oaApi, oaPageReq: oaPageReq, oaPageOf: oaPageOf, acMerge: acMerge, acStrip: acStrip, acMergeAdd: acMergeAdd, acSig: acSig, acDirFastPage: acDirFastPage, dirFastPage: dirFastPage, dirApply: dirApply, dirKeyOf: dirKeyOf, veilOn: veilOn, veilOff: veilOff, mxBmOaWx: mxBmOaWx, apWxFr24: apWxFr24, bmCodesTick: bmCodesTick, oaIataMode: oaIataMode, acPageReq: acPageReq, acPageOf: acPageOf, acPaginator: acPaginator, acTick: acTick, acceptAcDir: acceptAcDir, acceptAcPage: acceptAcPage, acAskPage: acAskPage, acLinkPressed: acLinkPressed, acceptAcFrom: acceptAcFrom, setAcNav: function (f) { acNav = f; }, acAddGet: acAddGet, acRefGet: acRefGet, statsUnlock: statsUnlock, onApWxGot: onApWxGot, mxStat: function () { return mx; }, mxTracksPac: mxTracksPac, mxPacParse: mxPacParse, mxPacots: mxPacots, acLegDir: acLegDir, acLegPage: acLegPage, acLegTick: acLegTick, acMaker: acMaker, acMakers: acMakers, patchListFor: patchList, listRowsFor: listRowsFor, listApCompact: listApCompact, listUnknown: listUnknown, setPac: function (o) { mxPac = { at: Date.now(), o: o }; }, rwyUseData: rwyUseData, rwyUseWant: rwyUseWant, cardRwyFill: cardRwyFill, rwyUseKept: rwyUseKept, mxLcTick: mxLcTick, mxBmMax: mxBmMax, mxNatParse: mxNatParse, mxAirsigList: mxAirsigList, mxStations: mxStations, mxLightning: mxLightning, mxLx: mxLx, mxFetch: mxFetch, mxWxText: mxWxText, mxWxKind: mxWxKind, mxCsv: mxCsv, patchLiveFeedRequest: patchLiveFeedRequest, mxCats: mxCats, mxOp: mxOp, mxLevels: mxLevels, mxNearest: mxNearest, MX_ICE: MX_ICE, MX_TURB: MX_TURB, mxWafsUrl: mxWafsUrl, routes: routes, setCurFollow: function (id) { curFollowId = id; } }); } catch (e) { /* ignore */ }
     post('ready', { oaWant: oaWant, stats: stats, feedReady: false, v: BRIDGE_V });
@@ -7407,11 +7447,23 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       // there, was "took off from LGW", 30 km away, over the strips beside it)
       const light = cls === 'piston' || cls === 'heli';
       let best = null;
+      // (1.3.10) Seen going down into the hole at speed, its track known: the field it came down at is ahead of it, not behind
+      // it - unless close enough to be turning in. And seen climbing out of it: the field it left is behind it. 9H-LEL, a
+      // Global 5500 lost descending through 13,800 ft on 170 degrees 70 km short of Liberia, 17 Nov, and heard again at
+      // FL430 heading north-east, was "down at Managua" - 117 km behind it, on the way to where it was heard again. (Going
+      // down: seen lower than a few minutes before, or its own vertical rate saying so - 9H-LEL's -1,568 ft/min, its point
+      // before 11 minutes earlier at FL387)
+      const descA = !!o && (o.aDesc === true || (fin(a.vr) && a.vr <= -500)), climbB = !!o && (o.bClimb === true || (fin(b.vr) && b.vr >= 500));
+      const trkA = descA && fin(a.trk) && fin(a.gs) && a.gs >= 120, trkB = climbB && fin(b.trk) && fin(b.gs) && b.gs >= 120;
       const consider = ap => {
         const da = dist(a.lat, a.lon, ap.lat, ap.lon), db = dist(ap.lat, ap.lon, b.lat, b.lon);
         if (da > reachA || db > reachB || da + db > budget || (cls && rwyImpossible(ap, cls, type))) return;
+        const offA = trkA && da > 25 ? angDiff(a.trk, brg(a.lat, a.lon, ap.lat, ap.lon)) : 0, offB = trkB && db > 25 ? 180 - angDiff(b.trk, brg(b.lat, b.lon, ap.lat, ap.lon)) : 0;
+        if (offA > 100 || offB > 100) return;
         const sz = Math.log10(1 + (ap.size || 0));
         let s = da + db - dab - (light ? Math.min(sz, 3) * 1.5 + (sz > 4.3 ? -12 : 0) : sz * 15);
+        if (offA > 60) s += da * 0.5;
+        if (offB > 60) s += db * 0.5;
         if (bClimb && !aDesc) s += 0.3 * Math.abs(db - 20 - Math.max(0, b.alt || 0) / 1000 * 4.5);
         if (aDesc && !bClimb) s += 0.3 * Math.abs(da - 20 - Math.max(0, a.alt || 0) / 1000 * 5.5);
         if (!best || s < best.s) best = { airport: ap, s, da, db };
@@ -9738,7 +9790,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '1.3.9';
+  const VERSION = '1.3.10';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
@@ -10235,7 +10287,8 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   const MON_DEFAULTS = [MON_DEFAULT_URL];
   const monAddr = u => { u = String(u || '').trim(); while (u.endsWith('/')) u = u.slice(0, -1); return u.startsWith('https://') && u.length > 9 && !/[/\s]/.test(u.slice(8)) ? u : ''; };
   // (kv monRemote: { url, token } set here, { off: true } turned off; nothing set - the public monitor, no secret)
-  const monRemote = () => { try { const r = store.kvGet('monRemote') || {}; if (r.off) return null; const url = monAddr(r.url) || MON_DEFAULT_URL; return { url, token: url === monAddr(r.url) ? String(r.token || '') : '', dflt: !monAddr(r.url) }; } catch (_) { return { url: MON_DEFAULT_URL, token: '', dflt: true }; } };
+  // (1.3.10: in FR24's Android app, the monitor set in the module's own settings, when one is: TL_MOBILE.mon)
+  const monRemote = () => { try { const mm = typeof TL_MOBILE === 'object' && TL_MOBILE && TL_MOBILE.mon && typeof TL_MOBILE.mon === 'object' ? TL_MOBILE.mon : null; const r = (mm && (mm.url || mm.off) ? mm : store.kvGet('monRemote')) || {}; if (r.off) return null; const url = monAddr(r.url) || MON_DEFAULT_URL; return { url, token: url === monAddr(r.url) ? String(r.token || '') : '', dflt: !monAddr(r.url) }; } catch (_) { return { url: MON_DEFAULT_URL, token: '', dflt: true }; } };
   // (with the owner's secret: it; without: which script is asking - not a secret, the monitor's request counts by version)
   const monAuth = r => r && r.token ? { 'X-Monitor-Token': r.token } : { 'X-Monitor-Client': 'fr24-ladd/' + VERSION };
   let monBase = '', monErr = '';   // (monErr: why the monitor was not used at the last check - shown beside it)
@@ -14116,6 +14169,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     const hs = ENGINE.histStats(hist, pos.t);
     // (an ordinary flight: the departure airport FR24 itself shows, when it has one, stands)
     let plan = (planState.get(id) || {}).plan || schedPlan(id);
+    if (planSpent(plan, trail.gapFrom)) plan = null;
     const st = routeState.get(id) || {};
     let o0 = ENGINE.inferOrigin({ ac, pos, trail, hs, now: pos.t, plan });
     if (o0 && o0.conf === 'plan' && plan && plan.fr24) o0.note = plan.list ? `FR24's own schedule${plan.num ? ' (' + plan.num + ')' : ''}` : 'departure shown by FR24';
@@ -14427,6 +14481,17 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     r.confirmed = r.destConf === 'confirmed';
     r.ms = pred ? pred.ms : 0;
     return r;
+  }
+  // (1.3.10) A plan whose flight ended in the hole the present track began after - its destination within reach of where
+  // the aircraft was last seen before it, going down - is the flight before's: FR24 kept one id for both. 9H-LEL (EAU58L),
+  // 17 Nov: Toronto - Liberia, lost descending 70 km short of Liberia at 20:41Z, heard again at FL430 heading north-east at
+  // 22:32Z - FR24's board row for the id, Toronto -> Liberia, had it "from Toronto" and "to Liberia (flight plan)" on its
+  // way away from Liberia. (A plan back to where it began - a local flight - is left: the hole may be its own.)
+  function planSpent(plan, gapFrom) {
+    if (!plan || !plan.destId || plan.destId === plan.originId || !gapFrom || !fin(gapFrom.lat) || !fin(gapFrom.lon)) return false;
+    const pd = apById(plan.destId); if (!pd || !fin(pd.lat) || !fin(pd.lon)) return false;
+    const agl = Math.max(0, (fin(gapFrom.alt) ? gapFrom.alt : 0) - (pd.alt || 0));
+    return ENGINE.dist(gapFrom.lat, gapFrom.lon, pd.lat, pd.lon) <= 40 + agl / 1000 * 9;
   }
   // ==/ROUTE-CORE==
   // (1.1.0) A flight's route is the monitor's: worked out there, with the same tables for every browser, from what all of
@@ -14780,7 +14845,11 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   function schedPlan(id) {
     if (live.has(id)) return null;
     const s = schedOf(id) || {}, p = pubRecs.get(id), m = p && p.fr24List;
-    const o = s.o || (m && m.o) || 0, d = s.d || (m && m.d) || 0;
+    // (1.3.10: and the departure FR24's own map gives it - its LiveFeed record's route, as FR24 draws it - where its schedule
+    // has none: a private flight FR24 tracked from its take-off has no schedule. N89P, a Falcon 2000 out of San José (SJO)
+    // on 17 Nov, FR24's header saying SJO, was "from Bluefields, out of ADS-B coverage" - public ADS-B hears little there)
+    const nf = naFeed.get(id), feedFrom = nf && nf.f && nf.f.from ? airports.byIata.get(String(nf.f.from).toUpperCase()) : null;
+    const o = s.o || (m && m.o) || (feedFrom ? feedFrom.id : 0), d = s.d || (m && m.d) || 0;
     if (!(apById(o) || apById(d)) && !s.std) return null;
     return { originId: apById(o) ? o : 0, destId: apById(d) ? d : 0, fr24: true, list: !!m && !(s.o && s.d), num: s.num || (m && m.num) || '', std: s.std || (m && m.std) || 0, sta: s.sta || (m && m.sta) || 0, atd: s.atd || (m && m.atd) || 0 };
   }
@@ -19245,7 +19314,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // (the version whose "what's new" was put away, and the one whose dot on the button the window was opened for)
   const UB_SEEN_KEY = 'tweeks.fr24.ladd.seenver', UB_DOT_KEY = 'tweeks.fr24.ladd.dotver';
   // (the newest CHANGELOG section's headlines, written in by build.mjs: { v, items })
-  const UB_WHATS_NEW = {"v":"1.3.9","items":["**The monitor keeps FR24's positions of every flight its scans see.** Before, it kept them only for flights FR24 showed with no destination, and only those in the air above 500 ft. Now it keeps every position, as FR24 sent it, of every flight in:","**G-LFSA \"Liverpool -> Manchester\" and \"Private Site\":** on 17 Nov, Ravenair's PA-38s G-LFSA and G-RVNA reported \"on the ground\" for a minute or more in the middle of their flights over Cheshire and Shropshire:","**G-RVNA \"N/A\" on Liverpool's board while flying back:** the monitor restarted (the 1.3.8 update) while G-RVNA was flying. When it heard it again, it joined the new positions to the take-off it had kept, but only once. On the next update it left a second copy, \"Liverpool -> ?\", open next to a \"? -> Liverpool\" of the same flight. It now joins every time and drops the older copy.","**G-NHVT \"last landed at Rhedyn Coch Farm\":** on 17 Nov NHV's AW169 was lost hovering at 1,150 ft and 1 kt over the Liverpool Bay platforms. The monitor put its landing at Rhedyn Coch Farm, a strip 32 km away inland, and its next take-off from Blackpool became \"from Rhedyn Coch Farm, where it last landed\". A helicopter lost hovering or creeping low (under 25 kt, under 2,500 ft) now came down where it was lost: at a heliport, airport or strip right there, or else at a place no list has. The landing in Blackpool afterwards was also stuck open by the restart (see G-RVNA), so it was not counted as its last landing; that is fixed too.","**OurAirports airports not opening again:** FR24's new build asks /api/v2/airports/<id> for an airport's window, where it asked /api/v1/... before. The script only answered v1, so an OurAirports airport's window failed (\"airportsApi.airport request is not ok\"). It now answers at any version of that address, by id or code, and builds the answer in the shape of FR24's latest answer for one of its own airports: any section or field FR24 adds is there, empty. An address or a part not known yet is counted and named by the health check, so the next change shows up there first."]};
+  const UB_WHATS_NEW = {"v":"1.3.10","items":["**FR24's Android app.** A first version of an LSPosed module that does the extension's work inside FR24's own app on a rooted phone: fr24-ladd-unblocker-module.apk, attached to each release (docs/mobile.md).","**9H-LEL \"Toronto -> Liberia (flight plan)\" flying out of Liberia:** on 17 Nov it flew Toronto to Liberia. FR24 never saw it land, so it kept one flight id for that flight and the next. The script took FR24's Toronto -> Liberia board row as the next flight's plan, and its departure as Toronto.","**N89P \"from Bluefields\" while FR24 showed it from San José:** FR24 knew N89P took off from San José (SJO), but the flight had no schedule, and the script read FR24's departure only from a schedule. With none, it guessed from public ADS-B, which hears little there. It now also takes the departure FR24 gives the flight on its own map."]};
   // (an aircraft with an open padlock: FR24's outline style - 24 grid, 1.5 stroke in the text colour)
   const UB_ICON = '<svg data-tl-ub-icon="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
   const UB_X = '<svg viewBox="0 0 14 14" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5l11 11M12.5 1.5l-11 11"/></svg>';
@@ -20823,7 +20892,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true }); else start();
   }
   }
-  try { (pageWindow()).__tweeksLadd = { version: VERSION, oaTest: { buildAirports, oaSet, closestOf, oaPageRef, oaIdNear, learnSite, oaAp, oaCity, apById, fr24Ap }, msgCount, datalinkPlan, datalinkRoutes, surgeNow, morphHtml, photoJob, photosOut, monPhotos, routeSearch, onNeedNaRoutes, onTopNeed, naFromTrail, naWanted, fr24Trail, schedOf, trailFor, get shownId() { return shownId; }, posStats, get bridgeV() { return bridgeV; }, hexOfId, currentPos, idHex, engine: ENGINE, live, pending, telemetry, store, routeState, planState, globalList, fr24, todayCache, sweep, resolveTargeted, routeFor, composeRoute, composeRoute0, centralOf, calcWhy, calcGot, calcSent, calcAsk, calcFlush, calcEvidence, calcNow, calcExtra, localView, hexCalcId, altsOf, holdTerminal, termHold, worldScan, refreshLists, quickRouteAll, historyPump, histPumped, learnedStore, regCountry, fr24Sched, pubRouted, pubRecs, privatePlace, loadSites, siteNear, sites, onSched, pubMem: () => pubMem, publishRoute, syncPanel, normalizeReadsb, telemOf, noteCands, csOfRec, warmHist, hostStat, wantWx, wxMap, wantNotams, closedMap, estimateEta, nNumberHex, watchList, pollWatch, accStore, accNote, statsHtml, fleetList, checkHealth, health, exportCsv, predictForHex, verifyAgainstList, strikes, revokedIds, fr24Named, noteFr24Named, loadHistory, loadToday, readTrace, classifyTrace, fetchTrace, netState, NETS, sourcesHtml, logGaps, fetchJetphotos, loadRunways, knownLegs, areaCache, pollView, saveSnapshot, boardNoteLegs, boardNoteFlight, boardNoteSched, boardScrub, boardLoad, boardList, naRouteOf, naEvidenceOf, pbWhere, pbFlight, pbSynId, onPbPage, legRowHtml, pbHashPlay, noteNa, naFeed, matchParked, parkedTick, isProv, adopt, recordFromMatch, matchAgainstList, verifyAll, fillAircraftHeader, ownersOut, identityToMonitor, matchByTraces, boardDrain, boardMem, onNeedBoard, operatorOf, shownOwner, enrich, userConfirm, userDestOf, monGet, monPost, monCheck, noteFr24Blocked, monLive, monUp, MON_DEFAULTS, get monBase() { return monBase; }, liveSources, tatSource: TAT_SOURCE, telOut, noteTelOut, reportTel, pbOut, srvIds, pullSrvIds, srvAdopt, reportToMonitor, srvRoute, srvRec, crowdOf, routesOut, routesSent, noteRouteOut, noteRouteWithdrawn, learnFromLeg, learnOutTake, learnOutBack, get learnOutN() { return learnOut.length; }, get feedHdr() { return feedHdr; }, boardMonFill, natRowOf, fnRows, buildSnapshot, bootHold, firAt, loadFir, onAirAsk, pb, onPbFeed, onPbFollow, onPbHex, pbRouteFor, pbMatch, pbFromMonitor, onNeedRoutes, onNeedAirportData, onNeedAirportPanel, liveBoardRows, runwaysOf, parseRunwayEnds, flightsOfCallsign, bootFlightPage, unlockExports, exportFile, rowWindow, hexOfFid, onNeedSearch, osmPick, wantOsmPlace, osmPlaceAt, learnSite, siteIdAt, siteBk, siteRow, apById, operatorIdOf, airlineIdByName, fr24Cat, onHistElsewhere, get viewBox() { return viewBox; }, get selectedId() { return currentId(); }, opt, setOpt, notify, openUnblockWindow, closeUnblockWindow, ensureBarButton, findBar, checkLatest, installKind, sayHello, helloSt, ubBanners, ubOffer, installId }; } catch (_) { /* ignore */ }
+  try { (pageWindow()).__tweeksLadd = { version: VERSION, oaTest: { buildAirports, oaSet, closestOf, oaPageRef, oaIdNear, learnSite, oaAp, oaCity, apById, fr24Ap }, msgCount, datalinkPlan, planSpent, schedPlan, datalinkRoutes, surgeNow, morphHtml, photoJob, photosOut, monPhotos, routeSearch, onNeedNaRoutes, onTopNeed, naFromTrail, naWanted, fr24Trail, schedOf, trailFor, get shownId() { return shownId; }, posStats, get bridgeV() { return bridgeV; }, hexOfId, currentPos, idHex, engine: ENGINE, live, pending, telemetry, store, routeState, planState, globalList, fr24, todayCache, sweep, resolveTargeted, routeFor, composeRoute, composeRoute0, centralOf, calcWhy, calcGot, calcSent, calcAsk, calcFlush, calcEvidence, calcNow, calcExtra, localView, hexCalcId, altsOf, holdTerminal, termHold, worldScan, refreshLists, quickRouteAll, historyPump, histPumped, learnedStore, regCountry, fr24Sched, pubRouted, pubRecs, privatePlace, loadSites, siteNear, sites, onSched, pubMem: () => pubMem, publishRoute, syncPanel, normalizeReadsb, telemOf, noteCands, csOfRec, warmHist, hostStat, wantWx, wxMap, wantNotams, closedMap, estimateEta, nNumberHex, watchList, pollWatch, accStore, accNote, statsHtml, fleetList, checkHealth, health, exportCsv, predictForHex, verifyAgainstList, strikes, revokedIds, fr24Named, noteFr24Named, loadHistory, loadToday, readTrace, classifyTrace, fetchTrace, netState, NETS, sourcesHtml, logGaps, fetchJetphotos, loadRunways, knownLegs, areaCache, pollView, saveSnapshot, boardNoteLegs, boardNoteFlight, boardNoteSched, boardScrub, boardLoad, boardList, naRouteOf, naEvidenceOf, pbWhere, pbFlight, pbSynId, onPbPage, legRowHtml, pbHashPlay, noteNa, naFeed, matchParked, parkedTick, isProv, adopt, recordFromMatch, matchAgainstList, verifyAll, fillAircraftHeader, ownersOut, identityToMonitor, matchByTraces, boardDrain, boardMem, onNeedBoard, operatorOf, shownOwner, enrich, userConfirm, userDestOf, monGet, monPost, monCheck, noteFr24Blocked, monLive, monUp, MON_DEFAULTS, get monBase() { return monBase; }, liveSources, tatSource: TAT_SOURCE, telOut, noteTelOut, reportTel, pbOut, srvIds, pullSrvIds, srvAdopt, reportToMonitor, srvRoute, srvRec, crowdOf, routesOut, routesSent, noteRouteOut, noteRouteWithdrawn, learnFromLeg, learnOutTake, learnOutBack, get learnOutN() { return learnOut.length; }, get feedHdr() { return feedHdr; }, boardMonFill, natRowOf, fnRows, buildSnapshot, bootHold, firAt, loadFir, onAirAsk, pb, onPbFeed, onPbFollow, onPbHex, pbRouteFor, pbMatch, pbFromMonitor, onNeedRoutes, onNeedAirportData, onNeedAirportPanel, liveBoardRows, runwaysOf, parseRunwayEnds, flightsOfCallsign, bootFlightPage, unlockExports, exportFile, rowWindow, hexOfFid, onNeedSearch, osmPick, wantOsmPlace, osmPlaceAt, learnSite, siteIdAt, siteBk, siteRow, apById, operatorIdOf, airlineIdByName, fr24Cat, onHistElsewhere, get viewBox() { return viewBox; }, get selectedId() { return currentId(); }, opt, setOpt, notify, openUnblockWindow, closeUnblockWindow, ensureBarButton, findBar, checkLatest, installKind, sayHello, helloSt, ubBanners, ubOffer, installId }; } catch (_) { /* ignore */ }
   log('loaded v' + VERSION);
 
 })();
