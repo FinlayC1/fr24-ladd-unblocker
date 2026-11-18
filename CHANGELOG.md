@@ -4,6 +4,24 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 
 1.0.0 is the first release. The versions before it are the betas, labelled B: B22.31.12 is version 22.31.12.
 
+## [1.3.11] - 2026-11-18
+
+### In short
+- **No more "FR24 asked for an OurAirports airport's /top-travelers" warning on every flight.** FR24's site now asks each airport for its top travellers. For the small airfields and heliports this script adds to FR24's map, the script already answered in FR24's own form, but still flagged it as something new, so the warning showed in every flight's panel for the rest of the session. It is only shown now when the script really has no answer.
+- **New kinds of airport information answered on the first ask.** When FR24's site asks one of those airfields for something new, the script asks FR24 the same thing for the real airport that airfield's pages are based on. It then answers in that form, with nothing filled in.
+
+### Fixed
+- **`/top-travelers` counted as "new to this script"** (`src/page.js` `oaApi`): any part of FR24's airport API other than the airport itself, its pictures, weather and delays was counted in `oaApiNew` and named by the health check (`06-tools.js`), even when it was answered in the shape of FR24's own answer for that part (1.3.9). The count now covers only a part answered blind (`{ data: {} }`); one answered in FR24's shape counts in `oaApiShaped`.
+- **A part never seen** (`oaApiPart`, `apRefUrl`): asked of FR24 itself, once, for the FR24 airport the OurAirports airport's pages are made from (its row's `[5]`), at the same address, version and query, as FR24's own request (a `Request` stays a `Request`). The answer's shape is kept (`tl.apShape1`, never its values) and the OurAirports airport answered in it, empty. Requests made meanwhile wait for the same answer. Only if FR24 has no answer either, or the airport has no FR24 airport, is it answered blind and counted. A failed ask is made again next time.
+
+### Tests
+- New `test/unit_1311.cjs` (13 checks), in the suite and CI:
+  - an OurAirports airport's `/top-travelers` answered in FR24's shape, empty (no traveller, name or count of FR24's), and not counted as new; on 1.3.10 it was counted every time
+  - a part not yet seen: FR24 asked once for the reference airport even with two asks at once, both answered in its shape, the shape kept, the next answered without asking
+  - a `Request` passed on as a `Request`
+  - FR24 failing, or no reference airport: answered blind and counted, then asked again once FR24 answers
+- `test/unit_139.cjs`: the `/radio` part is now answered in the shape of FR24's answer for Walney, and a part FR24 has no answer for (`/nowhere`) is counted (35 checks).
+
 ## [1.3.10] - 2026-11-17
 
 ### In short
