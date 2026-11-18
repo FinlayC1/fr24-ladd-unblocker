@@ -17,6 +17,7 @@
 // The userscript asks it (data: adsb.lol, ODbL):
 //  /status                       what it has
 //  /fr24ids[?since=<ms>]         every callsign-less FR24 flight named here: FR24 flight id -> aircraft, origin, rough destination
+//  /fr24of?hex=&t0=&t1=         (1.3.12) an aircraft's FR24 flights in that time, by FR24's ids (each read with /fr24raw)
 //  POST /report                  a browser's FR24 feed headers, the callsign-less flights it sees, the ones it named itself,
 //                                the owners and operators it found
 //  /owners?hex=a,b,c             the owner and operator of aircraft (looked up here once - owners.cjs - and kept for good)
@@ -2974,6 +2975,13 @@ function answer(u, nowS, ctx) {
   }
   // (1.2.4) a flight's FR24 positions as they came (fr24raw.cjs) - for its KML and CSV, and its playback
   if (p === '/fr24raw') { const r = rawOf(String(q('f') || ''), +q('t') || 0); return r ? Object.assign({ v: 1 }, r) : { v: 1, p: [] }; }
+  // (1.3.12) an aircraft's FR24 flights from t0 to t1 (three days at most), by FR24's ids - from every store: the flights
+  // of a log rebuilt from ADS-B played on FR24's own positions (/fr24raw each)
+  if (p === '/fr24of') {
+    const hex = String(q('hex') || '').toLowerCase(), t0 = +q('t0') || 0, t1 = +q('t1') || 0, by = new Map();
+    for (const st of [fr24raw, fr24scan, fr24apt]) for (const x of st.byHex(hex, t0, t1)) { const o = by.get(x.fid); by.set(x.fid, o ? { fid: x.fid, t0: Math.min(o.t0, x.t0), t1: Math.max(o.t1, x.t1) } : x); }
+    return { v: 1, list: [...by.values()].sort((x, y) => x.t0 - y.t0).slice(0, 40) };
+  }
   // (the routes these registrations sent or were sent over their datalinks, the last 36 hours)
   if (p === '/datalink') { const regs = String(q('reg') || '').toUpperCase().split(',').map(r => r.trim()).filter(r => /^[A-Z0-9-]{2,10}$/.test(r)).slice(0, 50); return { list: datalink.get(regs) }; }
   if (p === '/ladd') return { at: lastLadd.at, ac: lastLadd.ac };

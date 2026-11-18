@@ -768,7 +768,8 @@
     const ap = Number(d && d.ap) || 0; if (!(ap > 0) || (ap >= SITE_BASE && !oaKnown(ap))) return;
     const k = apWxKept.get(ap);
     if (k && now() - k.at < 10 * 60000) { postToPage('apWxGot', { ap, wx: k.wx }); return; }
-    const wx = await monGet(`/apwx?ap=${ap}`, { timeout: 20000 }).catch(() => null);
+    // (1.3.12: ahead of the monitor's other requests - a panel is waiting for it, its weather drawn by FR24 meanwhile as N/A)
+    const wx = await monGet(`/apwx?ap=${ap}`, { timeout: 20000, priority: true }).catch(() => null);
     if (wx && !wx.none && typeof wx.cond === 'string') { apWxKept.set(ap, { at: now(), wx }); if (apWxKept.size > 300) apWxKept.delete(apWxKept.keys().next().value); }
     postToPage('apWxGot', { ap, wx: wx && !wx.none ? wx : null });
   }

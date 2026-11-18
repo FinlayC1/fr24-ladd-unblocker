@@ -2181,8 +2181,11 @@
       stats.oaApi = (stats.oaApi || 0) + 1;
       if (part === '/images') return Promise.resolve({ data: [] });
       if (part === '/disruptions') return Promise.resolve({ data: {} });
-      if (part === '/weather') return apWxWait(id, 6000).then(function (w) { return { data: w ? oaWeather(w) : {} }; });
+      // (1.3.12: 8 s at most - 6 s left a phone's panel header without it while the monitor was busy)
+      if (part === '/weather') return apWxWait(id, 8000).then(function (w) { return { data: w ? oaWeather(w) : {} }; });
       if (part) return oaApiPart(r, part, viaRef);
+      // (1.3.12: the airport opened - its weather asked for now, on its way before FR24 asks for it a moment later)
+      apWxWant(id);
       var a = oaStoreRow(r), sun = sunTimes(a.latitude, a.longitude, Date.now());
       if (oaRefs.has(r[5])) oaOneKeep(r, oaRefs.get(r[5]), refOf(r[5]));
       oaStoreKeep(pinStore('airports'), a);
@@ -5012,7 +5015,9 @@
     function mxLcItem(ac) {
       var s = ac && ac.selected, fi = s && s.flightInfo; if (!fi || fi.flightId == null) return null;
       var ai = s.aircraftInfo || {}, sc = s.scheduleInfo || {}, id = Number(fi.flightId); if (!(id > 0)) return null;
-      return { id: id, callsign: fi.callsign || null, flight: sc.flightNumber || null, type: ai.type || null, registration: ai.reg || null, airport: { origin: mxLcAirport(ac.selectedFlightOriginAirport), destination: mxLcAirport(ac.selectedFlightDestinationAirport) } };
+      // (1.3.12: its aircraft's address too - FR24's icaoAddress, a number - for the tag in the widget's row)
+      var hexA = typeof ai.icaoAddress === 'number' && ai.icaoAddress > 0 && ai.icaoAddress < 0x1000000 ? ai.icaoAddress.toString(16).padStart(6, '0') : null;
+      return { id: id, hex: hexA, callsign: fi.callsign || null, flight: sc.flightNumber || null, type: ai.type || null, registration: ai.reg || null,airport: { origin: mxLcAirport(ac.selectedFlightOriginAirport), destination: mxLcAirport(ac.selectedFlightDestinationAirport) } };
     }
     // (1.2.6: never worse than it was - a blocked flight's name, aircraft and airports, once known, are kept: FR24's panel
     // shows "N/A" for a moment as it opens one, and nothing of it once it has landed. What this script knows of the flight
@@ -5434,6 +5439,23 @@
         l.push(f); oSetTimeout(function () { f(apWxOf(apId)); }, ms);
         var x = apWx[apId]; if (x) x.asked = 0;          // (asked again now, whenever it was asked last)
         apWxWant(apId);
+      });
+    }
+    // (1.3.12: FR24's /weather answer: { data: {} } - or its fields empty - where the airport sends no METAR)
+    function apWxEmpty(j) { var d = j && typeof j === 'object' ? j.data : null; return !d || typeof d !== 'object' || Array.isArray(d) || (d.condition == null && d.temperature == null); }
+    function apWxFill(p, apId) {
+      return p.then(function (res) {
+        if (!res || !res.ok) return res;
+        return res.clone().json().then(function (j) {
+          if (!apWxEmpty(j)) return res;
+          return apWxWait(apId, 8000).then(function (w) {
+            if (!w) return res;
+            var o = j && typeof j === 'object' && !Array.isArray(j) ? j : {};
+            o.data = Object.assign({}, o.data && typeof o.data === 'object' && !Array.isArray(o.data) ? o.data : {}, oaWeather(w));
+            stats.apWxFilled = (stats.apWxFilled || 0) + 1;
+            return jsonResponse(res, o);
+          });
+        }, function () { return res; });
       });
     }
     function onApWxGot(d) {
@@ -6055,6 +6077,11 @@
         // request about an OurAirports airport - an address of its not answered here: counted, named by the health check
         var apOwn = !oaBoard && url.match(OA_API_RE);
         if (apOwn && /^\d+$/.test(apOwn[1]) && Number(apOwn[1]) < 9000000 && !/^\/(?:departures|arrivals|on-grounds)\b/i.test(apOwn[2] || '')) { var apPart = (apOwn[2] || '').toLowerCase(); p.then(function (res) { if (res.ok) res.clone().json().then(function (j) { apShapeNote(apPart, j); }, function () {}); }, function () {}); }
+        // (1.3.12) FR24's weather for one of its own airports that sends no METAR - an answer with no conditions and no
+        // temperature in it: the monitor's (the weather model at the airport, its METAR made from it) put into FR24's
+        // answer, waited for 8 s at most - FR24 draws it itself, in its panel's tiles and, on a phone, in the panel's
+        // header before the panel is pulled up. An answer with weather of its own is left as it is
+        if (apOwn && /^\d+$/.test(apOwn[1]) && Number(apOwn[1]) < 9000000 && /^\/weather\/?$/i.test(apOwn[2] || '')) return apWxFill(p, Number(apOwn[1]));
         var oaN = oaById && oaById.size && /flightradar24\.com\//.test(url) ? url.match(/\/(\d{8,9})(?=[/?#]|$)/) : null;
         if (oaN && oaById.has(Number(oaN[1]))) { var oaPath = url.replace(/^https?:\/\/[^/]+/, '').replace(/[?#].*$/, '').replace(/\/\d{8,9}(?=\/|$)/g, '/:id'); p.then(function (res) { if (res.status === 404) { stats.oaMiss = (stats.oaMiss || 0) + 1; stats.oaMissPath = oaPath; } }, function () {}); }
         // FR24's own airport answer (its map panel's): its runways kept for the panel's table and the airport pages

@@ -124,7 +124,7 @@ public class AppTest {
 
     static final class Server implements AppNet.Opener {
         final Map<String, java.util.function.Function<URL, Fake>> routes = new HashMap<>();
-        final List<Fake> opened = new ArrayList<>();
+        final List<Fake> opened = Collections.synchronizedList(new ArrayList<>());
         @Override public HttpURLConnection open(URL u) {
             java.util.function.Function<URL, Fake> f = routes.get(u.toString());
             Fake c = f != null ? f.apply(u) : new Fake(u, 404, new byte[0], false);
@@ -223,5 +223,61 @@ public class AppTest {
         assertTrue(opened.await(5, TimeUnit.SECONDS));
         n.abort("p4.1"); release.countDown();
         assertFalse("no answer for an aborted request", answered.await(700, TimeUnit.MILLISECONDS));
+    }
+
+    // ---- (1.3.12) the app's own update, its sign-in windows, its location ----------------------------------------------
+    @Test public void versionsCompare() {
+        assertTrue(Policy.newer("1.3.12", "1.3.11")); assertTrue(Policy.newer("v1.4.0", "1.3.99")); assertTrue(Policy.newer("1.3.10", "1.3.9"));
+        assertFalse(Policy.newer("1.3.11", "1.3.11")); assertFalse(Policy.newer("1.3.9", "1.3.10")); assertFalse(Policy.newer("latest", "1.3.11")); assertFalse(Policy.newer("1.3.12", ""));
+        assertNull(Policy.version("1.3.12-beta")); assertEquals(3, Policy.version("v1.3.12").length);
+    }
+
+    private static JSONObject release(String tag, String name, String url, String digest, long size) throws Exception {
+        JSONObject a = new JSONObject().put("name", name).put("browser_download_url", url).put("size", size);
+        if (digest != null) a.put("digest", digest);
+        return new JSONObject().put("tag_name", tag).put("draft", false).put("prerelease", false).put("assets", new org.json.JSONArray().put(new JSONObject().put("name", "other.zip").put("browser_download_url", "https://github.com/x/y.zip").put("size", 5)).put(a));
+    }
+
+    @Test public void aReleasesAppIsReadOnlyFromThisProjectsOwnDownload() throws Exception {
+        String sha = "ab".repeat(32), url = "https://github.com/FinlayC1/fr24-ladd-unblocker/releases/download/v1.3.12/fr24-ladd-unblocker-app.apk";
+        Policy.Release r = Policy.release(release("v1.3.12", "fr24-ladd-unblocker-app.apk", url, "sha256:" + sha.toUpperCase(), 7340032));
+        assertEquals("1.3.12", r.version); assertEquals(url, r.url); assertEquals(sha, r.sha256); assertEquals(7340032, r.size);
+        assertEquals("no digest given: none required here (the signer is checked)", "", Policy.release(release("v1.3.12", "fr24-ladd-unblocker-app.apk", url, null, 10)).sha256);
+        assertNull("another address", Policy.release(release("v1.3.12", "fr24-ladd-unblocker-app.apk", "https://evil.example.com/fr24-ladd-unblocker-app.apk", null, 10)));
+        assertNull("another release's file", Policy.release(release("v1.3.12", "fr24-ladd-unblocker-app.apk", "https://github.com/FinlayC1/fr24-ladd-unblocker/releases/download/v1.3.11/fr24-ladd-unblocker-app.apk", null, 10)));
+        assertNull("no app in it", Policy.release(release("v1.3.12", "fr24-ladd-unblocker-module.apk", url, null, 10)));
+        assertNull("no version", Policy.release(release("nightly", "fr24-ladd-unblocker-app.apk", url, null, 10)));
+        assertNull("too large", Policy.release(release("v1.3.12", "fr24-ladd-unblocker-app.apk", url, null, Policy.MAX_APK + 1)));
+        JSONObject pre = release("v1.3.12", "fr24-ladd-unblocker-app.apk", url, null, 10).put("prerelease", true);
+        assertNull("a pre-release", Policy.release(pre));
+        assertEquals("00ff10", Policy.hex(new byte[] { 0, (byte) 255, 16 }));
+    }
+
+    @Test public void onlyASignInIsKeptInAWindow() {
+        assertTrue(Policy.signIn("https", "accounts.google.com")); assertTrue(Policy.signIn("https", "appleid.apple.com.")); assertTrue(Policy.signIn("HTTPS", "www.facebook.com"));
+        assertFalse(Policy.signIn("http", "accounts.google.com")); assertFalse(Policy.signIn("https", "accounts.google.com.evil.com")); assertFalse(Policy.signIn("https", "www.flightradar24.com")); assertFalse(Policy.signIn("https", "ads.example.com"));
+    }
+
+    @Test public void theLocationsLimits() {
+        assertEquals(20000, Policy.geoTimeout(0)); assertEquals(2000, Policy.geoTimeout(10)); assertEquals(60000, Policy.geoTimeout(600000)); assertEquals(9000, Policy.geoTimeout(9000));
+        assertEquals(30000, Policy.geoMaxAge(0)); assertEquals(60000, Policy.geoMaxAge(60000)); assertEquals(30 * 60000, Policy.geoMaxAge(Long.MAX_VALUE));
+    }
+
+    @Test public void requestsGoAtOnceAndAsThePhonesBrowser() throws Exception {
+        Server s = new Server(); final java.util.concurrent.atomic.AtomicInteger inFlight = new java.util.concurrent.atomic.AtomicInteger(), most = new java.util.concurrent.atomic.AtomicInteger();
+        CountDownLatch all = new CountDownLatch(12), release = new CountDownLatch(1);
+        s.routes.put("https://adsb.lol/slow", u -> { int n = inFlight.incrementAndGet(); most.accumulateAndGet(n, Math::max); all.countDown(); try { release.await(5, TimeUnit.SECONDS); } catch (InterruptedException ignored) { /* on */ } inFlight.decrementAndGet(); return new Fake(u, 200, "ok".getBytes(StandardCharsets.UTF_8), false); });
+        s.routes.put("https://adsb.lol/ua", u -> new Fake(u, 200, "ok".getBytes(StandardCharsets.UTF_8), false));
+        AppNet n = new AppNet(CONNECT, Collections::emptyList, new Jar(), s);
+        n.userAgent("Mozilla/5.0 (Linux; Android 14) Chrome/131 Mobile Safari/537.36");
+        CountDownLatch done = new CountDownLatch(12);
+        for (int i = 0; i < 12; i++) n.request("p5." + i, get("https://adsb.lol/slow"), x -> done.countDown());
+        assertTrue("twelve slow answers at once - 1.3.11's four left the rest (the monitor's check) waiting", all.await(5, TimeUnit.SECONDS));
+        release.countDown(); assertTrue(done.await(5, TimeUnit.SECONDS));
+        assertTrue(most.get() >= 12); assertTrue(n.threads() >= 32);
+        JSONObject a = run(n, "p5.20", get("https://adsb.lol/ua")), b = run(n, "p5.21", get("https://adsb.lol/ua").put("headers", new JSONObject().put("User-Agent", "own/1")));
+        assertEquals(200, a.getInt("status")); assertEquals(200, b.getInt("status"));
+        List<String> uas = new ArrayList<>(); synchronized (s.opened) { for (Fake f : s.opened) if (f.getURL().toString().endsWith("/ua")) uas.add(f.sent.get("user-agent")); }
+        assertEquals("the WebView's where the script sets none; the script's own where it does", Arrays.asList("Mozilla/5.0 (Linux; Android 14) Chrome/131 Mobile Safari/537.36", "own/1"), uas);
     }
 }

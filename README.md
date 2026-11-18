@@ -8,7 +8,7 @@
 
 <br><br>
 
-<a href="CHANGELOG.md"><img alt="Version 1.3.11" src="https://img.shields.io/badge/version-1.3.11-1f6feb?style=flat&labelColor=23272e"></a>
+<a href="CHANGELOG.md"><img alt="Version 1.3.12" src="https://img.shields.io/badge/version-1.3.12-1f6feb?style=flat&labelColor=23272e"></a>
 <a href="PRIVACY.md#counting-installs"><img alt="Users" src="https://img.shields.io/endpoint?url=https%3A%2F%2F143-47-224-210.sslip.io%2Fbadge&style=flat&labelColor=23272e"></a>
 <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/actions/workflows/tests.yml"><img alt="Tests" src="https://github.com/FinlayC1/fr24-ladd-unblocker/actions/workflows/tests.yml/badge.svg"></a>
 <a href="LICENCE"><img alt="Licence: personal use" src="https://img.shields.io/badge/licence-personal%20use-1f6feb?style=flat&labelColor=23272e"></a>
@@ -102,6 +102,7 @@ For any browser with a userscript manager such as [Tampermonkey](https://www.tam
 **The app** (any Android 10 phone or newer, no root):
 1. Download [`fr24-ladd-unblocker-app.apk`](https://github.com/FinlayC1/fr24-ladd-unblocker/releases/latest/download/fr24-ladd-unblocker-app.apk) on your phone and open it. Android asks you to allow installing apps from your browser the first time.
 2. Open **LADD Unblocker**. It shows FR24's own site, full-screen, with the script in it: the same as the extension on a computer.
+3. It updates itself: it looks for a new version when it opens, and *Update* in LADD Unblock installs it (Android asks you to confirm).
 
 **Or inside FR24's own app**, on a rooted phone with [LSPosed](https://github.com/LSPosed/LSPosed):
 1. Install [`fr24-ladd-unblocker-module.apk`](https://github.com/FinlayC1/fr24-ladd-unblocker/releases/latest/download/fr24-ladd-unblocker-module.apk).

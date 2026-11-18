@@ -8,6 +8,8 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <!-- (a watched aircraft's alerts) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- (the app's own update, from the project's releases - Updater: Android asks the user to allow it, and to confirm) -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
         android:label="@string/app_name"
@@ -27,5 +29,9 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- (Android's installer's answer to the app's update: its own installer session only - UpdateReceiver) -->
+        <receiver
+            android:name=".UpdateReceiver"
+            android:exported="false" />
     </application>
 </manifest>

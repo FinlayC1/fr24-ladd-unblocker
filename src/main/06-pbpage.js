@@ -2,8 +2,8 @@
   // (LADD) flight, every flight older than FR24's week of playback, every flight of a log rebuilt here. The page (page.js
   // mxPb*) shows FR24's own player - its map, slider, figures, graph, tracklog, KML and CSV - and this side gives it the
   // flight: which aircraft, its airports, its times, and its track as kept: every FR24 position the monitor has of it
-  // (fr24raw, 730 days), and the public ADS-B record of its day (adsb.lol, airplanes.live) - the fuller of the two, each
-  // filling the other's holes. A flight of FR24's own has its id; one known only here, the aircraft and its take-off:
+  // (fr24raw, 730 days), and the public ADS-B record of its day (adsb.lol, airplanes.live) - FR24's first (1.3.12), the
+  // record only where FR24 has nothing. A flight of FR24's own has its id; one known only here, the aircraft and its take-off:
   // "ff" + address + take-off time (hex) - "ff" + address + "00000000" for the aircraft's latest flight
   const PB_SYN = /^ff([0-9a-f]{6})([0-9a-f]{8})$/;
   const pbSynId = (hex, t) => 'ff' + hex + ('00000000' + Math.max(0, Math.round(t || 0)).toString(16)).slice(-8);
@@ -34,6 +34,30 @@
     let pts = [];
     for (const t of days) { const more = await (pbMore(hex, t) || pbPoints(hex, t)).catch(() => []); pts = pts.concat(more || []); }
     return pts.filter(p => p && fin(p.t) && fin(p.lat) && fin(p.lon)).map(p => { const g = !!(p.gnd0 || p.gnd); return { t: p.t, lat: p.lat, lon: p.lon, alt: g ? 0 : fin(p.alt) ? p.alt : null, gnd: g, gs: fin(p.gs) ? p.gs : null, trk: fin(p.trk) ? p.trk : null, vr: fin(p.vr) ? p.vr : null, sq: p.sq || '', cs: p.cs || '', ag: fin(p.altGeom) ? p.altGeom : null, ias: fin(p.ias) ? p.ias : null, tas: fin(p.tas) ? p.tas : null }; });
+  }
+  // (1.3.12) FR24's own positions of a flight first, whenever it has any: the public ADS-B record only where FR24 has
+  // nothing for a minute and more - before FR24 picked it up, after it lost it, and its holes. 1.2.4 took whichever had
+  // more points, and the track played was mostly adsb.lol's
+  function pbFr24First(fr, adsb) {
+    if (!fr || fr.length < 2) return pbMergePts(fr || [], adsb || []);
+    const out = fr.slice().sort((p, q) => p.t - q.t), ts = out.map(p => p.t);
+    const near = t => { let lo = 0, hi = ts.length; while (lo < hi) { const m = (lo + hi) >> 1; if (ts[m] < t) lo = m + 1; else hi = m; } return Math.min(lo < ts.length ? Math.abs(ts[lo] - t) : Infinity, lo > 0 ? Math.abs(ts[lo - 1] - t) : Infinity); };
+    for (const p of adsb || []) if (near(p.t) >= 60) out.push(p);
+    return out.sort((p, q) => p.t - q.t);
+  }
+  // (1.3.12) a flight of a log rebuilt here - no FR24 id of its own: FR24's positions of its aircraft in that time, as the
+  // monitor kept them (/fr24of: the aircraft's FR24 flights then; /fr24raw: each one's points) - none from a monitor
+  // before 1.3.12, or of a day before it kept them by aircraft
+  async function pbFr24Of(hex, t0, t1) {
+    if (!/^[0-9a-f]{6}$/.test(hex) || !monUp() || !(t1 > t0)) return [];
+    let list = [];
+    try { const j = await monGet(`/fr24of?hex=${hex}&t0=${Math.round(t0)}&t1=${Math.round(t1)}`, { timeout: 12000 }); list = Array.isArray(j && j.list) ? j.list : []; } catch (e) { return []; }
+    const by = new Map();
+    for (const x of list.filter(x => x && /^[0-9a-f]{1,12}$/.test(String(x.fid || ''))).slice(0, 4)) {
+      const r = await pbRaw(String(x.fid), fin(x.t0) ? x.t0 : t0);
+      for (const p of r.pts) if (p.t >= t0 && p.t <= t1 && !by.has(p.t)) by.set(p.t, p);
+    }
+    return [...by.values()].sort((p, q) => p.t - q.t);
   }
   // (two records of one flight made one: the fuller first, the other's points where it has none for 30 s and more)
   function pbMergePts(a, b) {
@@ -111,7 +135,9 @@
     if (!(t1 > t0) && raw.pts.length) t1 = raw.pts[raw.pts.length - 1].t + 60;
     if (!(t1 > t0)) t1 = Math.min(nowS(), t0 + 12 * 3600);
     const adsb = /^[0-9a-f]{6}$/.test(hex) ? (day && t0 >= nowS() - 86400 ? day : await pbAdsb(hex, t0, t1)) : [];
-    let pts = pbMergePts(raw.pts, adsb).filter(p => p.t >= t0 && p.t <= t1);
+    // (FR24's positions of it: its own id's - else, a flight of a rebuilt log, its aircraft's then - before ADS-B's)
+    const fr = raw.pts.length ? raw.pts : await pbFr24Of(hex, t0, t1);
+    let pts = pbFr24First(fr, adsb).filter(p => p.t >= t0 && p.t <= t1);
     // (no leg of it known: the flight itself out of the record - not the day's other flights)
     if (!leg && pts.length) pts = pbCut(pts, dep);
     if (pts.length < 2) return { ok: false };

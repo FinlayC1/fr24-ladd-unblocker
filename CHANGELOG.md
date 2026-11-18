@@ -4,6 +4,53 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 
 1.0.0 is the first release. The versions before it are the betas, labelled B: B22.31.12 is version 22.31.12.
 
+## [1.3.12] - 2026-11-18
+
+### In short
+- **The Android app's LADD Unblock is in FR24's bar at the bottom of the map**, beside Settings, Weather and Filters, as it is on a computer. Its window fits the phone's screen.
+- **The app updates itself.** It looks for a new version when it opens (every twelve hours at most) and when you press *Update* in LADD Unblock. It downloads the new version, checks it, and Android asks you to confirm. The first time, Android asks you to allow the app to install its updates.
+- **Aircraft and flight log pages look like a phone app's in the app.** A bar with the registration or flight number, the aircraft's pictures, its details in a grid, then its flights by year: one line each with the day, the flight, and where from and to. Tap one for its times, status and its Play, KML and CSV. *Play* shows FR24's player, with *Flights* to go back.
+- **The app connects to the monitor reliably, and is quicker.** It ran only four of the script's requests at once, so the monitor's check waited behind slower ones until the script gave up on it. Without the monitor, the script did all of its own background work as well.
+- **FR24's "my location" button works in the app.** The app now asks Android for the phone's location itself. FR24's "Open in app" pill and app banner are gone in the app.
+- **Sign-in windows stay in the app** (Google, Apple, Facebook and others), so the sign-in can finish on FR24's page.
+- **Generated weather comes sooner.** Weather for airfields and heliports, and for FR24 airports that send no METAR, now goes ahead of the script's other requests to the monitor, and is asked for as soon as the airport opens. FR24 airports with no METAR get it in FR24's own weather tiles. On a phone it shows in the airport panel's header before you pull the panel up.
+- **Playback uses FR24's own track.** A flight is played on FR24's positions wherever the monitor has them. Public ADS-B data only fills the parts FR24 doesn't have. Flights in logs rebuilt from ADS-B are played on FR24's positions too, from the days the monitor has kept them by aircraft (new in this version).
+- **Heliport landings named from FR24's track.** G-LCPX into London Heliport on 18 November now reads Denham (QKD) to London (EGLW). FR24's last point was over the Thames, just short of the pad.
+- **Serial numbers are looked for in more places**, including FR24's newer aircraft pages. Each aircraft opened without one is looked up again straight away, not a day later.
+- **No "Sorry, but flight was not found on this page" notice** on a log page for a flight this script plays itself.
+
+### Added
+- **The app's own update** (`android/app` `Updater.java`, `UpdateReceiver.java`): GitHub's latest release (`Policy.RELEASES_API`). The APK is taken only from this project's own download address for that release (`Policy.release`), no larger than the release says, and checked against GitHub's SHA-256 for it where given. It must be this app, later than the one installed and signed with the same key, before Android's installer (`PackageInstaller` session) is given it. Signed with another key (a release built without the project's own key): the user is told to install it by hand. `REQUEST_INSTALL_PACKAGES`; the receiver is not exported, and the screen it starts must be a system app's. `src/app/shim.js` `TL_APP.update()`; `src/main/06-window.js` *Update* uses it.
+- **The phone's location** (`Geo.java`; `src/app/shim.js`): the page's `navigator.geolocation` (`getCurrentPosition`, `watchPosition`, `clearWatch`) and `navigator.permissions.query({ name: 'geolocation' })` answered by the app. A fix the phone already has (half a minute old at most, or what the page allows) is given at once. Otherwise a new one comes from each provider that is on (fused, network, GPS); if none comes in time, the last fix of the last half hour is given, then "timed out". Location off: "position unavailable".
+- **Sign-in windows** (`MainActivity.java` `onCreateWindow`, `Policy.signIn`): a window FR24's page opens with a tap, to a sign-in provider, opens over the page and closes when the sign-in closes it, or with *Back*. FR24's own pages still open in the app's page, and anything else in the phone's browser. No `X-Requested-With` header, as Chrome sends none (`WebSettingsCompat.setRequestedWithHeaderOriginAllowList`, where the WebView has it).
+- **Log pages on a phone** (new `src/main/06-phone.js`): in the app, below 768 px wide, on `/data/aircraft/<reg>` and `/data/flights/<number>`. Built from the page itself (its header's labels and values, its pictures, its rows' cells, copied, not re-read as markup) and rebuilt as the page changes; the page's own buttons do the work. FR24's player is shown as FR24's page shows it, while it plays (its `hidden` class off).
+- **Monitor** `/fr24of?hex=&t0=&t1=` (`monitor/fr24raw.cjs` `byHex`): an aircraft's FR24 flights in a time, by FR24's ids, from every store. Each day's store now writes `YYYY-MM-DD.hex` beside its `.idx`: aircraft, FR24 id, first and last time. Kept and pruned with its day.
+
+### Changed
+- **The app's requests** (`AppNet.java`): up to 32 at once (the script keeps to each site's own limit itself), and the WebView's user agent where the script sets none (1.3.11 sent Android's own `Dalvik/...`).
+- **The app's page** (`MainActivity.java`): laid out as the phone's Chrome lays it out (the page's viewport tag; zoom where the page allows it).
+- **The monitor's requests** (`src/main/01-core.js`): six at once, not four. The airport weather request goes ahead of the queue (`06-boards.js`).
+- **Playback's track** (`src/main/06-pbpage.js` `pbFr24First`): FR24's positions are the track; ADS-B points are added only where FR24 has nothing for a minute and more. 1.2.4 took whichever had more points. For a flight of a rebuilt log, FR24's positions of its aircraft at the time come from the monitor (`pbFr24Of`).
+- **FR24's track ends** (`src/main/06-acpage.js` `placeCells`): for a helicopter, a heliport within 1.2 km of a low end of FR24's track (under 1,500 ft, within 1,000 ft of the heliport's height).
+
+### Fixed
+- **Weather for an FR24 airport with no METAR** (`src/page.js` `apWxFill`): FR24's `/weather` answer, empty, is given the monitor's weather in FR24's form (8 s at most), so FR24 draws it itself. An answer with weather of its own is left as it is.
+- **An airfield's weather** (`oaApi`): asked for when the airport itself is asked for; its `/weather` answer waits 8 s at most, not 6.
+- **Serial numbers** (`src/main/03-data.js` `msnOfPage`): FR24's page of the registration is read for the serial number in its own data (`data-page`), in the part that names that registration, where its title gives none. `MSN_TRY_V`: an aircraft looked for before this version is looked for again when opened.
+- **FR24's "flight was not found on this page"** (`06-acpage.js` `muteNotFound`): removed when the address names a flight this script plays itself; FR24's other notices are left alone.
+- **The flight's small panel on a phone** (`src/main/05-ui.js`): shows the airline, airports, cities, type and registration the script fills into the full panel.
+
+### Tests
+- `test/unit_app.cjs` (33 checks, from 16):
+  - The phone's location asked of the app with the page's options, refused, watched and cleared, and `navigator.permissions`.
+  - `TL_APP.update()`.
+  - FR24's "Open in app" pill and banner hidden, and another yellow pill of FR24's left alone.
+  - A log page on a phone in the app: its bar, picture, details, flights by year, a flight opened, its Play (FR24's player and the way back), following the page as it changes, FR24's notice for a flight of ours removed, and FR24's own page when wider than a phone.
+- `android/app/src/test` (16 JUnit checks, from 11):
+  - Versions compared, and a release's app read only from this project's own download.
+  - Sign-in windows; the location's limits.
+  - Twelve slow requests at once, and the user agent sent.
+
 ## [1.3.11] - 2026-11-18
 
 ### In short

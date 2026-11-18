@@ -773,6 +773,31 @@
   // (1.3.6) a serial number from FR24's page title of an aircraft: "<reg> - <model> [<serial>] - Flightradar24"; none for
   // "N/A" or anything that is not a serial number's form
   function msnOfTitle(t) { const m = String(t || '').replace(/&#0?39;|&amp;/g, ' ').match(/\[([A-Za-z0-9][A-Za-z0-9 .\/-]{0,19})\]/); const v = m ? clean(m[1]) : ''; return v && !isNA(v) ? v : ''; }
+  // (the places a serial number is looked for, as a number: one more since an aircraft was last looked up - it is looked
+  // up again, not a day later. 2: FR24's newer pages' own data - 1.3.12)
+  const MSN_TRY_V = 2;
+  // (1.3.12) FR24's page of a registration: the serial number its title gives (its older pages - "M-PORT - Bombardier
+  // Global 5000 [9868]"), else the one in the page's own data, where its newer pages carry one (data-page: the props its
+  // script draws the page from) - under a key named for it, in the part of the data that names this registration (never
+  // another aircraft's of the page's lists), a short code of letters and figures; never a padlock's text
+  const MSN_KEY = /^(?:msn|serial|serial_?(?:no|number)|serialNo|serialNumber)$/i, REG_KEY = /^(?:reg|registration)$/i;
+  function msnOfPage(html, reg) {
+    const s = String(html || ''), t = msnOfTitle((s.match(/<title[^>]*>([^<]*)<\/title>/i) || [])[1]); if (t) return t;
+    const want = String(reg || '').toUpperCase().replace(/[^A-Z0-9]/g, ''), m = s.match(/\bdata-page="([^"]{2,2000000})"/); if (!want || !m) return '';
+    let j = null; try { j = JSON.parse(m[1].replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')); } catch (e) { return ''; }
+    let found = '', seen = 0;
+    const ok = x => { const c = clean(String(x)); return (typeof x === 'string' || typeof x === 'number') && /^[A-Z0-9][A-Z0-9 ./-]{0,19}$/i.test(c) && !isNA(c) && !/^(?:0|locked|hidden|null|undefined)$/i.test(c) ? c : ''; };
+    const walk = (v, d) => {
+      if (found || d > 8 || ++seen > 20000 || !v || typeof v !== 'object') return;
+      const keys = Object.keys(v);
+      if (!Array.isArray(v) && keys.some(k => REG_KEY.test(k) && typeof v[k] === 'string' && v[k].toUpperCase().replace(/[^A-Z0-9]/g, '') === want)) {
+        for (const k of keys) if (MSN_KEY.test(k) && ok(v[k])) { found = ok(v[k]); return; }
+      }
+      for (const k of keys) { if (v[k] && typeof v[k] === 'object') walk(v[k], d + 1); if (found) return; }
+    };
+    walk(j && j.props, 0);
+    return found;
+  }
   // `bg`: prefetch for aircraft on screen - registry databases only (the photo site is left alone), low priority
   function publicIdentity(hex, reg, opts) {
     hex = String(hex || '').toLowerCase(); if (!/^[0-9a-f]{6}$/.test(hex)) return Promise.resolve(null);
@@ -790,7 +815,8 @@
     const monDue = monUp() && now() - (hx.monOwnAt || 0) > 6 * 3600e3 && !(hx.msn && hx.year > 1900 && shownOwner(hx, hx.cs));
     // (1.3.6: an aircraft opened with its serial number still not known - T7-EZZ's: no register of San Marino's is asked,
     // and the first look found none - looked for again a day later, not a month: FR24's own list of it, JetPhotos)
-    const snDue = !bg && !hx.msn && !!(reg || hx.reg) && now() - (hx.msnTryAt || 0) > 864e5;
+    // (1.3.12: and at once, whenever it was looked for, once more places are looked in than then - MSN_TRY_V)
+    const snDue = !bg && !hx.msn && !!(reg || hx.reg) && (now() - (hx.msnTryAt || 0) > 864e5 || (hx.msnTryV || 1) < MSN_TRY_V);
     if (hx.pubAt && now() - hx.pubAt < 30 * 864e5 && (bg || hx.msn || hx.pubFull) && !ownerDue && !msnDue && !monDue && !snDue) return Promise.resolve(hx);
     if (pubJobs.has(hex)) return pubJobs.get(hex);
     const job = (async () => {
@@ -816,11 +842,11 @@
       const fr24Sn = !bg && r.reg && !hx.msn ? fetchFr24Photos(r.reg, true).then(x => clean(x && x.info && x.info.serialNo), () => '') : Promise.resolve('');
       // (and FR24's own page of the registration, whose title gives it - "M-PORT - Bombardier Global 5000 [9868]" - the page
       // the log is drawn on, read for its pictures already)
-      const pageSn = !bg && r.reg && !hx.msn ? fr24AircraftHtml(r.reg).then(html => msnOfTitle((String(html).match(/<title[^>]*>([^<]*)<\/title>/i) || [])[1]), () => '') : Promise.resolve('');
+      const pageSn = !bg && r.reg && !hx.msn ? fr24AircraftHtml(r.reg).then(html => msnOfPage(html, r.reg), () => '') : Promise.resolve('');
       const [idn, jp, fsn, psn] = await Promise.all([fetchIdentity(r, !bg, bg).catch(() => ({})), jpJob, fr24Sn, pageSn]);
       const out = { reg: r.reg || idn.reg || '', msn: hx.msn || idn.msn || fsn || psn || (jp && jp.msn) || '', year: (hx.year > 1900 && !hx.yearEst ? hx.year : 0) || idn.year || hx.year || seed.year || 0, owner: (ownerName(hx.owner) ? hx.owner : '') || idn.owner || seed.owner || hx.owner || '', ownerCity: hx.ownerCity || idn.ownerCity || '', country: hx.country || idn.country || '', countryId: hx.countryId || idn.countryId || 0, type: hx.type || idn.type || seed.type || '', desc: hx.desc || idn.desc || seed.desc || (jp && jp.typeName) || '' };
       if (!out.year && !bg) { try { await fetchTrace(hex, '', { priority: true }); } catch (e) { /* not flying today */ } const m = traceMeta.get(hex); if (m && m.year) out.year = m.year; }
-      out.pubAt = now(); if (idn.regAnswered || !idn.regFailed) { out.ownerAskedAt = now(); out.ownerFailAt = 0; } else out.ownerFailAt = now(); if (!bg) { out.pubFull = true; if (!hx.msn) out.msnTryAt = now(); } if (r.faaAt) out.faaAt = r.faaAt;
+      out.pubAt = now(); if (idn.regAnswered || !idn.regFailed) { out.ownerAskedAt = now(); out.ownerFailAt = 0; } else out.ownerFailAt = now(); if (!bg) { out.pubFull = true; if (!hx.msn) { out.msnTryAt = now(); out.msnTryV = MSN_TRY_V; } } if (r.faaAt) out.faaAt = r.faaAt;
       // (a register's year over the monitor's estimate)
       if (out.year && out.year === idn.year && hx.yearEst) { out.yearEst = false; out.yearHow = ''; }
       const merged = store.mergeHex(hex, out); pushPubIds([hex]);
