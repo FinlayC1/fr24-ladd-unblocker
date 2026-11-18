@@ -247,7 +247,9 @@ const BRIDGE = () => {
 <div id="cnt-playback" class="hidden">the player</div>
 <table id="tbl-datatable"><tbody>${row(1795400000, '17 Nov 2026', ' Liverpool <a href="/data/airports/lpl">(LPL)</a>', ' Liverpool <a href="/data/airports/lpl">(LPL)</a>', ' — ', '1:36', 1795400000, 'green', 'Landed 12:05', play('abc123'))}${row(1767100000, '30 Dec 2025', ' Chester <a href="/data/airports/ceg">(CEG)</a>', ' — ', ' (RVR12) ', '1:02', 1767100000, 'gray', 'Unknown', play('ff4073ee69112c00'))}<tr class="tl-foot"><td colspan="20">2 earlier flights rebuilt from public ADS-B data</td></tr></tbody></table>
 <div id="toast-container"></div></body></html>`;
-      await page.route('**/*', route => route.request().url().split('#')[0] === 'https://www.flightradar24.com/data/aircraft/g-test' ? route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: BODY }) : route.fulfill({ status: 404, body: '' }));
+      // (FR24's player and flights pages: a page of their own here - an empty "not found" is shown by some Chromium builds
+      // as their own error page, chrome-error://, in place of the address the page went to)
+      await page.route('**/*', route => { const u = route.request().url().split('#')[0]; return u === 'https://www.flightradar24.com/data/aircraft/g-test' ? route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: BODY }) : /^https:\/\/www\.flightradar24\.com\/data\/(playback\/|flights\?)/.test(u) ? route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: '<!doctype html><html><head></head><body><div id="app"></div></body></html>' }) : route.fulfill({ status: 404, body: '' }); });
       await page.goto('https://www.flightradar24.com/data/aircraft/g-test#ff4073ee6911e300');
       // (FR24's notice for a flight of ours named in the address: shown as FR24 shows it)
       await page.evaluate(() => { document.getElementById('toast-container').innerHTML = '<div class="toast toast-warning"><div class="toast-message">Sorry, but flight was not found on this page. Please try load more flights</div></div><div class="toast"><div class="toast-message">Something else</div></div>'; });
