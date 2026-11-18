@@ -250,7 +250,18 @@ const BRIDGE = () => {
       // (FR24's player and flights pages: a page of their own here - an empty "not found" is shown by some Chromium builds
       // as their own error page, chrome-error://, in place of the address the page went to)
       await page.route('**/*', route => { const u = route.request().url().split('#')[0]; return u === 'https://www.flightradar24.com/data/aircraft/g-test' ? route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: BODY }) : /^https:\/\/www\.flightradar24\.com\/data\/(playback\/|flights\?)/.test(u) ? route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: '<!doctype html><html><head></head><body><div id="app"></div></body></html>' }) : route.fulfill({ status: 404, body: '' }); });
+      // (1.4.0: FR24's own Playback - its search's, the aircraft's panel's, its boards' - opens a log page with the flight in
+      // its address, where FR24's page plays it in its old player for a computer: in the app on a phone, FR24's own player
+      // page of it at once; one known only here, FR24's flights page given it)
+      await page.goto('https://www.flightradar24.com/data/aircraft/g-test#3d4fa2c1');
+      const toPl = await page.waitForURL('**/data/playback/3d4fa2c1', { timeout: 10000 }).then(() => page.url(), () => page.url());
+      check('a log page opened with a flight in its address (FR24\'s own Playback anywhere): FR24\'s own player page of it, in its place', toPl === 'https://www.flightradar24.com/data/playback/3d4fa2c1', toPl);
       await page.goto('https://www.flightradar24.com/data/aircraft/g-test#ff4073ee6911e300');
+      const toFl = await page.waitForURL('**/data/flights?tl-pb=*', { timeout: 10000 }).then(() => page.url(), () => page.url());
+      check('... one known only to the script: FR24\'s flights page given it, for FR24\'s player', toFl === 'https://www.flightradar24.com/data/flights?tl-pb=ff4073ee6911e300', toFl);
+      // (the log page itself, as it is opened from its own links: laid out for a phone)
+      await page.goto('https://www.flightradar24.com/data/aircraft/g-test');
+      await page.evaluate(() => history.replaceState(null, '', '#ff4073ee6911e300'));
       // (FR24's notice for a flight of ours named in the address: shown as FR24 shows it)
       await page.evaluate(() => { document.getElementById('toast-container').innerHTML = '<div class="toast toast-warning"><div class="toast-message">Sorry, but flight was not found on this page. Please try load more flights</div></div><div class="toast"><div class="toast-message">Something else</div></div>'; });
       await page.waitForSelector('#tl-pv .tl-pv-row', { timeout: 20000 }).catch(() => null);

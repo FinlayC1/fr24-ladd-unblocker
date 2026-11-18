@@ -586,6 +586,16 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     }
   }
 
+  // (1.4.0) FR24's search box on its other pages - its data pages, its player's, a log's: the tags as on the map's, each
+  // time FR24 draws its results (the map's own watch runs on the map only - off it, the rows went untagged)
+  function watchSearchTags() {
+    let due = false;
+    const run = () => { due = false; try { tagSearchResults(); } catch (e) { log('search tags', e); } };
+    const mo = new MutationObserver(() => { if (due || !document.querySelector('[data-testid="search__results"]')) return; due = true; setTimeout(run, 0); });
+    const go = () => { if (document.body) mo.observe(document.body, { childList: true, subtree: true }); };
+    store.kvReady.then(() => { if (document.body) go(); else document.addEventListener('DOMContentLoaded', go, { once: true }); }).catch(() => {});
+  }
+
   // ---- the yellow LADD / PIA / MIL tag wherever an identified aircraft appears ------------------------------------------
   // (panel header and search results above; here the airport boards, their expanded cards and "Recent <reg> flights")
   const badgeOf = r => r ? (r.ladd ? 'LADD' : r.pia ? 'PIA' : r.mil ? 'MIL' : '') : '';

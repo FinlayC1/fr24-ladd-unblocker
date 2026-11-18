@@ -354,6 +354,7 @@
   mxHidePrivacyAds();
   if (opt.noAds) addAdStyle();
   if (opt.noAds && (isDataPage || isFlightPage || isAircraftPage)) muteAdNotice();
+  if (isDataPage || isFlightPage || isAircraftPage) { addStyle(); watchSearchTags(); }
   // (the population tables unpack once FR24 has drawn the page - a few hundred ms of work that must not hold up its own
   // start - and the routes on screen are worked out again with them)
   if (!isDataPage && !isFlightPage) {
