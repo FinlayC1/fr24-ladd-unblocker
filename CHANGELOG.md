@@ -4,6 +4,25 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 
 1.0.0 is the first release. The versions before it are the betas, labelled B: B22.31.12 is version 22.31.12.
 
+## [1.3.13] - 2026-11-18
+
+### In short
+- **Playback in the app is FR24's own player for a phone.** *Play* opens FR24's own playback page, with its map and slider, for every flight: blocked ones, flights in logs rebuilt from ADS-B and older ones too. 1.3.12 opened the log page's old player for a computer.
+- **The map's pinch-zoom in the Android app is the map's again.** 1.3.12 let the app zoom its own snapshot of the page under your fingers, smearing aircraft and airport pins while you zoomed.
+- **A flight FR24 never marks as landed now ends where FR24's own track does.** G-LFSA's flights of 17 and 18 November, Liverpool and back, read "Scheduled", and one of them "Private Site". They now read Liverpool to Liverpool, "Landed ~" at the time FR24's track ends, and the player's TO is filled in too.
+- **The app is signed with the project's own key from this version on.** Uninstall the app once and install this version. From then on it updates itself.
+
+### Changed
+- **Playback in the phone app** (`src/page.js` `mxPbOpen`, `mxPbAway`, `mxPhoneApp`; `src/main/06-phone.js`; `src/main/05-ui.js` `aircraftLinks`): in the app on a phone, a flight is played in FR24's own player page, never on its aircraft's log page. A flight with FR24's own id goes to `/data/playback/<id>`; one known only to the script goes to `/data/flights?tl-pb=<id>`, which the page part turns into FR24's player. The phone log page's *Play* and the panel's *playback* link go there too.
+- **The Android app's zoom** (`MainActivity.java`): no zoom of the WebView's own (`setSupportZoom(false)`, `setBuiltInZoomControls(false)`). A pinch goes to FR24's map, as FR24's page allows no zooming of the page.
+- **CI**: the iPhone app is built on a push to `main`, or by hand (*Run workflow*), and no longer on every working branch's push and pull request.
+
+### Fixed
+- **A flight FR24 still calls "Scheduled" or "Unknown"** (`src/main/06-acpage.js` `fillFr24Rows`): FR24's own track of it is read once it took off over half an hour ago, as for a flight FR24 marks landed. Its ends name the airports, replacing "Private Site" and inferred ends. When the track ends low and over 20 minutes ago, the row reads "Landed ~" at that time, with its duration.
+
+### Tests
+- `test/unit_app.cjs`: the phone log page's *Play* opens FR24's own player page, by FR24's id or, for a flight known only to the script, through FR24's flights page.
+
 ## [1.3.12] - 2026-11-18
 
 ### In short

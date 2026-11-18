@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Flightradar24 LADD / N-A Unblocker (feed-level)
 // @namespace    tweeks.io
-// @version      1.3.12
+// @version      1.3.13
 // @description  Identifies every LADD / N/A / blocked military aircraft on Flightradar24 from public ADS-B, and injects callsign, registration, operator, age, country, MSN, squawk, vertical speed, GPS altitude, airspeeds, wind, photos, a reasoned origin/destination with a wind-corrected ETA (also for ordinary flights FR24 shows as N/A - military, private, GA, helicopters, with private landing sites; learned from 63 days of every aircraft worldwide, with live weather and closures), airport-board entries and a rebuilt 7-month flight log straight into FR24's own data - so it all renders like normal FR24 traffic.
 // @author       Finlay Clarke
 // @updateURL    https://raw.githubusercontent.com/FinlayC1/fr24-ladd-unblocker/main/dist/fr24-ladd-unblocker.user.js
@@ -100,7 +100,7 @@
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "1.3.12";
+    var BRIDGE_V = "1.3.13";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed but the
@@ -5910,17 +5910,24 @@
     // script plays it in place, in its own player)
     var mxNav = function (u, replace) { if (replace) location.replace(u); else location.assign(u); };
     var mxPbLogUrl = function (reg, id) { return '/data/aircraft/' + encodeURIComponent(String(reg).toLowerCase()) + '#' + id; };
+    // (1.3.12) in the phone app (android/app, ios/) on a phone: a flight played in FR24's own player page - its map, its
+    // slider, made for a phone - never on its aircraft's log page, whose player is FR24's old one for a computer
+    var mxPhoneApp = function () { try { return typeof TL_APP === 'object' && !!TL_APP && !!window.matchMedia && window.matchMedia('(max-width: 767.98px)').matches; } catch (e) { return false; } };
+    // (its address there: FR24's own id's page; one known only here, FR24's flights page given it - mxPbAway)
+    var mxPbPhoneUrl = function (id) { return MX_PB_SYN.test(String(id)) ? '/data/flights?tl-pb=' + id : '/data/playback/' + id; };
     // (1.3: the flight's log page and its player in a tab of their own, however it was clicked - the map, its panel and
     // board left as they were. A browser that will not open one - a pop-up blocker: in this tab after all)
     var mxTab = function (u) { var wn = null; try { wn = window.open(u, '_blank'); } catch (e) { wn = null; } if (wn) { try { wn.opener = null; } catch (e) { /* ignore */ } } else mxNav(u); };
     function mxPbOpen(w, t, newTab) {
       var id = isHex(w.hex) && w.dep > 0 ? mxPbSynId(w.hex, w.dep) : w.id > 0 ? Number(w.id).toString(16) : isHex(w.hex) ? mxPbSynId(w.hex, 0) : '';
       var go = function (u) { mxTab(u); };
-      if (w.reg && id) { go(mxPbLogUrl(w.reg, id)); return; }
+      // (1.3.12: in the phone app, FR24's own player page, in this page)
+      if (id && mxPhoneApp()) { mxNav(mxPbPhoneUrl(id)); return; }
+      if (w.reg && id && !mxPhoneApp()) { go(mxPbLogUrl(w.reg, id)); return; }
       var root = document.documentElement; root.style.cursor = 'progress';
       mxPbAsk({ id: id, hex: w.hex || '', reg: w.reg || '', cs: w.cs || '', dep: w.dep || 0, at: w.at || 0, apId: w.apId || 0, kind: w.kind || '' }).then(function (d) {
         root.style.cursor = '';
-        if (d && d.reg) { go(mxPbLogUrl(d.reg, d.hex && d.dep ? mxPbSynId(d.hex, d.dep) : d.id)); return; }
+        if (d && d.reg && !mxPhoneApp()) { go(mxPbLogUrl(d.reg, d.hex && d.dep ? mxPbSynId(d.hex, d.dep) : d.id)); return; }
         if (!newTab && d && mxPbShow(d, false, null)) return;
         // (1.2.6: no registration known, here or to FR24 - FR24's own Playback would open its list of aircraft types,
         // /data/aircraft/#<id>: FR24's player page of the flight instead - its own id's page, or, for one known only here,
@@ -6029,7 +6036,7 @@
     var mxPbAway = function (id) {
       if (mx.pbAway === id) return; mx.pbAway = id;
       mxPbAsk({ id: id }, 30000).then(function (d) {
-        if (d && d.reg) { mxNav(mxPbLogUrl(d.reg, d.hex && d.dep && MX_PB_SYN.test(id) ? mxPbSynId(d.hex, d.dep) : id), true); return; }
+        if (d && d.reg && !mxPhoneApp()) { mxNav(mxPbLogUrl(d.reg, d.hex && d.dep && MX_PB_SYN.test(id) ? mxPbSynId(d.hex, d.dep) : id), true); return; }
         if (!d) return;
         // (1.2.6: an aircraft of no registration anywhere - no log page to play it on: FR24's own player page, given the
         // flight by FR24's router - here when this page is FR24's app, else on FR24's flights page, where it is)
@@ -9812,7 +9819,7 @@
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '1.3.12';
+  const VERSION = '1.3.13';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
@@ -15691,7 +15698,8 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       reg && `<a href="/data/aircraft/${encodeURIComponent(reg.toLowerCase())}" target="_blank" rel="noopener">flight log</a>`,
       // (1.2.4: its flight now - or latest - played on its log page in FR24's own player, as FR24 plays a flight: its track
       // as kept, 06-pbpage)
-      reg && /^[0-9a-f]{6}$/.test(hexL) && `<a href="/data/aircraft/${encodeURIComponent(reg.toLowerCase())}#${esc(pbSynId(hexL, 0))}" target="_blank" rel="noopener" title="This aircraft's flight in FR24's player">playback</a>`,
+      // (1.3.12: in the phone app, FR24's own player page - made for a phone - in the app's page)
+      reg && /^[0-9a-f]{6}$/.test(hexL) && (typeof TL_APP === 'object' && TL_APP ? `<a href="/data/flights?tl-pb=${esc(pbSynId(hexL, 0))}" title="This aircraft's flight in FR24's player">playback</a>` : `<a href="/data/aircraft/${encodeURIComponent(reg.toLowerCase())}#${esc(pbSynId(hexL, 0))}" target="_blank" rel="noopener" title="This aircraft's flight in FR24's player">playback</a>`),
       reg && `<a href="https://www.jetphotos.com/showphotos.php?regsearch=${encodeURIComponent(reg)}" target="_blank" rel="noopener noreferrer">photos</a>`,
       (u => u && `<a href="${esc(u[0])}" target="_blank" rel="noopener noreferrer" title="${esc(u[1])}: ${esc(reg)}">registry</a>`)(registryUrl(reg)),
       // (1.3.12: its serial number, history and age in the aircraft databases - opened by the user, never read by the script)
@@ -16643,12 +16651,32 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
         }
       }
       // (still "—" on a flight FR24 says landed: where its own track began / ended)
-      if (fid && landedRow && (dash(fromTd) || dash(toTd) || weak(fromTd) || weak(toTd))) {
+      // (1.3.12: and on one FR24 still calls "Scheduled" or "Unknown" that took off over half an hour ago - FR24 keeps no
+      // landing for many a light aircraft's flight: G-LFSA's of 17 and 18 Nov, Liverpool and back, "Scheduled", the first
+      // "Private Site" where ADS-B lost it low, the player's TO "-". Its own track's end, low and over 20 minutes ago, is
+      // also its landing: "Landed ~" then)
+      const unfinished = /^\s*(Scheduled|Unknown)\b/i.test(statusTd.textContent || '') && atd > 0 && nowS() - atd > 1800;
+      if (fid && (landedRow || unfinished) && (dash(fromTd) || dash(toTd) || weak(fromTd) || weak(toTd) || unfinished)) {
         const fe = fr24EndCells.get(fid);
-        if (fe) { if (putCells(fromTd, 'FROM', fe.from, 'from')) n++; if (putCells(toTd, 'TO', fe.to, 'to')) n++; }
-        else if (!fr24EndAsked.has(fid)) {
+        if (fe) {
+          if (putCells(fromTd, 'FROM', fe.from, 'from')) n++;
+          if (putCells(toTd, 'TO', fe.to, 'to')) n++;
+          if (unfinished && fe.landT > atd && fe.to && fe.to.a) {
+            const tzTo = tzOf(fe.to.a), txt = 'Landed ~' + fmtLocal(fe.landT, tzTo);
+            statusTd.dataset.prefix = 'Landed ~'; statusTd.dataset.timestamp = String(fe.landT); statusTd.dataset.offset = String(tzTo); statusTd.textContent = ' ' + txt + ' ';
+            statusTd.title = 'Where and when FR24\'s own track of the flight ends (LADD unblocker)';
+            const sb = stateTd.querySelector('.state-block'); if (sb) { sb.classList.remove('gray', 'red', 'yellow'); sb.classList.add('green'); }
+            if (dash(durTd)) durTd.textContent = '~' + durStr(fe.landT - atd);
+            for (const r of tr.querySelectorAll('td.visible-xs .row[data-prefix]')) if (/Scheduled|Unknown/i.test(r.textContent)) { r.textContent = ' ' + txt + ' '; r.dataset.prefix = 'Landed ~'; r.dataset.timestamp = String(fe.landT); r.dataset.offset = String(tzTo); }
+            n++;
+          }
+        } else if (!fr24EndAsked.has(fid)) {
           fr24EndAsked.add(fid);
-          fr24TrackEnds(fid, Number(tr.dataset.timestamp) || atd).then(e => { fr24EndCells.set(fid, { from: e && placeCells(e.start), to: e && placeCells(e.end) }); if (fr24Refill) fr24Refill(); });
+          fr24TrackEnds(fid, Number(tr.dataset.timestamp) || atd).then(e => {
+            const end = e && e.end, down = !!end && end.t > 0 && nowS() - end.t > 1200 && (end.alt == null || end.alt < 1500) && (end.gs == null || end.gs < 120);
+            fr24EndCells.set(fid, { from: e && placeCells(e.start), to: e && placeCells(e.end), landT: down ? end.t : 0 });
+            if (fr24Refill) fr24Refill();
+          });
         }
       }
       if (!l) continue;
@@ -18737,7 +18765,15 @@ html.tl-pv-play #tl-pv .tl-pv-backpill{display:flex}
         for (const a of c[12] ? c[12].querySelectorAll('a') : []) {
           const label = pvText(a); if (!label) continue;
           const b = pvEl('button', /btn-playback|tl-live/.test(a.className) ? 'tl-pv-play' : ''); b.type = 'button'; b.textContent = label;
-          b.onclick = () => { a.click(); };
+          // (Play: the flight in FR24's own player page, made for a phone - its map and slider - not this page's player,
+          // FR24's old one for a computer. A flight of FR24's own by its id; one known only here by the aircraft and its
+          // take-off, on FR24's flights page, which the page part turns into the player - page.js mxPbAway)
+          const pid = /btn-playback/.test(a.className) ? String(a.dataset.flightHex || (/^btn-playback-([0-9a-f]+)$/.exec(a.id) || [])[1] || '').toLowerCase() : '';
+          b.onclick = () => {
+            if (/^[0-9a-f]{1,8}$/.test(pid)) location.href = '/data/playback/' + pid;
+            else if (PB_SYN.test(pid)) location.href = '/data/flights?tl-pb=' + pid;
+            else a.click();
+          };
           btns.appendChild(b);
         }
         if (btns.children.length) more.appendChild(btns);
@@ -19664,7 +19700,7 @@ html.tl-pv-play #tl-pv .tl-pv-backpill{display:flex}
   // (the version whose "what's new" was put away, and the one whose dot on the button the window was opened for)
   const UB_SEEN_KEY = 'tweeks.fr24.ladd.seenver', UB_DOT_KEY = 'tweeks.fr24.ladd.dotver';
   // (the newest CHANGELOG section's headlines, written in by build.mjs: { v, items })
-  const UB_WHATS_NEW = {"v":"1.3.12","items":["**The Android app's LADD Unblock is in FR24's bar at the bottom of the map**, beside Settings, Weather and Filters, as it is on a computer. Its window fits the phone's screen.","**The app updates itself.** It looks for a new version when it opens (every twelve hours at most) and when you press *Update* in LADD Unblock. It downloads the new version, checks it, and Android asks you to confirm. The first time, Android asks you to allow the app to install its updates.","**Aircraft and flight log pages look like a phone app's in the app.** A bar with the registration or flight number, the aircraft's pictures, its details in a grid, then its flights by year: one line each with the day, the flight, and where from and to. Tap one for its times, status and its Play, KML and CSV. *Play* shows FR24's player, with *Flights* to go back.","**The app connects to the monitor reliably, and is quicker.** It ran only four of the script's requests at once, so the monitor's check waited behind slower ones until the script gave up on it. Without the monitor, the script did all of its own background work as well.","**FR24's \"my location\" button works in the app.** The app now asks Android for the phone's location itself. FR24's \"Open in app\" pill and app banner are gone in the app.","**Sign-in windows stay in the app** (Google, Apple, Facebook and others), so the sign-in can finish on FR24's page."]};
+  const UB_WHATS_NEW = {"v":"1.3.13","items":["**Playback in the app is FR24's own player for a phone.** *Play* opens FR24's own playback page, with its map and slider, for every flight: blocked ones, flights in logs rebuilt from ADS-B and older ones too. 1.3.12 opened the log page's old player for a computer.","**The map's pinch-zoom in the Android app is the map's again.** 1.3.12 let the app zoom its own snapshot of the page under your fingers, smearing aircraft and airport pins while you zoomed.","**A flight FR24 never marks as landed now ends where FR24's own track does.** G-LFSA's flights of 17 and 18 November, Liverpool and back, read \"Scheduled\", and one of them \"Private Site\". They now read Liverpool to Liverpool, \"Landed ~\" at the time FR24's track ends, and the player's TO is filled in too.","**The app is signed with the project's own key from this version on.** Uninstall the app once and install this version. From then on it updates itself."]};
   // (an aircraft with an open padlock: FR24's outline style - 24 grid, 1.5 stroke in the text colour)
   const UB_ICON = '<svg data-tl-ub-icon="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
   const UB_X = '<svg viewBox="0 0 14 14" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5l11 11M12.5 1.5l-11 11"/></svg>';

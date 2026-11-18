@@ -1,4 +1,4 @@
-// FR24 LADD Unblocker 1.3.12 - the page-world part (see src/page.js)
+// FR24 LADD Unblocker 1.3.13 - the page-world part (see src/page.js)
 (function () {
   'use strict';
   // ------------------------------------------------------------------------------------------------------------
@@ -7,7 +7,7 @@
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "1.3.12";
+    var BRIDGE_V = "1.3.13";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed but the
@@ -5817,17 +5817,24 @@
     // script plays it in place, in its own player)
     var mxNav = function (u, replace) { if (replace) location.replace(u); else location.assign(u); };
     var mxPbLogUrl = function (reg, id) { return '/data/aircraft/' + encodeURIComponent(String(reg).toLowerCase()) + '#' + id; };
+    // (1.3.12) in the phone app (android/app, ios/) on a phone: a flight played in FR24's own player page - its map, its
+    // slider, made for a phone - never on its aircraft's log page, whose player is FR24's old one for a computer
+    var mxPhoneApp = function () { try { return typeof TL_APP === 'object' && !!TL_APP && !!window.matchMedia && window.matchMedia('(max-width: 767.98px)').matches; } catch (e) { return false; } };
+    // (its address there: FR24's own id's page; one known only here, FR24's flights page given it - mxPbAway)
+    var mxPbPhoneUrl = function (id) { return MX_PB_SYN.test(String(id)) ? '/data/flights?tl-pb=' + id : '/data/playback/' + id; };
     // (1.3: the flight's log page and its player in a tab of their own, however it was clicked - the map, its panel and
     // board left as they were. A browser that will not open one - a pop-up blocker: in this tab after all)
     var mxTab = function (u) { var wn = null; try { wn = window.open(u, '_blank'); } catch (e) { wn = null; } if (wn) { try { wn.opener = null; } catch (e) { /* ignore */ } } else mxNav(u); };
     function mxPbOpen(w, t, newTab) {
       var id = isHex(w.hex) && w.dep > 0 ? mxPbSynId(w.hex, w.dep) : w.id > 0 ? Number(w.id).toString(16) : isHex(w.hex) ? mxPbSynId(w.hex, 0) : '';
       var go = function (u) { mxTab(u); };
-      if (w.reg && id) { go(mxPbLogUrl(w.reg, id)); return; }
+      // (1.3.12: in the phone app, FR24's own player page, in this page)
+      if (id && mxPhoneApp()) { mxNav(mxPbPhoneUrl(id)); return; }
+      if (w.reg && id && !mxPhoneApp()) { go(mxPbLogUrl(w.reg, id)); return; }
       var root = document.documentElement; root.style.cursor = 'progress';
       mxPbAsk({ id: id, hex: w.hex || '', reg: w.reg || '', cs: w.cs || '', dep: w.dep || 0, at: w.at || 0, apId: w.apId || 0, kind: w.kind || '' }).then(function (d) {
         root.style.cursor = '';
-        if (d && d.reg) { go(mxPbLogUrl(d.reg, d.hex && d.dep ? mxPbSynId(d.hex, d.dep) : d.id)); return; }
+        if (d && d.reg && !mxPhoneApp()) { go(mxPbLogUrl(d.reg, d.hex && d.dep ? mxPbSynId(d.hex, d.dep) : d.id)); return; }
         if (!newTab && d && mxPbShow(d, false, null)) return;
         // (1.2.6: no registration known, here or to FR24 - FR24's own Playback would open its list of aircraft types,
         // /data/aircraft/#<id>: FR24's player page of the flight instead - its own id's page, or, for one known only here,
@@ -5936,7 +5943,7 @@
     var mxPbAway = function (id) {
       if (mx.pbAway === id) return; mx.pbAway = id;
       mxPbAsk({ id: id }, 30000).then(function (d) {
-        if (d && d.reg) { mxNav(mxPbLogUrl(d.reg, d.hex && d.dep && MX_PB_SYN.test(id) ? mxPbSynId(d.hex, d.dep) : id), true); return; }
+        if (d && d.reg && !mxPhoneApp()) { mxNav(mxPbLogUrl(d.reg, d.hex && d.dep && MX_PB_SYN.test(id) ? mxPbSynId(d.hex, d.dep) : id), true); return; }
         if (!d) return;
         // (1.2.6: an aircraft of no registration anywhere - no log page to play it on: FR24's own player page, given the
         // flight by FR24's router - here when this page is FR24's app, else on FR24's flights page, where it is)

@@ -38,7 +38,7 @@ Everything the extension does on FR24's site, on FR24's site as a phone gets it:
 - LADD Unblock in FR24's bar at the bottom of the map, beside Settings, Weather and Filters, as on a computer (1.3.12)
 - aircraft and flight log pages laid out as a phone app lays them out (1.3.12): a bar with the registration or flight
   number, the aircraft's pictures and details, then its flights by year, one line each - tap one for its times, status
-  and its Play, KML and CSV; *Play* shows FR24's player, *Flights* goes back
+  and its Play, KML and CSV; *Play* opens FR24's own player page for a phone, with its map and slider (1.3.13)
 - no "Open in app" pill or app banner (1.3.12)
 
 What is different from FR24's own app:

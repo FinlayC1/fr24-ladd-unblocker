@@ -265,12 +265,32 @@
         }
       }
       // (still "—" on a flight FR24 says landed: where its own track began / ended)
-      if (fid && landedRow && (dash(fromTd) || dash(toTd) || weak(fromTd) || weak(toTd))) {
+      // (1.3.12: and on one FR24 still calls "Scheduled" or "Unknown" that took off over half an hour ago - FR24 keeps no
+      // landing for many a light aircraft's flight: G-LFSA's of 17 and 18 Nov, Liverpool and back, "Scheduled", the first
+      // "Private Site" where ADS-B lost it low, the player's TO "-". Its own track's end, low and over 20 minutes ago, is
+      // also its landing: "Landed ~" then)
+      const unfinished = /^\s*(Scheduled|Unknown)\b/i.test(statusTd.textContent || '') && atd > 0 && nowS() - atd > 1800;
+      if (fid && (landedRow || unfinished) && (dash(fromTd) || dash(toTd) || weak(fromTd) || weak(toTd) || unfinished)) {
         const fe = fr24EndCells.get(fid);
-        if (fe) { if (putCells(fromTd, 'FROM', fe.from, 'from')) n++; if (putCells(toTd, 'TO', fe.to, 'to')) n++; }
-        else if (!fr24EndAsked.has(fid)) {
+        if (fe) {
+          if (putCells(fromTd, 'FROM', fe.from, 'from')) n++;
+          if (putCells(toTd, 'TO', fe.to, 'to')) n++;
+          if (unfinished && fe.landT > atd && fe.to && fe.to.a) {
+            const tzTo = tzOf(fe.to.a), txt = 'Landed ~' + fmtLocal(fe.landT, tzTo);
+            statusTd.dataset.prefix = 'Landed ~'; statusTd.dataset.timestamp = String(fe.landT); statusTd.dataset.offset = String(tzTo); statusTd.textContent = ' ' + txt + ' ';
+            statusTd.title = 'Where and when FR24\'s own track of the flight ends (LADD unblocker)';
+            const sb = stateTd.querySelector('.state-block'); if (sb) { sb.classList.remove('gray', 'red', 'yellow'); sb.classList.add('green'); }
+            if (dash(durTd)) durTd.textContent = '~' + durStr(fe.landT - atd);
+            for (const r of tr.querySelectorAll('td.visible-xs .row[data-prefix]')) if (/Scheduled|Unknown/i.test(r.textContent)) { r.textContent = ' ' + txt + ' '; r.dataset.prefix = 'Landed ~'; r.dataset.timestamp = String(fe.landT); r.dataset.offset = String(tzTo); }
+            n++;
+          }
+        } else if (!fr24EndAsked.has(fid)) {
           fr24EndAsked.add(fid);
-          fr24TrackEnds(fid, Number(tr.dataset.timestamp) || atd).then(e => { fr24EndCells.set(fid, { from: e && placeCells(e.start), to: e && placeCells(e.end) }); if (fr24Refill) fr24Refill(); });
+          fr24TrackEnds(fid, Number(tr.dataset.timestamp) || atd).then(e => {
+            const end = e && e.end, down = !!end && end.t > 0 && nowS() - end.t > 1200 && (end.alt == null || end.alt < 1500) && (end.gs == null || end.gs < 120);
+            fr24EndCells.set(fid, { from: e && placeCells(e.start), to: e && placeCells(e.end), landT: down ? end.t : 0 });
+            if (fr24Refill) fr24Refill();
+          });
         }
       }
       if (!l) continue;

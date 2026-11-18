@@ -148,7 +148,15 @@ html.tl-pv-play #tl-pv .tl-pv-backpill{display:flex}
         for (const a of c[12] ? c[12].querySelectorAll('a') : []) {
           const label = pvText(a); if (!label) continue;
           const b = pvEl('button', /btn-playback|tl-live/.test(a.className) ? 'tl-pv-play' : ''); b.type = 'button'; b.textContent = label;
-          b.onclick = () => { a.click(); };
+          // (Play: the flight in FR24's own player page, made for a phone - its map and slider - not this page's player,
+          // FR24's old one for a computer. A flight of FR24's own by its id; one known only here by the aircraft and its
+          // take-off, on FR24's flights page, which the page part turns into the player - page.js mxPbAway)
+          const pid = /btn-playback/.test(a.className) ? String(a.dataset.flightHex || (/^btn-playback-([0-9a-f]+)$/.exec(a.id) || [])[1] || '').toLowerCase() : '';
+          b.onclick = () => {
+            if (/^[0-9a-f]{1,8}$/.test(pid)) location.href = '/data/playback/' + pid;
+            else if (PB_SYN.test(pid)) location.href = '/data/flights?tl-pb=' + pid;
+            else a.click();
+          };
           btns.appendChild(b);
         }
         if (btns.children.length) more.appendChild(btns);

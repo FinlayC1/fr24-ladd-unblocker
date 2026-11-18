@@ -233,7 +233,8 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       reg && `<a href="/data/aircraft/${encodeURIComponent(reg.toLowerCase())}" target="_blank" rel="noopener">flight log</a>`,
       // (1.2.4: its flight now - or latest - played on its log page in FR24's own player, as FR24 plays a flight: its track
       // as kept, 06-pbpage)
-      reg && /^[0-9a-f]{6}$/.test(hexL) && `<a href="/data/aircraft/${encodeURIComponent(reg.toLowerCase())}#${esc(pbSynId(hexL, 0))}" target="_blank" rel="noopener" title="This aircraft's flight in FR24's player">playback</a>`,
+      // (1.3.12: in the phone app, FR24's own player page - made for a phone - in the app's page)
+      reg && /^[0-9a-f]{6}$/.test(hexL) && (typeof TL_APP === 'object' && TL_APP ? `<a href="/data/flights?tl-pb=${esc(pbSynId(hexL, 0))}" title="This aircraft's flight in FR24's player">playback</a>` : `<a href="/data/aircraft/${encodeURIComponent(reg.toLowerCase())}#${esc(pbSynId(hexL, 0))}" target="_blank" rel="noopener" title="This aircraft's flight in FR24's player">playback</a>`),
       reg && `<a href="https://www.jetphotos.com/showphotos.php?regsearch=${encodeURIComponent(reg)}" target="_blank" rel="noopener noreferrer">photos</a>`,
       (u => u && `<a href="${esc(u[0])}" target="_blank" rel="noopener noreferrer" title="${esc(u[1])}: ${esc(reg)}">registry</a>`)(registryUrl(reg)),
       // (1.3.12: its serial number, history and age in the aircraft databases - opened by the user, never read by the script)
