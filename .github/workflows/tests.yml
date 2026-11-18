@@ -146,8 +146,11 @@ jobs:
           path: android/module/build/outputs/apk/release/module-release.apk
           if-no-files-found: error
   # iPhone and iPad (ios/): the app - FR24's site with the script in it, the Android app's twin - built on a Mac with
-  # Xcode and XcodeGen, unsigned, its .ipa kept with the run (ios/build.sh)
+  # Xcode and XcodeGen, unsigned, its .ipa kept with the run (ios/build.sh). On a push only: a pull request from this
+  # repository is the same commit built twice (a Mac's minutes count ten times), and the release takes the .ipa of the
+  # push to main's run
   ios:
+    if: github.event_name == 'push'
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
