@@ -15,6 +15,8 @@ on:
     types: [published]
 permissions:
   contents: write
+  # (the iPhone app's .ipa, built by the Tests run that started the release, read from that run)
+  actions: read
 concurrency:
   group: release
   cancel-in-progress: false
@@ -71,6 +73,16 @@ jobs:
           cp android/app/build/outputs/apk/release/app-release.apk dist/fr24-ladd-unblocker-app.apk
           cp android/module/build/outputs/apk/release/module-release.apk dist/fr24-ladd-unblocker-module.apk
           rm -f "$RUNNER_TEMP/module.jks"
+      # (iPhone and iPad: the .ipa the Tests run that started this release built on a Mac - ios/build.sh - attached as
+      # it is; a release made by hand from a tag has none)
+      - uses: actions/download-artifact@v4
+        if: steps.v.outputs.skip != '1' && github.event_name == 'workflow_run'
+        continue-on-error: true
+        with:
+          name: fr24-ladd-unblocker-ios
+          path: dist
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
       - name: Release notes from the changelog
         if: steps.v.outputs.skip != '1'
         env:
@@ -82,7 +94,7 @@ jobs:
             let i = s.indexOf('## [' + v + ']'); if (i < 0) i = s.indexOf('## [B' + v + ']'); if (i < 0) { console.log('Version ' + v); process.exit(0); }
             const j = s.indexOf('\n## [', i + 1); console.log(s.slice(s.indexOf('\n', i) + 1, j < 0 ? undefined : j).trim());
           " "$TAG" > notes.md
-          printf '\n\n---\n**Install:** Chrome / Edge - download `fr24-ladd-unblocker-extension.zip`, unzip it, then *Load unpacked* in `chrome://extensions` (Developer mode). Firefox - `fr24-ladd-unblocker-firefox.zip` is the build for Firefox Add-ons (or *Load Temporary Add-on* in `about:debugging`). Tampermonkey - open `fr24-ladd-unblocker.user.js`. Android - install `fr24-ladd-unblocker-app.apk` and open it: FR24'"'"'s site with the script in it, no root needed. FR24'"'"'s own Android app (rooted, with LSPosed) - install `fr24-ladd-unblocker-module.apk`, enable it in LSPosed for Flightradar24, then close and reopen FR24 (docs/mobile.md).\n' >> notes.md
+          printf '\n\n---\n**Install:** Chrome / Edge - download `fr24-ladd-unblocker-extension.zip`, unzip it, then *Load unpacked* in `chrome://extensions` (Developer mode). Firefox - `fr24-ladd-unblocker-firefox.zip` is the build for Firefox Add-ons (or *Load Temporary Add-on* in `about:debugging`). Tampermonkey - open `fr24-ladd-unblocker.user.js`. Android - install `fr24-ladd-unblocker-app.apk` and open it: FR24'"'"'s site with the script in it, no root needed. FR24'"'"'s own Android app (rooted, with LSPosed) - install `fr24-ladd-unblocker-module.apk`, enable it in LSPosed for Flightradar24, then close and reopen FR24. iPhone and iPad - install `fr24-ladd-unblocker-ios.ipa` with a sideloading app (AltStore, Sideloadly), which signs it with your own Apple ID (docs/mobile.md).\n' >> notes.md
       - name: Publish
         if: steps.v.outputs.skip != '1'
         env:
@@ -96,11 +108,12 @@ jobs:
           # the releases, and the one made from main is the latest: GitHub would otherwise rank 22.31.12 above 1.0.0)
           V="${TAG#v}"; MAJ="${V%%.*}"
           if [ "$MAJ" -ge 20 ]; then TITLE="FR24 LADD Unblocker B$V (beta)"; KIND="--prerelease"; else TITLE="FR24 LADD Unblocker v$V"; KIND="--latest"; fi
+          IPA=""; if [ -f dist/fr24-ladd-unblocker-ios.ipa ]; then IPA="dist/fr24-ladd-unblocker-ios.ipa"; else echo "no .ipa from the Tests run: the iPhone app is not attached"; fi
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" dist/fr24-ladd-unblocker-extension.zip dist/fr24-ladd-unblocker-firefox.zip dist/fr24-ladd-unblocker.user.js dist/fr24-ladd-unblocker-app.apk dist/fr24-ladd-unblocker-module.apk --clobber
+            gh release upload "$TAG" dist/fr24-ladd-unblocker-extension.zip dist/fr24-ladd-unblocker-firefox.zip dist/fr24-ladd-unblocker.user.js dist/fr24-ladd-unblocker-app.apk dist/fr24-ladd-unblocker-module.apk $IPA --clobber
             gh release edit "$TAG" --title "$TITLE" --notes-file notes.md
           else
-            gh release create "$TAG" dist/fr24-ladd-unblocker-extension.zip dist/fr24-ladd-unblocker-firefox.zip dist/fr24-ladd-unblocker.user.js dist/fr24-ladd-unblocker-app.apk dist/fr24-ladd-unblocker-module.apk --target "$SHA" --title "$TITLE" --notes-file notes.md $KIND
+            gh release create "$TAG" dist/fr24-ladd-unblocker-extension.zip dist/fr24-ladd-unblocker-firefox.zip dist/fr24-ladd-unblocker.user.js dist/fr24-ladd-unblocker-app.apk dist/fr24-ladd-unblocker-module.apk $IPA --target "$SHA" --title "$TITLE" --notes-file notes.md $KIND
           fi
       - name: The betas labelled as such
         if: steps.v.outputs.skip != '1'

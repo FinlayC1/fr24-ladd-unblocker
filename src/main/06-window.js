@@ -121,7 +121,7 @@ html.tl-no-strip .tl-strip{display:none!important}
   const verLabel = v => { const s = String(v || '').replace(/^[vB]/i, ''); return (verParts(v)[0] === 0 && s ? 'B' : 'v') + s; };
   function installKind() {
     // (1.3.11: the Android app - FR24's site in the app's own window, android/app; updated by installing its new APK)
-    if (typeof TL_APP === 'object' && TL_APP) return { kind: 'app', name: 'Android app' };
+    if (typeof TL_APP === 'object' && TL_APP) return { kind: 'app', name: TL_APP.platform === 'ios' ? 'iPhone app' : 'Android app' };
     if (typeof TL_EXTENSION === 'boolean') {
       let m = null; try { m = chrome.runtime.getManifest(); } catch (e) { /* the extension was reloaded */ }
       // (Firefox: installed from addons.mozilla.org, which updates it - it cannot load an unpacked folder for good)
@@ -154,7 +154,8 @@ html.tl-no-strip .tl-strip{display:none!important}
     // (1.3.12: the app updates itself - it downloads its new version, checks it and has Android install it over this one;
     // an app before that, by the browser's download)
     if (act === 'update' && k === 'app') {
-      if (typeof TL_APP.update === 'function' && TL_APP.update()) ubNote = 'The app downloads its new version and asks Android to install it over this one - your settings stay. Android asks you to confirm.';
+      if (TL_APP.platform === 'ios' && typeof TL_APP.update === 'function' && TL_APP.update()) ubNote = 'The app looks for its new version and opens its release page: install the new .ipa with the app you installed this one with - your settings stay.';
+      else if (typeof TL_APP.update === 'function' && TL_APP.update()) ubNote = 'The app downloads its new version and asks Android to install it over this one - your settings stay. Android asks you to confirm.';
       else { window.open(UB_APP_URL, '_blank', 'noopener'); ubNote = 'Your browser downloads the new app. Open it when it has, and install it over this one: your settings stay.'; }
     }
     else if (act === 'update' && k === 'us') { window.open(UB_USERSCRIPT_URL, '_blank', 'noopener'); ubNote = verParts(VERSION)[0] === 0 && verParts(latestV())[0] === 1 ? 'Your userscript manager opens the new version in a tab. It may call it a downgrade (it compares 1 with 22), but it is the newer one: confirm it there, then reload FR24.' : 'Your userscript manager opens the new version in a tab: click Update there, then reload FR24.'; }
@@ -192,7 +193,7 @@ html.tl-no-strip .tl-strip{display:none!important}
     else if (newer) btns.push(`<button class="tl-ub-b" data-ub-act="update">Update to v${esc(O.v)}</button>`);
     else btns.push(`<button class="tl-ub-b tl-ub-b2" data-ub-act="check"${ubAsking ? ' disabled' : ''}>Check for updates</button>`);
     if (ik.kind === 'ext') btns.push('<button class="tl-ub-b tl-ub-b2" data-ub-act="reloadExt" title="Load the extension again from its folder - after replacing its files with a new version">Reload extension</button>');
-    const how = ik.kind === 'app' ? 'Update downloads the new version of the app and installs it over this one (Android asks you to confirm). The app also looks for one itself when it opens.' : ik.kind === 'us' ? 'Update opens the new version in your userscript manager, which offers to update.' : ik.kind === 'ext' ? 'Update puts the new version into the extension\'s folder for you. The first time, Chrome asks you to choose that folder and allow it to be edited.' : 'Installed from a store: your browser updates it by itself.';
+    const how = ik.kind === 'app' ? (TL_APP.platform === 'ios' ? 'Update opens the new version\'s release page, to install with the app you installed this one with. The app also looks for one itself when it opens.' : 'Update downloads the new version of the app and installs it over this one (Android asks you to confirm). The app also looks for one itself when it opens.') : ik.kind === 'us' ? 'Update opens the new version in your userscript manager, which offers to update.' : ik.kind === 'ext' ? 'Update puts the new version into the extension\'s folder for you. The first time, Chrome asks you to choose that folder and allow it to be edited.' : 'Installed from a store: your browser updates it by itself.';
     const warn = ubInstalled ? `<div class="tl-ub-alert">v${esc(ubInstalled)} is installed. Refresh the page to start using it.</div>` : newer ? `<div class="tl-ub-alert">This version is out of date: <b>v${esc(O.v)}</b> is out, you have v${esc(VERSION)}.${O.req ? ' <b>This update is required</b>: this version is no longer supported.' : ''}</div>` : '';
     return `${warn}<div class="tl-ub-kv"><span>Installed</span><span>v${esc(VERSION)}</span></div><div class="tl-ub-kv"><span>Latest</span><span>${latest}</span></div>
       <div class="tl-ub-kv"><span>Type</span><span>${esc(ik.name)}</span></div><div class="tl-ub-btns">${btns.join('')}</div>

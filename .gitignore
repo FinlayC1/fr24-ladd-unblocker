@@ -18,3 +18,10 @@ dist/*.apk
 dist/mobile/
 # (the Android app's script: build.mjs writes it, the app's build copies it into its APK - built only)
 dist/app/
+# (the iPhone app: the script copied in, the generated Xcode project, the build and its .ipa - ios/build.sh)
+ios/Web/app.js
+ios/Web/hosts.txt
+ios/LADDUnblocker.xcodeproj/
+ios/build/
+ios/Payload/
+dist/fr24-ladd-unblocker-ios.ipa

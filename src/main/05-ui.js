@@ -235,7 +235,10 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       // as kept, 06-pbpage)
       reg && /^[0-9a-f]{6}$/.test(hexL) && `<a href="/data/aircraft/${encodeURIComponent(reg.toLowerCase())}#${esc(pbSynId(hexL, 0))}" target="_blank" rel="noopener" title="This aircraft's flight in FR24's player">playback</a>`,
       reg && `<a href="https://www.jetphotos.com/showphotos.php?regsearch=${encodeURIComponent(reg)}" target="_blank" rel="noopener noreferrer">photos</a>`,
-      (u => u && `<a href="${esc(u[0])}" target="_blank" rel="noopener noreferrer" title="${esc(u[1])}: ${esc(reg)}">registry</a>`)(registryUrl(reg))
+      (u => u && `<a href="${esc(u[0])}" target="_blank" rel="noopener noreferrer" title="${esc(u[1])}: ${esc(reg)}">registry</a>`)(registryUrl(reg)),
+      // (1.3.12: its serial number, history and age in the aircraft databases - opened by the user, never read by the script)
+      reg && `<a href="https://www.planespotters.net/search?q=${encodeURIComponent(reg)}" target="_blank" rel="noopener noreferrer" title="Planespotters.net: its serial number, history and age">planespotters</a>`,
+      reg && `<a href="https://www.airfleets.net/recherche/?key=${encodeURIComponent(reg)}" target="_blank" rel="noopener noreferrer" title="Airfleets.net: its serial number, history and age">airfleets</a>`
     ].filter(Boolean).join(' · ');
   }
   // the national register's own page (or search) for a registration - opened by the user, never read by the script where
@@ -243,11 +246,13 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   function registryUrl(reg) {
     const r = String(reg || '').toUpperCase(), e = encodeURIComponent(r);
     if (/^N\d/.test(r)) return [`https://registry.faa.gov/AircraftInquiry/Search/NNumberResult?nNumberTxt=${e}`, 'FAA register'];
-    if (/^G-/.test(r)) return ['https://siteapps.caa.co.uk/g-info/', 'G-INFO - search'];
+    if (/^G-/.test(r)) return ['https://www.caa.co.uk/g-info/', 'G-INFO - search'];
+    // (1.3.12: France's - the DGAC's list of its register)
+    if (/^F-/.test(r)) return ['https://immat.aviation-civile.gouv.fr/immat/servlet/aeronef_liste.html', 'French register (DGAC) - search'];
     if (/^M-/.test(r)) return [`https://ardis.iomaircraftregistry.com/register/search?prs_rm__tt=1&prs_rm__v1=${encodeURIComponent(r.slice(2))}&prs_bg__2__value=Search`, 'Isle of Man register'];
     if (/^HB-/.test(r)) return ['https://app02.bazl.admin.ch/web/bazl/en/#/lfr/search', 'Swiss register - search'];
     if (/^C-[FGI]/.test(r)) return ['https://wwwapps.tc.gc.ca/saf-sec-sur/2/ccarcs-riacc/RchSimp.aspx', 'Canadian register (CCARCS) - search'];
-    if (/^VH-/.test(r)) return ['https://www.casa.gov.au/search-centre/aircraft-register', 'Australian register (CASA) - search'];
+    if (/^VH-/.test(r)) return ['https://www.casa.gov.au/aircraft-register', 'Australian register (CASA) - search'];
     if (/^ZK-/.test(r)) return ['https://www.aviation.govt.nz/aircraft/aircraft-registration/aircraft-register-search/', 'New Zealand register - search'];
     if (/^EI-/.test(r)) return ['https://www.iaa.ie/commercial-aviation/aircraft-registration-2/latest-register-and-monthly-changes-1', 'Irish register (IAA)'];
     return null;

@@ -10,6 +10,7 @@
 //     its tap; a monitor host asked for; a file the page saves (a blob link, clicked by script or by hand) handed to the
 //     app; ids of this page's own, not a page's before it
 //   - (1.3.12) the phone's location asked of the app (navigator.geolocation, navigator.permissions); TL_APP.update();
+//     which app it is (Android, iPhone);
 //     FR24's "open in app" pill and app banner not shown
 //   - (1.3.12) a log page on a phone in the app: laid out as a phone app lays it out (bar, pictures, details, flights by
 //     year, a flight opened, its Play - FR24's player and the way back), following the page as it changes; FR24's "flight
@@ -208,6 +209,20 @@ const BRIDGE = () => {
       check('TL_APP.update(): the app asked to look for its update', up === true && got.some(m => m.t === 'update'), up);
       const shown = await page.evaluate(() => ['open-in-app-banner', 'pill', 'other'].map(id => getComputedStyle(document.getElementById(id)).display));
       check('FR24\'s "Open in app" pill and app banner not shown; another yellow pill of FR24\'s left as it is', shown[0] === 'none' && shown[1] === 'none' && shown[2] !== 'none', shown);
+      check('the Android app\'s preamble: TL_APP.platform "android", GM_info "android-app"', await page.evaluate(() => TL_APP.platform === 'android'));
+      // (the iPhone app - ios/ - puts the same script in, its own preamble first saying which it is)
+      {
+        const c2 = await browser.newContext(), p2 = await c2.newPage();
+        await c2.addInitScript(() => { window.__tlAppPlatform = 'ios'; });
+        await c2.addInitScript(BRIDGE);
+        await c2.addInitScript({ content: fs.readFileSync(SHIM, 'utf8') + '\n;Object.assign(window, { TL_APP, GM_info });' });
+        await p2.route('**/*', route => route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><body></body>' }));
+        await c2.exposeBinding('__tlHost', () => {});
+        await p2.goto('https://www.flightradar24.com/m');
+        const ios = await p2.evaluate(() => ({ p: TL_APP.platform, h: GM_info.scriptHandler }));
+        check('... the iPhone app\'s: "ios", "ios-app"', ios.p === 'ios' && ios.h === 'ios-app', ios);
+        await c2.close();
+      }
       check('no error in the page', errors.length === 0, errors.slice(0, 5));
       await ctx.close();
     }

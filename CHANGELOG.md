@@ -18,12 +18,18 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 - **Heliport landings named from FR24's track.** G-LCPX into London Heliport on 18 November now reads Denham (QKD) to London (EGLW). FR24's last point was over the Thames, just short of the pad.
 - **Serial numbers are looked for in more places**, including FR24's newer aircraft pages. Each aircraft opened without one is looked up again straight away, not a day later.
 - **No "Sorry, but flight was not found on this page" notice** on a log page for a flight this script plays itself.
+- **An iPhone and iPad app.** `fr24-ladd-unblocker-ios.ipa`, attached to each release, is the Android app's twin: FR24's site with the script in it, the same features. Install it with a sideloading app such as AltStore or Sideloadly, which signs it with your own Apple ID.
+- **The repository page's buttons are centred on a phone**, and there are buttons for the Android and iPhone apps.
+- **Register and database links:** the French register (DGAC) for F- aircraft, and Planespotters and Airfleets for any aircraft, beside the registry link under the panel.
 
 ### Added
 - **The app's own update** (`android/app` `Updater.java`, `UpdateReceiver.java`): GitHub's latest release (`Policy.RELEASES_API`). The APK is taken only from this project's own download address for that release (`Policy.release`), no larger than the release says, and checked against GitHub's SHA-256 for it where given. It must be this app, later than the one installed and signed with the same key, before Android's installer (`PackageInstaller` session) is given it. Signed with another key (a release built without the project's own key): the user is told to install it by hand. `REQUEST_INSTALL_PACKAGES`; the receiver is not exported, and the screen it starts must be a system app's. `src/app/shim.js` `TL_APP.update()`; `src/main/06-window.js` *Update* uses it.
 - **The phone's location** (`Geo.java`; `src/app/shim.js`): the page's `navigator.geolocation` (`getCurrentPosition`, `watchPosition`, `clearWatch`) and `navigator.permissions.query({ name: 'geolocation' })` answered by the app. A fix the phone already has (half a minute old at most, or what the page allows) is given at once. Otherwise a new one comes from each provider that is on (fused, network, GPS); if none comes in time, the last fix of the last half hour is given, then "timed out". Location off: "position unavailable".
 - **Sign-in windows** (`MainActivity.java` `onCreateWindow`, `Policy.signIn`): a window FR24's page opens with a tap, to a sign-in provider, opens over the page and closes when the sign-in closes it, or with *Back*. FR24's own pages still open in the app's page, and anything else in the phone's browser. No `X-Requested-With` header, as Chrome sends none (`WebSettingsCompat.setRequestedWithHeaderOriginAllowList`, where the WebView has it).
 - **Log pages on a phone** (new `src/main/06-phone.js`): in the app, below 768 px wide, on `/data/aircraft/<reg>` and `/data/flights/<number>`. Built from the page itself (its header's labels and values, its pictures, its rows' cells, copied, not re-read as markup) and rebuilt as the page changes; the page's own buttons do the work. FR24's player is shown as FR24's page shows it, while it plays (its `hidden` class off).
+- **The iPhone and iPad app** (new: `ios/`): `WebViewController.swift` (FR24's site in a `WKWebView`; the preamble and `dist/app/app.js` as document-start scripts, top frame only, FR24's site only; the bridge through a script message handler, from FR24's own pages only, answered under a name of the run's own; sign-in windows; FR24's pages in the app and the rest in Safari), `AppNet.swift` (the script's requests: https only, the header's hosts and those allowed, every redirect followed and checked by the app), `Geo.swift` (the location), `Updater.swift` (the latest release looked for; iOS cannot install it, so its page opens), `Policy.swift` (the Android app's rules). Built unsigned on a Mac by CI's new `ios` job (`ios/build.sh`, XcodeGen's `ios/project.yml`); the release attaches the `.ipa` the Tests run built. `src/app/shim.js` `TL_APP.platform`; the LADD Unblock window names the app and says how it updates.
+- **Links** (`src/main/05-ui.js`): `registryUrl` - France's register (F-), and the user's addresses for G-INFO and CASA; `aircraftLinks` - Planespotters and Airfleets searches by registration (opened by the user, never read by the script).
+- **README and website**: the buttons centred on a phone (the same room either side of each, a plain space between - two `&nbsp;` were left at the end of the first button's line); Android and iPhone app buttons (`docs/assets/button-android-*.svg`, `button-ios-*.svg`).
 - **Monitor** `/fr24of?hex=&t0=&t1=` (`monitor/fr24raw.cjs` `byHex`): an aircraft's FR24 flights in a time, by FR24's ids, from every store. Each day's store now writes `YYYY-MM-DD.hex` beside its `.idx`: aircraft, FR24 id, first and last time (a flight sent again without its aircraft is written under the one named before). Kept and pruned with its day. Days written before 1.3.12 have none.
 
 ### Changed
@@ -41,15 +47,16 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 - **The flight's small panel on a phone** (`src/main/05-ui.js`): shows the airline, airports, cities, type and registration the script fills into the full panel.
 
 ### Tests
-- `test/unit_app.cjs` (33 checks, from 16):
+- `test/unit_app.cjs` (35 checks, from 16):
   - The phone's location asked of the app with the page's options, refused, watched and cleared, and `navigator.permissions`.
-  - `TL_APP.update()`.
+  - `TL_APP.update()`, and which app it is (Android, iPhone).
   - FR24's "Open in app" pill and banner hidden, and another yellow pill of FR24's left alone.
   - A log page on a phone in the app: its bar, picture, details, flights by year, a flight opened, its Play (FR24's player and the way back), following the page as it changes, FR24's notice for a flight of ours removed, and FR24's own page when wider than a phone.
 - `android/app/src/test` (16 JUnit checks, from 11):
   - Versions compared, and a release's app read only from this project's own download.
   - Sign-in windows; the location's limits.
   - Twelve slow requests at once, and the user agent sent.
+- CI's new `ios` job builds the iPhone app on a Mac and keeps its `.ipa` with the run.
 - `test/unit_fr24raw.cjs` (22 checks, from 18): each day's `.hex` (a flight sent again without its aircraft written under the aircraft named before), `byHex` after a restart and for points not written yet, nothing for another aircraft or time, and `.hex` files pruned with their day.
 
 ## [1.3.11] - 2026-11-18

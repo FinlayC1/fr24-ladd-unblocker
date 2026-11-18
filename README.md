@@ -15,11 +15,14 @@
 
 <br>
 
-A browser extension for Flightradar24. It names the flights FR24 hides or shows as "N/A", adds their route,<br>owner and history, plays their flights back in FR24's own player, fills in the figures FR24 keeps behind a padlock<br>and unlocks its locked weather layers and map options, all from public ADS-B and other free public data.
+A browser extension and phone app for Flightradar24. It names the flights FR24 hides or shows as "N/A", adds their route,<br>owner and history, plays their flights back in FR24's own player, fills in the figures FR24 keeps behind a padlock<br>and unlocks its locked weather layers and map options, all from public ADS-B and other free public data.
 
 <br>
 
-<a href="https://github.com/FinlayC1/fr24-ladd-unblocker/releases/latest/download/fr24-ladd-unblocker-extension.zip"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/button-extension-dark.svg"><source media="(prefers-color-scheme: light)" srcset="docs/assets/button-extension-light.svg"><img src="docs/assets/button-extension-dark.svg" alt="Download the extension for Chrome, Edge and Brave (.zip)" width="300"></picture></a>&nbsp;&nbsp;<a href="https://github.com/FinlayC1/fr24-ladd-unblocker/raw/main/dist/fr24-ladd-unblocker.user.js"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/button-userscript-dark.svg"><source media="(prefers-color-scheme: light)" srcset="docs/assets/button-userscript-light.svg"><img src="docs/assets/button-userscript-dark.svg" alt="Install the userscript (Tampermonkey or Violentmonkey)" width="300"></picture></a>
+<a href="https://github.com/FinlayC1/fr24-ladd-unblocker/releases/latest/download/fr24-ladd-unblocker-extension.zip"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/button-extension-dark.svg"><source media="(prefers-color-scheme: light)" srcset="docs/assets/button-extension-light.svg"><img src="docs/assets/button-extension-dark.svg" alt="Download the extension for Chrome, Edge and Brave (.zip)" width="300" hspace="4" vspace="4"></picture></a>
+<a href="https://github.com/FinlayC1/fr24-ladd-unblocker/raw/main/dist/fr24-ladd-unblocker.user.js"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/button-userscript-dark.svg"><source media="(prefers-color-scheme: light)" srcset="docs/assets/button-userscript-light.svg"><img src="docs/assets/button-userscript-dark.svg" alt="Install the userscript (Tampermonkey or Violentmonkey)" width="300" hspace="4" vspace="4"></picture></a>
+<a href="https://github.com/FinlayC1/fr24-ladd-unblocker/releases/latest/download/fr24-ladd-unblocker-app.apk"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/button-android-dark.svg"><source media="(prefers-color-scheme: light)" srcset="docs/assets/button-android-light.svg"><img src="docs/assets/button-android-dark.svg" alt="Download the Android app (.apk), Android 10 and newer, no root" width="300" hspace="4" vspace="4"></picture></a>
+<a href="https://github.com/FinlayC1/fr24-ladd-unblocker/releases/latest/download/fr24-ladd-unblocker-ios.ipa"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/button-ios-dark.svg"><source media="(prefers-color-scheme: light)" srcset="docs/assets/button-ios-light.svg"><img src="docs/assets/button-ios-dark.svg" alt="Download the iPhone and iPad app (.ipa), iOS 15 and newer, to sideload" width="300" hspace="4" vspace="4"></picture></a>
 
 <sub>[Install](#install) · [Features](#features) · [How it works](#how-it-works) · [FAQ](#faq) · [Changelog](CHANGELOG.md)</sub>
 
@@ -97,12 +100,14 @@ For any browser with a userscript manager such as [Tampermonkey](https://www.tam
 > [!IMPORTANT]
 > Use **one or the other**, not both at once. If you switch to the extension, turn the userscript off in your userscript manager.
 
-### Android
+### Android and iPhone
 
 **The app** (any Android 10 phone or newer, no root):
 1. Download [`fr24-ladd-unblocker-app.apk`](https://github.com/FinlayC1/fr24-ladd-unblocker/releases/latest/download/fr24-ladd-unblocker-app.apk) on your phone and open it. Android asks you to allow installing apps from your browser the first time.
 2. Open **LADD Unblocker**. It shows FR24's own site, full-screen, with the script in it: the same as the extension on a computer.
 3. It updates itself: it looks for a new version when it opens, and *Update* in LADD Unblock installs it (Android asks you to confirm).
+
+**The iPhone and iPad app** (iOS 15 or newer): install [`fr24-ladd-unblocker-ios.ipa`](https://github.com/FinlayC1/fr24-ladd-unblocker/releases/latest/download/fr24-ladd-unblocker-ios.ipa) with a sideloading app such as AltStore or Sideloadly, which signs it with your own Apple ID (Apple allows nothing else outside the App Store). The same as the Android app; details in [docs/mobile.md](docs/mobile.md).
 
 **Or inside FR24's own app**, on a rooted phone with [LSPosed](https://github.com/LSPosed/LSPosed):
 1. Install [`fr24-ladd-unblocker-module.apk`](https://github.com/FinlayC1/fr24-ladd-unblocker/releases/latest/download/fr24-ladd-unblocker-module.apk).

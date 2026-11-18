@@ -24,8 +24,9 @@
 //   FR24's "open in app" pill and banner are not shown: this is the app (1.3.12)
 /* eslint-disable no-unused-vars, no-var, no-redeclare */
 /* global TLNative */
-var TL_APP = { v: 2, update: function () { try { TL_BRIDGE.send({ t: 'update' }); return true; } catch (e) { return false; } } };
-var GM_info = { scriptHandler: 'android-app', version: '1', script: { name: 'FR24 LADD Unblocker' } };
+// (1.3.12: the iPhone app - ios/ - puts the same script in with the same bridge; its preamble says which it is)
+var TL_APP = { v: 2, platform: typeof window.__tlAppPlatform === 'string' && window.__tlAppPlatform === 'ios' ? 'ios' : 'android', update: function () { try { TL_BRIDGE.send({ t: 'update' }); return true; } catch (e) { return false; } } };
+var GM_info = { scriptHandler: TL_APP.platform === 'ios' ? 'ios-app' : 'android-app', version: '1', script: { name: 'FR24 LADD Unblocker' } };
 var TL_BRIDGE = (function () {
   var b = null; try { b = typeof TLNative !== 'undefined' && TLNative && typeof TLNative.postMessage === 'function' ? TLNative : null; } catch (e) { b = null; }
   try { delete window.TLNative; } catch (e) { /* kept: the app still answers this page only, and only for the hosts above */ }
