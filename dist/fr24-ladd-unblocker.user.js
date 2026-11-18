@@ -5533,7 +5533,9 @@
       return new Promise(function (res) {
         var l = apWxWaiting[apId] || (apWxWaiting[apId] = []), done = false, f = function (v) { if (!done) { done = true; res(v || null); } };
         l.push(f); oSetTimeout(function () { f(apWxOf(apId)); }, ms);
-        var x = apWx[apId]; if (x) x.asked = 0;          // (asked again now, whenever it was asked last)
+        // (asked again now, whenever it was asked last - unless it is on its way already: 1.3.12 asks for an airfield's weather
+        // the moment the airfield is, and FR24's own ask for it a moment later waits for that answer, not a second one)
+        var x = apWx[apId]; if (x && Date.now() - x.asked > 20000) x.asked = 0;
         apWxWant(apId);
       });
     }
