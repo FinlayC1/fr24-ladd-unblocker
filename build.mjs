@@ -208,3 +208,26 @@ console.log('built', extDir, '(+ zip),', manifest.host_permissions.length, 'host
 const ffFiles = extFiles.map(([name, data]) => name === 'manifest.json' ? [name, Buffer.from(JSON.stringify(firefoxManifest, null, 2) + '\n')] : [name, data]);
 fs.writeFileSync(path.join(root, 'dist', 'fr24-ladd-unblocker-firefox.zip'), zip(ffFiles));
 console.log('built', path.join(root, 'dist', 'fr24-ladd-unblocker-firefox.zip'), '(Firefox, id ' + GECKO_ID + ')');
+
+// ---- (1.3.11) the Android app (android/app): FR24's own site, full-screen, with the script in it -----------------------
+//   dist/app/app.js     what the app puts into each FR24 page at document start: src/app/shim.js (what a userscript
+//                       manager gives the script, from the app's Java side), the page part (as the extension's page.js),
+//                       then the userscript - in FR24's top frame only (@noframes), all in one closure (nothing of it
+//                       a global of the page's but the page part's own bridge)
+//   dist/app/hosts.txt  the hosts the app may make the script's requests to: the header's @connect list (each with its
+//                       subdomains, as a userscript manager takes it)
+// Built only, not kept in the repository; the app's build copies both into its APK
+const appJs = '// FR24 LADD Unblocker ' + version + ' - the Android app\'s script (android/app; built by build.mjs)\n(function () {\n' +
+  "  if (window.top !== window || !/^https:\\/\\/(www\\.)?flightradar24\\.com$/.test(location.origin) || window.__tlAppIn) return;\n" +
+  "  try { Object.defineProperty(window, '__tlAppIn', { value: true }); } catch (e) { return; }\n" +
+  '  var run = function () {\n' + rd('src/app/shim.js') + '\n' + pagePart + '\n' + out + '\n  };\n' +
+  // (the page part and the script expect the page's own <html> element, as the extension's document start has it: where
+  // a WebView puts this in before there is one, it waits for it - a mutation observer's call comes before the parser runs
+  // FR24's first script, so the page part is still in before any of FR24's code)
+  '  if (document.documentElement) run();\n' +
+  '  else new MutationObserver(function (l, o) { if (document.documentElement) { o.disconnect(); run(); } }).observe(document, { childList: true });\n' +
+  '})();\n';
+fs.mkdirSync(path.join(root, 'dist', 'app'), { recursive: true });
+fs.writeFileSync(path.join(root, 'dist', 'app', 'app.js'), appJs);
+fs.writeFileSync(path.join(root, 'dist', 'app', 'hosts.txt'), hosts.join('\n') + '\n');
+console.log('built', path.join(root, 'dist', 'app', 'app.js'), (appJs.length / 1024).toFixed(0) + ' KB,', hosts.length, 'hosts');

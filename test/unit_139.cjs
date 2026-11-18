@@ -4,7 +4,8 @@
 //     (v3 ...), by its id or by its code; its pictures, weather, delays and boards at any version too; never one of FR24's
 //   - FR24's own answer for one of its airports read for its shape only (its keys, never its values): an OurAirports
 //     airport's answer made in it - a section or field FR24 adds is there, empty of its kind; ours over it
-//   - a part of the API never seen: answered in the shape FR24's own answer for it had, else empty - and counted; FR24's
+//   - a part of the API never seen: answered in the shape FR24's own answer for it had (1.3.11: asked of FR24 for the
+//     airport its pages are made from, where none has been seen), else empty - and counted; FR24's
 //     "not found" for any request about an OurAirports airport counted with its address: both named by the health check
 //   - the route engine: a run of "ground" reports at flying speed away from every field, well up either side - G-LFSA's
 //     and G-RVNA's ADS-B units over Cheshire on 17 Nov, their real positions - is flight; a real landing is not touched
@@ -87,8 +88,13 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     check('... the shape kept for the next page (no value of FR24\'s in it)', kept[''] && kept[''].data && kept[''].data.futureSection && !/Walney Island|walney\.example|FR24 VALUE/.test(JSON.stringify(kept)));
 
     // ---- 3. a part never seen; a request FR24's server answers "not found" ------------------------------------------
+    // (1.3.11: a part never seen is first asked of FR24 for the FR24 airport the OurAirports one's pages are made from -
+    // Walney, 530 - and answered in that answer's shape; only a part FR24 has no answer for either is answered blind and
+    // counted. 1.3.9 counted every one: "new to this script" on every panel - unit_1311.cjs)
     const s0 = H.stats.oaApiNew || 0, rad0 = await get('https://www.flightradar24.com/api/v2/airports/17000002/radio');
-    check('a part of the API never seen (/radio): answered here, empty - and counted, named', rad0.status === 200 && rad0.j.data && Object.keys(rad0.j.data).length === 0 && H.stats.oaApiNew === s0 + 1 && H.stats.oaApiNewPart === '/radio', { j: rad0.j, n: H.stats.oaApiNew, part: H.stats.oaApiNewPart });
+    check('a part of the API never seen (/radio): FR24\'s own answer for Walney (530) at the same address asked, the answer in its shape, empty - not counted as new', rad0.status === 200 && Array.isArray(rad0.j.data.frequencies) && rad0.j.data.frequencies.length === 0 && rad0.j.data.updated === 0 && asked.some(u => u === 'https://www.flightradar24.com/api/v2/airports/530/radio') && (H.stats.oaApiNew || 0) === s0, { j: rad0.j, n: H.stats.oaApiNew });
+    const nw = await get('https://www.flightradar24.com/api/v2/airports/17000002/nowhere');
+    check('... one FR24 has no answer for either (/nowhere): answered here, empty - and counted, named', nw.status === 200 && nw.j.data && Object.keys(nw.j.data).length === 0 && H.stats.oaApiNew === s0 + 1 && H.stats.oaApiNewPart === '/nowhere', { j: nw.j, n: H.stats.oaApiNew, part: H.stats.oaApiNewPart });
     await get('https://www.flightradar24.com/api/v2/airports/530/radio'); await sleep(30);
     const rad1 = await get('https://www.flightradar24.com/api/v2/airports/17000002/radio');
     check('... once FR24\'s own answer for it has been seen: in its shape (frequencies, an empty list)', Array.isArray(rad1.j.data.frequencies) && rad1.j.data.frequencies.length === 0 && rad1.j.data.updated === 0, rad1.j);

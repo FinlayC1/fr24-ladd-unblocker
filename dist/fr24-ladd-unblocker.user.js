@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Flightradar24 LADD / N-A Unblocker (feed-level)
 // @namespace    tweeks.io
-// @version      1.3.10
+// @version      1.3.11
 // @description  Identifies every LADD / N/A / blocked military aircraft on Flightradar24 from public ADS-B, and injects callsign, registration, operator, age, country, MSN, squawk, vertical speed, GPS altitude, airspeeds, wind, photos, a reasoned origin/destination with a wind-corrected ETA (also for ordinary flights FR24 shows as N/A - military, private, GA, helicopters, with private landing sites; learned from 63 days of every aircraft worldwide, with live weather and closures), airport-board entries and a rebuilt 7-month flight log straight into FR24's own data - so it all renders like normal FR24 traffic.
 // @author       Finlay Clarke
 // @updateURL    https://raw.githubusercontent.com/FinlayC1/fr24-ladd-unblocker/main/dist/fr24-ladd-unblocker.user.js
@@ -100,7 +100,7 @@
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "1.3.10";
+    var BRIDGE_V = "1.3.11";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed but the
@@ -2240,13 +2240,45 @@
       if (!id && oaByCode.size && !/^(search|disruptions|list|nearby)$/i.test(seg)) { var r = oaByCode.get(seg.toLowerCase()); if (r && !fr24HasCode(seg)) id = r[0]; }
       return id >= 1e7 && oaById && oaById.has(id) ? { id: id, part: part } : null;
     }
-    function oaApi(id, part) {
+    // (1.3.11) Any other part - FR24's /top-travelers, mid-November - answered in the shape of FR24's own answer for it,
+    // empty: an OurAirports airport has none of it. 1.3.9 counted each of these as "new to this script" even where that
+    // shape was known, and the health line said so on every panel. Now only a part answered blind is counted: one whose
+    // shape is not known is first asked of FR24 itself - once, for the FR24 airport the OurAirports one's pages are made
+    // from (its row's [5]), by the same version and address - and that answer's shape kept; only if FR24 has no answer
+    // for it either is it answered { data: {} } and counted. viaRef(refId): FR24's own request for it, as FR24 made this one
+    var apShapeAsk = {};
+    function oaApiPart(r, part, viaRef) {
+      var sh = apShapes[part];
+      if (sh) { stats.oaApiShaped = (stats.oaApiShaped || 0) + 1; return Promise.resolve(JSON.parse(JSON.stringify(sh))); }
+      var blind = function () { stats.oaApiNew = (stats.oaApiNew || 0) + 1; stats.oaApiNewPart = part; return { data: {} }; };
+      var refId = r[5];
+      if (typeof viaRef !== 'function' || !Number.isInteger(refId) || !(refId > 0 && refId < 9000000)) return Promise.resolve(blind());
+      if (!apShapeAsk[part]) {
+        var ask = apShapeAsk[part] = Promise.resolve().then(function () { return viaRef(refId); }).then(function (res) {
+          if (!res || !res.ok) return null;
+          return res.json().then(function (j) { if (!j || typeof j !== 'object') return null; apShapeNote(part, j); return apShapeOf(j, 0); }, function () { return null; });
+        }, function () { return null; });
+        // (asked once at a time: those asked meanwhile wait for the same answer; a failed ask may be made again later)
+        ask.then(function (s) { if (!s && apShapeAsk[part] === ask) delete apShapeAsk[part]; });
+      }
+      return apShapeAsk[part].then(function (s) {
+        if (!s) return blind();
+        stats.oaApiShaped = (stats.oaApiShaped || 0) + 1; return JSON.parse(JSON.stringify(s));
+      });
+    }
+    // (an airport-API address with another airport in it: the same version, part and query - for FR24's own airport refId)
+    function apRefUrl(url, refId) {
+      var s = String(url), m = s.match(OA_API_RE); if (!m) return null;
+      var i = m.index + m[0].indexOf('/airports/') + '/airports/'.length;
+      return s.slice(0, i) + refId + s.slice(i + m[1].length);
+    }
+    function oaApi(id, part, viaRef) {
       var r = oaById.get(id); if (!r) return null;
       stats.oaApi = (stats.oaApi || 0) + 1;
       if (part === '/images') return Promise.resolve({ data: [] });
       if (part === '/disruptions') return Promise.resolve({ data: {} });
       if (part === '/weather') return apWxWait(id, 6000).then(function (w) { return { data: w ? oaWeather(w) : {} }; });
-      if (part) { stats.oaApiNew = (stats.oaApiNew || 0) + 1; stats.oaApiNewPart = part; var sh = apShapes[part]; return Promise.resolve(sh ? JSON.parse(JSON.stringify(sh)) : { data: {} }); }
+      if (part) return oaApiPart(r, part, viaRef);
       var a = oaStoreRow(r), sun = sunTimes(a.latitude, a.longitude, Date.now());
       if (oaRefs.has(r[5])) oaOneKeep(r, oaRefs.get(r[5]), refOf(r[5]));
       oaStoreKeep(pinStore('airports'), a);
@@ -6103,7 +6135,15 @@
       // monitor makes for it (apwx.cjs - waited for, a few seconds at most; FR24 shows "N/A" when there is none); no delays
       // (1.3.8: any version of the API, any part, by id or code - oaApiTarget)
       var oaT = oaApiTarget(url);
-      if (oaT) { var oaAns = oaApi(oaT.id, oaT.part); if (oaAns) return oaAns.then(function (j) { return jsonResponse(null, j); }); }
+      if (oaT) {
+        // (1.3.11: FR24's own request, for the FR24 airport the OurAirports one's pages are made from - a part not yet seen)
+        var oaSelf = this, oaArgs = arguments, oaRef = function (refId) {
+          var ru = apRefUrl(url, refId); if (!ru) return Promise.reject(new Error('no address'));
+          var a0 = oaArgs[0], RQ = window.Request;
+          return oFetch.apply(oaSelf, RQ && a0 instanceof RQ ? [new RQ(ru, a0)] : [ru, oaArgs[1]]);
+        };
+        var oaAns = oaApi(oaT.id, oaT.part, oaRef); if (oaAns) return oaAns.then(function (j) { return jsonResponse(null, j); });
+      }
       var oaB = url.match(/\/api\/v\d+\/airports\/(\d+)\/(?:departures|arrivals|on-grounds)\b/), oaBoard = !!oaB && Number(oaB[1]) >= 1e7;
       var p = oaBoard ? Promise.resolve(jsonResponse(null, { data: [], meta: { currentPage: Number((url.match(/[?&]page=(-?\d+)/) || [])[1]) || 1, previousPage: null, nextPage: null, hasMorePreviousData: false, hasMoreNextData: false } })) : oFetch.apply(this, arguments);
       try {
@@ -9743,7 +9783,7 @@
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '1.3.10';
+  const VERSION = '1.3.11';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
@@ -19261,13 +19301,14 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   const UB_LATEST_URL = `https://raw.githubusercontent.com/${UB_REPO}/main/package.json`;
   const UB_USERSCRIPT_URL = `https://raw.githubusercontent.com/${UB_REPO}/main/dist/fr24-ladd-unblocker.user.js`;
   // (main's own zip - built with the version in main's package.json, the one offered; the release's "latest" lags behind it)
+  const UB_APP_URL = `https://github.com/${UB_REPO}/releases/latest/download/fr24-ladd-unblocker-app.apk`;
   const UB_ZIP_URL = `https://raw.githubusercontent.com/${UB_REPO}/main/dist/fr24-ladd-unblocker-extension.zip`;
   const UB_CHANGES_URL = `https://github.com/${UB_REPO}/blob/main/CHANGELOG.md`;
   const UB_LABELS = ['Settings', 'Weather', 'Filters', 'Widgets', 'Playback'];
   // (the version whose "what's new" was put away, and the one whose dot on the button the window was opened for)
   const UB_SEEN_KEY = 'tweeks.fr24.ladd.seenver', UB_DOT_KEY = 'tweeks.fr24.ladd.dotver';
   // (the newest CHANGELOG section's headlines, written in by build.mjs: { v, items })
-  const UB_WHATS_NEW = {"v":"1.3.10","items":["**FR24's Android app.** A first version of an LSPosed module that does the extension's work inside FR24's own app on a rooted phone: fr24-ladd-unblocker-module.apk, attached to each release (docs/mobile.md).","**9H-LEL \"Toronto -> Liberia (flight plan)\" flying out of Liberia:** on 17 Nov it flew Toronto to Liberia. FR24 never saw it land, so it kept one flight id for that flight and the next. The script took FR24's Toronto -> Liberia board row as the next flight's plan, and its departure as Toronto.","**N89P \"from Bluefields\" while FR24 showed it from San José:** FR24 knew N89P took off from San José (SJO), but the flight had no schedule, and the script read FR24's departure only from a schedule. With none, it guessed from public ADS-B, which hears little there. It now also takes the departure FR24 gives the flight on its own map."]};
+  const UB_WHATS_NEW = {"v":"1.3.11","items":["**An Android app, no root needed.** fr24-ladd-unblocker-app.apk, attached to each release, opens FR24's own site full-screen with the script in it: the same as the extension on a computer, on your phone. Install it and open it. Hidden aircraft are named, routes shown, and the LADD Unblock window is there. Alerts for watched aircraft arrive as the phone's notifications, and a flight log's CSV saves to Downloads. Sign in to FR24 there with your e-mail and password (docs/mobile.md).","**No more \"FR24 asked for an OurAirports airport's /top-travelers\" warning on every flight.** FR24's site now asks each airport for its top travellers. For the small airfields and heliports this script adds to FR24's map, the script already answered in FR24's own form, but still flagged it as something new, so the warning showed in every flight's panel for the rest of the session. It is only shown now when the script really has no answer.","**New kinds of airport information answered on the first ask.** When FR24's site asks one of those airfields for something new, the script asks FR24 the same thing for the real airport that airfield's pages are based on. It then answers in that form, with nothing filled in."]};
   // (an aircraft with an open padlock: FR24's outline style - 24 grid, 1.5 stroke in the text colour)
   const UB_ICON = '<svg data-tl-ub-icon="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
   const UB_X = '<svg viewBox="0 0 14 14" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5l11 11M12.5 1.5l-11 11"/></svg>';
@@ -19369,6 +19410,8 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   // (a version as shown: v1.0.0; a beta, B22.31.12)
   const verLabel = v => { const s = String(v || '').replace(/^[vB]/i, ''); return (verParts(v)[0] === 0 && s ? 'B' : 'v') + s; };
   function installKind() {
+    // (1.3.11: the Android app - FR24's site in the app's own window, android/app; updated by installing its new APK)
+    if (typeof TL_APP === 'object' && TL_APP) return { kind: 'app', name: 'Android app' };
     if (typeof TL_EXTENSION === 'boolean') {
       let m = null; try { m = chrome.runtime.getManifest(); } catch (e) { /* the extension was reloaded */ }
       // (Firefox: installed from addons.mozilla.org, which updates it - it cannot load an unpacked folder for good)
@@ -19398,7 +19441,8 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   function doUpdate(act) {
     const k = installKind().kind;
     // (from a beta - 22.x - to 1.0.0 and on: the manager compares the numbers alone, and calls the newer one a downgrade)
-    if (act === 'update' && k === 'us') { window.open(UB_USERSCRIPT_URL, '_blank', 'noopener'); ubNote = verParts(VERSION)[0] === 0 && verParts(latestV())[0] === 1 ? 'Your userscript manager opens the new version in a tab. It may call it a downgrade (it compares 1 with 22), but it is the newer one: confirm it there, then reload FR24.' : 'Your userscript manager opens the new version in a tab: click Update there, then reload FR24.'; }
+    if (act === 'update' && k === 'app') { window.open(UB_APP_URL, '_blank', 'noopener'); ubNote = 'Your browser downloads the new app. Open it when it has, and install it over this one: your settings stay.'; }
+    else if (act === 'update' && k === 'us') { window.open(UB_USERSCRIPT_URL, '_blank', 'noopener'); ubNote = verParts(VERSION)[0] === 0 && verParts(latestV())[0] === 1 ? 'Your userscript manager opens the new version in a tab. It may call it a downgrade (it compares 1 with 22), but it is the newer one: confirm it there, then reload FR24.' : 'Your userscript manager opens the new version in a tab: click Update there, then reload FR24.'; }
     // (unpacked: the extension's own update page, in a tab next to this one - it writes the new version into the extension's
     // folder, extension/update.js; the zip by hand only where that page cannot be opened)
     else if (act === 'update' && k === 'ext') {
@@ -19433,7 +19477,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     else if (newer) btns.push(`<button class="tl-ub-b" data-ub-act="update">Update to v${esc(O.v)}</button>`);
     else btns.push(`<button class="tl-ub-b tl-ub-b2" data-ub-act="check"${ubAsking ? ' disabled' : ''}>Check for updates</button>`);
     if (ik.kind === 'ext') btns.push('<button class="tl-ub-b tl-ub-b2" data-ub-act="reloadExt" title="Load the extension again from its folder - after replacing its files with a new version">Reload extension</button>');
-    const how = ik.kind === 'us' ? 'Update opens the new version in your userscript manager, which offers to update.' : ik.kind === 'ext' ? 'Update puts the new version into the extension\'s folder for you. The first time, Chrome asks you to choose that folder and allow it to be edited.' : 'Installed from a store: your browser updates it by itself.';
+    const how = ik.kind === 'app' ? 'Update downloads the new version of the app, to install over this one.' : ik.kind === 'us' ? 'Update opens the new version in your userscript manager, which offers to update.' : ik.kind === 'ext' ? 'Update puts the new version into the extension\'s folder for you. The first time, Chrome asks you to choose that folder and allow it to be edited.' : 'Installed from a store: your browser updates it by itself.';
     const warn = ubInstalled ? `<div class="tl-ub-alert">v${esc(ubInstalled)} is installed. Refresh the page to start using it.</div>` : newer ? `<div class="tl-ub-alert">This version is out of date: <b>v${esc(O.v)}</b> is out, you have v${esc(VERSION)}.${O.req ? ' <b>This update is required</b>: this version is no longer supported.' : ''}</div>` : '';
     return `${warn}<div class="tl-ub-kv"><span>Installed</span><span>v${esc(VERSION)}</span></div><div class="tl-ub-kv"><span>Latest</span><span>${latest}</span></div>
       <div class="tl-ub-kv"><span>Type</span><span>${esc(ik.name)}</span></div><div class="tl-ub-btns">${btns.join('')}</div>

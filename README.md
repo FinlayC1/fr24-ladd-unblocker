@@ -8,7 +8,7 @@
 
 <br><br>
 
-<a href="CHANGELOG.md"><img alt="Version 1.3.10" src="https://img.shields.io/badge/version-1.3.10-1f6feb?style=flat&labelColor=23272e"></a>
+<a href="CHANGELOG.md"><img alt="Version 1.3.11" src="https://img.shields.io/badge/version-1.3.11-1f6feb?style=flat&labelColor=23272e"></a>
 <a href="PRIVACY.md#counting-installs"><img alt="Users" src="https://img.shields.io/endpoint?url=https%3A%2F%2F143-47-224-210.sslip.io%2Fbadge&style=flat&labelColor=23272e"></a>
 <a href="https://github.com/FinlayC1/fr24-ladd-unblocker/actions/workflows/tests.yml"><img alt="Tests" src="https://github.com/FinlayC1/fr24-ladd-unblocker/actions/workflows/tests.yml/badge.svg"></a>
 <a href="LICENCE"><img alt="Licence: personal use" src="https://img.shields.io/badge/licence-personal%20use-1f6feb?style=flat&labelColor=23272e"></a>
@@ -97,14 +97,18 @@ For any browser with a userscript manager such as [Tampermonkey](https://www.tam
 > [!IMPORTANT]
 > Use **one or the other**, not both at once. If you switch to the extension, turn the userscript off in your userscript manager.
 
-### FR24's Android app
+### Android
 
-On a rooted Android phone with [LSPosed](https://github.com/LSPosed/LSPosed):
+**The app** (any Android 10 phone or newer, no root):
+1. Download [`fr24-ladd-unblocker-app.apk`](https://github.com/FinlayC1/fr24-ladd-unblocker/releases/latest/download/fr24-ladd-unblocker-app.apk) on your phone and open it. Android asks you to allow installing apps from your browser the first time.
+2. Open **LADD Unblocker**. It shows FR24's own site, full-screen, with the script in it: the same as the extension on a computer.
+
+**Or inside FR24's own app**, on a rooted phone with [LSPosed](https://github.com/LSPosed/LSPosed):
 1. Install [`fr24-ladd-unblocker-module.apk`](https://github.com/FinlayC1/fr24-ladd-unblocker/releases/latest/download/fr24-ladd-unblocker-module.apk).
 2. Enable it in LSPosed, with Flightradar24 ticked.
 3. Close FR24's app and open it again.
 
-The module runs the same script inside FR24's own app. It contains only this project's code, and FR24's app is not changed or redistributed. What it covers so far, and how to test it, is in [docs/mobile.md](docs/mobile.md).
+Both contain only this project's code; FR24's app is not changed or redistributed. How they work, what each covers and how to test them is in [docs/mobile.md](docs/mobile.md).
 
 ### The monitor
 
@@ -254,7 +258,7 @@ Test conventions, fixtures and the release checklist: [docs/development.md](docs
 | [docs/architecture.md](docs/architecture.md) | Components, data flows and the design decisions behind them |
 | [docs/monitor.md](docs/monitor.md) | The monitor: configuration, what it keeps, API reference, server setup, operations |
 | [docs/data-sources.md](docs/data-sources.md) | Every external source, its terms, limits and how it is used |
-| [docs/mobile.md](docs/mobile.md) | FR24's Android app: the LSPosed module - installing, how it works, testing it, FR24 updates, signing |
+| [docs/mobile.md](docs/mobile.md) | Android: the app (FR24's site with the script in it) and the LSPosed module for FR24's own app - installing, how they work, testing them, FR24 updates, signing |
 | [docs/development.md](docs/development.md) | Building, testing, fixtures, release checklist |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |
 | [SECURITY.md](SECURITY.md) | Secrets, keys and reporting problems |

@@ -4,6 +4,45 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 
 1.0.0 is the first release. The versions before it are the betas, labelled B: B22.31.12 is version 22.31.12.
 
+## [1.3.11] - 2026-11-18
+
+### In short
+- **An Android app, no root needed.** `fr24-ladd-unblocker-app.apk`, attached to each release, opens FR24's own site full-screen with the script in it: the same as the extension on a computer, on your phone. Install it and open it. Hidden aircraft are named, routes shown, and the LADD Unblock window is there. Alerts for watched aircraft arrive as the phone's notifications, and a flight log's CSV saves to Downloads. Sign in to FR24 there with your e-mail and password (docs/mobile.md).
+- **No more "FR24 asked for an OurAirports airport's /top-travelers" warning on every flight.** FR24's site now asks each airport for its top travellers. For the small airfields and heliports this script adds to FR24's map, the script already answered in FR24's own form, but still flagged it as something new, so the warning showed in every flight's panel for the rest of the session. It is only shown now when the script really has no answer.
+- **New kinds of airport information answered on the first ask.** When FR24's site asks one of those airfields for something new, the script asks FR24 the same thing for the real airport that airfield's pages are based on. It then answers in that form, with nothing filled in.
+
+### Added
+- **The Android app** (new: `android/app`, `src/app/shim.js`):
+  - `MainActivity.java`: FR24's site (`https://www.flightradar24.com/`) full-screen in a WebView of the app's own, kept clear of the system bars and the keyboard. FR24's pages open in the app; other links open in the phone's browser; e-mail and phone links open their apps; anything else is not followed. Back goes back a page. If the page's renderer stops, the app restarts it at the same page (five times at most). A WebView too old for the app is said so, with a link to update it.
+  - The script put into each page of FR24's site at document start, before FR24's code runs (AndroidX WebKit `addDocumentStartJavaScript`, for `https://www.flightradar24.com` and `https://flightradar24.com` only): `dist/app/app.js` (`build.mjs`), which is the preamble, then the page part (as the extension's `page.js`), then the userscript. It runs in the top frame only (`@noframes`), all in one closure. It waits for the page's `<html>` element where the WebView has none yet; a mutation observer's call still comes before FR24's first script.
+  - `src/app/shim.js`: what a userscript manager gives the script, over a bridge given to those pages only (`TLNative`, AndroidX WebKit `addWebMessageListener`). The preamble takes it and removes it from the page's globals.
+    - `GM_xmlhttpRequest`: the request made by `AppNet.java`, https only, to the header's `@connect` hosts (with their subdomains) and monitor hosts the user allowed, each redirect checked. The app's own cookies for the host are sent and kept, as the extension's `credentials: 'include'`.
+    - `GM_notification`: an Android notification; tapping it calls the page's `onclick`.
+    - `TL_HOST_ACCESS`: a monitor host not in the header, allowed or not by the user, once.
+    - A file the page saves from a `blob:` or `data:` link (the flight log's CSV), which a WebView cannot download by itself: saved to Downloads.
+    - Ids are this page's own (a page id and a count), so no answer meant for a page before a reload is taken.
+  - `Policy.java`: which pages stay in the app, which origins get the script and the bridge, which hosts the script may reach, saved files' names, and the user agent without the WebView's `wv` mark.
+  - Location for FR24's "my location", when asked, for FR24's site only; camera and microphone always refused.
+  - `src/main/06-window.js`: in the app (`TL_APP`), the LADD Unblock window's *Update* downloads the new APK (`releases/latest/download/fr24-ladd-unblocker-app.apk`).
+  - CI builds and tests the app beside the module and keeps its APK with each run. The release attaches `fr24-ladd-unblocker-app.apk`, signed as the module is. `dist/app/` is built only, not kept in the repository.
+
+### Fixed
+- **`/top-travelers` counted as "new to this script"** (`src/page.js` `oaApi`): any part of FR24's airport API other than the airport itself, its pictures, weather and delays was counted in `oaApiNew` and named by the health check (`06-tools.js`), even when it was answered in the shape of FR24's own answer for that part (1.3.9). The count now covers only a part answered blind (`{ data: {} }`); one answered in FR24's shape counts in `oaApiShaped`.
+- **A part never seen** (`oaApiPart`, `apRefUrl`): asked of FR24 itself, once, for the FR24 airport the OurAirports airport's pages are made from (its row's `[5]`), at the same address, version and query, as FR24's own request (a `Request` stays a `Request`). The answer's shape is kept (`tl.apShape1`, never its values) and the OurAirports airport answered in it, empty. Requests made meanwhile wait for the same answer. Only if FR24 has no answer either, or the airport has no FR24 airport, is it answered blind and counted. A failed ask is made again next time.
+
+### Tests
+- New `test/unit_app.cjs` (16 checks), in the suite and CI (Chromium, as Android's WebView): the app's script put into a page of FR24's site at document start, as the app does.
+  - The page part is in before FR24's first script, the bridge is out of the page's globals, and nothing is put into other frames.
+  - FR24's own LiveFeed request (XHR, gRPC-web) asks for type and registration, and the LADD list asked for through the bridge names the unnamed flight in its answer.
+  - The preamble's requests (answered, as bytes, failed, timed out, aborted), notifications and their taps (another page's tap not taken), monitor hosts, files saved by script and by hand, and each page's own ids.
+- New `android/app/src/test` (11 JUnit checks), in CI: the app's rules (pages kept, origins, hosts, monitor hosts, file names, user agent), and its requests against fake servers (cookies both ways, unlisted hosts never asked, redirects only to allowed hosts and https, 303 after a POST, bytes, timeouts, error answers, aborts).
+- New `test/unit_1311.cjs` (13 checks), in the suite and CI:
+  - an OurAirports airport's `/top-travelers` answered in FR24's shape, empty (no traveller, name or count of FR24's), and not counted as new; on 1.3.10 it was counted every time
+  - a part not yet seen: FR24 asked once for the reference airport even with two asks at once, both answered in its shape, the shape kept, the next answered without asking
+  - a `Request` passed on as a `Request`
+  - FR24 failing, or no reference airport: answered blind and counted, then asked again once FR24 answers
+- `test/unit_139.cjs`: the `/radio` part is now answered in the shape of FR24's answer for Walney, and a part FR24 has no answer for (`/nowhere`) is counted (35 checks).
+
 ## [1.3.10] - 2026-11-17
 
 ### In short

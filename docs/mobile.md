@@ -1,19 +1,83 @@
-# FR24's Android app (LSPosed module)
+# Android
 
-The same work the browser extension does on FR24's website, inside FR24's own Android app (`com.flightradar24free`): the
-aircraft it hides (LADD, blocked, military with no callsign) shown with their registration, type and operator, their
-routes and destinations, and FR24's padlocked figures filled in from public ADS-B. The module is a small APK of this
-project's code only. LSPosed loads it into the official FR24 app while that app runs on your phone, and it hooks FR24's
-code from inside, the way the extension hooks FR24's website. FR24's app is never changed on disk and never redistributed.
+Two ways to have the extension's work on an Android phone:
 
-## What you need
+- **The app** (no root): FR24's own site, as FR24 serves it to a phone, full-screen in an app of this project's own, with
+  the script in it, as the extension puts it in on a computer. Install one APK and open it.
+- **The LSPosed module** (rooted phones): the same script inside FR24's own Android app (`com.flightradar24free`).
+
+Both are this project's code only. FR24's site is loaded from FR24, as a browser loads it, and FR24's app is never changed
+or redistributed.
+
+## The app
+
+### Installing
+
+1. On the phone, download `fr24-ladd-unblocker-app.apk` from the
+   [latest release](https://github.com/FinlayC1/fr24-ladd-unblocker/releases/latest), or a test build: the
+   *fr24-ladd-unblocker-app* artifact of a [Tests run](https://github.com/FinlayC1/fr24-ladd-unblocker/actions/workflows/tests.yml).
+2. Open it. The first time, Android asks you to allow your browser to install apps.
+3. Open **LADD Unblocker**.
+
+Updates: the LADD Unblock window says when a new version is out, and *Update* downloads the new APK, which installs over
+the old one with your settings kept. (Releases signed with a debug key cannot install over each other: see *Signing*.)
+
+### What it does
+
+Everything the extension does on FR24's site, on FR24's site as a phone gets it:
+- blocked aircraft (LADD, blocked, military with no callsign) named on the map, with their routes and destinations
+- the flight panel, boards, playback, most tracked, airport pages, and the LADD Unblock window with its settings (your
+  monitor among them)
+- a watched aircraft's alerts as the phone's own notifications
+- a flight log's CSV saved to Downloads
+- FR24's "my location", when you allow it
+
+What is different from FR24's own app:
+- It is FR24's mobile site. It looks and works much like FR24's app, but it is FR24's site, not a copy of their app.
+- Sign in to FR24 with your e-mail and password. "Sign in with Google" and "with Apple" open in your browser and cannot
+  come back to the app.
+- Its sign-in is its own: signing in to FR24 in Chrome does not sign you in here.
+- Links away from FR24's site open in your browser.
+
+### How it works
+
+- **The script, before FR24's code.** The app puts the script (`dist/app/app.js`, from `build.mjs`) into each page of FR24's
+  site at document start, before FR24's own code runs: `src/app/shim.js`, then the page part (`src/page.js`), then the
+  userscript. It does this with AndroidX WebKit's document-start scripts, for `https://www.flightradar24.com` and
+  `https://flightradar24.com` only, and in their top frame only (as the userscript's `@noframes`).
+- **What a userscript manager would give it** comes from the app's Java side (`MainActivity.java`), over a bridge given to
+  those pages only (`TLNative`, AndroidX WebKit's web message listener):
+  - the script's requests to the other sites (`AppNet.java`): https only, to the hosts its header lists (`@connect`, each
+    with its subdomains) and a monitor host you allow. Every redirect is checked too. They carry the app's own cookies
+    for that host, as the extension's do.
+  - notifications, a monitor host to allow (asked of you once), and files to save to Downloads
+- **Kept private.** The preamble takes the bridge and removes it from the page's globals, so nothing FR24's page loads
+  after it can use it, and the script's own functions live in a closure, not the page's globals.
+- **Its rules** are in `Policy.java`: which pages stay in the app, which hosts the script may reach, and saved files' names.
+
+### Testing it
+
+- `adb logcat -s FR24LADD chromium` shows the app's log and the page's console.
+- The checks without a phone:
+  - `test/unit_app.cjs` runs `dist/app/app.js` as the app puts it in, in Chromium (Android's WebView is Chromium), with the
+    app's side stood in for. It checks that the page part is in before FR24's first script, that FR24's LiveFeed answer is
+    named, and the bridge's every message.
+  - `android/app/src/test` checks the app's rules and its requests against fake servers (JUnit).
+
+## The LSPosed module (FR24's own app)
+
+The same work inside FR24's own Android app. The module is a small APK of this project's code only. LSPosed loads it into
+the official FR24 app while that app runs on your phone, and it hooks FR24's code from inside, the way the extension hooks
+FR24's website. FR24's app is never changed on disk and never redistributed.
+
+### What you need
 
 - A rooted Android phone, Android 10 or later (FR24's app needs 10)
 - [LSPosed](https://github.com/LSPosed/LSPosed) (Zygisk), API 93 or later
 - FR24's app from Google Play. Tested against 11.14.0 (`android/tools/fr24check.sh`, below); other versions are
   recognised by what their code does, not by its names (see *When FR24 updates its app*)
 
-## Installing
+### Installing
 
 1. Download `fr24-ladd-unblocker-module.apk` from the [latest release](https://github.com/FinlayC1/fr24-ladd-unblocker/releases/latest)
    (or a test build: the *fr24-ladd-unblocker-module* artifact of a [Tests run](https://github.com/FinlayC1/fr24-ladd-unblocker/actions/workflows/tests.yml)).
@@ -24,7 +88,7 @@ code from inside, the way the extension hooks FR24's website. FR24's app is neve
 The module's own screen (from the launcher, or LSPosed's module list) has its switches: on or off, and a monitor of your
 own (its address and secret). Each change applies once FR24 is closed and opened again.
 
-## How it works
+### How it works
 
 - **Where FR24's data comes in.** FR24's app gets its map, flight panel, search cards, playback and most-tracked list from
   the same gRPC service as its website (`fr24.feed.api.v1.Feed`: LiveFeed, FollowFlight, FlightDetails, Playback,
@@ -49,7 +113,7 @@ own (its address and secret). Each change applies once FR24 is closed and opened
   - the page's renderer crashing: Android is told it was handled, so FR24 is not taken down with it, and the page is
     started again
 
-## What carries over, and what does not yet
+### What carries over, and what does not yet
 
 | On the website | In FR24's app (this version) |
 |---|---|
@@ -60,7 +124,7 @@ own (its address and secret). Each change applies once FR24 is closed and opened
 | Airport boards beyond FR24's free day, recent-flights lists | Not yet: FR24's app asks for these over its web API, not gRPC (the next release) |
 | The LADD Unblock window, website pages (aircraft, airport, flight pages) | Not in the app: its settings are the module's own screen |
 
-## Testing on your phone
+### Testing on your phone
 
 1. Install and enable the module as above, then open FR24.
 2. Over a computer, `adb logcat -s FR24LADD` shows the module's log:
@@ -71,7 +135,7 @@ own (its address and secret). Each change applies once FR24 is closed and opened
 3. Pan to a blocked aircraft you know (on the website it shows named). Within a few seconds, as on the website, it should
    show its callsign and registration on the map and in its panel.
 
-## When FR24 updates its app
+### When FR24 updates its app
 
 The module looks for its hook points again, by what they do. If FR24 changed the gRPC library so much that they cannot be
 found, the log says `FR24's app (this version) not recognised: nothing hooked`, and FR24 works as it does without the
@@ -80,12 +144,12 @@ runs the script's messages through FR24's own code taken from that APK (its prot
 the LiveFeed answer into the flights its map draws). Every check should pass. FR24's code is only read there, from an APK
 you have; none of it is kept in this repository or its CI.
 
-## Signing the module for releases
+## Signing for releases
 
-Android only installs an update over an app signed with the same key. Releases are signed with the project's own key
-when the repository has it as secrets (`MODULE_KEYSTORE_B64`, `MODULE_KEYSTORE_PASSWORD`, `MODULE_KEY_ALIAS`,
-`MODULE_KEY_PASSWORD`). Without them, each release is signed with a different debug key, so the old module has to be
-uninstalled before the new one is installed (its settings go with it). To make a key, on your own computer (never commit it):
+Android only installs an update over an app signed with the same key. Releases (the app and the module) are signed with
+the project's own key when the repository has it as secrets (`MODULE_KEYSTORE_B64`, `MODULE_KEYSTORE_PASSWORD`, `MODULE_KEY_ALIAS`,
+`MODULE_KEY_PASSWORD`). Without them, each release is signed with a different debug key, so the old app or module has
+to be uninstalled before the new one is installed (its settings go with it). To make a key, on your own computer (never commit it):
 
 ```
 keytool -genkeypair -v -keystore fr24ladd-module.jks -alias fr24ladd -keyalg RSA -keysize 4096 -validity 36500
@@ -98,12 +162,14 @@ in PowerShell).
 ## Building it yourself
 
 ```
-node build.mjs                      # dist/mobile/runtime.js - the script, as the module runs it
-cd android && ./gradlew :module:testReleaseUnitTest :module:assembleRelease
-                                    # module/build/outputs/apk/release/module-release.apk (needs ANDROID_HOME, Java 17)
+node build.mjs                      # dist/app/app.js and dist/mobile/runtime.js - the script, as each runs it
+cd android && ./gradlew :app:testReleaseUnitTest :app:assembleRelease :module:testReleaseUnitTest :module:assembleRelease
+                                    # app/build/outputs/apk/release/app-release.apk and module/.../module-release.apk
+                                    # (needs ANDROID_HOME, Java 17)
 ```
 
 The tests:
+- `test/unit_app.cjs` and `android/app/src/test`: the app's, above.
 - `test/unit_mobile.cjs` runs the script as the module runs it, in Chromium (Android's WebView is Chromium).
 - `android/module/src/test` covers the module's own parts, and its dex reader against dexlib2. It uses a test dex of our
   own (`android/tools/fixture`, rebuilt with its `build.sh`). With `FR24_APK` set, it also checks every method of an FR24

@@ -22,7 +22,7 @@ jobs:
       - name: Offline tests
         run: |
           git config --global user.email "tests@example.invalid" && git config --global user.name "tests"
-          node test/run-suite.cjs --no-build --only unit_engine,unit_cases,unit_heading,unit_final,unit_legs,unit_monitor,unit_monitor2,unit_fr24,unit_store,unit_registry,unit_merge,unit_deploy,unit_installs,unit_dash,unit_names,unit_origin,unit_flightmsg,unit_monlive,unit_panel,unit_window,unit_hello,unit_vectoring,unit_boards,unit_padlocks,unit_public,unit_wx,unit_tracks,unit_waiting,unit_shared,unit_playback,unit_pbbuttons,unit_recent,unit_photos,unit_ksk16,unit_gioos,unit_n6012c,unit_logos,unit_window2,unit_mosttracked,unit_histgap,unit_photocache,unit_recentlist,unit_recentfast,unit_logreset,unit_photopage,unit_archive,unit_world,unit_central,unit_102,unit_monboards,unit_boardsync,unit_centralpool,unit_noroute,unit_scores,unit_fleet,unit_111,unit_acdb,unit_recent112,unit_console,unit_appanel,unit_boardfreeze,unit_boardpages,unit_mapx,unit_wxmap,unit_tel,unit_fr24raw,unit_local,unit_boardplace,unit_netfetch
+          node test/run-suite.cjs --no-build --only unit_engine,unit_cases,unit_heading,unit_final,unit_legs,unit_monitor,unit_monitor2,unit_fr24,unit_store,unit_registry,unit_merge,unit_deploy,unit_installs,unit_dash,unit_names,unit_origin,unit_flightmsg,unit_monlive,unit_panel,unit_window,unit_hello,unit_vectoring,unit_boards,unit_padlocks,unit_public,unit_wx,unit_tracks,unit_waiting,unit_shared,unit_playback,unit_pbbuttons,unit_recent,unit_photos,unit_ksk16,unit_gioos,unit_n6012c,unit_logos,unit_window2,unit_mosttracked,unit_histgap,unit_photocache,unit_recentlist,unit_recentfast,unit_logreset,unit_photopage,unit_archive,unit_world,unit_central,unit_102,unit_monboards,unit_boardsync,unit_centralpool,unit_noroute,unit_scores,unit_fleet,unit_111,unit_acdb,unit_recent112,unit_console,unit_appanel,unit_boardfreeze,unit_boardpages,unit_mapx,unit_wxmap,unit_tel,unit_fr24raw,unit_local,unit_boardplace,unit_netfetch,unit_1311
   monitor-node18:
     runs-on: ubuntu-latest
     steps:
@@ -103,14 +103,21 @@ jobs:
           export CHROMIUM="$(node -e "console.log(require(process.env.PLAYWRIGHT_PATH).chromium.executablePath())")"
           node test/unit_mobile.cjs > out.txt 2>&1 || { cat out.txt; exit 1; }
           cat out.txt; grep -q '^(skipped' out.txt && exit 1; grep -q '^FAIL' out.txt && exit 1; true
+      - name: The Android app - its script put into FR24's site at document start (Chromium, as Android's WebView)
+        run: |
+          export PLAYWRIGHT_PATH="$RUNNER_TEMP/pw/node_modules/playwright"
+          export CHROMIUM="$(node -e "console.log(require(process.env.PLAYWRIGHT_PATH).chromium.executablePath())")"
+          node test/unit_app.cjs > out.txt 2>&1 || { cat out.txt; exit 1; }
+          cat out.txt; grep -q '^(skipped' out.txt && exit 1; grep -q '^FAIL' out.txt && exit 1; true
       - name: A LADD aircraft's picture in FR24's panel (Vue page, Chromium)
         run: |
           export PLAYWRIGHT_PATH="$RUNNER_TEMP/pw/node_modules/playwright" VUE_PATH="$RUNNER_TEMP/pw/node_modules/vue/dist/vue.global.js"
           export CHROMIUM="$(node -e "console.log(require(process.env.PLAYWRIGHT_PATH).chromium.executablePath())")"
           node test/unit_panelphoto.cjs > out.txt 2>&1 || { cat out.txt; exit 1; }
           cat out.txt; grep -q '^(skipped' out.txt && exit 1; grep -q '^FAIL' out.txt && exit 1; true
-  # FR24's Android app: the LSPosed module (android/) - its own tests, and the APK built (kept with the run). FR24's app
-  # itself is never here: its code is checked against the module locally, android/tools/fr24check.sh
+  # Android (android/): the app (FR24's site with the script in it) and the LSPosed module for FR24's own app - their own
+  # tests, and both APKs built (kept with the run). FR24's app itself is never here: its code is checked against the
+  # module locally, android/tools/fr24check.sh
   android:
     runs-on: ubuntu-latest
     steps:
@@ -125,9 +132,14 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
-      - name: The module's tests and its APK
+      - name: The app's and the module's tests, and their APKs
         working-directory: android
-        run: ./gradlew --no-daemon :module:testReleaseUnitTest :module:assembleRelease
+        run: ./gradlew --no-daemon :app:testReleaseUnitTest :app:assembleRelease :module:testReleaseUnitTest :module:assembleRelease
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fr24-ladd-unblocker-app
+          path: android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
           name: fr24-ladd-unblocker-module
