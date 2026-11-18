@@ -39,7 +39,13 @@ Everything the extension does on FR24's site, on FR24's site as a phone gets it:
 - aircraft and flight log pages laid out as a phone app lays them out (1.3.12): a bar with the registration or flight
   number, the aircraft's pictures and details, then its flights by year, one line each - tap one for its times, status
   and its Play, KML and CSV; *Play* opens FR24's own player page for a phone, with its map and slider (1.3.13)
+- every Play opens FR24's own player for a phone - search results, an aircraft's panel, airport boards, live flights
+  (1.4.0); a blocked aircraft's opens on a loading screen while it is made ready, its aircraft drawn with its own icon
 - no "Open in app" pill or app banner (1.3.12)
+- *Map drawing: compatible mode* in the LADD Unblock window (1.4.0, off by default): for aircraft and airport pins that
+  break up or smear when the map is zoomed - FR24's map drawn without keeping its last picture or smoothing its edges,
+  from the next load. *This browser* there says what draws the map (the phone's graphics, the WebView): send it with
+  a report if the map draws wrong either way
 
 What is different from FR24's own app:
 - It is FR24's mobile site. It looks and works much like FR24's app, but it is FR24's site, not a copy of their app.

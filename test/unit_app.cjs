@@ -306,6 +306,29 @@ const BRIDGE = () => {
       check('no error in the page', errors.length === 0, errors.slice(0, 5));
       await ctx.close();
     }
+
+    // ======== 5. (1.4.0) the app's "Map drawing: compatible mode": FR24's map's WebGL asked for without keeping its last
+    // picture or smoothing its edges - only when switched on ===========================================================
+    {
+      const ctx = await browser.newContext({ viewport: { width: 412, height: 915 }, isMobile: true, hasTouch: true }), page = await ctx.newPage(), errors = [];
+      page.on('pageerror', e => errors.push(String(e && e.message || e)));
+      await ctx.exposeBinding('__tlHost', async () => {});
+      await ctx.addInitScript(BRIDGE);
+      await ctx.addInitScript({ content: fs.readFileSync(APP, 'utf8') });
+      await page.route('**/*', route => route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><html><head></head><body></body></html>' }));
+      const attrs = () => page.evaluate(() => { const c = document.createElement('canvas'), g = c.getContext('webgl2', { preserveDrawingBuffer: true, antialias: true, alpha: true }); const a = g && g.getContextAttributes(); return a ? { pdb: a.preserveDrawingBuffer, aa: a.antialias, alpha: a.alpha } : null; });
+      await page.goto('https://www.flightradar24.com/m');
+      const off = await attrs();
+      check('compatible mode off (as it starts): FR24\'s WebGL as FR24 asks for it - its last picture kept', !!off && off.pdb === true, off);
+      await page.evaluate(() => localStorage.setItem('tweeks.fr24.ladd.opts1', JSON.stringify({ on: true, mapCompat: true })));
+      await page.reload();
+      const on = await attrs();
+      check('... switched on (the next load): no last picture kept, no smoothing - the rest as asked (its transparency)', !!on && on.pdb === false && on.aa === false && on.alpha === true, on);
+      const c2d = await page.evaluate(() => !!document.createElement('canvas').getContext('2d'));
+      check('... a page\'s 2D drawing untouched', c2d === true);
+      check('no error in the page', errors.length === 0, errors.slice(0, 5));
+      await ctx.close();
+    }
   } finally { await browser.close(); }
   console.log(fails ? `\n${fails} failed` : '\nall passed');
   process.exit(fails ? 1 : 0);

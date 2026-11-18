@@ -208,6 +208,13 @@ Since 1.2.7 the monitor logs the runway of **every** flight FR24 draws, worldwid
 
 Since 1.2.8 an airport's runways come in one answer, at once: `/rwyap?use=1` gives every flight's runway for the boards and cards, and the runway ends and the last day's movements by runway for the runway in use. It is answered from the runway log's days held in memory (today's and yesterday's, every airport in the world) and made once per airport every 20 seconds; the airports asked for in the last half hour are made afresh every minute. The page shares that one answer between the panel's tiles, the board's rows and the cards, and keeps each airport's runways and last three hours' movements in the page's storage, so the runway in use shows the moment a panel opens.
 
+Since 1.4.0 the monitor also keeps every aircraft **on the ground** at every airport, FR24's and OurAirports' alike (`onground.cjs`, `/onground?ap=`). The rule is FR24's own: on the list from its landing until it is known to have left. It is fed by the same scans:
+- An aircraft seen on the ground within 4 km of a field is there.
+- An aircraft last seen coming in to a field and not seen in the air four minutes on has landed there. Coming in means within 12 km, below 2,000 ft over it, descending, or going there by FR24's route.
+- Any report of it in the air after that takes it off the list.
+
+The list is kept for up to a week and written every quarter of an hour. The boards' *On ground* adds it to FR24's own list (a free account gets FR24's last hour), and an OurAirports field's board shows it alone.
+
 Since 1.2.10 the runway log has every airport's airliners, not only the airports someone is looking at. A **low scan** asks FR24's feed every 30 seconds for the flights in the air below the height each region's airports need (6,000 ft, 10,500 ft over the western US, 11,000 ft over Europe, Africa and the Middle East, 13,000 ft over Asia, 17,000 ft over Latin America), with FR24's own altitude filter (LiveFeed field 3, an altitude range). About 5,000 flights, in eight requests, North America cut so that each region takes one. Each is fed to the runway log and its callsign-less flights to the identification. The world scan runs every minute. When FR24 pushes back, every scan runs at half speed for six hours (a quarter after a second pushback).
 
 Which runway, since 1.2.10 (`airport.cjs runwayOf`):

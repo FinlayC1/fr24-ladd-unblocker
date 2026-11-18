@@ -48,7 +48,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
 // ==UserScript==
 // @name         Flightradar24 LADD / N-A Unblocker (feed-level)
 // @namespace    tweeks.io
-// @version      1.3.13
+// @version      1.4.0
 // @description  Identifies every LADD / N/A / blocked military aircraft on Flightradar24 from public ADS-B, and injects callsign, registration, operator, age, country, MSN, squawk, vertical speed, GPS altitude, airspeeds, wind, photos, a reasoned origin/destination with a wind-corrected ETA (also for ordinary flights FR24 shows as N/A - military, private, GA, helicopters, with private landing sites; learned from 63 days of every aircraft worldwide, with live weather and closures), airport-board entries and a rebuilt 7-month flight log straight into FR24's own data - so it all renders like normal FR24 traffic.
 // @author       Finlay Clarke
 // @updateURL    https://raw.githubusercontent.com/FinlayC1/fr24-ladd-unblocker/main/dist/fr24-ladd-unblocker.user.js
@@ -147,7 +147,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "1.3.13";
+    var BRIDGE_V = "1.4.0";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed but the
@@ -10050,11 +10050,11 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '1.3.13';
+  const VERSION = '1.4.0';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
-  const OPT_DEFAULTS = { on: true, strip: true, boards: true, search: true, acPages: true, alerts: true, noAds: true, mapx: true, count: true };
+  const OPT_DEFAULTS = { on: true, strip: true, boards: true, search: true, acPages: true, alerts: true, noAds: true, mapx: true, count: true, mapCompat: false };
   const opt = (() => { let o = null; try { o = JSON.parse(localStorage.getItem(OPT_KEY) || 'null'); } catch (_) { o = null; } return Object.assign({}, OPT_DEFAULTS, o && typeof o === 'object' ? o : {}); })();
   const NM_KM = 1.852;
   const AREA_RADIUS_NM = 220;           // aggregator "point" radius for viewport sweeps (APIs cap at 250)
@@ -20048,7 +20048,7 @@ html.tl-pv-play #tl-pv .tl-pv-backpill{display:flex}
   // (the version whose "what's new" was put away, and the one whose dot on the button the window was opened for)
   const UB_SEEN_KEY = 'tweeks.fr24.ladd.seenver', UB_DOT_KEY = 'tweeks.fr24.ladd.dotver';
   // (the newest CHANGELOG section's headlines, written in by build.mjs: { v, items })
-  const UB_WHATS_NEW = {"v":"1.3.13","items":["**Playback in the app is FR24's own player for a phone.** *Play* opens FR24's own playback page, with its map and slider, for every flight: blocked ones, flights in logs rebuilt from ADS-B and older ones too. 1.3.12 opened the log page's old player for a computer.","**A flight FR24 never marks as landed now ends where FR24's own track does.** G-LFSA's flights of 17 and 18 November, Liverpool and back, read \"Scheduled\", one of them \"Private Site\", and FR24's player said \"To: -\". They now read Liverpool to Liverpool, \"Landed ~\" at the time FR24's track ends, and the player's TO says Liverpool.","**The app no longer zooms the page itself on a pinch.** A pinch is the map's, as in FR24's own app.","**The app is signed with the project's own key from this version on.** Uninstall the app once and install this version. From then on it updates itself."]};
+  const UB_WHATS_NEW = {"v":"1.4.0","items":["**Every Play in the app opens FR24's own player for a phone.** Search results, an aircraft's panel, airport boards, live flights: all of them, not FR24's old player for a computer.","**A blocked aircraft's playback opens straight away on a loading screen.** No more FR24's \"Search for flights\" page first, and it loads sooner.","**FR24's player draws the aircraft with its own icon,** a Citation or a helicopter, for the flights this script plays. It drew them all as a Boeing 737.","**No padlocks in FR24's player.**","**Runways for blocked aircraft on airport boards:** the take-off's and the landing's, in each flight's card.","**\"On ground\" at every airport, from the monitor.** It covers FR24's airports and OurAirports' fields."]};
   // (an aircraft with an open padlock: FR24's outline style - 24 grid, 1.5 stroke in the text colour)
   const UB_ICON = '<svg data-tl-ub-icon="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
   const UB_X = '<svg viewBox="0 0 14 14" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5l11 11M12.5 1.5l-11 11"/></svg>';
@@ -20123,6 +20123,8 @@ html.tl-no-strip .tl-strip{display:none!important}
     ['alerts', 'Take-off & landing alerts', 'Notifications for the aircraft on your watchlist.'],
     ['mapx', 'Locked map options', "FR24's weather layers, aeronautical charts, ATC boundaries, oceanic tracks, the Last clicked flights widget and aircraft category filters, worked natively from free sources.", 'reload'],
     ['noAds', 'Hide ads & upgrade prompts', "FR24's adverts, the ad sidebar, the free-trial pop-up and upgrade banners. The sidebar and pop-up come back after a reload.", 'reload'],
+    // (1.4.0: the phone app only - src/app/shim.js)
+    ['mapCompat', 'Map drawing: compatible mode', "If aircraft and airport pins break up, turn pale or smear when you zoom the map: FR24's map drawn without keeping its last picture or smoothing its edges, which some phones' graphics get wrong. Off by default. Reload to apply.", 'reload', 'app'],
     // (the hello to the monitor, 06-hello.js: exactly what it sends is in PRIVACY.md)
     ['count', 'Count this install (anonymous)', 'A random number, your version and browser, once a day - no IP kept, nothing about flights. Helps show how many people use it.']
   ];
@@ -20357,10 +20359,29 @@ html.tl-no-strip .tl-strip{display:none!important}
     resetLogsNow().then(n => { ubLogNote = `Deleted ${nf(n)} saved logs in this browser. They are built again from both networks as aircraft are looked at.`; }, e => { ubLogNote = 'Could not delete them (' + String((e && e.message) || e).slice(0, 80) + ').'; }).then(renderUnblockWindow);
   }
   // ---- this browser: what it has done since FR24 was opened -----------------------------------------------------------
+  // (1.4.0) the phone app: what draws FR24's map - the graphics' name, the largest picture it takes, the screen's pixels to
+  // the page's, the WebView - for a report of a map that draws wrong (read once, its drawing context let go at once)
+  let gpuRead = null;
+  function gpuInfo() {
+    if (gpuRead) return gpuRead;
+    gpuRead = { name: '', max: 0, dpr: window.devicePixelRatio || 1, wv: (/Chrome\/([\d.]+)/.exec(navigator.userAgent) || [])[1] || '' };
+    try {
+      const c = document.createElement('canvas'), g = c.getContext('webgl2') || c.getContext('webgl');
+      if (g) {
+        const d = g.getExtension('WEBGL_debug_renderer_info');
+        gpuRead.name = String((d && g.getParameter(d.UNMASKED_RENDERER_WEBGL)) || g.getParameter(g.RENDERER) || '');
+        gpuRead.max = Number(g.getParameter(g.MAX_TEXTURE_SIZE)) || 0;
+        const lose = g.getExtension('WEBGL_lose_context'); if (lose) lose.loseContext();
+      } else gpuRead.name = 'no WebGL';
+    } catch (e) { gpuRead.name = 'not read: ' + String(e && e.message || e).slice(0, 60); }
+    return gpuRead;
+  }
   function localHtml() {
     let ok = 0, fail = 0; for (const h of hostStat.values()) { ok += h.ok; fail += h.fail; }
     const kv = (k, v, t) => `<div class="tl-ub-kv"${t ? ` title="${esc(t)}"` : ''}><span>${esc(k)}</span><span>${v}</span></div>`;
-    return `<div class="tl-ub-grid">${kv('Flights identified', nf(live.size), 'Blocked and N/A flights this tab has named')}${kv('Routes worked out', nf(routeState.size))}${kv('Named by the monitor', nf(srvIds.rows.size), 'FR24 flights the monitor has named, known to this tab')}${kv('Blocked aircraft live', nf(globalList.byHex.size))}${kv('Requests', `${nf(ok)} answered${fail ? ` · <span class="tl-warn">${nf(fail)} failed</span>` : ''}`, "Every data source together; each one's own count is under Data sources")}</div><div class="tl-ub-note tl-muted">Since FR24 was opened in this tab.</div><div class="tl-ub-btns"><button class="tl-ub-b tl-ub-b2" data-ub-act="logReset" title="Delete every flight log saved in this browser (what was learned is kept): built again from both networks as aircraft are looked at">${ubLogAsk && now() - ubLogAsk <= 5000 ? 'Click again to delete' : 'Rebuild flight logs'}</button></div>${ubLogNote ? `<div class="tl-ub-note">${esc(ubLogNote)}</div>` : ''}`;
+    const gi = typeof TL_APP === 'object' ? gpuInfo() : null;
+    const gpu = gi ? kv('Map drawing', `${esc(gi.name || '-')} · textures to ${nf(gi.max)} px · ${esc(String(Math.round(gi.dpr * 100) / 100))}x · WebView ${esc(gi.wv || '-')}${opt.mapCompat ? ' · <span class="tl-warn">compatible mode</span>' : ''}`, "What draws FR24's map on this phone - for a report of a map that draws wrong") : '';
+    return `<div class="tl-ub-grid">${gpu}${kv('Flights identified', nf(live.size), 'Blocked and N/A flights this tab has named')}${kv('Routes worked out', nf(routeState.size))}${kv('Named by the monitor', nf(srvIds.rows.size), 'FR24 flights the monitor has named, known to this tab')}${kv('Blocked aircraft live', nf(globalList.byHex.size))}${kv('Requests', `${nf(ok)} answered${fail ? ` · <span class="tl-warn">${nf(fail)} failed</span>` : ''}`, "Every data source together; each one's own count is under Data sources")}</div><div class="tl-ub-note tl-muted">Since FR24 was opened in this tab.</div><div class="tl-ub-btns"><button class="tl-ub-b tl-ub-b2" data-ub-act="logReset" title="Delete every flight log saved in this browser (what was learned is kept): built again from both networks as aircraft are looked at">${ubLogAsk && now() - ubLogAsk <= 5000 ? 'Click again to delete' : 'Rebuild flight logs'}</button></div>${ubLogNote ? `<div class="tl-ub-note">${esc(ubLogNote)}</div>` : ''}`;
   }
   function monPaint() {
     if (!ubBody || !ubBody.isConnected) return;
@@ -20377,7 +20398,7 @@ html.tl-no-strip .tl-strip{display:none!important}
     return `<div class="tl-ub-reload"${ubNeedReload ? '' : ' hidden'}><span>Reload FR24 to apply</span><button type="button" class="tl-ub-b" data-ub-act="reload">Reload</button></div>${whatsNewHtml()}
       <div class="tl-ub-row tl-ub-top"><span class="tl-ub-t">Enable LADD Unblock</span>${tgHtml('on', 'Enable LADD Unblock')}</div>
       <div class="tl-ub-info">${info}<span>Names blocked (LADD) and N/A aircraft from public ADS-B, with routes, predicted destinations and flight history.${opt.on ? '' : ' Switched off: FR24 is left as it is - only what it shows is still shared with the monitor.'}</span></div>
-      ${UB_FEATURES.map(([k, t, d]) => `<div class="tl-ub-item tl-ub-feat"><div class="tl-ub-row"><span class="tl-ub-t">${esc(t)}</span>${tgHtml(k, t)}</div><p>${esc(d)}</p>${k === 'count' && opt.count && ffConsent === false ? '<div class="tl-ub-note">Firefox has not allowed this add-on to send technical data, so nothing is sent. <button type="button" class="tl-ub-b tl-ub-b2" data-ub-act="ffConsent">Allow in Firefox</button></div>' : ''}</div>`).join('')}
+      ${UB_FEATURES.filter(f => f[4] !== 'app' || typeof TL_APP === 'object').map(([k, t, d]) => `<div class="tl-ub-item tl-ub-feat"><div class="tl-ub-row"><span class="tl-ub-t">${esc(t)}</span>${tgHtml(k, t)}</div><p>${esc(d)}</p>${k === 'count' && opt.count && ffConsent === false ? '<div class="tl-ub-note">Firefox has not allowed this add-on to send technical data, so nothing is sent. <button type="button" class="tl-ub-b tl-ub-b2" data-ub-act="ffConsent">Allow in Firefox</button></div>' : ''}</div>`).join('')}
       <div class="tl-ub-item"><span class="tl-ub-t">Updates</span><div id="tl-ub-upd">${updatesHtml()}</div></div>
       <div class="tl-ub-item"><span class="tl-ub-t">Monitor</span><div id="tl-ub-mon">${opt.on ? monHtml() : '<p>Switched off.</p>'}</div></div>
       <div class="tl-ub-item"><span class="tl-ub-t">This browser</span><div id="tl-ub-local">${opt.on ? localHtml() : '<p>Switched off.</p>'}</div></div>

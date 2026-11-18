@@ -171,6 +171,26 @@ var TL_HOST_ACCESS = (function () {
     }
   } catch (e) { /* the WebView's own */ }
 })();
+// (1.4.0) "Map drawing: compatible mode" (the LADD Unblock window, the app only; off by default): FR24's map drawn in
+// WebGL - its aircraft, airport pins and their shadows (deck.gl, luma.gl) - asked for without keeping its last picture
+// (preserveDrawingBuffer) and without smoothing its edges (antialias): both a phone's graphics can get wrong, pieces of
+// the pictures before left on screen as the map zooms. Read from the window's switches as this page starts
+(function () {
+  var on = false; try { var o = JSON.parse(localStorage.getItem('tweeks.fr24.ladd.opts1') || 'null'); on = !!(o && o.on !== false && o.mapCompat === true); } catch (e) { on = false; }
+  if (!on) return;
+  try {
+    var C = window.HTMLCanvasElement && HTMLCanvasElement.prototype, oGet = C && C.getContext;
+    if (typeof oGet !== 'function') return;
+    C.getContext = function (kind) {
+      if (kind === 'webgl2' || kind === 'webgl' || kind === 'experimental-webgl') {
+        var a = arguments[1] && typeof arguments[1] === 'object' ? arguments[1] : {}, b = {}; for (var k in a) b[k] = a[k];
+        b.preserveDrawingBuffer = false; b.antialias = false;
+        return oGet.call(this, kind, b);
+      }
+      return oGet.apply(this, arguments);
+    };
+  } catch (e) { /* the WebView's own */ }
+})();
 // (1.3.12) FR24's "Open in app" pill on its map and its "Get the best flight tracking experience using our app" banner on
 // its data pages: this is the app - neither is shown
 (function () {
