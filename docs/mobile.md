@@ -93,7 +93,8 @@ has to be signed again every 7 days (AltStore does it for you); a paid developer
 
 1. Download `fr24-ladd-unblocker-ios.ipa` from the
    [latest release](https://github.com/FinlayC1/fr24-ladd-unblocker/releases/latest), or the *fr24-ladd-unblocker-ios*
-   artifact of a [Tests run](https://github.com/FinlayC1/fr24-ladd-unblocker/actions/workflows/tests.yml).
+   artifact of a [Tests run](https://github.com/FinlayC1/fr24-ladd-unblocker/actions/workflows/tests.yml) on `main` (or
+   one run by hand on a branch).
 2. Open it with AltStore or Sideloadly and install it.
 3. On the phone: *Settings → General → VPN & Device Management*, trust your Apple ID's profile (the first time).
 4. Open **LADD Unblocker**.
@@ -119,7 +120,9 @@ share sheet (Files, AirDrop ...), sign-in windows. FR24's pages open in the app;
   redirect checked and followed by the app itself, with the web view's user agent.
 - `Geo.swift` (the location), `Updater.swift` (the update), `Policy.swift` (the rules, as the Android app's).
 - Built on a Mac by CI's `ios` job (`ios/build.sh`: XcodeGen makes the Xcode project from `ios/project.yml`; Xcode builds
-  it unsigned and the `.ipa` is put together). The release attaches the `.ipa` that the Tests run built.
+  it unsigned and the `.ipa` is put together). It runs on a push to `main` - the release attaches that run's `.ipa` - or
+  by hand: *Actions → Tests → Run workflow* on any branch. GitHub's Macs are few and can take minutes to start; "Waiting
+  for a hosted runner to come online" is that wait.
 
 ## The LSPosed module (FR24's own app)
 
