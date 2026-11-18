@@ -15,7 +15,7 @@
 
 <br>
 
-A browser extension and phone app for Flightradar24. It names the flights FR24 hides or shows as "N/A", adds their route,<br>owner and history, plays their flights back in FR24's own player, fills in the figures FR24 keeps behind a padlock<br>and unlocks its locked weather layers and map options, all from public ADS-B and other free public data.
+An app and browser extension to enhance Flightradar24. It names the flights FR24 hides or shows as "N/A", adds their route,<br>owner and history, plays their flights back in FR24's own player, fills in the figures FR24 keeps behind a padlock<br>and unlocks its locked weather layers and map options, all from public ADS-B and other free public data.
 
 <br>
 
