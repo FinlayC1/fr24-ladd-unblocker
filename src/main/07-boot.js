@@ -190,6 +190,7 @@
       case 'rwyUse': onRwyUse(d).catch(e => { log('runway in use', String(e && e.message || e)); postToPage('rwyUseGot', { rid: d.rid, ap: d.ap, ok: false, ends: [], runways: [], mv: [] }); }); break;
       case 'needEnds': onNeedEnds(d).catch(e => { log('board ends', String(e && e.message || e)); postToPage('endsGot', { list: [] }); }); break;
       case 'trackFile': onTrackFile(d).catch(e => { log('track file', String(e && e.message || e)); postToPage('trackFileGot', { rid: d && d.rid, ok: false }); }); break;
+      case 'ogWant': onOgWant(d).catch(e => { log('on ground', String(e && e.message || e)); postToPage('ogGot', { rid: d && d.rid, ap: d && d.ap, list: [] }); }); break;
       case 'pbPage': onPbPage(d).catch(e => { log('playback page', String(e && e.message || e)); postToPage('pbPageGot', { rid: d && d.rid, ok: false }); }); break;
       case 'sched': onSched(d); break;
       case 'airAsk': onAirAsk(d).catch(e => log('airspace', e)); break;

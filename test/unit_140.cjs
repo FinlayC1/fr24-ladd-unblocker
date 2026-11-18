@@ -31,7 +31,11 @@ const str = f => f && f.b ? Buffer.from(f.b).toString() : '';
   const w = dom.window, doc = w.document;
   let H = null; w.__tlTestHook = h => { H = h; };
   const posted = []; w.postMessage = d => posted.push(d);
-  w.unsafeWindow = w; w.GM_xmlhttpRequest = () => {}; w.fetch = () => Promise.reject(new Error('offline')); w.indexedDB = undefined; w.Response = Response; w.Headers = Headers;
+  w.unsafeWindow = w; w.GM_xmlhttpRequest = () => {}; w.indexedDB = undefined; w.Response = Response; w.Headers = Headers;
+  // (FR24's own on-ground list of Liverpool: its last hour - G-DRTC; everything else offline)
+  const nowS0 = Math.floor(Date.now() / 1000);
+  const FR24_OG = { data: [{ id: 123456, flight: { id: '3d4fa2c1', number: 'LS3256', callsign: 'EXS53CE' }, landedTime: nowS0 - 120, airlineId: 5, runway: null, aircraft: { category: 1, name: 'Boeing 737-808', registeredOwners: 'Jet2', registration: 'G-DRTC', type: 'B738' }, originId: 1, activeDay: '2026-11-18' }], meta: { currentPage: 1 } };
+  w.fetch = (input) => { const u = typeof input === 'string' ? input : input.url; return /\/api\/v2\/airports\/2002\/on-grounds/.test(u) ? Promise.resolve(new Response(JSON.stringify(FR24_OG), { status: 200, headers: { 'content-type': 'application/json' } })) : Promise.reject(new Error('offline')); };
   // (jsdom lays nothing out: the boxes of what has words in it, as a browser draws them)
   w.HTMLElement.prototype.getBoundingClientRect = function () { const t = (this.textContent || '').trim(); return t ? { x: 0, y: 0, width: 100, height: 20, top: 0, left: 0, right: 100, bottom: 20 } : { x: 0, y: 0, width: 0, height: 0, top: 0, left: 0, right: 0, bottom: 0 }; };
   const SHARED = { errors: {}, name: 'Flightradar24', host: 'www.flightradar24.com', locale: 'en' };
@@ -121,6 +125,25 @@ const str = f => f && f.b ? Buffer.from(f.b).toString() : '';
   H.mxPbVeilOn(); gp.$page = { component: 'Data/NewFlightPlayback', url: '/data/playback/' + SID, props: Object.assign({}, SHARED, { trailSource: 'tl', callsign: 'MPORT', download: { flightId: SID } }) };
   H.mxDataTick();
   check('... FR24\'s player in: uncovered', !doc.getElementById('tl-pb-veil'));
+
+  // ---- (the on-ground list) FR24's own of Liverpool and the monitor's: every aircraft there, FR24's list's own first
+  posted.length = 0;
+  const ogP = w.fetch('https://www.flightradar24.com/api/v2/airports/2002/on-grounds?page=1');
+  await sleep(30);
+  const ow = posted.find(p => p && p.__tweeksLadd === 'ogWant');
+  check('an airport\'s on-ground list asked of FR24: the monitor\'s of it asked for alongside', !!ow && ow.ap === 2002, ow);
+  w.dispatchEvent(new w.MessageEvent('message', { data: { __tweeksLadd: 'ogGot', rid: ow && ow.rid, ap: 2002, list: [
+    { fid: '3d4fa2c1', reg: 'G-DRTC', ty: 'B738', t: nowS0 - 120 },
+    { fid: '3d4f0001', hex: '400abc', reg: 'G-CEGP', ty: 'BE20', name: 'Beech B200 Super King Air', cs: 'MDI28F', alId: 0, t: nowS0 - 2340 },
+    { fid: '', hex: '43edb1', reg: 'M-PORT', ty: 'C68A', name: 'Cessna 680A Citation Latitude', cs: 'MPORT', t: nowS0 - 3 * 86400, badge: 'LADD' }] }, source: w }));
+  const og = await (await ogP).json();
+  const regs = og.data.map(e => e.aircraft.registration);
+  check('... the monitor\'s aircraft FR24\'s hour has not got added - G-CEGP, and M-PORT landed three days ago; G-DRTC (FR24\'s own) once', JSON.stringify(regs) === JSON.stringify(['G-DRTC', 'G-CEGP', 'M-PORT']), regs);
+  const cegp = og.data[1], mport = og.data[2];
+  check('... in FR24\'s own row form: its flight, landing time, aircraft (name, type, registration), its day', cegp.id === 40000000000 + 0x3d4f0001 && cegp.flight.callsign === 'MDI28F' && cegp.landedTime === nowS0 - 2340 && cegp.aircraft.name === 'Beech B200 Super King Air' && cegp.aircraft.type === 'BE20' && /^\d{4}-\d\d-\d\d$/.test(cegp.activeDay), cegp);
+  check('... one with no flight id of FR24\'s: by its address, its callsign its registration\'s if none', mport.id === 40000000000 + 0x43edb1 && mport.flight.callsign === 'MPORT' && mport.flight.id === null, mport);
+  const im = await (await w.fetch('https://www.flightradar24.com/api/v2/airports/2002/on-grounds/' + cegp.id + '/aircraft-images')).json();
+  check('... its card\'s pictures: answered here (FR24 has no such row), none', Array.isArray(im.data.images) && im.data.images.length === 0, im);
 
   // ---- the app's routing: which addresses are a flight's playback
   check('an aircraft\'s or flight number\'s log page with a flight in its address: that flight - FR24\'s id, or one of this script\'s', H.mxPbLogId('/data/aircraft/g-drtc', '#3d4fa2c1') === '3d4fa2c1' && H.mxPbLogId('/data/flights/ls3256', '#' + SID) === SID && H.mxPbLogId('/data/aircraft/G-DRTC/', '#3D4FA2C1') === '3d4fa2c1');

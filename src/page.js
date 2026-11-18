@@ -5264,6 +5264,49 @@
     // or came down the final approach (monitor/rwylog.cjs): by FR24's id of the flight, and a blocked flight's by its
     // address and time (its ADS-B track's). Asked for as a board opens - the board waits a moment for them - and kept a
     // minute; a card asks for the other end's airport the same way.
+    // (1.4.0) An airport's "On ground" as the monitor has it (the userscript's ogRows): asked for with FR24's own list, kept a
+    // minute - every aircraft there from its landing until it is seen in the air again, FR24's airports and OurAirports'
+    var mxOg = new Map(), mxOgWait = new Map(), mxOgSeq = 0;
+    function ogAsk(apId, ms) {
+      apId = Number(apId) || 0; if (!(apId > 0)) return Promise.resolve(null);
+      var c = mxOg.get(apId);
+      if (!c || Date.now() - c.at > 60000) {
+        var rid = 'og' + (++mxOgSeq); c = { at: Date.now() };
+        c.p = new Promise(function (res) {
+          mxOgWait.set(rid, function (d) { mxOgWait.delete(rid); res(d && Array.isArray(d.list) ? d.list : null); });
+          oSetTimeout(function () { if (mxOgWait.has(rid)) { mxOgWait.delete(rid); c.at = 0; res(null); } }, 9000);
+        });
+        mxOg.set(apId, c); if (mxOg.size > 50) mxOg.delete(mxOg.keys().next().value);
+        post('ogWant', { rid: rid, ap: apId });
+      }
+      return ms ? withTimeout(c.p, ms, null) : c.p;
+    }
+    function onOgGot(d) { var f = d && mxOgWait.get(d.rid); if (f) f(d); }
+    // (each aircraft FR24's own list has not got - by its flight, registration or address - as a row of FR24's own form;
+    // the list latest landed first, as FR24's is)
+    var regNorm = function (r) { return String(r || '').toUpperCase().replace(/[^A-Z0-9]/g, ''); };
+    function ogAdd(data, list, apId) {
+      if (!Array.isArray(data) || !Array.isArray(list) || !list.length) return 0;
+      var have = {}, n = 0;
+      data.forEach(function (e) {
+        if (!e) return; var f = e.flight || {}, ac = e.aircraft || {}, rec = f.id ? recOf(parseInt(f.id, 16)) : null;
+        if (f.id) have['f' + String(f.id).toLowerCase()] = true; if (ac.registration) have['r' + regNorm(ac.registration)] = true;
+        var hx = e.__tlHex || (rec && rec.hex); if (hx) have['h' + String(hx).toLowerCase()] = true;
+      });
+      list.forEach(function (x) {
+        if (!x || (!x.reg && !x.hex && !x.cs)) return;
+        if ((x.fid && have['f' + x.fid]) || (x.reg && have['r' + regNorm(x.reg)]) || (x.hex && have['h' + x.hex])) return;
+        var num = x.fid ? parseInt(x.fid, 16) % 4000000000 : x.hex ? parseInt(x.hex, 16) : 0; if (!num) return;
+        var t = Number(x.t) || 0, cat = null; try { cat = categoryOf({ type: x.ty, desc: x.name }); } catch (e) { cat = null; }
+        data.push({ id: 40000000000 + num, flight: { id: x.fid || null, number: null, callsign: x.cs || regNorm(x.reg) || null }, landedTime: t || null, airlineId: x.alId || null, runway: null,
+          aircraft: { category: cat, name: x.name || x.ty || '', registeredOwners: '', registration: x.reg || '', type: x.ty || '' }, originId: x.ap || null,
+          activeDay: t ? new Date(t * 1000).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10), __tlAdded: true, __tlOg: true, __tlHex: x.hex || '', __tlBadge: x.badge || '' });
+        if (x.fid) have['f' + x.fid] = true; if (x.reg) have['r' + regNorm(x.reg)] = true; if (x.hex) have['h' + x.hex] = true;
+        n++;
+      });
+      if (n) mx.ogRows = (mx.ogRows || 0) + n;
+      return n;
+    }
     var mxRwyAp = new Map(), mxRwyHex = new Map(), mxRwyApSeq = 0;   // apId -> { at, p }; apId -> [[hex, 0|1, runway, time]]
     function mxRwyAirport(apId, ms) {
       apId = Number(apId) || 0; if (!(apId > 0) || !mx.on) return Promise.resolve(false);
@@ -6179,6 +6222,8 @@
           var sid = Number(m[3]) - 9000000000, rec0 = recOf(sid), route0 = routeNow(sid) || {};
           if (rec0) { stats.details++; var sAp = Number(m[1]), sKind = m[2]; return photosWithin(rec0, 2800).then(function (ph) { return cardRwy(jsonResponse(null, boardDetailFor(sid, rec0, route0, sKind, sAp, ph)), sAp, sKind, false, rec0.hex); }); }
         }
+        // (1.4.0: a row of the monitor's on-ground list - FR24 has no such row: no pictures of FR24's, at once)
+        if ((m = url.match(/\/api\/v\d+\/airports\/(\d+)\/on-grounds\/(\d+)\/aircraft-images/)) && Number(m[2]) >= 40000000000) return Promise.resolve(jsonResponse(null, { data: { images: [] } }));
         if ((m = url.match(/\/api\/v\d+\/airports\/(\d+)\/on-grounds\/(\d+)\/aircraft-images/)) && Number(m[2]) >= 9000000000) {
           var gid = Number(m[2]) - 9000000000, grec = resolved.get(gid);
           if (grec) return photosWithin(grec, 2800).then(function (ph) { return jsonResponse(null, { data: { images: ph.slice(0, 3).map(boardImage) } }); });
@@ -6350,7 +6395,9 @@
           var earlierP = whole && apId < 1e7 ? oFetch.call(window, /[?&]page=/.test(url) ? url.replace(/([?&])page=-?\d+/, '$1page=-1') : url + (url.indexOf('?') >= 0 ? '&' : '?') + 'page=-1', init).then(function (r) { return r.ok ? r.json() : null; }).then(function (x) { earlier = x; }, function () { /* FR24's day without it */ }) : null;
           // (1.2.7: and the airport's runways, as logged - 1.5 s at most: the board drawn with them in)
           var rwyApP = mx.on ? mxRwyAirport(apId, 1500) : null;
-          return Promise.all([p, archP, earlierP, rwyApP]).then(function (x) { return x[0]; }).then(function (res) {
+          // (1.4.0: the on-ground list: the monitor's of the airport too - 2 s at most)
+          var ogList = null, ogP = kind === 'on-grounds' && page === 1 ? ogAsk(apId, 2000).then(function (l) { ogList = l; }) : null;
+          return Promise.all([p, archP, earlierP, rwyApP, ogP]).then(function (x) { return x[0]; }).then(function (res) {
             if (!res.ok) return res;
             return res.clone().json().then(function (j) {
               if (!j || !Array.isArray(j.data)) return res;
@@ -6404,7 +6451,10 @@
                   j.data.push(row); hits++; seenIds.push(id);
                 };
                 resolved.forEach(addRow); naRecs.forEach(function (rec, id) { if (!resolved.has(id)) addRow(rec, id); });
-                if (hits) j.data.sort(function (a, b) { return (a.scheduledTime || a.landedTime || 0) - (b.scheduledTime || b.landedTime || 0); });
+                // (1.4.0: the monitor's aircraft on the ground there that FR24's list has not got)
+                if (kind === 'on-grounds' && ogList) { try { hits += ogAdd(j.data, ogList, apId); } catch (e) { stats.errors++; stats.lastError = String(e); } }
+                // (the on-ground list latest landed first, as FR24 orders it - the boards earliest first)
+                if (hits) j.data.sort(kind === 'on-grounds' ? function (a, b) { return (b.landedTime || 0) - (a.landedTime || 0); } : function (a, b) { return (a.scheduledTime || a.landedTime || 0) - (b.scheduledTime || b.landedTime || 0); });
               }
               j.data.forEach(function (e) { if (e && e.flight && e.flight.id && !e.__tlAdded) board.native[parseInt(e.flight.id, 16)] = true; });
               if (page === 1) { resolved.forEach(function (rec, id) { board.sig[id] = boardSig(id, apId, kind); }); naRecs.forEach(function (rec, id) { board.sig[id] = boardSig(id, apId, kind); }); }
@@ -6876,6 +6926,7 @@
       else if (d.__tweeksLadd === 'rwyGot') onRwyGot(d);
       else if (d.__tweeksLadd === 'endsGot') onEndsGot(d);
       else if (d.__tweeksLadd === 'rwyApGot') onRwyApGot(d);
+      else if (d.__tweeksLadd === 'ogGot') onOgGot(d);
       else if (d.__tweeksLadd === 'rwyUseGot') onRwyUseGot(d);
       else if (d.__tweeksLadd === 'apWxGot') onApWxGot(d);
       else if (d.__tweeksLadd === 'trackFileGot') onTrackFileGot(d);
