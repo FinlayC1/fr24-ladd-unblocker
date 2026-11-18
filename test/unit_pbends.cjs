@@ -238,6 +238,18 @@ const ageCell = w => { const c = [...w.document.querySelectorAll('[data-testid="
     check('FR24\'s box under its "On ground" list (its hour, a trial): taken away - its list and disclaimer left', !!hid && w.document.querySelector('.og-row').style.display !== 'none' && w.document.querySelector('.og-disc').style.display !== 'none', w.document.querySelector('.og-box').getAttribute('style'));
     w.close();
   }
+  // ---- (1.4.0) FR24's search box on one of its data pages (an airport's): a blocked aircraft among its results tagged
+  // "LADD" as on the map - the map's own watch runs on the map only
+  {
+    const asked = [], w = makeWin('https://www.flightradar24.com/data/airports/lpl', asked), L = await ready(w);
+    L.store.mergeHex('43edb1', { reg: 'M-PORT', type: 'C68A', ladd: true });
+    await sleep(200);
+    w.document.body.insertAdjacentHTML('beforeend', '<div data-testid="search__results"><div data-testid="search__result-row"><a data-search-result="aircraft:M-PORT"><span data-testid="search__result-aircraft__name">M-PORT</span><span data-testid="search__result-aircraft__type">Cessna 680A</span></a></div><div data-testid="search__result-row"><a data-search-result="aircraft:G-DRTC"><span data-testid="search__result-aircraft__name">G-DRTC</span><span data-testid="search__result-aircraft__type">Boeing 737-808</span></a></div></div>');
+    const chip = await until(() => w.document.querySelector('[data-testid="search__result-row"] .tl-ladd-chip'), 6000);
+    const rows = [...w.document.querySelectorAll('[data-testid="search__result-row"]')];
+    check('FR24\'s search on one of its data pages (an airport\'s): the blocked aircraft tagged "LADD" as on the map; another not', !!chip && chip.textContent === 'LADD' && !!rows[0].querySelector('.tl-ladd-chip') && !rows[1].querySelector('.tl-ladd-chip'), rows.map(r => r.textContent));
+    w.close();
+  }
   // ---- (1.2.4) a flight's KML and CSV for FR24's own download buttons: made from FR24's track of it, in FR24's CSV columns
   {
     const asked = [], w = makeWin(PB_URL, asked); await ready(w);
