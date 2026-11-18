@@ -38,7 +38,7 @@ Everything the extension does on FR24's site, on FR24's site as a phone gets it:
 - LADD Unblock in FR24's bar at the bottom of the map, beside Settings, Weather and Filters, as on a computer (1.3.12)
 - aircraft and flight log pages laid out as a phone app lays them out (1.3.12): a bar with the registration or flight
   number, the aircraft's pictures and details, then its flights by year, one line each - tap one for its times, status
-  and its Play, KML and CSV; *Play* shows FR24's player, *Flights* goes back
+  and its Play, KML and CSV; *Play* opens FR24's own player page for a phone, with its map and slider (1.3.13)
 - no "Open in app" pill or app banner (1.3.12)
 
 What is different from FR24's own app:
@@ -93,7 +93,8 @@ has to be signed again every 7 days (AltStore does it for you); a paid developer
 
 1. Download `fr24-ladd-unblocker-ios.ipa` from the
    [latest release](https://github.com/FinlayC1/fr24-ladd-unblocker/releases/latest), or the *fr24-ladd-unblocker-ios*
-   artifact of a [Tests run](https://github.com/FinlayC1/fr24-ladd-unblocker/actions/workflows/tests.yml).
+   artifact of a [Tests run](https://github.com/FinlayC1/fr24-ladd-unblocker/actions/workflows/tests.yml) on `main` (or
+   one run by hand on a branch).
 2. Open it with AltStore or Sideloadly and install it.
 3. On the phone: *Settings → General → VPN & Device Management*, trust your Apple ID's profile (the first time).
 4. Open **LADD Unblocker**.
@@ -119,7 +120,9 @@ share sheet (Files, AirDrop ...), sign-in windows. FR24's pages open in the app;
   redirect checked and followed by the app itself, with the web view's user agent.
 - `Geo.swift` (the location), `Updater.swift` (the update), `Policy.swift` (the rules, as the Android app's).
 - Built on a Mac by CI's `ios` job (`ios/build.sh`: XcodeGen makes the Xcode project from `ios/project.yml`; Xcode builds
-  it unsigned and the `.ipa` is put together). The release attaches the `.ipa` that the Tests run built.
+  it unsigned and the `.ipa` is put together). It runs on a push to `main` - the release attaches that run's `.ipa` - or
+  by hand: *Actions → Tests → Run workflow* on any branch. GitHub's Macs are few and can take minutes to start; "Waiting
+  for a hosted runner to come online" is that wait.
 
 ## The LSPosed module (FR24's own app)
 

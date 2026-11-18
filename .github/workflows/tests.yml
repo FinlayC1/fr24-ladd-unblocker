@@ -5,6 +5,8 @@ name: Tests
 on:
   push:
   pull_request:
+  # (by hand, from the Actions tab: every job - the iPhone app's build too - on any branch)
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
@@ -146,11 +148,11 @@ jobs:
           path: android/module/build/outputs/apk/release/module-release.apk
           if-no-files-found: error
   # iPhone and iPad (ios/): the app - FR24's site with the script in it, the Android app's twin - built on a Mac with
-  # Xcode and XcodeGen, unsigned, its .ipa kept with the run (ios/build.sh). On a push only: a pull request from this
-  # repository is the same commit built twice (a Mac's minutes count ten times), and the release takes the .ipa of the
-  # push to main's run
+  # Xcode and XcodeGen, unsigned, its .ipa kept with the run (ios/build.sh). On a push to main - the release takes the
+  # .ipa of that run - or by hand (Run workflow): GitHub's Macs are few and slow to start, a working branch's push and its
+  # pull request each asked for one for the same commit, and waited for it; a Mac's minutes count ten times
   ios:
-    if: github.event_name == 'push'
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4

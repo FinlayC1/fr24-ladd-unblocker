@@ -13,7 +13,7 @@
 //     which app it is (Android, iPhone);
 //     FR24's "open in app" pill and app banner not shown
 //   - (1.3.12) a log page on a phone in the app: laid out as a phone app lays it out (bar, pictures, details, flights by
-//     year, a flight opened, its Play - FR24's player and the way back), following the page as it changes; FR24's "flight
+//     year, a flight opened, its Play - FR24's own player page, 1.3.13), following the page as it changes; FR24's "flight
 //     was not found" for a flight of ours taken away; wider than a phone, FR24's own page
 //   - no error in the page
 // usage: node test/unit_app.cjs   (needs Playwright's Chromium)
@@ -245,9 +245,11 @@ const BRIDGE = () => {
       const BODY = `<!doctype html><html><head><meta name="viewport" content="width=device-width"></head><body><div id="open-in-app-banner">Get the app</div><header id="hdr">FR24's header</header>
 <div class="section-header"><div><div id="cnt-subpage-info"><h1>G-TEST</h1></div><div id="cnt-aircraft-info"><div class="row"><label>AIRCRAFT</label><span class="details">Piper Seneca V</span></div><div class="row"><label>TYPE CODE</label><span class="details">PA34</span></div><div class="row"><label>SERIAL NUMBER (MSN)</label><span class="details">3449108</span></div></div></div><div><div class="row"><div class="col-xs-6 cnt-picture"><span class="label">© A. Spotter | Jetphotos</span><a href="#"><img src="https://cdn.example.org/p1.jpg"></a></div></div></div></div>
 <div id="cnt-playback" class="hidden">the player</div>
-<table id="tbl-datatable"><tbody>${row(1795400000, '17 Nov 2026', ' Liverpool <a href="/data/airports/lpl">(LPL)</a>', ' Liverpool <a href="/data/airports/lpl">(LPL)</a>', ' — ', '1:36', 1795400000, 'green', 'Landed 12:05', play('abc123'))}${row(1767100000, '30 Dec 2025', ' Chester <a href="/data/airports/ceg">(CEG)</a>', ' — ', ' (RVR12) ', '1:02', 1767100000, 'gray', 'Unknown', play('abc124'))}<tr class="tl-foot"><td colspan="20">2 earlier flights rebuilt from public ADS-B data</td></tr></tbody></table>
+<table id="tbl-datatable"><tbody>${row(1795400000, '17 Nov 2026', ' Liverpool <a href="/data/airports/lpl">(LPL)</a>', ' Liverpool <a href="/data/airports/lpl">(LPL)</a>', ' — ', '1:36', 1795400000, 'green', 'Landed 12:05', play('abc123'))}${row(1767100000, '30 Dec 2025', ' Chester <a href="/data/airports/ceg">(CEG)</a>', ' — ', ' (RVR12) ', '1:02', 1767100000, 'gray', 'Unknown', play('ff4073ee69112c00'))}<tr class="tl-foot"><td colspan="20">2 earlier flights rebuilt from public ADS-B data</td></tr></tbody></table>
 <div id="toast-container"></div></body></html>`;
-      await page.route('**/*', route => route.request().url().split('#')[0] === 'https://www.flightradar24.com/data/aircraft/g-test' ? route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: BODY }) : route.fulfill({ status: 404, body: '' }));
+      // (FR24's player and flights pages: a page of their own here - an empty "not found" is shown by some Chromium builds
+      // as their own error page, chrome-error://, in place of the address the page went to)
+      await page.route('**/*', route => { const u = route.request().url().split('#')[0]; return u === 'https://www.flightradar24.com/data/aircraft/g-test' ? route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: BODY }) : /^https:\/\/www\.flightradar24\.com\/data\/(playback\/|flights\?)/.test(u) ? route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: '<!doctype html><html><head></head><body><div id="app"></div></body></html>' }) : route.fulfill({ status: 404, body: '' }); });
       await page.goto('https://www.flightradar24.com/data/aircraft/g-test#ff4073ee6911e300');
       // (FR24's notice for a flight of ours named in the address: shown as FR24 shows it)
       await page.evaluate(() => { document.getElementById('toast-container').innerHTML = '<div class="toast toast-warning"><div class="toast-message">Sorry, but flight was not found on this page. Please try load more flights</div></div><div class="toast"><div class="toast-message">Something else</div></div>'; });
@@ -268,19 +270,24 @@ const BRIDGE = () => {
       await page.click('#tl-pv .tl-pv-row .tl-pv-date');
       const ex = await page.evaluate(() => { const r = document.querySelector('#tl-pv .tl-pv-row'); return { open: r.classList.contains('open'), grid: [...r.querySelectorAll('.tl-pv-grid > div')].map(d => d.textContent.replace(/\s+/g, ' ').trim()), btns: [...r.querySelectorAll('.tl-pv-btns button')].map(b => b.textContent.trim()) }; });
       check('... a flight tapped: its times, status and duration, and its own buttons', ex.open && ex.grid.includes('ATD10:29') && ex.grid.includes('STATUSLanded 12:05') && ex.grid.includes('FLIGHT TIME1:36') && JSON.stringify(ex.btns) === '["KML","Play"]', ex);
-      await page.click('#tl-pv .tl-pv-row.open .tl-pv-play');
-      await page.evaluate(() => { document.getElementById('cnt-playback').classList.remove('hidden'); });
-      await sleep(400);
-      const pl = await page.evaluate(() => ({ played: window.__played || [], play: document.documentElement.classList.contains('tl-pv-play'), player: getComputedStyle(document.getElementById('cnt-playback')).display, pill: getComputedStyle(document.querySelector('#tl-pv .tl-pv-backpill')).display, open: document.querySelector('#tl-pv .tl-pv-row').classList.contains('open') }));
-      check('... its Play: the page\'s own Play pressed; FR24\'s player shown as its page shows it, with the way back to the list', JSON.stringify(pl.played) === '["abc123"]' && pl.play && pl.player !== 'none' && pl.pill !== 'none', pl);
-      await page.click('#tl-pv .tl-pv-backpill');
-      const bk = await page.evaluate(() => ({ play: document.documentElement.classList.contains('tl-pv-play'), list: getComputedStyle(document.getElementById('tl-pv')).display }));
-      check('... "Flights": the list again', !bk.play && bk.list !== 'none', bk);
       // (the page changes - a row filled in by the script: the list follows it, the open flight left open)
       await page.evaluate(() => { const td = document.querySelector('#tbl-datatable tbody tr:nth-child(2) td:nth-child(5)'); td.innerHTML = ' Liverpool <a href="/data/airports/lpl">(LPL)</a>'; });
       await sleep(700);
       const up2 = await page.evaluate(() => ({ to: document.querySelectorAll('#tl-pv .tl-pv-row')[1].querySelectorAll('.tl-pv-ap')[1].textContent.replace(/\s+/g, ' ').trim(), open: document.querySelector('#tl-pv .tl-pv-row').classList.contains('open') }));
       check('... the page\'s rows changed: the list follows them', up2.to === 'Liverpool (LPL)' && up2.open, up2);
+      // (1.3.13: its Play - FR24's own player page, made for a phone: a flight of FR24's own by its id; one known only to
+      // the script on FR24's flights page, which the page part turns into the player. Never the page's own player, FR24's
+      // old one for a computer)
+      await Promise.all([page.waitForURL('**/data/playback/abc123', { timeout: 10000 }).catch(() => null), page.click('#tl-pv .tl-pv-row.open .tl-pv-play')]);
+      const pl1 = page.url(), played1 = await page.evaluate(() => window.__played || []).catch(() => []);
+      check('... its Play: FR24\'s own player page for the flight (FR24\'s id), not the page\'s player for a computer', pl1 === 'https://www.flightradar24.com/data/playback/abc123' && !played1.length, { url: pl1, played: played1 });
+      await page.goto('https://www.flightradar24.com/data/aircraft/g-test');
+      await page.waitForSelector('#tl-pv .tl-pv-row', { timeout: 20000 }).catch(() => null);
+      await page.evaluate(() => { const r = document.querySelectorAll('#tl-pv .tl-pv-row')[1]; if (r && !r.classList.contains('open')) r.querySelector('.tl-pv-date').click(); });
+      await Promise.all([page.waitForURL('**/data/flights?tl-pb=*', { timeout: 10000 }).catch(() => null), page.click('#tl-pv .tl-pv-row.open .tl-pv-play')]);
+      check('... a flight known only to the script: FR24\'s flights page given it, for FR24\'s player', page.url() === 'https://www.flightradar24.com/data/flights?tl-pb=ff4073ee69112c00', page.url());
+      await page.goto('https://www.flightradar24.com/data/aircraft/g-test');
+      await page.waitForSelector('#tl-pv .tl-pv-row', { timeout: 20000 }).catch(() => null);
       // (wider than a phone: FR24's page as it is)
       await page.setViewportSize({ width: 1280, height: 900 });
       const wide = await page.evaluate(() => ({ pv: getComputedStyle(document.getElementById('tl-pv')).display, table: getComputedStyle(document.getElementById('tbl-datatable')).display }));
