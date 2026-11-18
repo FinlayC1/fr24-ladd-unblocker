@@ -1,0 +1,33 @@
+# FR24 LADD Unblocker for iPhone and iPad: FR24's site in the app's own web view with the script in it - the Android app's
+# twin (android/app). The Xcode project is made from this file by XcodeGen (ios/build.sh), on a Mac: CI's ios job.
+name: LADDUnblocker
+options:
+  bundleIdPrefix: io.github.finlayc1
+  deploymentTarget:
+    iOS: "15.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+targets:
+  LADDUnblocker:
+    type: application
+    platform: iOS
+    sources:
+      - path: App
+      # (the script and the hosts its requests may go to - build.mjs's dist/app, copied in by build.sh)
+      - path: Web
+        type: folder
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.finlayc1.fr24ladd.ios
+        PRODUCT_NAME: LADDUnblocker
+        INFOPLIST_FILE: App/Info.plist
+        GENERATE_INFOPLIST_FILE: "NO"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        MARKETING_VERSION: "0.0.0"
+        CURRENT_PROJECT_VERSION: "0"
+        CODE_SIGNING_ALLOWED: "NO"
+        CODE_SIGNING_REQUIRED: "NO"
+        CODE_SIGN_IDENTITY: ""

@@ -16,11 +16,17 @@
 //                       address the header does not list: the app asks the user, as the browser extension does
 //   saving a file       { t: 'save', name, mime, b64 } - a CSV of an aircraft's flights, or anything else the page saves
 //                       from a blob: or data: address (which a WebView cannot download by itself) - into Downloads
-//   GM_info, TL_APP     which "manager" this is, and that it is the app (its update: the app's own APK)
+//   GM_info, TL_APP     which "manager" this is, and that it is the app; TL_APP.update(): { t: 'update' } - the app looks
+//                       for its new version and installs it (1.3.12)
+//   the location        { t: 'geo', id, high, timeout, maxAge } -> { t: 'geo', id, ok, lat, lon, ... | code, message } -
+//                       the page's navigator.geolocation (FR24's "my location"), asked of Android by the app (1.3.12);
+//                       { t: 'geoState', id } -> { t: 'geoState', id, state } for navigator.permissions
+//   FR24's "open in app" pill and banner are not shown: this is the app (1.3.12)
 /* eslint-disable no-unused-vars, no-var, no-redeclare */
 /* global TLNative */
-var TL_APP = { v: 1 };
-var GM_info = { scriptHandler: 'android-app', version: '1', script: { name: 'FR24 LADD Unblocker' } };
+// (1.3.12: the iPhone app - ios/ - puts the same script in with the same bridge; its preamble says which it is)
+var TL_APP = { v: 2, platform: typeof window.__tlAppPlatform === 'string' && window.__tlAppPlatform === 'ios' ? 'ios' : 'android', update: function () { try { TL_BRIDGE.send({ t: 'update' }); return true; } catch (e) { return false; } } };
+var GM_info = { scriptHandler: TL_APP.platform === 'ios' ? 'ios-app' : 'android-app', version: '1', script: { name: 'FR24 LADD Unblocker' } };
 var TL_BRIDGE = (function () {
   var b = null; try { b = typeof TLNative !== 'undefined' && TLNative && typeof TLNative.postMessage === 'function' ? TLNative : null; } catch (e) { b = null; }
   try { delete window.TLNative; } catch (e) { /* kept: the app still answers this page only, and only for the hosts above */ }
@@ -102,4 +108,81 @@ var TL_HOST_ACCESS = (function () {
     var a = ev.target && ev.target.closest ? ev.target.closest('a') : null;
     if (wanted(a)) { ev.preventDefault(); save(a); }
   }, true);
+})();
+// (1.3.12) the phone's location - FR24's "my location" on its map, the airports nearest you in its search: asked of
+// Android by the app (android/app Geo.java), not of the WebView's own, which waited for good on some phones (FR24's
+// button spun and never moved the map). The page's navigator.geolocation answers from it, as the browser's does
+(function () {
+  if (!TL_BRIDGE.ok) return;
+  var geo = null; try { geo = navigator.geolocation; } catch (e) { geo = null; }
+  if (!geo) return;
+  var seq = 0, waiting = new Map(), watches = new Map(), wseq = 0;
+  TL_BRIDGE.on('geo', function (m) { var f = waiting.get(m.id); if (f) { waiting.delete(m.id); f(m); } });
+  TL_BRIDGE.on('geoState', function (m) { var f = waiting.get(m.id); if (f) { waiting.delete(m.id); f(m); } });
+  var num = function (v) { return typeof v === 'number' && isFinite(v) ? v : null; };
+  function position(m) {
+    var c = { latitude: m.lat, longitude: m.lon, accuracy: num(m.acc) == null ? 1000 : m.acc, altitude: num(m.alt), altitudeAccuracy: num(m.altAcc), heading: num(m.heading), speed: num(m.speed) };
+    c.toJSON = function () { return { latitude: c.latitude, longitude: c.longitude, accuracy: c.accuracy, altitude: c.altitude, altitudeAccuracy: c.altitudeAccuracy, heading: c.heading, speed: c.speed }; };
+    var p = { coords: c, timestamp: num(m.ts) || Date.now() };
+    p.toJSON = function () { return { coords: c.toJSON(), timestamp: p.timestamp }; };
+    return p;
+  }
+  function failure(code, message) { return { code: code, message: String(message || ''), PERMISSION_DENIED: 1, POSITION_UNAVAILABLE: 2, TIMEOUT: 3 }; }
+  function ask(opts, ok, fail) {
+    var o = opts && typeof opts === 'object' ? opts : {}, id = TL_BRIDGE.id(++seq);
+    var to = typeof o.timeout === 'number' && isFinite(o.timeout) && o.timeout >= 0 ? o.timeout : 0;
+    var age = typeof o.maximumAge === 'number' && isFinite(o.maximumAge) && o.maximumAge > 0 ? o.maximumAge : 0;
+    waiting.set(id, function (m) {
+      try { if (m.ok && num(m.lat) != null && num(m.lon) != null) { if (typeof ok === 'function') ok(position(m)); } else if (typeof fail === 'function') fail(failure(m.code === 1 || m.code === 3 ? m.code : 2, m.message)); } catch (e) { /* the page's own */ }
+    });
+    try { TL_BRIDGE.send({ t: 'geo', id: id, high: !!o.enableHighAccuracy, timeout: to, maxAge: age }); }
+    catch (e) { waiting.delete(id); setTimeout(function () { if (typeof fail === 'function') fail(failure(2, 'no location')); }, 0); }
+  }
+  try {
+    geo.getCurrentPosition = function (ok, fail, opts) { ask(opts, ok, fail); };
+    // (watched: asked again five seconds after each answer - a quarter of a minute after a failure - until cleared)
+    geo.watchPosition = function (ok, fail, opts) {
+      var w = ++wseq, live = { on: true, t: 0 };
+      watches.set(w, live);
+      var tick = function () {
+        if (!live.on) return;
+        ask(opts, function (p) { if (!live.on) return; if (typeof ok === 'function') ok(p); live.t = setTimeout(tick, 5000); },
+          function (e) { if (!live.on) return; if (typeof fail === 'function') fail(e); live.t = setTimeout(tick, 15000); });
+      };
+      tick();
+      return w;
+    };
+    geo.clearWatch = function (w) { var l = watches.get(w); if (l) { l.on = false; clearTimeout(l.t); watches.delete(w); } };
+  } catch (e) { /* the WebView's own, as before */ }
+  // (FR24 asks whether it may before it asks where - its nearest airports: "granted" once the app may)
+  try {
+    var perms = navigator.permissions, oQuery = perms && perms.query;
+    if (typeof oQuery === 'function') {
+      perms.query = function (d) {
+        if (!(d && d.name === 'geolocation')) return oQuery.apply(perms, arguments);
+        return new Promise(function (res) {
+          var id = TL_BRIDGE.id(++seq), done = false;
+          var give = function (state) { if (done) return; done = true; res({ name: 'geolocation', state: state, onchange: null, addEventListener: function () {}, removeEventListener: function () {}, dispatchEvent: function () { return false; } }); };
+          waiting.set(id, function (m) { give(m.state === 'granted' ? 'granted' : 'prompt'); });
+          try { TL_BRIDGE.send({ t: 'geoState', id: id }); } catch (e) { waiting.delete(id); give('prompt'); }
+          setTimeout(function () { waiting.delete(id); give('prompt'); }, 3000);
+        });
+      };
+    }
+  } catch (e) { /* the WebView's own */ }
+})();
+// (1.3.12) FR24's "Open in app" pill on its map and its "Get the best flight tracking experience using our app" banner on
+// its data pages: this is the app - neither is shown
+(function () {
+  var css = '#open-in-app-banner{display:none!important}' +
+    '.rounded-full.bg-yellow-500:has(> button.whitespace-nowrap + .w-px + button){display:none!important}';
+  var put = function () {
+    if (document.getElementById('tl-app-style')) return true;
+    var host = document.head || document.documentElement; if (!host) return false;
+    var st = document.createElement('style'); st.id = 'tl-app-style'; st.textContent = css; host.appendChild(st);
+    return true;
+  };
+  if (!put()) document.addEventListener('DOMContentLoaded', put, { once: true });
+  // (moved into the page's head once it has one - kept when FR24 writes its head)
+  document.addEventListener('DOMContentLoaded', function () { var st = document.getElementById('tl-app-style'); if (st && document.head && st.parentNode !== document.head) document.head.appendChild(st); }, { once: true });
 })();

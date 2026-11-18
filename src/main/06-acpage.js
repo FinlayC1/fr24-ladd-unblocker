@@ -199,7 +199,10 @@
     if (!p || !fin(p.lat) || !fin(p.lon)) return null;
     // (a helicopter FR24 has down - or lifting off - at field level within 2 km of a strip is at that strip: G-DGFD's
     // track ends 1.4 km from Enstone's reference point, by its hangars)
-    const n = pageHeli ? ENGINE.heliAirportAt(p.lat, p.lon) || ENGINE.fieldAt(p.lat, p.lon, 2, { alt: p.alt, maxAgl: 600 }) : ENGINE.placeAt(p.lat, p.lon, 7, 2);
+    // (1.3.12: or - low, where FR24's track of it ends or begins - a heliport within 1.2 km: FR24's last point of G-LCPX into
+    // London Heliport on 18 Nov was over the Thames, short of its pad - the row said "-")
+    const low = p.alt == null || p.alt < 1500;
+    const n = pageHeli ? ENGINE.heliAirportAt(p.lat, p.lon) || ENGINE.fieldAt(p.lat, p.lon, 2, { alt: p.alt, maxAgl: 600 }) || (low ? ENGINE.heliportAt(p.lat, p.lon, 1.2, { alt: p.alt, maxAgl: 1000 }) : null) : ENGINE.placeAt(p.lat, p.lon, 7, 2);
     if (n && n.airport) return Object.assign(apCells(n.airport, ''), { a: n.airport });
     // (FR24 itself says the flight landed: its track ending - or beginning - low, away from every field, is a site)
     return pageLight && (p.alt == null || p.alt < 1000) && (p.gs == null || p.gs < 120) ? SITE_CELLS : null;
@@ -655,6 +658,23 @@
     if (b && b.classList.contains('tl-pbrow') && h === pbHashDone && cp && !cp.classList.contains('hidden')) { b.classList.add('active'); const tr = b.closest('tr'); if (tr) tr.classList.add('active'); }
     pbHashPlay(tbody);
   }
+  // (1.3.12) FR24's own notice "Sorry, but flight was not found on this page. Please try load more flights": FR24 shows it
+  // when the address names a flight not among its rows - one of those this script adds, which it plays itself (pbHashPlay)
+  // a moment later. Taken away for those; any other left as it is
+  function muteNotFound() {
+    const ours = () => {
+      const h = (location.hash || '').replace(/^#/, '').toLowerCase(); if (!/^[0-9a-f]{6,16}$/.test(h)) return false;
+      const b = document.getElementById('btn-playback-' + h);
+      return PB_SYN.test(h) || pbHashWhere.has(h) || pbHashDone === h || !!(b && b.classList.contains('tl-pbrow'));
+    };
+    const sweep = () => { for (const t of document.querySelectorAll('#toast-container .toast')) if (/flight was not found on this page/i.test(t.textContent || '') && ours()) t.remove(); };
+    const box = () => document.getElementById('toast-container');
+    let watched = null;
+    const hook = () => { const b = box(); if (b && b !== watched) { watched = b; new MutationObserver(sweep).observe(b, { childList: true, subtree: true }); } sweep(); };
+    hook();
+    if (document.body) new MutationObserver(hook).observe(document.body, { childList: true });
+    setTimeout(sweep, 1500); setTimeout(sweep, 4000);
+  }
   async function bootAircraftPage() {
     const reg = decodeURIComponent((location.pathname.match(/^\/data\/aircraft\/([^/?#]+)/i) || [])[1] || '').toUpperCase();
     if (!reg) return;
@@ -662,6 +682,7 @@
     await store.kvReady;          // (the airport list and small records; the aircraft's own records are read by key)
     if (document.readyState === 'loading') await new Promise(r => document.addEventListener('DOMContentLoaded', r, { once: true }));
     const table = document.getElementById('tbl-datatable'); if (!table) return;
+    muteNotFound();
     // (1.3.6: the OurAirports airports - their heliports among the route engine's places, their pages for their codes - read
     // first: 4 s at most)
     await Promise.race([loadOa().catch(() => false), sleep(4000)]);
@@ -950,6 +971,7 @@
     if (document.readyState === 'loading') await new Promise(r => document.addEventListener('DOMContentLoaded', r, { once: true }));
     await Promise.race([loadOa().catch(() => false), sleep(4000)]);
     const sec = document.getElementById('cnt-data-content'); if (!sec) return;
+    muteNotFound();
     // (FR24 lists this number itself: its rows stand, ours are not merged in - its playback's padlocked figures and its
     // rows' padlocked files filled)
     if (document.querySelector('#tbl-datatable tbody tr.data-row')) { flightPagePlayback(document.querySelector('#tbl-datatable tbody'), cs); return; }

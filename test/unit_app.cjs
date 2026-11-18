@@ -9,6 +9,12 @@
 //   - the preamble alone (src/app/shim.js): a request answered, as bytes, failed, timed out, aborted; a notification and
 //     its tap; a monitor host asked for; a file the page saves (a blob link, clicked by script or by hand) handed to the
 //     app; ids of this page's own, not a page's before it
+//   - (1.3.12) the phone's location asked of the app (navigator.geolocation, navigator.permissions); TL_APP.update();
+//     which app it is (Android, iPhone);
+//     FR24's "open in app" pill and app banner not shown
+//   - (1.3.12) a log page on a phone in the app: laid out as a phone app lays it out (bar, pictures, details, flights by
+//     year, a flight opened, its Play - FR24's player and the way back), following the page as it changes; FR24's "flight
+//     was not found" for a flight of ours taken away; wider than a phone, FR24's own page
 //   - no error in the page
 // usage: node test/unit_app.cjs   (needs Playwright's Chromium)
 const fs = require('fs'), path = require('path');
@@ -167,6 +173,118 @@ const BRIDGE = () => {
       await page.reload(); await page.evaluate(() => GM_xmlhttpRequest({ url: 'https://adsb.lol/ok', onload: () => {} })); await sleep(200);
       const ids2 = got.filter(m => m.t === 'req').map(m => m.id), last = ids2[ids2.length - 1];
       check('... a page loaded again: ids of its own (another page id)', !!last && last.split('.')[0] !== prefix, { before: prefix, after: last });
+      check('no error in the page', errors.length === 0, errors.slice(0, 5));
+      await ctx.close();
+    }
+    // ======== 3. (1.3.12) the preamble: the phone's location, the app's update, FR24's "open in app" pill ==================
+    {
+      const ctx = await browser.newContext({ viewport: { width: 412, height: 915 } }), page = await ctx.newPage(), errors = [], got = [];
+      page.on('pageerror', e => errors.push(String(e && e.message || e)));
+      let geoMode = 'fix';
+      await ctx.exposeBinding('__tlHost', async (src, s) => {
+        const m = JSON.parse(s); got.push(m);
+        const back = o => setTimeout(() => src.frame.evaluate(x => window.__tlDeliver(x), JSON.stringify(o)).catch(() => {}), 5);
+        if (m.t === 'geo') back(geoMode === 'fix' ? { t: 'geo', id: m.id, ok: true, lat: 53.3336, lon: -2.8497, acc: 12.5, alt: 30, ts: 1795000000000 } : { t: 'geo', id: m.id, ok: false, code: 1, message: 'not allowed' });
+        else if (m.t === 'geoState') back({ t: 'geoState', id: m.id, state: 'granted' });
+      });
+      await ctx.addInitScript(BRIDGE);
+      await ctx.addInitScript({ content: fs.readFileSync(SHIM, 'utf8') + '\n;Object.assign(window, { TL_APP });' });
+      const PILL = '<div class="pointer-events-auto absolute bottom-24 flex items-center rounded-full bg-yellow-500 px-4" id="pill"><button class="whitespace-nowrap py-2">Open in app</button><div class="mx-2 h-6 w-px bg-white"></div><button>x</button></div>';
+      const OTHER = '<div class="rounded-full bg-yellow-500" id="other"><button>Upgrade</button></div>';
+      await page.route('**/*', route => route.request().url() === 'https://www.flightradar24.com/m' ? route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><html><head></head><body><div id="open-in-app-banner">Get the best flight tracking experience using our app</div>' + PILL + OTHER + '</body></html>' }) : route.fulfill({ status: 404, body: '' }));
+      await page.goto('https://www.flightradar24.com/m');
+      const pos = await page.evaluate(() => new Promise(done => navigator.geolocation.getCurrentPosition(p => done({ lat: p.coords.latitude, lon: p.coords.longitude, acc: p.coords.accuracy, alt: p.coords.altitude, ts: p.timestamp, json: JSON.stringify(p) }), e => done({ err: e.code }), { enableHighAccuracy: true, timeout: 9000, maximumAge: 60000 })));
+      const ask = got.find(m => m.t === 'geo');
+      check('the page\'s location (navigator.geolocation, FR24\'s "my location"): asked of the app with the page\'s options, its answer the page\'s position', pos.lat === 53.3336 && pos.lon === -2.8497 && pos.acc === 12.5 && pos.alt === 30 && pos.ts === 1795000000000 && /"latitude":53.3336/.test(pos.json) && ask && ask.high === true && ask.timeout === 9000 && ask.maxAge === 60000, { pos, ask });
+      geoMode = 'denied';
+      const den = await page.evaluate(() => new Promise(done => navigator.geolocation.getCurrentPosition(() => done({ ok: true }), e => done({ code: e.code, denied: e.code === e.PERMISSION_DENIED }))));
+      check('... refused by the user: the page\'s error callback, PERMISSION_DENIED', den.code === 1 && den.denied === true, den);
+      geoMode = 'fix';
+      const w = await page.evaluate(() => new Promise(done => { let n = 0; const id = navigator.geolocation.watchPosition(() => { if (++n === 1) { navigator.geolocation.clearWatch(id); setTimeout(() => done(n), 6500); } }); }));
+      check('... watched: answered, and cleared - asked no more', w === 1, w);
+      const st = await page.evaluate(async () => (await navigator.permissions.query({ name: 'geolocation' })).state);
+      check('... whether it may (navigator.permissions): the app\'s answer', st === 'granted', st);
+      const up = await page.evaluate(() => TL_APP.update());
+      await sleep(100);
+      check('TL_APP.update(): the app asked to look for its update', up === true && got.some(m => m.t === 'update'), up);
+      const shown = await page.evaluate(() => ['open-in-app-banner', 'pill', 'other'].map(id => getComputedStyle(document.getElementById(id)).display));
+      check('FR24\'s "Open in app" pill and app banner not shown; another yellow pill of FR24\'s left as it is', shown[0] === 'none' && shown[1] === 'none' && shown[2] !== 'none', shown);
+      check('the Android app\'s preamble: TL_APP.platform "android", GM_info "android-app"', await page.evaluate(() => TL_APP.platform === 'android'));
+      // (the iPhone app - ios/ - puts the same script in, its own preamble first saying which it is)
+      {
+        const c2 = await browser.newContext(), p2 = await c2.newPage();
+        await c2.addInitScript(() => { window.__tlAppPlatform = 'ios'; });
+        await c2.addInitScript(BRIDGE);
+        await c2.addInitScript({ content: fs.readFileSync(SHIM, 'utf8') + '\n;Object.assign(window, { TL_APP, GM_info });' });
+        await p2.route('**/*', route => route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><body></body>' }));
+        await c2.exposeBinding('__tlHost', () => {});
+        await p2.goto('https://www.flightradar24.com/m');
+        const ios = await p2.evaluate(() => ({ p: TL_APP.platform, h: GM_info.scriptHandler }));
+        check('... the iPhone app\'s: "ios", "ios-app"', ios.p === 'ios' && ios.h === 'ios-app', ios);
+        await c2.close();
+      }
+      check('no error in the page', errors.length === 0, errors.slice(0, 5));
+      await ctx.close();
+    }
+
+    // ======== 4. (1.3.12) a log page on a phone, in the app: laid out as a phone app lays it out ========================
+    {
+      const ctx = await browser.newContext({ viewport: { width: 412, height: 915 }, isMobile: true, hasTouch: true }), page = await ctx.newPage(), errors = [];
+      page.on('pageerror', e => errors.push(String(e && e.message || e)));
+      await ctx.exposeBinding('__tlHost', async (src, s) => {
+        const m = JSON.parse(s); if (m.t !== 'req') return;
+        setTimeout(() => src.frame.evaluate(x => window.__tlDeliver(x), JSON.stringify({ t: 'res', id: m.id, status: 404, statusText: '', url: m.url, headers: '', text: '{}' })).catch(() => {}), 5);
+      });
+      await ctx.addInitScript(BRIDGE);
+      await ctx.addInitScript({ content: fs.readFileSync(APP, 'utf8') });
+      // (a page in the markup of FR24's own log pages - its header's labels and values, its pictures, its rows: the phone
+      // block and the desktop cells - made up here, nothing of FR24's)
+      const td = (ts) => `data-timestamp="${ts}" data-offset="0"`;
+      const row = (ts, date, from, to, fl, dur, atd, color, status, btns) => `<tr class=" data-row" data-timestamp="${ts}"><td class="visible-xs visible-sm"><div class="row table-row-responsive">phone</div></td><td class="w40 hidden-xs hidden-sm">&nbsp;</td><td class="hidden-xs hidden-sm">${date}</td><td class="text-center-sm hidden-xs hidden-sm">${from}</td><td class="text-center-sm hidden-xs hidden-sm">${to}</td><td class="hidden-xs hidden-sm">${fl}</td><td class="hidden-xs hidden-sm">${dur}</td><td class="hidden-xs hidden-sm"> — </td><td class="hidden-xs hidden-sm" ${td(atd)}>${atd ? '10:29' : ' — '}</td><td class="hidden-xs hidden-sm"> — </td><td class="hidden-xs hidden-sm"><div class="state-block ${color}"></div></td><td class="hidden-xs hidden-sm">${status}</td><td class="text-right hidden-xs hidden-sm">${btns}</td><td class="w40 hidden-xs hidden-sm">&nbsp;</td></tr>`;
+      const play = id => `<a class="btn btn-sm btn-white fs-10 tl-export" href="#" data-tl-export="KML"> KML </a> <a class="btn btn-sm btn-playback bkg-blue fs-10" href="#${id}" id="btn-playback-${id}" onclick="window.__played=(window.__played||[]).concat('${id}');return false"><i class="fa fa-play"></i> &nbsp;Play </a>`;
+      const BODY = `<!doctype html><html><head><meta name="viewport" content="width=device-width"></head><body><div id="open-in-app-banner">Get the app</div><header id="hdr">FR24's header</header>
+<div class="section-header"><div><div id="cnt-subpage-info"><h1>G-TEST</h1></div><div id="cnt-aircraft-info"><div class="row"><label>AIRCRAFT</label><span class="details">Piper Seneca V</span></div><div class="row"><label>TYPE CODE</label><span class="details">PA34</span></div><div class="row"><label>SERIAL NUMBER (MSN)</label><span class="details">3449108</span></div></div></div><div><div class="row"><div class="col-xs-6 cnt-picture"><span class="label">© A. Spotter | Jetphotos</span><a href="#"><img src="https://cdn.example.org/p1.jpg"></a></div></div></div></div>
+<div id="cnt-playback" class="hidden">the player</div>
+<table id="tbl-datatable"><tbody>${row(1795400000, '17 Nov 2026', ' Liverpool <a href="/data/airports/lpl">(LPL)</a>', ' Liverpool <a href="/data/airports/lpl">(LPL)</a>', ' — ', '1:36', 1795400000, 'green', 'Landed 12:05', play('abc123'))}${row(1767100000, '30 Dec 2025', ' Chester <a href="/data/airports/ceg">(CEG)</a>', ' — ', ' (RVR12) ', '1:02', 1767100000, 'gray', 'Unknown', play('abc124'))}<tr class="tl-foot"><td colspan="20">2 earlier flights rebuilt from public ADS-B data</td></tr></tbody></table>
+<div id="toast-container"></div></body></html>`;
+      await page.route('**/*', route => route.request().url().split('#')[0] === 'https://www.flightradar24.com/data/aircraft/g-test' ? route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: BODY }) : route.fulfill({ status: 404, body: '' }));
+      await page.goto('https://www.flightradar24.com/data/aircraft/g-test#ff4073ee6911e300');
+      // (FR24's notice for a flight of ours named in the address: shown as FR24 shows it)
+      await page.evaluate(() => { document.getElementById('toast-container').innerHTML = '<div class="toast toast-warning"><div class="toast-message">Sorry, but flight was not found on this page. Please try load more flights</div></div><div class="toast"><div class="toast-message">Something else</div></div>'; });
+      await page.waitForSelector('#tl-pv .tl-pv-row', { timeout: 20000 }).catch(() => null);
+      await sleep(600);
+      const v = await page.evaluate(() => {
+        const pv = document.getElementById('tl-pv'), txt = e => (e && e.textContent || '').replace(/\s+/g, ' ').trim();
+        return { on: !!pv && getComputedStyle(pv).display !== 'none', hdr: getComputedStyle(document.getElementById('hdr')).display, table: getComputedStyle(document.getElementById('tbl-datatable')).display,
+          kind: txt(pv && pv.querySelector('.tl-pv-k')), name: txt(pv && pv.querySelector('.tl-pv-n')), pics: pv ? pv.querySelectorAll('.tl-pv-pic img').length : 0,
+          fields: pv ? [...pv.querySelectorAll('.tl-pv-f')].map(f => txt(f.querySelector('b')) + ' ' + txt(f.querySelector('div'))) : [], years: pv ? [...pv.querySelectorAll('.tl-pv-year')].map(txt) : [],
+          rows: pv ? [...pv.querySelectorAll('.tl-pv-row')].map(r => ({ date: txt(r.querySelector('.tl-pv-date')), fl: txt(r.querySelector('.tl-pv-fl')), aps: [...r.querySelectorAll('.tl-pv-ap')].map(txt), link: !!r.querySelector('.tl-pv-ap a[href="/data/airports/lpl"]'), dot: r.querySelector('.tl-pv-dot').className })) : [],
+          note: txt(pv && pv.querySelector('.tl-pv-note')), toasts: [...document.querySelectorAll('#toast-container .toast')].map(txt) };
+      });
+      check('a log page in the app on a phone: shown as an app shows it - FR24\'s page under it not shown', v.on && v.hdr === 'none' && v.table === 'none', v);
+      check('... its bar (AIRCRAFT, the registration), its picture, its details', v.kind === 'AIRCRAFT' && v.name === 'G-TEST' && v.pics === 1 && v.fields.join('|') === 'AIRCRAFT Piper Seneca V|TYPE CODE PA34|SERIAL NUMBER (MSN) 3449108', v);
+      check('... its flights by year, a line each: the day, the flight, from and to (the page\'s own links), the state', JSON.stringify(v.years) === '["YEAR 2026","YEAR 2025"]' && v.rows.length === 2 && v.rows[0].date === 'Nov 17' && v.rows[0].fl === '—' && v.rows[0].aps[0] === 'Liverpool (LPL)' && v.rows[0].link && /green/.test(v.rows[0].dot) && v.rows[1].date === 'Dec 30' && v.rows[1].fl === '(RVR12)' && v.rows[1].aps[1] === '—' && v.note === '2 earlier flights rebuilt from public ADS-B data', v);
+      check('FR24\'s "flight was not found" for a flight of ours in the address: taken away; its other notices left', v.toasts.length === 1 && v.toasts[0] === 'Something else', v.toasts);
+      await page.click('#tl-pv .tl-pv-row .tl-pv-date');
+      const ex = await page.evaluate(() => { const r = document.querySelector('#tl-pv .tl-pv-row'); return { open: r.classList.contains('open'), grid: [...r.querySelectorAll('.tl-pv-grid > div')].map(d => d.textContent.replace(/\s+/g, ' ').trim()), btns: [...r.querySelectorAll('.tl-pv-btns button')].map(b => b.textContent.trim()) }; });
+      check('... a flight tapped: its times, status and duration, and its own buttons', ex.open && ex.grid.includes('ATD10:29') && ex.grid.includes('STATUSLanded 12:05') && ex.grid.includes('FLIGHT TIME1:36') && JSON.stringify(ex.btns) === '["KML","Play"]', ex);
+      await page.click('#tl-pv .tl-pv-row.open .tl-pv-play');
+      await page.evaluate(() => { document.getElementById('cnt-playback').classList.remove('hidden'); });
+      await sleep(400);
+      const pl = await page.evaluate(() => ({ played: window.__played || [], play: document.documentElement.classList.contains('tl-pv-play'), player: getComputedStyle(document.getElementById('cnt-playback')).display, pill: getComputedStyle(document.querySelector('#tl-pv .tl-pv-backpill')).display, open: document.querySelector('#tl-pv .tl-pv-row').classList.contains('open') }));
+      check('... its Play: the page\'s own Play pressed; FR24\'s player shown as its page shows it, with the way back to the list', JSON.stringify(pl.played) === '["abc123"]' && pl.play && pl.player !== 'none' && pl.pill !== 'none', pl);
+      await page.click('#tl-pv .tl-pv-backpill');
+      const bk = await page.evaluate(() => ({ play: document.documentElement.classList.contains('tl-pv-play'), list: getComputedStyle(document.getElementById('tl-pv')).display }));
+      check('... "Flights": the list again', !bk.play && bk.list !== 'none', bk);
+      // (the page changes - a row filled in by the script: the list follows it, the open flight left open)
+      await page.evaluate(() => { const td = document.querySelector('#tbl-datatable tbody tr:nth-child(2) td:nth-child(5)'); td.innerHTML = ' Liverpool <a href="/data/airports/lpl">(LPL)</a>'; });
+      await sleep(700);
+      const up2 = await page.evaluate(() => ({ to: document.querySelectorAll('#tl-pv .tl-pv-row')[1].querySelectorAll('.tl-pv-ap')[1].textContent.replace(/\s+/g, ' ').trim(), open: document.querySelector('#tl-pv .tl-pv-row').classList.contains('open') }));
+      check('... the page\'s rows changed: the list follows them', up2.to === 'Liverpool (LPL)' && up2.open, up2);
+      // (wider than a phone: FR24's page as it is)
+      await page.setViewportSize({ width: 1280, height: 900 });
+      const wide = await page.evaluate(() => ({ pv: getComputedStyle(document.getElementById('tl-pv')).display, table: getComputedStyle(document.getElementById('tbl-datatable')).display }));
+      check('... wider than a phone: FR24\'s own page', wide.pv === 'none' && wide.table !== 'none', wide);
       check('no error in the page', errors.length === 0, errors.slice(0, 5));
       await ctx.close();
     }

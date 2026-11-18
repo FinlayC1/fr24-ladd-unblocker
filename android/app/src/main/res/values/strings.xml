@@ -14,4 +14,20 @@
     <string name="saved">Saved to Downloads: %1$s</string>
     <string name="not_saved">The file could not be saved.</string>
     <string name="downloading">Downloading…</string>
+    <string name="update_title">Update available</string>
+    <string name="update_text">Version %1$s of LADD Unblocker is out (this phone has %2$s). Update now?</string>
+    <string name="update_now">Update</string>
+    <string name="update_later">Not now</string>
+    <string name="update_checking">Looking for an update…</string>
+    <string name="update_busy">The update is already on its way.</string>
+    <string name="update_latest">This is the latest version (%1$s).</string>
+    <string name="update_none_found">No update could be found right now.</string>
+    <string name="update_downloading">Downloading version %1$s…</string>
+    <string name="update_failed">The update did not go through: %1$s</string>
+    <string name="update_allow_title">Allow updates</string>
+    <string name="update_allow_text">Android asks once whether LADD Unblocker may install its own updates. Turn on \"Allow from this source\" on the next screen, then come back: the update carries on.</string>
+    <string name="update_allow_open">Open the setting</string>
+    <string name="update_key_title">Install it by hand this time</string>
+    <string name="update_key_text">The new version is signed with a different key than the app on this phone, so Android will not install it over it. Uninstall this app, then install the new one from the release page.</string>
+    <string name="update_key_open">Open the release page</string>
 </resources>

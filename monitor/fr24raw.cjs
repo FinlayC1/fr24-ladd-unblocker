@@ -5,6 +5,9 @@
 //   STORE/fr24raw/YYYY-MM-DD.gzl  gzip members one after another, each time the points gathered are written a member
 //                                 for every 64 flights (a member: { "<fid hex>": { m: { hex, reg, cs, type, fn }, p: [[...], ...] }, ... })
 //   STORE/fr24raw/YYYY-MM-DD.idx  a line for each flight in each member: "<fid hex> <offset> <length>"
+//   STORE/fr24raw/YYYY-MM-DD.hex  (1.3.12) a line for each flight named in each member: "<aircraft hex> <fid hex> <first t>
+//                                 <last t>" - a flight found by its aircraft and time (byHex: a rebuilt log's flight played
+//                                 on FR24's own positions)
 // (1.3.9) A flight's points are written column by column - 'z': { n, c: [column, ...] } - each column 0 (no figure in
 // it), or [kind, values...]: 'd' whole numbers, the first as it is and each after as the step from the one before
 // (times, heights, speeds), 'f' FR24's own single-precision latitudes and longitudes, the same steps between the
@@ -138,8 +141,12 @@ function createFr24Raw(env) {
       fs.mkdirSync(dir, { recursive: true });
       fs.appendFileSync(fileOf(d, '.gzl'), Buffer.concat(bufs));
       fs.appendFileSync(fileOf(d, '.idx'), lines.join('\n') + '\n');
+      // (its aircraft as named in these points - or, sent again without it, as named when it was last written)
+      const hexOfF = f => String(out[f].m.hex || (done.get(f) || {}).hex || '').toLowerCase();
+      const hx = fids.filter(f => /^[0-9a-f]{6}$/.test(hexOfF(f))).map(f => hexOfF(f) + ' ' + f + ' ' + out[f].ts[0] + ' ' + out[f].ts[out[f].ts.length - 1]);
+      if (hx.length) { fs.appendFileSync(fileOf(d, '.hex'), hx.join('\n') + '\n'); hexIdx.delete(d); }
       const x = idxs.get(d); if (x) for (const [o, l, part] of spans) { const i = x.spans.length; x.spans.push([o, l]); for (const f of part) (x.by.get(f) || x.by.set(f, []).get(f)).push(i); }
-      for (const f of fids) { const dn = done.get(f); done.set(f, { ts: merge(dn ? dn.ts : [], out[f].ts), at: nowS }); }
+      for (const f of fids) { const dn = done.get(f), h = String(out[f].m.hex || (dn && dn.hex) || '').toLowerCase(); done.set(f, { ts: merge(dn ? dn.ts : [], out[f].ts), at: nowS, hex: /^[0-9a-f]{6}$/.test(h) ? h : '' }); }
       stats.members += spans.length; stats.flights += fids.length; stats.written += n; stats.bytes = (stats.bytes || 0) + (off - start);
     } catch (e) { stats.err = String(e && e.message || e).slice(0, 160); if (env.log) env.log('fr24raw', d, stats.err); return 0; }
     return fids.length;
@@ -163,6 +170,28 @@ function createFr24Raw(env) {
     } catch (e) { /* the day's file unreadable: none */ } finally { if (fd !== null) try { fs.closeSync(fd); } catch (e) { /* closed */ } }
     return res;
   }
+  // (1.3.12) an aircraft's flights by FR24's ids, from t0 to t1: [{ fid, t0, t1 }] - those written (each day's .hex, read
+  // once and kept for the last few days asked) and those not written yet
+  const hexIdx = new Map();   // day -> { by: Map(hex -> [[fid, t0, t1]]), used }
+  function hexDay(d) {
+    let x = hexIdx.get(d);
+    if (!x) {
+      x = { by: new Map(), used: 0 };
+      let txt = ''; try { txt = fs.readFileSync(fileOf(d, '.hex'), 'utf8'); } catch (e) { txt = ''; }
+      for (const ln of txt.split('\n')) { const a = ln.split(' '); if (a.length !== 4 || !/^[0-9a-f]{6}$/.test(a[0])) continue; (x.by.get(a[0]) || x.by.set(a[0], []).get(a[0])).push([a[1], +a[2], +a[3]]); }
+      hexIdx.set(d, x);
+      if (hexIdx.size > 3) { const old = [...hexIdx].sort((p, q) => p[1].used - q[1].used)[0]; if (old && old[0] !== d) hexIdx.delete(old[0]); }
+    }
+    x.used = Date.now();
+    return x;
+  }
+  function byHex(hex, t0, t1) {
+    hex = String(hex || '').toLowerCase(); if (!/^[0-9a-f]{6}$/.test(hex) || !fin(t0) || !fin(t1) || t1 < t0 || t1 - t0 > 3 * 86400) return [];
+    const got = new Map(), add = (fid, a, b) => { if (b < t0 || a > t1) return; const o = got.get(fid); got.set(fid, o ? [Math.min(o[0], a), Math.max(o[1], b)] : [a, b]); };
+    for (const d of [...new Set([dayOf(t0), dayOf(t1), dayOf(t1 + 86400)])]) for (const [fid, a, b] of hexDay(d).by.get(hex) || []) add(fid, a, b);
+    for (const [fid, e] of pend) if (String(e.m.hex || '').toLowerCase() === hex && e.p.size) { const ts = [...e.p.keys()]; add(fid, Math.min(...ts), Math.max(...ts)); }
+    return [...got].map(([fid, [a, b]]) => ({ fid, t0: a, t1: b })).sort((p, q) => p.t0 - q.t0).slice(0, 40);
+  }
   // A flight's FR24 points around moment t (the files of the day before to two days after, and the points not written
   // yet) - { fid, m: what it is, cols: COLS, p: the points in time order, each second once (the one with more figures) }
   function of(id, t) {
@@ -179,22 +208,22 @@ function createFr24Raw(env) {
     const cut = dayOf((nowS || Date.now() / 1000) - keepDays * 86400);
     let names = []; try { names = fs.readdirSync(dir); } catch (e) { return 0; }
     let n = 0;
-    for (const f of names) { const mt = /^(\d{4}-\d\d-\d\d)\.(gzl|idx)$/.exec(f); if (mt && mt[1] < cut) { try { fs.unlinkSync(path.join(dir, f)); idxs.delete(mt[1]); n++; } catch (e) { /* gone */ } } }
+    for (const f of names) { const mt = /^(\d{4}-\d\d-\d\d)\.(gzl|idx|hex)$/.exec(f); if (mt && mt[1] < cut) { try { fs.unlinkSync(path.join(dir, f)); idxs.delete(mt[1]); hexIdx.delete(mt[1]); n++; } catch (e) { /* gone */ } } }
     stats.pruned += n;
     return n;
   }
   // (1.3.9) the oldest day kept, removed - a store that gives way first when the disk runs short of room: that day, or ''
   function pruneOldest(keepFrom) {
     let names = []; try { names = fs.readdirSync(dir); } catch (e) { return ''; }
-    const days = [...new Set(names.map(f => (/^(\d{4}-\d\d-\d\d)\.(gzl|idx)$/.exec(f) || [])[1]).filter(Boolean))].sort();
+    const days = [...new Set(names.map(f => (/^(\d{4}-\d\d-\d\d)\.(gzl|idx|hex)$/.exec(f) || [])[1]).filter(Boolean))].sort();
     const d = days.find(x => !keepFrom || x < keepFrom); if (!d) return '';
-    for (const ext of ['.gzl', '.idx']) try { fs.unlinkSync(fileOf(d, ext)); } catch (e) { /* gone */ }
-    idxs.delete(d); for (const k of [...memo.keys()]) if (k.startsWith(d + ' ')) memo.delete(k);
+    for (const ext of ['.gzl', '.idx', '.hex']) try { fs.unlinkSync(fileOf(d, ext)); } catch (e) { /* gone */ }
+    idxs.delete(d); hexIdx.delete(d); for (const k of [...memo.keys()]) if (k.startsWith(d + ' ')) memo.delete(k);
     stats.pruned++; stats.freed = d;
     return d;
   }
   // (the disk short of room: the points gathered let go, counted - nothing written is touched)
   function drop() { let n = 0; for (const e of pend.values()) n += e.p.size; pend.clear(); stats.skipped = (stats.skipped || 0) + n; return n; }
-  return { put, flush, drop, of, prune, pruneOldest, stats, COLS, get pending() { let n = 0; for (const e of pend.values()) n += e.p.size; return n; }, get held() { return done.size; } };
+  return { put, flush, drop, of, byHex, prune, pruneOldest, stats, COLS, get pending() { let n = 0; for (const e of pend.values()) n += e.p.size; return n; }, get held() { return done.size; } };
 }
 module.exports = { createFr24Raw, COLS, encode, decode };

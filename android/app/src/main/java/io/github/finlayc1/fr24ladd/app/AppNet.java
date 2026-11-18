@@ -19,8 +19,9 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
 /**
@@ -31,6 +32,10 @@ import java.util.function.Supplier;
  *   - with the app's own cookies for that host, and those it sets kept (the extension: credentials "include")
  *   - answered { t: 'res', id, status, statusText, url, headers, text } - { b64 } for bytes - or { t: 'res', id, error,
  *     timeout }; an aborted one not answered
+ *   - as many at once as the script sends (it keeps to each site's own limit itself): 1.3.11's four at a time left the
+ *     monitor's check waiting behind slow answers from the other sites until the script gave it up - "the monitor is not
+ *     connected" - and everything else waiting with it
+ *   - as the phone's browser: its user agent where the script sets none (1.3.11 sent Android's own, "Dalvik/...")
  */
 final class AppNet {
     interface Done { void done(String json); }
@@ -39,14 +44,16 @@ final class AppNet {
     /** opens a connection (the tests give fake ones) */
     interface Opener { HttpURLConnection open(URL url) throws java.io.IOException; }
 
-    static final int MAX = 64 * 1024 * 1024, HOPS = 5;
-    private final ExecutorService pool = Executors.newFixedThreadPool(4, r -> { Thread t = new Thread(r, "fr24ladd-net"); t.setDaemon(true); return t; });
+    static final int MAX = 64 * 1024 * 1024, HOPS = 5, THREADS = 32;
+    private final ThreadPoolExecutor pool = new ThreadPoolExecutor(THREADS, THREADS, 30, TimeUnit.SECONDS, new LinkedBlockingQueue<>(), r -> { Thread t = new Thread(r, "fr24ladd-net"); t.setDaemon(true); return t; });
+    { pool.allowCoreThreadTimeOut(true); }
     private final Map<String, HttpURLConnection> open = new ConcurrentHashMap<>();
     private final Set<String> aborted = ConcurrentHashMap.newKeySet();
     private final Collection<String> connect;
     private final Supplier<Collection<String>> granted;
     private final Cookies cookies;
     private final Opener opener;
+    private volatile String userAgent;
 
     AppNet(Collection<String> connect, Supplier<Collection<String>> granted, Cookies cookies) {
         this(connect, granted, cookies, u -> (HttpURLConnection) u.openConnection());
@@ -55,6 +62,12 @@ final class AppNet {
     AppNet(Collection<String> connect, Supplier<Collection<String>> granted, Cookies cookies, Opener opener) {
         this.connect = connect; this.granted = granted; this.cookies = cookies; this.opener = opener;
     }
+
+    /** the user agent sent where the script sets none: the WebView's, as the page's own requests send it */
+    void userAgent(String ua) { userAgent = ua == null || ua.trim().isEmpty() ? null : ua.trim(); }
+
+    /** how many requests can run at once */
+    int threads() { return pool.getMaximumPoolSize(); }
 
     boolean allowed(String host) { return Policy.hostAllowed(host, connect, granted.get()); }
 
@@ -100,11 +113,15 @@ final class AppNet {
             c.setUseCaches(false);
             c.setRequestMethod(method);
             JSONObject h = o.optJSONObject("headers");
+            boolean ownUa = false;
             if (h != null) for (Iterator<String> it = h.keys(); it.hasNext(); ) {
                 String k = it.next();
                 if (k.equalsIgnoreCase("host") || k.equalsIgnoreCase("cookie") || k.equalsIgnoreCase("content-length")) continue;
+                if (k.equalsIgnoreCase("user-agent")) ownUa = true;
                 c.setRequestProperty(k, String.valueOf(h.get(k)));
             }
+            String ua = userAgent;
+            if (!ownUa && ua != null) c.setRequestProperty("User-Agent", ua);
             String jar = cookies != null ? cookies.get(url.toString()) : null;
             if (jar != null && !jar.isEmpty()) c.setRequestProperty("Cookie", jar);
             if (body != null) {

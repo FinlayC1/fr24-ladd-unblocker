@@ -26,7 +26,7 @@
 .tl-cap a{color:#fff;text-decoration:none}
 .tl-spin{display:inline-block;width:9px;height:9px;border:2px solid rgba(50,125,182,.35);border-top-color:#327db6;border-radius:50%;vertical-align:-1px;animation:tl-spin .8s linear infinite}
 .tl-inf{font-size:60%;vertical-align:super;opacity:.6;margin-left:2px}
-.tl-ladd{display:inline-block;margin-left:6px;padding:0 5px;border-radius:3px;background:#e3b021;color:#1b1b1b!important;font:700 10px/16px Roboto,Arial,sans-serif;letter-spacing:.3px;text-decoration:none!important;vertical-align:middle;cursor:pointer}
+.tl-ladd{display:inline-block;align-self:center;margin-left:6px;padding:0 5px;border-radius:3px;background:#e3b021;color:#1b1b1b!important;font:700 10px/16px Roboto,Arial,sans-serif;letter-spacing:.3px;text-decoration:none!important;vertical-align:middle;cursor:pointer}
 .tl-ladd:hover{background:#f0c341}
 .tl-ladd-chip{display:inline-flex;align-items:center;margin-left:4px;padding:0 4px;border-radius:3px;background:#e3b021;color:#1b1b1b;font:700 10px/14px Roboto,Arial,sans-serif;letter-spacing:.3px;flex:none}
 .tl-airline{color:#fff;font-size:14px;line-height:16px}
@@ -235,7 +235,10 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       // as kept, 06-pbpage)
       reg && /^[0-9a-f]{6}$/.test(hexL) && `<a href="/data/aircraft/${encodeURIComponent(reg.toLowerCase())}#${esc(pbSynId(hexL, 0))}" target="_blank" rel="noopener" title="This aircraft's flight in FR24's player">playback</a>`,
       reg && `<a href="https://www.jetphotos.com/showphotos.php?regsearch=${encodeURIComponent(reg)}" target="_blank" rel="noopener noreferrer">photos</a>`,
-      (u => u && `<a href="${esc(u[0])}" target="_blank" rel="noopener noreferrer" title="${esc(u[1])}: ${esc(reg)}">registry</a>`)(registryUrl(reg))
+      (u => u && `<a href="${esc(u[0])}" target="_blank" rel="noopener noreferrer" title="${esc(u[1])}: ${esc(reg)}">registry</a>`)(registryUrl(reg)),
+      // (1.3.12: its serial number, history and age in the aircraft databases - opened by the user, never read by the script)
+      reg && `<a href="https://www.planespotters.net/search?q=${encodeURIComponent(reg)}" target="_blank" rel="noopener noreferrer" title="Planespotters.net: its serial number, history and age">planespotters</a>`,
+      reg && `<a href="https://www.airfleets.net/recherche/?key=${encodeURIComponent(reg)}" target="_blank" rel="noopener noreferrer" title="Airfleets.net: its serial number, history and age">airfleets</a>`
     ].filter(Boolean).join(' · ');
   }
   // the national register's own page (or search) for a registration - opened by the user, never read by the script where
@@ -243,11 +246,13 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   function registryUrl(reg) {
     const r = String(reg || '').toUpperCase(), e = encodeURIComponent(r);
     if (/^N\d/.test(r)) return [`https://registry.faa.gov/AircraftInquiry/Search/NNumberResult?nNumberTxt=${e}`, 'FAA register'];
-    if (/^G-/.test(r)) return ['https://siteapps.caa.co.uk/g-info/', 'G-INFO - search'];
+    if (/^G-/.test(r)) return ['https://www.caa.co.uk/g-info/', 'G-INFO - search'];
+    // (1.3.12: France's - the DGAC's list of its register)
+    if (/^F-/.test(r)) return ['https://immat.aviation-civile.gouv.fr/immat/servlet/aeronef_liste.html', 'French register (DGAC) - search'];
     if (/^M-/.test(r)) return [`https://ardis.iomaircraftregistry.com/register/search?prs_rm__tt=1&prs_rm__v1=${encodeURIComponent(r.slice(2))}&prs_bg__2__value=Search`, 'Isle of Man register'];
     if (/^HB-/.test(r)) return ['https://app02.bazl.admin.ch/web/bazl/en/#/lfr/search', 'Swiss register - search'];
     if (/^C-[FGI]/.test(r)) return ['https://wwwapps.tc.gc.ca/saf-sec-sur/2/ccarcs-riacc/RchSimp.aspx', 'Canadian register (CCARCS) - search'];
-    if (/^VH-/.test(r)) return ['https://www.casa.gov.au/search-centre/aircraft-register', 'Australian register (CASA) - search'];
+    if (/^VH-/.test(r)) return ['https://www.casa.gov.au/aircraft-register', 'Australian register (CASA) - search'];
     if (/^ZK-/.test(r)) return ['https://www.aviation.govt.nz/aircraft/aircraft-registration/aircraft-register-search/', 'New Zealand register - search'];
     if (/^EI-/.test(r)) return ['https://www.iaa.ie/commercial-aviation/aircraft-registration-2/latest-register-and-monthly-changes-1', 'Irish register (IAA)'];
     return null;
@@ -669,8 +674,10 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     for (const cell of cells) {
       const label = clean(cell.textContent).toUpperCase(); if (!label) continue;
       const k = kept.find(x => x && ((x.callsign && String(x.callsign).toUpperCase() === label) || (x.registration && String(x.registration).toUpperCase() === label)));
-      let rec = k ? live.get(Number(k.id)) || null : null;
-      if (!rec && k && /^[0-9a-f]{6}$/.test(String(k.hex || ''))) rec = { hex: String(k.hex) };
+      let rec = k ? live.get(Number(k.id)) || pubRecs.get(Number(k.id)) || null : null;
+      // (1.3.12: its aircraft by address - kept with the flight since 1.3.12, or as FR24 named it to this page)
+      const kHex = k ? String(k.hex || hexOfId(Number(k.id)) || '').toLowerCase() : '';
+      if (!badgeOf(flagsOf(rec)) && /^[0-9a-f]{6}$/.test(kHex)) rec = Object.assign({}, globalList.byHex.get(kHex) || areaCache.get(kHex) || {}, rec || {}, { hex: kHex });
       if (!rec) rec = recByLabel(label);
       // (1.3.6: an ordinary flight - a military one FR24 shows as its own: by its label as heard on ADS-B, or its registration)
       if (!badgeOf(flagsOf(rec))) rec = flaggedByLabel(label) || (k && k.registration ? flaggedByLabel(k.registration) : null) || rec;
@@ -686,7 +693,10 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     const r = recByLabel(label); if (r && badgeOf(flagsOf(r))) return r;
     if (now() - flagIdx.at > 5000) {
       flagIdx.map = new Map(); flagIdx.at = now();
-      for (const c of areaCache.values()) if (c && (c.ladd || c.pia || c.mil)) { if (c.cs) flagIdx.map.set(String(c.cs).toUpperCase(), c); if (c.reg) flagIdx.map.set(String(c.reg).toUpperCase().replace(/[^A-Z0-9]/g, ''), c); }
+      // (1.3.12: and every LADD, PIA and military aircraft flying anywhere - the monitor's live list, or this browser's own
+      // - not only those heard near the map's view: JDI01 over the Atlantic, CVG-MAN, was tagged in its panel and not in
+      // Most tracked or Last-clicked. The view's own reports, fresher, are put in last and kept)
+      for (const src of [globalList.byHex.values(), areaCache.values()]) for (const c of src) if (c && (c.ladd || c.pia || c.mil)) { if (c.cs) flagIdx.map.set(String(c.cs).trim().toUpperCase(), c); if (c.reg) flagIdx.map.set(String(c.reg).toUpperCase().replace(/[^A-Z0-9]/g, ''), c); }
     }
     const k = label.replace(/[^A-Z0-9]/g, '');
     return flagIdx.map.get(label) || flagIdx.map.get(k) || regIndex().get(k) || null;
@@ -735,14 +745,76 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
 
   let syncTimer = 0, observer = null, observedPanel = null;
   function syncPanelSoon() { if (syncTimer) return; syncTimer = setTimeout(() => { syncTimer = 0; syncPanel(); }, 40); }
+  // ---- (1.3.12) FR24's phone layout: a flight's small panel -------------------------------------------------------------
+  // On a phone FR24 shows a flight first in a small panel of its own at the foot of the map - its callsign (under the same
+  // test id as the panel's), its airline, its two airports and their cities, the type and registration - and keeps its full
+  // panel below the screen until that is pulled up. Everything above fills the full panel only, so a blocked aircraft's
+  // small panel showed no LADD tag and "N/A" both ends, its route known all along. What this script has put in the full
+  // panel - the tag, the airports, their cities and "?", the operator - goes into the small one too, the same way: only over
+  // FR24's "N/A" or a value of this script's own, and taken out again when the full panel's goes.
+  const SMALL = { depIata: 'departure-iata', depCity: 'departure-city', arrIata: 'arrival-iata', arrCity: 'arrival-city', airline: 'airline-name', registration: 'registration', model: 'model' };
+  const smallEl = (root, k) => root.querySelector(`[data-testid="aircraft-small-panel__${SMALL[k]}"]`);
+  let smallObserved = null, smallObs = null;
+  function smallPanel() {
+    const cs = [...document.querySelectorAll(SEL.callsign)].find(e => !e.closest(SEL.panel)); if (!cs) return null;
+    for (let p = cs.parentElement, d = 0; p && p !== document.body && d < 10; p = p.parentElement, d++) if (p.querySelector('[data-testid^="aircraft-small-panel__"]')) return { root: p, cs };
+    return null;
+  }
+  // (the full panel's city line of an airport this script wrote: FR24's city test id where it has one, else the line under
+  // the code - as applyAirportBox writes them)
+  function bigCity(panel, side) {
+    const c = panel.querySelector(`[data-testid="aircraft-panel__airport-${side}-city"]`); if (c && 'tlVal' in c.dataset) return c;
+    const iata = q(panel, side === 'departure' ? SEL.depIata : SEL.arrIata), cell = iata && iata.closest('[class*="col-span"]'), sub = cell && cell.children[1];
+    return sub && 'tlVal' in sub.dataset ? sub : null;
+  }
+  function smallBack(el) {
+    if (!el || !('tlVal' in el.dataset)) return;
+    if ('tlOrig' in el.dataset) writeOwn(el, el.dataset.tlOrig);
+    delete el.dataset.tlVal; delete el.dataset.tlOrig; el.removeAttribute('title');
+    el.querySelectorAll('.tl-inf').forEach(m => m.remove());
+  }
+  function mirrorSmall(panel) {
+    const sp = smallPanel();
+    if (!sp) { if (smallObs) { smallObs.disconnect(); smallObs = null; smallObserved = null; } return; }
+    if (smallObserved !== sp.root) {
+      if (smallObs) smallObs.disconnect();
+      smallObs = new MutationObserver(recs => { if (recs.some(r => !(r.target.closest && r.target.closest('.tl-ladd,.tl-inf')))) syncPanelSoon(); });
+      smallObs.observe(sp.root, { childList: true, subtree: true, characterData: true });
+      smallObserved = sp.root;
+    }
+    const big = panel && panel.isConnected ? panel : null;
+    // (the tag, beside the callsign as in the full panel)
+    const tagB = big && big.querySelector('.tl-ladd'); let tagS = sp.root.querySelector('.tl-ladd');
+    if (!tagB) { if (tagS) tagS.remove(); }
+    else {
+      if (tagS && (tagS.textContent !== tagB.textContent || tagS.getAttribute('href') !== tagB.getAttribute('href'))) { tagS.remove(); tagS = null; }
+      if (!tagS) tagS = tagB.cloneNode(true);
+      if (tagS.previousElementSibling !== sp.cs) sp.cs.after(tagS);
+    }
+    // (each field: the full panel's value where it is this script's, else the small panel's own back)
+    const fields = [['depIata', big && q(big, SEL.depIata)], ['depCity', big && bigCity(big, 'departure')], ['arrIata', big && q(big, SEL.arrIata)], ['arrCity', big && bigCity(big, 'arrival')],
+      ['airline', big && (q(big, SEL.airline) || big.querySelector('.tl-airline'))], ['registration', big && q(big, SEL.registration)], ['model', big && q(big, SEL.model)]];
+    for (const [k, b] of fields) {
+      const el = smallEl(sp.root, k); if (!el) continue;
+      const val = b && (b.classList.contains('tl-airline') ? clean(b.textContent) : 'tlVal' in b.dataset ? b.dataset.tlVal : '');
+      if (!val) { smallBack(el); continue; }
+      setText(el, val, b.title || el.title);
+      if (el.dataset.tlVal !== val) continue;   // (FR24's own value there: left as it is)
+      const mB = b.querySelector('.tl-inf'), mS = el.querySelector('.tl-inf');
+      if (mB && !mS) el.appendChild(mB.cloneNode(true)); else if (!mB && mS) mS.remove();
+    }
+  }
   // (an error while filling the panel is shown in it - with the version - instead of leaving it silently unfilled)
   function syncPanel() {
+    try { mirrorSmallSoon(); } catch (e) { log('small panel', e); }
     try { syncPanel0(); } catch (e) {
       log('panel sync failed', e);
       const panel = document.querySelector(SEL.panel); if (!panel) return;
       try { const el = strip(panel); el.dataset.state = 'failed'; const html = rowHtml('pin', gridHtml([cellHtml('LADD unblocker', '<span class="tl-warn">script error</span>', esc(String((e && e.message) || e).slice(0, 160)) + ' · v' + VERSION, true)])); if (el.__tlHtml !== html) { morphHtml(el, html); el.__tlHtml = html; } } catch (_) { /* ignore */ }
     }
   }
+  // (after the full panel is filled - this turn's work done - the small one follows it)
+  function mirrorSmallSoon() { setTimeout(() => { try { mirrorSmall(document.querySelector(SEL.panel)); } catch (e) { log('small panel', e); } }, 0); }
   function syncPanel0() {
     tagSearchResults();
     const panel = document.querySelector(SEL.panel);

@@ -1,7 +1,7 @@
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '1.3.11';
+  const VERSION = '1.3.12';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
@@ -522,7 +522,7 @@
       if (!r) { monBase = ''; throw new Error('turned off'); }
       // (the shared one: each of them in turn, the one in use first; one set here: that one)
       const urls = r.dflt ? [monBase].filter(u => MON_DEFAULTS.includes(u)).concat(MON_DEFAULTS.filter(u => u !== monBase)) : [r.url];
-      const ask = i => { const u = urls[i]; HOSTS[new URL(u).host] = [4, 50]; return gmRequest(u + '/status', { timeout: 10000, headers: monAuth(r) }).then(j => { if (!(j && j.v)) throw new Error('not a monitor'); monBase = u; return j; }).catch(e => { if (i + 1 < urls.length) return ask(i + 1); throw e; }); };
+      const ask = i => { const u = urls[i]; HOSTS[new URL(u).host] = [6, 30]; return gmRequest(u + '/status', { timeout: 10000, headers: monAuth(r) }).then(j => { if (!(j && j.v)) throw new Error('not a monitor'); monBase = u; return j; }).catch(e => { if (i + 1 < urls.length) return ask(i + 1); throw e; }); };
       return ask(0).catch(e => { monErr = String((e && e.message) || e).slice(0, 120); throw e; });
     }).then(j => { monOk = !!(j && j.v); monStat = j && j.v ? j : null; if (monOk) monGood(); return j; }, e => {
       // (no answer from the one in use: busy, as above - kept while it answered lately; refused, or turned off: not used)

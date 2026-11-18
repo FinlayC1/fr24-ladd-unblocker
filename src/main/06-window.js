@@ -73,7 +73,12 @@
 .tl-ub-c .tl-ub-grid .tl-ub-kv span:last-child{text-align:right}
 .tl-ub-c .tl-ub-log{margin:6px 0 0;max-height:180px;overflow:auto;padding:6px;background:#fff;border:1px solid #dcdcdc;border-radius:4px;font:11px/1.35 ui-monospace,Consolas,monospace;white-space:pre-wrap;word-break:break-word;color:#393939}
 .tl-ub-gone,.tl-ub-hid{display:none!important}
-html.tl-no-strip .tl-strip{display:none!important}`;
+html.tl-no-strip .tl-strip{display:none!important}
+@media (max-width:1023.98px){
+.tl-ub{left:6px;right:6px;width:auto;top:58px;max-height:calc(100vh - 140px)}
+:has(> .tl-ub-btn){padding-left:.75rem!important;padding-right:.75rem!important;column-gap:0!important}
+:has(> .tl-ub-btn) > *{margin-left:0!important;margin-right:0!important}
+}`;
   // the switches, in the order shown; 'reload': takes effect when FR24 is loaded again
   const UB_FEATURES = [
     ['strip', 'Aircraft panel details', 'The strip under the photo: owner, registry and tracking links, the prediction odds, and the confirm, watch, fleet, CSV and scorecard tools.'],
@@ -116,7 +121,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   const verLabel = v => { const s = String(v || '').replace(/^[vB]/i, ''); return (verParts(v)[0] === 0 && s ? 'B' : 'v') + s; };
   function installKind() {
     // (1.3.11: the Android app - FR24's site in the app's own window, android/app; updated by installing its new APK)
-    if (typeof TL_APP === 'object' && TL_APP) return { kind: 'app', name: 'Android app' };
+    if (typeof TL_APP === 'object' && TL_APP) return { kind: 'app', name: TL_APP.platform === 'ios' ? 'iPhone app' : 'Android app' };
     if (typeof TL_EXTENSION === 'boolean') {
       let m = null; try { m = chrome.runtime.getManifest(); } catch (e) { /* the extension was reloaded */ }
       // (Firefox: installed from addons.mozilla.org, which updates it - it cannot load an unpacked folder for good)
@@ -146,7 +151,13 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   function doUpdate(act) {
     const k = installKind().kind;
     // (from a beta - 22.x - to 1.0.0 and on: the manager compares the numbers alone, and calls the newer one a downgrade)
-    if (act === 'update' && k === 'app') { window.open(UB_APP_URL, '_blank', 'noopener'); ubNote = 'Your browser downloads the new app. Open it when it has, and install it over this one: your settings stay.'; }
+    // (1.3.12: the app updates itself - it downloads its new version, checks it and has Android install it over this one;
+    // an app before that, by the browser's download)
+    if (act === 'update' && k === 'app') {
+      if (TL_APP.platform === 'ios' && typeof TL_APP.update === 'function' && TL_APP.update()) ubNote = 'The app looks for its new version and opens its release page: install the new .ipa with the app you installed this one with - your settings stay.';
+      else if (typeof TL_APP.update === 'function' && TL_APP.update()) ubNote = 'The app downloads its new version and asks Android to install it over this one - your settings stay. Android asks you to confirm.';
+      else { window.open(UB_APP_URL, '_blank', 'noopener'); ubNote = 'Your browser downloads the new app. Open it when it has, and install it over this one: your settings stay.'; }
+    }
     else if (act === 'update' && k === 'us') { window.open(UB_USERSCRIPT_URL, '_blank', 'noopener'); ubNote = verParts(VERSION)[0] === 0 && verParts(latestV())[0] === 1 ? 'Your userscript manager opens the new version in a tab. It may call it a downgrade (it compares 1 with 22), but it is the newer one: confirm it there, then reload FR24.' : 'Your userscript manager opens the new version in a tab: click Update there, then reload FR24.'; }
     // (unpacked: the extension's own update page, in a tab next to this one - it writes the new version into the extension's
     // folder, extension/update.js; the zip by hand only where that page cannot be opened)
@@ -182,7 +193,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     else if (newer) btns.push(`<button class="tl-ub-b" data-ub-act="update">Update to v${esc(O.v)}</button>`);
     else btns.push(`<button class="tl-ub-b tl-ub-b2" data-ub-act="check"${ubAsking ? ' disabled' : ''}>Check for updates</button>`);
     if (ik.kind === 'ext') btns.push('<button class="tl-ub-b tl-ub-b2" data-ub-act="reloadExt" title="Load the extension again from its folder - after replacing its files with a new version">Reload extension</button>');
-    const how = ik.kind === 'app' ? 'Update downloads the new version of the app, to install over this one.' : ik.kind === 'us' ? 'Update opens the new version in your userscript manager, which offers to update.' : ik.kind === 'ext' ? 'Update puts the new version into the extension\'s folder for you. The first time, Chrome asks you to choose that folder and allow it to be edited.' : 'Installed from a store: your browser updates it by itself.';
+    const how = ik.kind === 'app' ? (TL_APP.platform === 'ios' ? 'Update opens the new version\'s release page, to install with the app you installed this one with. The app also looks for one itself when it opens.' : 'Update downloads the new version of the app and installs it over this one (Android asks you to confirm). The app also looks for one itself when it opens.') : ik.kind === 'us' ? 'Update opens the new version in your userscript manager, which offers to update.' : ik.kind === 'ext' ? 'Update puts the new version into the extension\'s folder for you. The first time, Chrome asks you to choose that folder and allow it to be edited.' : 'Installed from a store: your browser updates it by itself.';
     const warn = ubInstalled ? `<div class="tl-ub-alert">v${esc(ubInstalled)} is installed. Refresh the page to start using it.</div>` : newer ? `<div class="tl-ub-alert">This version is out of date: <b>v${esc(O.v)}</b> is out, you have v${esc(VERSION)}.${O.req ? ' <b>This update is required</b>: this version is no longer supported.' : ''}</div>` : '';
     return `${warn}<div class="tl-ub-kv"><span>Installed</span><span>v${esc(VERSION)}</span></div><div class="tl-ub-kv"><span>Latest</span><span>${latest}</span></div>
       <div class="tl-ub-kv"><span>Type</span><span>${esc(ik.name)}</span></div><div class="tl-ub-btns">${btns.join('')}</div>
@@ -394,8 +405,9 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   function openUnblockWindow() {
     addUnblockStyle();
     if (unblockWindowOpen() || HJ.st === 'opening') return;
+    // (1.3.12: Widgets not drawn - FR24's phone layout has no Widgets window to lend: the stand-in)
     const it = ubItems.get('Widgets');
-    if (ubNoLend || !it || !it.isConnected || !ubBar || !ubBar.contains(it)) return openStandIn();
+    if (ubNoLend || !it || !it.isConnected || !ubBar || !ubBar.contains(it) || !shownEl(it)) return openStandIn();
     lendOpen(it);
   }
   function closeUnblockWindow() {
@@ -706,8 +718,9 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   }
   function placeStandIn() {
     if (!ubFloat) return;
-    const vh = window.innerHeight || 800, barTop = ubBar && ubBar.isConnected ? layoutTop(ubBar) : vh - 70;
-    ubFloat.style.maxHeight = Math.max(240, Math.min(vh, barTop > 100 ? barTop : vh) - 8 - 10) + 'px';
+    // (from where it is drawn - below FR24's header on a phone, UB_STYLE - down to the bar)
+    const vh = window.innerHeight || 800, barTop = ubBar && ubBar.isConnected ? layoutTop(ubBar) : vh - 70, top = Math.max(8, Math.round(ubFloat.getBoundingClientRect().top) || 8);
+    ubFloat.style.maxHeight = Math.max(240, Math.min(vh, barTop > 100 ? barTop : vh) - top - 10) + 'px';
   }
   // (FR24's widget panels on the map, found by their titles: out of sight while the stand-in is open, back after)
   const UB_WIDGET_TITLES = ['most tracked flights', 'airport disruptions', 'statistics', 'last-clicked flights', 'latest blog posts', 'bookmarks'];
@@ -1042,14 +1055,17 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     }
     return best;
   }
-  // (the look most of the bar's buttons share is the resting one)
+  // (the look most of the bar's buttons share is the resting one - among those drawn: 1.3.12, FR24's phone layout keeps
+  // Widgets and Playback in its bar, hidden, both alike, while its three shown buttons each differ a little - the hidden
+  // pair's look won, and this button was made from hidden Widgets: there, but never seen)
   const classSig = el => sigOf(lookOf(el));
+  const barPool = found => { const items = [...found.items.values()], shown = items.filter(shownEl); return shown.length ? shown : items; };
+  const commonOf = pool => { const sigs = new Map(); for (const it of pool) sigs.set(classSig(it), (sigs.get(classSig(it)) || 0) + 1); return [...sigs.entries()].sort((a, b) => b[1] - a[1])[0][0]; };
   function makeBarButton(found) {
-    const items = [...found.items.values()], sigs = new Map();
-    for (const it of items) sigs.set(classSig(it), (sigs.get(classSig(it)) || 0) + 1);
-    ubCommon = [...sigs.entries()].sort((a, b) => b[1] - a[1])[0][0];
+    const pool = barPool(found);
+    ubCommon = commonOf(pool);
     const wi = found.items.get('Widgets');
-    const tpl = wi && classSig(wi) === ubCommon ? wi : items.find(it => classSig(it) === ubCommon) || items[0];
+    const tpl = wi && pool.includes(wi) && classSig(wi) === ubCommon ? wi : pool.find(it => classSig(it) === ubCommon) || pool[0];
     const label = [...found.items.entries()].find(([, it]) => it === tpl)[0];
     const b = faceOf(tpl, label, true);
     ubRestFace = b.cloneNode(true);
@@ -1101,9 +1117,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     ubSyncing = true;
     try {
       const found = findBar(); if (!found || found.bar !== ubBar) { ubDirty = true; return; }
-      const sigs = new Map();
-      for (const it of found.items.values()) sigs.set(classSig(it), (sigs.get(classSig(it)) || 0) + 1);
-      const common = [...sigs.entries()].sort((a, b) => b[1] - a[1])[0][0];
+      const common = commonOf(barPool(found));
       ubItems = found.items;
       if (common !== ubCommon) placeBarButton(found);
     } finally { ubSyncing = false; }

@@ -19,8 +19,12 @@ or redistributed.
 2. Open it. The first time, Android asks you to allow your browser to install apps.
 3. Open **LADD Unblocker**.
 
-Updates: the LADD Unblock window says when a new version is out, and *Update* downloads the new APK, which installs over
-the old one with your settings kept. (Releases signed with a debug key cannot install over each other: see *Signing*.)
+Updates (1.3.12): the app looks for a new version when it opens (every twelve hours at most), and when you press *Update*
+in the LADD Unblock window. It downloads the new APK from the latest release, checks it (GitHub's SHA-256 for it, and that
+it is this app, later, signed with the same key), and Android asks you to confirm. The first time, Android asks you to let
+the app install its updates ("Allow from this source"). Your settings are kept. A release signed with another key
+cannot install over the app: the app tells you, and you uninstall it and install the new one from the release page (see
+*Signing*). Version 1.3.11 cannot update itself: install 1.3.12 by hand once.
 
 ### What it does
 
@@ -30,12 +34,17 @@ Everything the extension does on FR24's site, on FR24's site as a phone gets it:
   monitor among them)
 - a watched aircraft's alerts as the phone's own notifications
 - a flight log's CSV saved to Downloads
-- FR24's "my location", when you allow it
+- FR24's "my location", when you allow it: the app asks Android for the phone's location itself (1.3.12)
+- LADD Unblock in FR24's bar at the bottom of the map, beside Settings, Weather and Filters, as on a computer (1.3.12)
+- aircraft and flight log pages laid out as a phone app lays them out (1.3.12): a bar with the registration or flight
+  number, the aircraft's pictures and details, then its flights by year, one line each - tap one for its times, status
+  and its Play, KML and CSV; *Play* shows FR24's player, *Flights* goes back
+- no "Open in app" pill or app banner (1.3.12)
 
 What is different from FR24's own app:
 - It is FR24's mobile site. It looks and works much like FR24's app, but it is FR24's site, not a copy of their app.
-- Sign in to FR24 with your e-mail and password. "Sign in with Google" and "with Apple" open in your browser and cannot
-  come back to the app.
+- Sign in to FR24 with your e-mail and password. A sign-in with Google, Apple or Facebook opens in a window over the
+  page (1.3.12) and closes when it is done, or with *Back*. Google may still refuse sign-ins from inside an app.
 - Its sign-in is its own: signing in to FR24 in Chrome does not sign you in here.
 - Links away from FR24's site open in your browser.
 
@@ -51,6 +60,10 @@ What is different from FR24's own app:
     with its subdomains) and a monitor host you allow. Every redirect is checked too. They carry the app's own cookies
     for that host, as the extension's do.
   - notifications, a monitor host to allow (asked of you once), and files to save to Downloads
+  - the phone's location (`Geo.java`): the page's `navigator.geolocation`, answered by the app
+  - the app's own update (`Updater.java`, `UpdateReceiver.java`)
+  - up to 32 requests at once, with the WebView's user agent where the script sets none (1.3.12: 1.3.11's four at a time
+    left the monitor's check waiting behind slower answers until the script gave up on the monitor)
 - **Kept private.** The preamble takes the bridge and removes it from the page's globals, so nothing FR24's page loads
   after it can use it, and the script's own functions live in a closure, not the page's globals.
 - **Its rules** are in `Policy.java`: which pages stay in the app, which hosts the script may reach, and saved files' names.
@@ -61,8 +74,52 @@ What is different from FR24's own app:
 - The checks without a phone:
   - `test/unit_app.cjs` runs `dist/app/app.js` as the app puts it in, in Chromium (Android's WebView is Chromium), with the
     app's side stood in for. It checks that the page part is in before FR24's first script, that FR24's LiveFeed answer is
-    named, and the bridge's every message.
-  - `android/app/src/test` checks the app's rules and its requests against fake servers (JUnit).
+    named, and the bridge's every message: the location, the update, and a log page laid out for a phone too.
+  - `android/app/src/test` checks the app's rules (pages, origins, hosts, sign-in windows, the update's release and
+    versions, the location's limits) and its requests against fake servers (JUnit).
+
+## The iPhone and iPad app (1.3.12)
+
+The Android app's twin (`ios/`): FR24's site in the app's own web view, with the same script (`dist/app/app.js`) put
+into each page of FR24's site at document start, before FR24's own code runs, and the same bridge for what a userscript
+manager would give it. The script cannot tell them apart, apart from which app it is (`TL_APP.platform`).
+
+### Installing
+
+Apple lets an app outside the App Store be installed only by signing it with an Apple ID. The release's
+`fr24-ladd-unblocker-ios.ipa` is unsigned: install it with a sideloading app, which signs it with your own Apple ID:
+[AltStore](https://altstore.io) or [Sideloadly](https://sideloadly.io) (on your computer). With a free Apple ID, the app
+has to be signed again every 7 days (AltStore does it for you); a paid developer account makes it a year.
+
+1. Download `fr24-ladd-unblocker-ios.ipa` from the
+   [latest release](https://github.com/FinlayC1/fr24-ladd-unblocker/releases/latest), or the *fr24-ladd-unblocker-ios*
+   artifact of a [Tests run](https://github.com/FinlayC1/fr24-ladd-unblocker/actions/workflows/tests.yml).
+2. Open it with AltStore or Sideloadly and install it.
+3. On the phone: *Settings → General → VPN & Device Management*, trust your Apple ID's profile (the first time).
+4. Open **LADD Unblocker**.
+
+Updates: the app looks for a new version when it opens (every twelve hours at most) and when you press *Update* in the
+LADD Unblock window. iOS does not let an app install its own update: the app tells you, and opens the release page.
+Install the new `.ipa` the same way; your settings stay.
+
+### What it does
+
+The same as the Android app: blocked aircraft named, routes, the panel, boards, playback, log pages laid out for a phone,
+LADD Unblock in FR24's bar, notifications, FR24's "my location" (iOS asks you once), a flight log's CSV saved through the
+share sheet (Files, AirDrop ...), sign-in windows. FR24's pages open in the app; anything else opens in Safari.
+
+### How it works
+
+- `WebViewController.swift`: FR24's site in a `WKWebView`, kept clear of the notch and the home bar. The bridge's
+  preamble, then the script, as `WKUserScript`s at document start, top frame only; both run only on
+  `https://www.flightradar24.com` and `https://flightradar24.com`. The page's messages come in through a script message
+  handler (`TLNative`), only from FR24's own pages; the app's answers go back to the page's bridge under a name of this
+  run's own.
+- `AppNet.swift`: the script's requests - https only, to the hosts its header lists and a monitor host you allow, every
+  redirect checked and followed by the app itself, with the web view's user agent.
+- `Geo.swift` (the location), `Updater.swift` (the update), `Policy.swift` (the rules, as the Android app's).
+- Built on a Mac by CI's `ios` job (`ios/build.sh`: XcodeGen makes the Xcode project from `ios/project.yml`; Xcode builds
+  it unsigned and the `.ipa` is put together). The release attaches the `.ipa` that the Tests run built.
 
 ## The LSPosed module (FR24's own app)
 

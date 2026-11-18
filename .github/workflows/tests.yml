@@ -145,3 +145,27 @@ jobs:
           name: fr24-ladd-unblocker-module
           path: android/module/build/outputs/apk/release/module-release.apk
           if-no-files-found: error
+  # iPhone and iPad (ios/): the app - FR24's site with the script in it, the Android app's twin - built on a Mac with
+  # Xcode and XcodeGen, unsigned, its .ipa kept with the run (ios/build.sh). On a push only: a pull request from this
+  # repository is the same commit built twice (a Mac's minutes count ten times), and the release takes the .ipa of the
+  # push to main's run
+  ios:
+    if: github.event_name == 'push'
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: XcodeGen
+        run: brew install xcodegen
+      - name: The app, unsigned (.ipa)
+        run: bash ios/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fr24-ladd-unblocker-ios
+          path: dist/fr24-ladd-unblocker-ios.ipa
+          if-no-files-found: error

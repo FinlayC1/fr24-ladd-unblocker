@@ -20,6 +20,7 @@ import android.os.Bundle;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.Message;
 import android.provider.MediaStore;
 import android.util.Base64;
 import android.util.Log;
@@ -45,6 +46,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.webkit.JavaScriptReplyProxy;
+import androidx.webkit.WebSettingsCompat;
 import androidx.webkit.WebViewCompat;
 import androidx.webkit.WebViewFeature;
 
@@ -57,6 +59,7 @@ import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -68,8 +71,10 @@ import java.util.concurrent.atomic.AtomicInteger;
  * src/app/shim.js, the page part, the userscript) is put into each page of FR24's site at document start, before FR24's
  * own code runs, as the extension's manifest puts it (androidx.webkit: addDocumentStartJavaScript). What a userscript
  * manager gives the script comes from here, over a bridge given to FR24's site only (addWebMessageListener: TLNative):
- * its requests to the other sites (AppNet), notifications, a monitor host the user allows, files saved to Downloads.
- * FR24's other pages open here too (its sign-in); anything else opens in the phone's browser.
+ * its requests to the other sites (AppNet), notifications, a monitor host the user allows, files saved to Downloads,
+ * the phone's location for FR24's "my location" (Geo), and the app's own update (Updater).
+ * FR24's other pages open here too; a sign-in page FR24's page opens in a window of its own opens in one here (a window
+ * over the page, closed when the sign-in closes it, or by Back); anything else opens in the phone's browser.
  */
 public final class MainActivity extends Activity {
     static final String TAG = "FR24LADD";
@@ -90,6 +95,10 @@ public final class MainActivity extends Activity {
     private String geoOrigin;
     private GeolocationPermissions.Callback geoCb;
     private int restarts;
+    private WebView popup;                       // (a sign-in window FR24's page opened - Policy.signIn)
+    private Geo geo;
+    private Updater updater;
+    private final List<Object[]> geoWait = new ArrayList<>();   // (location asks waiting for the user's answer: { message, reply })
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
@@ -115,8 +124,11 @@ public final class MainActivity extends Activity {
             return;
         }
         channel();
+        geo = new Geo(this);
+        updater = new Updater(this);
         build(state, null);
         handleNote(getIntent());
+        updater.check(false);
     }
 
     // ---- the WebView ----------------------------------------------------------------------------------------------------
@@ -133,9 +145,22 @@ public final class MainActivity extends Activity {
         s.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         s.setAllowFileAccess(false);
         s.setAllowContentAccess(false);
-        s.setSupportMultipleWindows(false);
+        // (1.3.12: a window a page opens - onCreateWindow - a sign-in's kept here, the rest as before; the page laid out as
+        // the phone's Chrome lays it out - its viewport tag, zoom where the page allows it)
+        s.setSupportMultipleWindows(true);
         s.setJavaScriptCanOpenWindowsAutomatically(true);
+        s.setUseWideViewPort(true);
+        s.setLoadWithOverviewMode(true);
+        s.setSupportZoom(true);
+        s.setBuiltInZoomControls(true);
+        s.setDisplayZoomControls(false);
         s.setUserAgentString(Policy.userAgent(s.getUserAgentString()));
+        net.userAgent(s.getUserAgentString());
+        // (no "X-Requested-With: <the app's name>" on the page's requests, as Chrome sends none: sign-in pages refuse an
+        // app's web view by it)
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.REQUESTED_WITH_HEADER_ALLOW_LIST)) {
+            try { WebSettingsCompat.setRequestedWithHeaderOriginAllowList(s, Collections.emptySet()); } catch (RuntimeException ignored) { /* sent as before */ }
+        }
         CookieManager cm = CookieManager.getInstance();
         cm.setAcceptCookie(true);
         cm.setAcceptThirdPartyCookies(web, true);
@@ -201,14 +226,100 @@ public final class MainActivity extends Activity {
         }
         @Override public void onGeolocationPermissionsHidePrompt() { geoOrigin = null; geoCb = null; }
         @Override public void onPermissionRequest(PermissionRequest r) { r.deny(); }
+        // (1.3.12) a window the page opens: what it shows decides where - a sign-in (one a tap opened) in a window over the
+        // page, FR24's own pages in the app's page, anything else in the phone's browser, as before 1.3.12
+        @Override public boolean onCreateWindow(WebView view, boolean isDialog, boolean isUserGesture, Message resultMsg) {
+            if (resultMsg == null || !(resultMsg.obj instanceof WebView.WebViewTransport)) return false;
+            closePopup();
+            WebView p;
+            try { p = new WebView(MainActivity.this); } catch (Throwable t) { return false; }
+            WebSettings ps = p.getSettings();
+            ps.setJavaScriptEnabled(true);
+            ps.setDomStorageEnabled(true);
+            ps.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
+            ps.setAllowFileAccess(false);
+            ps.setAllowContentAccess(false);
+            ps.setSupportMultipleWindows(false);
+            ps.setJavaScriptCanOpenWindowsAutomatically(false);
+            ps.setUserAgentString(web != null ? web.getSettings().getUserAgentString() : Policy.userAgent(ps.getUserAgentString()));
+            if (WebViewFeature.isFeatureSupported(WebViewFeature.REQUESTED_WITH_HEADER_ALLOW_LIST)) {
+                try { WebSettingsCompat.setRequestedWithHeaderOriginAllowList(ps, Collections.emptySet()); } catch (RuntimeException ignored) { /* sent */ }
+            }
+            CookieManager.getInstance().setAcceptThirdPartyCookies(p, true);
+            p.setBackgroundColor(0xFFFFFFFF);
+            p.setVisibility(View.INVISIBLE);                           // (shown once it is a sign-in's)
+            p.setWebViewClient(new PopupClient(isUserGesture));
+            p.setWebChromeClient(new WebChromeClient() {
+                @Override public void onCloseWindow(WebView w) { if (w == popup) closePopup(); }
+            });
+            popup = p;
+            root.addView(p, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            ((WebView.WebViewTransport) resultMsg.obj).setWebView(p);
+            resultMsg.sendToTarget();
+            return true;
+        }
+        @Override public void onCloseWindow(WebView w) { if (w == popup) closePopup(); }
+    }
+
+    // (the window's pages: its first decides where it is shown - Policy.signIn keeps it; then, a sign-in going on, any
+    // https page in it - the provider's own steps, back to FR24 - and anything else to the phone's browser)
+    private final class PopupClient extends WebViewClient {
+        private final boolean tapped;
+        private boolean kept;
+        PopupClient(boolean tapped) { this.tapped = tapped; }
+        private boolean decide(WebView v, Uri u) {
+            String scheme = Policy.lower(u.getScheme());
+            if (kept) {
+                if ("https".equals(scheme)) return false;
+                if ("http".equals(scheme) || "mailto".equals(scheme) || "tel".equals(scheme) || "market".equals(scheme)) open(u);
+                return true;
+            }
+            if ("about".equals(scheme)) return false;                  // (an empty window, its page set a moment later)
+            if (tapped && Policy.signIn(scheme, u.getHost())) { kept = true; v.setVisibility(View.VISIBLE); return false; }
+            ui.post(MainActivity.this::closePopup);
+            if (Policy.inApp(scheme, u.getHost())) { if (web != null) web.loadUrl(u.toString()); }
+            else if ("http".equals(scheme) && Policy.inApp("https", u.getHost())) { if (web != null) web.loadUrl(u.buildUpon().scheme("https").build().toString()); }
+            else if ("http".equals(scheme) || "https".equals(scheme) || "mailto".equals(scheme) || "tel".equals(scheme) || "market".equals(scheme)) open(u);
+            return true;
+        }
+        @Override public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest r) { return r.isForMainFrame() && decide(v, r.getUrl()); }
+        @Override public void onPageStarted(WebView v, String url, android.graphics.Bitmap icon) {
+            if (!kept && url != null && !"about:blank".equals(url) && decide(v, Uri.parse(url))) v.stopLoading();
+        }
+        @Override public boolean onRenderProcessGone(WebView v, RenderProcessGoneDetail d) { if (v == popup) { popup = null; root.removeView(v); } v.destroy(); return true; }
+    }
+
+    private void closePopup() {
+        WebView p = popup; popup = null;
+        if (p == null) return;
+        root.removeView(p);
+        try { p.stopLoading(); p.destroy(); } catch (Throwable ignored) { /* gone */ }
     }
 
     @Override public void onRequestPermissionsResult(int code, String[] perms, int[] results) {
         super.onRequestPermissionsResult(code, perms, results);
-        if (code != REQ_LOCATION || geoCb == null) return;
+        if (code != REQ_LOCATION) return;
         boolean ok = false; for (int r : results) ok |= r == PackageManager.PERMISSION_GRANTED;
-        geoCb.invoke(geoOrigin, ok, false);
-        geoOrigin = null; geoCb = null;
+        if (geoCb != null) { geoCb.invoke(geoOrigin, ok, false); geoOrigin = null; geoCb = null; }
+        // (the page's own asks - src/app/shim.js: answered now, the phone's location or "denied")
+        List<Object[]> w = new ArrayList<>(geoWait); geoWait.clear();
+        for (Object[] x : w) {
+            JSONObject m = (JSONObject) x[0]; JavaScriptReplyProxy reply = (JavaScriptReplyProxy) x[1];
+            if (ok) geoNow(m, reply); else send(reply, Geo.fail(m.optString("id"), 1, "not allowed"));
+        }
+    }
+
+    private boolean located() { return has(Manifest.permission.ACCESS_FINE_LOCATION) || has(Manifest.permission.ACCESS_COARSE_LOCATION); }
+
+    // (1.3.12) the page asks for the phone's location (FR24's "my location"): the user asked first if the app may
+    private void geoAsk(JSONObject m, JavaScriptReplyProxy reply) {
+        if (located()) { geoNow(m, reply); return; }
+        geoWait.add(new Object[] { m, reply });
+        if (geoWait.size() == 1) requestPermissions(new String[] { Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION }, REQ_LOCATION);
+    }
+
+    private void geoNow(JSONObject m, JavaScriptReplyProxy reply) {
+        geo.get(m.optString("id"), m.optBoolean("high", false), m.optLong("timeout", 0), m.optLong("maxAge", 0), out -> ui.post(() -> send(reply, out)));
     }
 
     private boolean has(String perm) { return checkSelfPermission(perm) == PackageManager.PERMISSION_GRANTED; }
@@ -224,6 +335,9 @@ public final class MainActivity extends Activity {
             case "notify": notify(m.optString("id"), m.optString("title"), m.optString("text")); break;
             case "grant": grant(m.optString("id"), m.optString("origin"), reply); break;
             case "save": save(m.optString("name"), m.optString("mime"), m.optString("b64")); break;
+            case "geo": geoAsk(m, reply); break;
+            case "geoState": send(reply, msg("geoState", m.optString("id"), "state", located() ? "granted" : "prompt")); break;
+            case "update": if (updater != null) updater.check(true); break;
             default: break;
         }
     }
@@ -374,14 +488,16 @@ public final class MainActivity extends Activity {
 
     // ---- the activity's life --------------------------------------------------------------------------------------------
     @Override public void onBackPressed() {
+        if (popup != null) { if (popup.canGoBack()) popup.goBack(); else closePopup(); return; }
         if (web != null && web.canGoBack()) web.goBack();
         else super.onBackPressed();
     }
 
     @Override protected void onPause() { super.onPause(); if (web != null) web.onPause(); CookieManager.getInstance().flush(); }
-    @Override protected void onResume() { super.onResume(); if (web != null) web.onResume(); }
+    @Override protected void onResume() { super.onResume(); if (web != null) web.onResume(); if (updater != null) updater.resumed(); }
     @Override protected void onSaveInstanceState(Bundle out) { super.onSaveInstanceState(out); if (web != null) web.saveState(out); }
     @Override protected void onDestroy() {
+        closePopup();
         if (web != null) { root.removeView(web); web.destroy(); web = null; }
         super.onDestroy();
     }
