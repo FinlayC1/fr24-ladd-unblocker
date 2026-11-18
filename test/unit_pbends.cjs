@@ -48,6 +48,7 @@ function makeWin(url, asked, opts) {
   win.caches = { open: async () => ({ match: async () => undefined, put: async () => {}, keys: async () => [], delete: async () => false }) };
   const answer = u => {
     asked.push({ url: u, at: Date.now() });
+    if (opts.answer) { const r = opts.answer(u); if (r) return r; }
     if (/flightradar24\.com\/mobile\/airports\/format/.test(u)) return [0, 200, AIRPORTS];
     if (/trace_full_43c968\.json/.test(u)) return [150, 200, hawkTrace()];
     if (/common\/v1\/flight-playback\.json/.test(u) && /flightId=3c4d5e6f/.test(u)) return [200, 200, fr24Playback()];
@@ -173,6 +174,47 @@ const ageCell = w => { const c = [...w.document.querySelectorAll('[data-testid="
     const to = await until(() => /Private Site/.test(w.document.getElementById('txt-airport-dest').textContent), 3000);
     check('an aircraft\'s page: FR24\'s playback of the row Liverpool -> Private Site says "Private Site" for To, not "-"', !!to, w.document.getElementById('txt-airport-dest').textContent);
     check('... FR24\'s own From left as it is', /Liverpool/.test(w.document.getElementById('txt-airport-origin').textContent));
+    w.close();
+  }
+  // ---- (1.3.13) G-LFSA (a Tomahawk out of Liverpool), FR24 keeping no landing for its flights: rows "Scheduled", one with
+  // FR24's own "Liverpool" for TO and its player's TO "-", one with "—" (no ADS-B flight of it known here at all), one in
+  // the air now, one over a week old, one that never took off
+  {
+    const NOW = Math.round(Date.now() / 1000), LPL = [53.3336, -2.8497];
+    const A = DAY0 + 9 * 3600 + 53 * 60, B = DAY0 - 86400 + 15 * 3600 + 53 * 60, C = NOW - 40 * 60, Dd = NOW - 9 * 86400, E = DAY0 + 14 * 3600;
+    const pb = (fid, t0, end) => { const p = (t, lat, lon, ft, kts) => ({ latitude: lat, longitude: lon, altitude: { feet: ft, meters: 0 }, speed: { kts, kmh: 0, mph: 0 }, heading: 0, squawk: '7000', timestamp: t });
+      return JSON.stringify({ result: { response: { data: { flight: { identification: { id: fid }, track: [p(t0, LPL[0], LPL[1], 0, 10), p(t0 + 120, 53.30, -2.85, 1200, 80), end(p)] } } } } }); };
+    const tracks = {
+      aa000001: pb('aa000001', A, p => p(A + 57 * 60, LPL[0], LPL[1], 0, 15)),
+      aa000002: pb('aa000002', B, p => p(B + 52 * 60, LPL[0] + 0.004, LPL[1] + 0.006, 50, 40)),
+      aa000003: pb('aa000003', C, p => p(NOW - 60, 53.178, -2.978, 2000, 95)),
+      aa000004: pb('aa000004', Dd, p => p(Dd + 3000, LPL[0], LPL[1], 0, 10)),
+      aa000005: pb('aa000005', E, p => p(E + 3000, LPL[0], LPL[1], 0, 10))
+    };
+    const answer = u => { const m = /common\/v1\/flight-playback\.json\?flightId=([0-9a-f]+)/.exec(u); return m && tracks[m[1]] ? [150, 200, tracks[m[1]]] : null; };
+    const own = '<td>Liverpool <a href="/data/airports/lpl">(LPL)</a></td>', dashTd = '<td>—</td>';
+    const row = (fid, t, atd, to, status) => `<tr class="data-row" data-timestamp="${t}"><td></td><td></td><td data-timestamp="${t}">day</td>${own}${to}<td>(GLFSA)</td><td>—</td><td>—</td><td${atd ? ` data-timestamp="${atd}"` : ''}>${atd ? 'hh:mm' : '—'}</td><td>—</td><td><div class="state-block gray"></div></td><td>${status}</td><td><a class="btn btn-sm btn-playback" data-flight="${fid}">Play</a></td></tr>`;
+    const html = `<!doctype html><html><head><title>G-LFSA</title></head><body><div id="cnt-aircraft-info"><div class="row"><label>TYPE CODE</label> <span class="details">PA38</span></div><div class="row"><label>MODE S</label> <span class="details" id="txt-mode-s">406A1B</span></div></div>
+      <table id="tbl-datatable"><tbody>${row('aa000003', C, C, dashTd, 'Scheduled')}${row('aa000005', E, 0, dashTd, 'Scheduled')}${row('aa000001', A, A, own, 'Scheduled')}${row('aa000002', B, B, dashTd, 'Scheduled')}${row('aa000004', Dd, Dd, dashTd, 'Scheduled')}</tbody></table></body></html>`;
+    const asked = [], w = makeWin('https://www.flightradar24.com/data/aircraft/g-lfsa', asked, { html, answer }); await ready(w);
+    const tr = fid => w.document.querySelector(`[data-flight="${fid}"]`).closest('tr'), cellTxt = (fid, i) => tr(fid).children[i].textContent.replace(/\s+/g, ' ').trim();
+    await until(() => /Landed ~/.test(cellTxt('aa000002', 11)) && /Landed ~/.test(cellTxt('aa000001', 11)), 10000);
+    await sleep(600);
+    check('G-LFSA: a "Scheduled" row with "—" for TO and no ADS-B flight of it known: FR24\'s own track of it, down at Liverpool, ends it - "Liverpool (LPL)", "Landed ~", its time "~"', /Liverpool/.test(cellTxt('aa000002', 4)) && /LPL/.test(cellTxt('aa000002', 4)) && /^Landed ~\d/.test(cellTxt('aa000002', 11)) && /^~/.test(cellTxt('aa000002', 6)) && tr('aa000002').querySelector('.state-block.green'), [cellTxt('aa000002', 4), cellTxt('aa000002', 11), cellTxt('aa000002', 6)]);
+    check('... one with FR24\'s own "Liverpool" for TO: "Landed ~" too, FR24\'s TO left as it is', /^Landed ~\d/.test(cellTxt('aa000001', 11)) && cellTxt('aa000001', 4) === 'Liverpool (LPL)' && !tr('aa000001').children[4].classList.contains('tl-filled'), [cellTxt('aa000001', 4), cellTxt('aa000001', 11)]);
+    check('... one in the air now (FR24\'s track ending a minute ago at 2,000 ft by Hawarden): still "Scheduled", its TO still "—" - not the field it is passing', cellTxt('aa000003', 11) === 'Scheduled' && cellTxt('aa000003', 4) === '—', [cellTxt('aa000003', 4), cellTxt('aa000003', 11)]);
+    const pbAsked = id => asked.filter(x => new RegExp('flight-playback\\.json\\?flightId=' + id + '&').test(x.url)).length;
+    check('... FR24 asked once for each of those three; not for one over a week old (beyond a free account\'s playback), nor for one that never took off', pbAsked('aa000001') === 1 && pbAsked('aa000002') === 1 && pbAsked('aa000003') === 1 && pbAsked('aa000004') === 0 && pbAsked('aa000005') === 0 && cellTxt('aa000004', 11) === 'Scheduled', [1, 2, 3, 4, 5].map(i => pbAsked('aa00000' + i)));
+    // FR24's player of the 18 Nov flight: its TO "-" while its row says Liverpool
+    w.location.hash = '#aa000001';
+    await sleep(300);
+    w.document.body.insertAdjacentHTML('beforeend', '<div class="playback-player"><span id="txt-airport-origin">Liverpool <small>(LPL)</small></span><span id="txt-airport-dest"></span></div>');
+    await sleep(100);
+    w.document.getElementById('txt-airport-dest').textContent = '-';
+    const to = await until(() => /Liverpool/.test(w.document.getElementById('txt-airport-dest').textContent), 3000);
+    check('... its player\'s TO "-": the row\'s Liverpool (LPL), as the row has it', !!to && w.document.getElementById('txt-airport-dest').innerHTML === 'Liverpool <small>(LPL)</small>', w.document.getElementById('txt-airport-dest').innerHTML);
+    const errs = w.__logs.filter(x => /^ERROR/.test(x));
+    check('... no script errors', !errs.length, errs.slice(0, 3));
     w.close();
   }
   // ---- (1.2.4) a flight's KML and CSV for FR24's own download buttons: made from FR24's track of it, in FR24's CSV columns

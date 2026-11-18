@@ -15605,6 +15605,15 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
 [data-testid="airport-panel"] [data-testid^="airport-panel__promo-movement"],[data-testid="airport-panel"] [data-testid^="airport-panel__promo-runway_usage"],[data-testid="airport-panel"] img[alt="Movements per day" i],[data-testid="airport-panel"] img[alt="Runway usage" i]{visibility:hidden!important}
 [data-testid="airport-panel"] button:has(img[alt="Movements per day" i]),[data-testid="airport-panel"] button:has(img[alt="Runway usage" i]),[data-testid="airport-panel"] button:has([data-testid^="airport-panel__promo-movement"]),[data-testid="airport-panel"] button:has([data-testid^="airport-panel__promo-runway_usage"]){visibility:hidden!important}`;
   function addAdStyle() { if (document.getElementById('tl-noads')) return; const s = document.createElement('style'); s.id = 'tl-noads'; s.textContent = AD_STYLE; (document.head || document.documentElement).appendChild(s); }
+  // (1.3.13) Google's "ad blocking recovery" notice on FR24's older pages - its aircraft and flight logs: "You are seeing
+  // this message because ad or script blocking software is interfering with this page", fixed along the foot of a phone's
+  // screen. With FR24's adverts hidden here (this option), taken away with them - a box of its own put on the page's body
+  const AD_NOTICE = /ad or script blocking software is interfering with this page/i;
+  function muteAdNotice() {
+    const sweep = () => { for (const el of document.body.children) { if (el.dataset.tlAdNotice) continue; const t = el.textContent || ''; if (t.length < 600 && AD_NOTICE.test(t)) { el.dataset.tlAdNotice = '1'; el.style.setProperty('display', 'none', 'important'); } } };
+    const go = () => { if (!document.body) return false; sweep(); new MutationObserver(sweep).observe(document.body, { childList: true }); return true; };
+    if (!go()) document.addEventListener('DOMContentLoaded', go, { once: true });
+  }
 
   const q = (root, sel) => root.querySelector(sel);
   // `ours`: values this script injected into FR24's feed earlier (they render natively, so they must stay
@@ -16642,7 +16651,9 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   }
   function fillFr24Rows(tbody, hex, lv) {
     const legs = knownLegs(hex).filter(l => l.from || l.to || l.startedOnGround || landedOff(l));
-    if (!legs.length && !lv) return 0;
+    // (1.3.13: with no ADS-B flight of it known, FR24's own track's ends are still read for its rows - the neighbouring
+    // rows' ends below copied only where ADS-B has flights of it, as before)
+    const noLegs = !legs.length && !lv;
     const dash = el => !!el && /^\s*(—|-|N\/A)?\s*$/.test(el.textContent || '');
     // (one of ours that a better answer may still replace: a private site, an inferred airport)
     const weak = el => !!el && el.classList.contains('tl-filled') && Number(el.dataset.tlRank || 0) < 3;
@@ -16663,7 +16674,12 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       const mob = tr.querySelectorAll('td.visible-xs p');
       const fid = (tr.querySelector('[data-flight]') || { dataset: {} }).dataset.flight || '';
       const landedRow = /Landed/i.test(statusTd.textContent || '');
-      if (!l && !isLive && !(fid && landedRow)) continue;
+      // (1.3.13: a flight FR24 still calls "Scheduled" or "Unknown" that took off over half an hour ago, within FR24's
+      // week of playback a free account can open - with or without an ADS-B flight beside it)
+      // (its own take-off time, not the row's date: one that never took off - cancelled - is not asked about)
+      const tOff = Number(atdTd.dataset.timestamp) || 0;
+      const unfinished = /^\s*(Scheduled|Unknown)\b/i.test(statusTd.textContent || '') && tOff > 0 && nowS() - tOff > 1800 && nowS() - tOff < 7 * 86400;
+      if (!l && !isLive && !(fid && (landedRow || unfinished))) continue;
       const rec = fr24Flights.get(fid) || {}; if (fid) fr24Flights.set(fid, rec);
       // (a better answer replaces one of ours shown earlier - an airport over a private site, a sure one over a guess: the
       // history day that names the strip can come in after FR24's track was read)
@@ -16702,12 +16718,13 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       // landing for many a light aircraft's flight: G-LFSA's of 17 and 18 Nov, Liverpool and back, "Scheduled", the first
       // "Private Site" where ADS-B lost it low, the player's TO "-". Its own track's end, low and over 20 minutes ago, is
       // also its landing: "Landed ~" then)
-      const unfinished = /^\s*(Scheduled|Unknown)\b/i.test(statusTd.textContent || '') && atd > 0 && nowS() - atd > 1800;
       if (fid && (landedRow || unfinished) && (dash(fromTd) || dash(toTd) || weak(fromTd) || weak(toTd) || unfinished)) {
         const fe = fr24EndCells.get(fid);
         if (fe) {
           if (putCells(fromTd, 'FROM', fe.from, 'from')) n++;
-          if (putCells(toTd, 'TO', fe.to, 'to')) n++;
+          // (an unfinished one's TO only where its track ended down: one FR24 calls "Scheduled" while it is still in the
+          // air ends where it is now - an airfield it is passing is not where it went)
+          if (putCells(toTd, 'TO', landedRow || fe.landT > atd ? fe.to : null, 'to')) n++;
           if (unfinished && fe.landT > atd && fe.to && fe.to.a) {
             const tzTo = tzOf(fe.to.a), txt = 'Landed ~' + fmtLocal(fe.landT, tzTo);
             statusTd.dataset.prefix = 'Landed ~'; statusTd.dataset.timestamp = String(fe.landT); statusTd.dataset.offset = String(tzTo); statusTd.textContent = ' ' + txt + ' ';
@@ -16737,6 +16754,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
         n++;
       }
     }
+    if (noLegs) return n;
     // (an end still "—" between two flights that are known: where the one before landed is where this one took off -
     // within twelve hours; marked as inferred)
     const rows = [...tbody.querySelectorAll('tr.data-row:not(.tl-adsb-row):not(.tl-live-row)')].filter(r => r.children.length >= 12);
@@ -16777,9 +16795,11 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     if (sn && pageMsn && /^\s*-?\s*$/.test(sn.textContent || '')) { sn.textContent = pageMsn; sn.title = 'From the public register / JetPhotos (LADD unblocker)'; }
     const id = (location.hash || '').replace(/^#/, '').toLowerCase(); if (!id) return;
     // (the row's own cells as filled, should the flight not be among those kept - a "Private Site" end, an inferred one)
-    const rec = fr24Flights.get(id) || rowEnds(id); if (!rec) return;
+    // (1.3.13: and the row's end where this page filled none - FR24's own: G-LFSA's 18 Nov flight, its row "Liverpool ->
+    // Liverpool", FR24's player "To: -")
+    const rec = fr24Flights.get(id), row = rowEnds(id); if (!rec && !row) return;
     for (const [sel, key] of [['#txt-airport-origin', 'from'], ['#txt-airport-dest', 'to']]) {
-      const el = document.querySelector(sel), c = rec[key]; if (!el || !c || !/^\s*(?:-|—|–|N\/A)?\s*$/i.test(el.textContent || '')) continue;
+      const el = document.querySelector(sel), c = (rec && rec[key]) || (row && row[key]); if (!el || !c || !/^\s*(?:-|—|–|N\/A)?\s*$/i.test(el.textContent || '')) continue;
       const a = c.a, q = /tl-inf/.test(c.desk) ? (c.desk.match(/<span class="tl-inf"[^>]*>\?<\/span>/) || [''])[0] : '';
       el.innerHTML = a ? `${esc(a.city || a.name)} <small>(${esc(a.iata || a.icao)})</small>${q}` : /Private Site/.test(c.desk) ? 'Private Site' : c.desk.replace(/<a\b[^>]*>\s*(\([^()<]*\))\s*<\/a>/, '<small>$1</small>');
       el.title = a ? `${a.name}${a.field ? ' (airfield not in FR24\'s list)' : ''}` : c.title || 'Away from any listed airfield';
@@ -16788,7 +16808,9 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   function rowEnds(fid) {
     if (!/^[0-9a-f]{4,12}$/.test(fid)) return null;
     const btn = document.querySelector(`#tbl-datatable [data-flight="${fid}"]`), tr = btn && btn.closest('tr'); if (!tr || tr.children.length < 12) return null;
-    const cell = td => td && td.classList.contains('tl-filled') ? { desk: td.innerHTML, mob: td.innerHTML, title: td.title || '', a: null } : null;
+    // (FR24's own cell - "Liverpool (LPL)" - made from its words alone: its markup is FR24's table's, not the player's)
+    const own = td => { const t = clean(td.textContent), m = /^(.*?)\s*\(([A-Z0-9]{3,4})\)$/.exec(t); return t && !/^(—|-|–|N\/A)$/i.test(t) ? { desk: m ? `${esc(m[1])} <small>(${esc(m[2])})</small>` : esc(t), mob: '', title: td.title || t, a: null } : null; };
+    const cell = td => !td ? null : td.classList.contains('tl-filled') ? { desk: td.innerHTML, mob: td.innerHTML, title: td.title || '', a: null } : own(td);
     const o = { from: cell(tr.children[3]), to: cell(tr.children[4]) };
     return o.from || o.to ? o : null;
   }
@@ -19747,7 +19769,7 @@ html.tl-pv-play #tl-pv .tl-pv-backpill{display:flex}
   // (the version whose "what's new" was put away, and the one whose dot on the button the window was opened for)
   const UB_SEEN_KEY = 'tweeks.fr24.ladd.seenver', UB_DOT_KEY = 'tweeks.fr24.ladd.dotver';
   // (the newest CHANGELOG section's headlines, written in by build.mjs: { v, items })
-  const UB_WHATS_NEW = {"v":"1.3.13","items":["**Playback in the app is FR24's own player for a phone.** *Play* opens FR24's own playback page, with its map and slider, for every flight: blocked ones, flights in logs rebuilt from ADS-B and older ones too. 1.3.12 opened the log page's old player for a computer.","**The map's pinch-zoom in the Android app is the map's again.** 1.3.12 let the app zoom its own snapshot of the page under your fingers, smearing aircraft and airport pins while you zoomed.","**A flight FR24 never marks as landed now ends where FR24's own track does.** G-LFSA's flights of 17 and 18 November, Liverpool and back, read \"Scheduled\", and one of them \"Private Site\". They now read Liverpool to Liverpool, \"Landed ~\" at the time FR24's track ends, and the player's TO is filled in too.","**The app is signed with the project's own key from this version on.** Uninstall the app once and install this version. From then on it updates itself."]};
+  const UB_WHATS_NEW = {"v":"1.3.13","items":["**Playback in the app is FR24's own player for a phone.** *Play* opens FR24's own playback page, with its map and slider, for every flight: blocked ones, flights in logs rebuilt from ADS-B and older ones too. 1.3.12 opened the log page's old player for a computer.","**A flight FR24 never marks as landed now ends where FR24's own track does.** G-LFSA's flights of 17 and 18 November, Liverpool and back, read \"Scheduled\", one of them \"Private Site\", and FR24's player said \"To: -\". They now read Liverpool to Liverpool, \"Landed ~\" at the time FR24's track ends, and the player's TO says Liverpool.","**The app no longer zooms the page itself on a pinch.** A pinch is the map's, as in FR24's own app.","**The app is signed with the project's own key from this version on.** Uninstall the app once and install this version. From then on it updates itself."]};
   // (an aircraft with an open padlock: FR24's outline style - 24 grid, 1.5 stroke in the text colour)
   const UB_ICON = '<svg data-tl-ub-icon="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
   const UB_X = '<svg viewBox="0 0 14 14" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5l11 11M12.5 1.5l-11 11"/></svg>';
@@ -21277,6 +21299,7 @@ html.tl-no-strip .tl-strip{display:none!important}
   function bootAll() {
   mxHidePrivacyAds();
   if (opt.noAds) addAdStyle();
+  if (opt.noAds && (isDataPage || isFlightPage || isAircraftPage)) muteAdNotice();
   // (the population tables unpack once FR24 has drawn the page - a few hundred ms of work that must not hold up its own
   // start - and the routes on screen are worked out again with them)
   if (!isDataPage && !isFlightPage) {

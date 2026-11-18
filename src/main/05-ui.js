@@ -93,6 +93,15 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
 [data-testid="airport-panel"] [data-testid^="airport-panel__promo-movement"],[data-testid="airport-panel"] [data-testid^="airport-panel__promo-runway_usage"],[data-testid="airport-panel"] img[alt="Movements per day" i],[data-testid="airport-panel"] img[alt="Runway usage" i]{visibility:hidden!important}
 [data-testid="airport-panel"] button:has(img[alt="Movements per day" i]),[data-testid="airport-panel"] button:has(img[alt="Runway usage" i]),[data-testid="airport-panel"] button:has([data-testid^="airport-panel__promo-movement"]),[data-testid="airport-panel"] button:has([data-testid^="airport-panel__promo-runway_usage"]){visibility:hidden!important}`;
   function addAdStyle() { if (document.getElementById('tl-noads')) return; const s = document.createElement('style'); s.id = 'tl-noads'; s.textContent = AD_STYLE; (document.head || document.documentElement).appendChild(s); }
+  // (1.3.13) Google's "ad blocking recovery" notice on FR24's older pages - its aircraft and flight logs: "You are seeing
+  // this message because ad or script blocking software is interfering with this page", fixed along the foot of a phone's
+  // screen. With FR24's adverts hidden here (this option), taken away with them - a box of its own put on the page's body
+  const AD_NOTICE = /ad or script blocking software is interfering with this page/i;
+  function muteAdNotice() {
+    const sweep = () => { for (const el of document.body.children) { if (el.dataset.tlAdNotice) continue; const t = el.textContent || ''; if (t.length < 600 && AD_NOTICE.test(t)) { el.dataset.tlAdNotice = '1'; el.style.setProperty('display', 'none', 'important'); } } };
+    const go = () => { if (!document.body) return false; sweep(); new MutationObserver(sweep).observe(document.body, { childList: true }); return true; };
+    if (!go()) document.addEventListener('DOMContentLoaded', go, { once: true });
+  }
 
   const q = (root, sel) => root.querySelector(sel);
   // `ours`: values this script injected into FR24's feed earlier (they render natively, so they must stay

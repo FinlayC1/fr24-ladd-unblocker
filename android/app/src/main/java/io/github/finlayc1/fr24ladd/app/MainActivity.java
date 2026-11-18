@@ -147,8 +147,8 @@ public final class MainActivity extends Activity {
         s.setAllowContentAccess(false);
         // (1.3.12: a window a page opens - onCreateWindow - a sign-in's kept here, the rest as before; the page laid out as
         // the phone's Chrome lays it out - its viewport tag)
-        // (1.3.13: no zoom of the WebView's own: a pinch is the map's - FR24's page allows no zooming of the page. 1.3.12's
-        // let the WebView scale its last picture of the page under the fingers, the map's aircraft and pins smeared with it)
+        // (1.3.13: no zoom of the WebView's own: a pinch is the map's, as in FR24's own app - FR24's map page lets a
+        // browser zoom the page)
         s.setSupportMultipleWindows(true);
         s.setJavaScriptCanOpenWindowsAutomatically(true);
         s.setUseWideViewPort(true);

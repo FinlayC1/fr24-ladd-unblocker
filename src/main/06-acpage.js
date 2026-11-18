@@ -209,7 +209,9 @@
   }
   function fillFr24Rows(tbody, hex, lv) {
     const legs = knownLegs(hex).filter(l => l.from || l.to || l.startedOnGround || landedOff(l));
-    if (!legs.length && !lv) return 0;
+    // (1.3.13: with no ADS-B flight of it known, FR24's own track's ends are still read for its rows - the neighbouring
+    // rows' ends below copied only where ADS-B has flights of it, as before)
+    const noLegs = !legs.length && !lv;
     const dash = el => !!el && /^\s*(—|-|N\/A)?\s*$/.test(el.textContent || '');
     // (one of ours that a better answer may still replace: a private site, an inferred airport)
     const weak = el => !!el && el.classList.contains('tl-filled') && Number(el.dataset.tlRank || 0) < 3;
@@ -230,7 +232,12 @@
       const mob = tr.querySelectorAll('td.visible-xs p');
       const fid = (tr.querySelector('[data-flight]') || { dataset: {} }).dataset.flight || '';
       const landedRow = /Landed/i.test(statusTd.textContent || '');
-      if (!l && !isLive && !(fid && landedRow)) continue;
+      // (1.3.13: a flight FR24 still calls "Scheduled" or "Unknown" that took off over half an hour ago, within FR24's
+      // week of playback a free account can open - with or without an ADS-B flight beside it)
+      // (its own take-off time, not the row's date: one that never took off - cancelled - is not asked about)
+      const tOff = Number(atdTd.dataset.timestamp) || 0;
+      const unfinished = /^\s*(Scheduled|Unknown)\b/i.test(statusTd.textContent || '') && tOff > 0 && nowS() - tOff > 1800 && nowS() - tOff < 7 * 86400;
+      if (!l && !isLive && !(fid && (landedRow || unfinished))) continue;
       const rec = fr24Flights.get(fid) || {}; if (fid) fr24Flights.set(fid, rec);
       // (a better answer replaces one of ours shown earlier - an airport over a private site, a sure one over a guess: the
       // history day that names the strip can come in after FR24's track was read)
@@ -269,12 +276,13 @@
       // landing for many a light aircraft's flight: G-LFSA's of 17 and 18 Nov, Liverpool and back, "Scheduled", the first
       // "Private Site" where ADS-B lost it low, the player's TO "-". Its own track's end, low and over 20 minutes ago, is
       // also its landing: "Landed ~" then)
-      const unfinished = /^\s*(Scheduled|Unknown)\b/i.test(statusTd.textContent || '') && atd > 0 && nowS() - atd > 1800;
       if (fid && (landedRow || unfinished) && (dash(fromTd) || dash(toTd) || weak(fromTd) || weak(toTd) || unfinished)) {
         const fe = fr24EndCells.get(fid);
         if (fe) {
           if (putCells(fromTd, 'FROM', fe.from, 'from')) n++;
-          if (putCells(toTd, 'TO', fe.to, 'to')) n++;
+          // (an unfinished one's TO only where its track ended down: one FR24 calls "Scheduled" while it is still in the
+          // air ends where it is now - an airfield it is passing is not where it went)
+          if (putCells(toTd, 'TO', landedRow || fe.landT > atd ? fe.to : null, 'to')) n++;
           if (unfinished && fe.landT > atd && fe.to && fe.to.a) {
             const tzTo = tzOf(fe.to.a), txt = 'Landed ~' + fmtLocal(fe.landT, tzTo);
             statusTd.dataset.prefix = 'Landed ~'; statusTd.dataset.timestamp = String(fe.landT); statusTd.dataset.offset = String(tzTo); statusTd.textContent = ' ' + txt + ' ';
@@ -304,6 +312,7 @@
         n++;
       }
     }
+    if (noLegs) return n;
     // (an end still "—" between two flights that are known: where the one before landed is where this one took off -
     // within twelve hours; marked as inferred)
     const rows = [...tbody.querySelectorAll('tr.data-row:not(.tl-adsb-row):not(.tl-live-row)')].filter(r => r.children.length >= 12);
@@ -344,9 +353,11 @@
     if (sn && pageMsn && /^\s*-?\s*$/.test(sn.textContent || '')) { sn.textContent = pageMsn; sn.title = 'From the public register / JetPhotos (LADD unblocker)'; }
     const id = (location.hash || '').replace(/^#/, '').toLowerCase(); if (!id) return;
     // (the row's own cells as filled, should the flight not be among those kept - a "Private Site" end, an inferred one)
-    const rec = fr24Flights.get(id) || rowEnds(id); if (!rec) return;
+    // (1.3.13: and the row's end where this page filled none - FR24's own: G-LFSA's 18 Nov flight, its row "Liverpool ->
+    // Liverpool", FR24's player "To: -")
+    const rec = fr24Flights.get(id), row = rowEnds(id); if (!rec && !row) return;
     for (const [sel, key] of [['#txt-airport-origin', 'from'], ['#txt-airport-dest', 'to']]) {
-      const el = document.querySelector(sel), c = rec[key]; if (!el || !c || !/^\s*(?:-|—|–|N\/A)?\s*$/i.test(el.textContent || '')) continue;
+      const el = document.querySelector(sel), c = (rec && rec[key]) || (row && row[key]); if (!el || !c || !/^\s*(?:-|—|–|N\/A)?\s*$/i.test(el.textContent || '')) continue;
       const a = c.a, q = /tl-inf/.test(c.desk) ? (c.desk.match(/<span class="tl-inf"[^>]*>\?<\/span>/) || [''])[0] : '';
       el.innerHTML = a ? `${esc(a.city || a.name)} <small>(${esc(a.iata || a.icao)})</small>${q}` : /Private Site/.test(c.desk) ? 'Private Site' : c.desk.replace(/<a\b[^>]*>\s*(\([^()<]*\))\s*<\/a>/, '<small>$1</small>');
       el.title = a ? `${a.name}${a.field ? ' (airfield not in FR24\'s list)' : ''}` : c.title || 'Away from any listed airfield';
@@ -355,7 +366,9 @@
   function rowEnds(fid) {
     if (!/^[0-9a-f]{4,12}$/.test(fid)) return null;
     const btn = document.querySelector(`#tbl-datatable [data-flight="${fid}"]`), tr = btn && btn.closest('tr'); if (!tr || tr.children.length < 12) return null;
-    const cell = td => td && td.classList.contains('tl-filled') ? { desk: td.innerHTML, mob: td.innerHTML, title: td.title || '', a: null } : null;
+    // (FR24's own cell - "Liverpool (LPL)" - made from its words alone: its markup is FR24's table's, not the player's)
+    const own = td => { const t = clean(td.textContent), m = /^(.*?)\s*\(([A-Z0-9]{3,4})\)$/.exec(t); return t && !/^(—|-|–|N\/A)$/i.test(t) ? { desk: m ? `${esc(m[1])} <small>(${esc(m[2])})</small>` : esc(t), mob: '', title: td.title || t, a: null } : null; };
+    const cell = td => !td ? null : td.classList.contains('tl-filled') ? { desk: td.innerHTML, mob: td.innerHTML, title: td.title || '', a: null } : own(td);
     const o = { from: cell(tr.children[3]), to: cell(tr.children[4]) };
     return o.from || o.to ? o : null;
   }
