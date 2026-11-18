@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">LADD Unblocker</string>
+    <string name="old_webview">This phone\'s Android System WebView is too old for the app.\n\nUpdate it from Google Play, then open the app again.\n\nTap to open it in Google Play.</string>
+    <string name="broken">The app\'s files are incomplete. Install it again.</string>
+    <string name="offline">Flightradar24 could not be reached.\n\nTap to try again.</string>
+    <string name="crashed">The page stopped several times.\n\nTap to start it again.</string>
+    <string name="no_app">No app on this phone opens that.</string>
+    <string name="grant_title">A monitor of your own</string>
+    <string name="grant_text">Let the script reach %1$s? It is the monitor address you entered in LADD Unblock.</string>
+    <string name="allow">Allow</string>
+    <string name="deny">Don\'t allow</string>
+    <string name="channel">Watched aircraft</string>
+    <string name="saved">Saved to Downloads: %1$s</string>
+    <string name="not_saved">The file could not be saved.</string>
+    <string name="downloading">Downloading…</string>
+</resources>

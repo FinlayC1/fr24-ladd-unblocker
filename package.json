@@ -19,7 +19,7 @@
   },
   "scripts": {
     "build": "node build.mjs",
-    "lint": "eslint --no-eslintrc -c .eslintrc.json dist/fr24-ladd-unblocker.user.js src/page.js src/mobile/shim.js",
+    "lint": "eslint --no-eslintrc -c .eslintrc.json dist/fr24-ladd-unblocker.user.js src/page.js src/mobile/shim.js src/app/shim.js",
     "test": "node test/run-suite.cjs",
     "test:all": "node test/run-suite.cjs --e2e",
     "monitor": "node monitor/monitor.cjs"

@@ -6,6 +6,7 @@
   const UB_LATEST_URL = `https://raw.githubusercontent.com/${UB_REPO}/main/package.json`;
   const UB_USERSCRIPT_URL = `https://raw.githubusercontent.com/${UB_REPO}/main/dist/fr24-ladd-unblocker.user.js`;
   // (main's own zip - built with the version in main's package.json, the one offered; the release's "latest" lags behind it)
+  const UB_APP_URL = `https://github.com/${UB_REPO}/releases/latest/download/fr24-ladd-unblocker-app.apk`;
   const UB_ZIP_URL = `https://raw.githubusercontent.com/${UB_REPO}/main/dist/fr24-ladd-unblocker-extension.zip`;
   const UB_CHANGES_URL = `https://github.com/${UB_REPO}/blob/main/CHANGELOG.md`;
   const UB_LABELS = ['Settings', 'Weather', 'Filters', 'Widgets', 'Playback'];
@@ -114,6 +115,8 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   // (a version as shown: v1.0.0; a beta, B22.31.12)
   const verLabel = v => { const s = String(v || '').replace(/^[vB]/i, ''); return (verParts(v)[0] === 0 && s ? 'B' : 'v') + s; };
   function installKind() {
+    // (1.3.11: the Android app - FR24's site in the app's own window, android/app; updated by installing its new APK)
+    if (typeof TL_APP === 'object' && TL_APP) return { kind: 'app', name: 'Android app' };
     if (typeof TL_EXTENSION === 'boolean') {
       let m = null; try { m = chrome.runtime.getManifest(); } catch (e) { /* the extension was reloaded */ }
       // (Firefox: installed from addons.mozilla.org, which updates it - it cannot load an unpacked folder for good)
@@ -143,7 +146,8 @@ html.tl-no-strip .tl-strip{display:none!important}`;
   function doUpdate(act) {
     const k = installKind().kind;
     // (from a beta - 22.x - to 1.0.0 and on: the manager compares the numbers alone, and calls the newer one a downgrade)
-    if (act === 'update' && k === 'us') { window.open(UB_USERSCRIPT_URL, '_blank', 'noopener'); ubNote = verParts(VERSION)[0] === 0 && verParts(latestV())[0] === 1 ? 'Your userscript manager opens the new version in a tab. It may call it a downgrade (it compares 1 with 22), but it is the newer one: confirm it there, then reload FR24.' : 'Your userscript manager opens the new version in a tab: click Update there, then reload FR24.'; }
+    if (act === 'update' && k === 'app') { window.open(UB_APP_URL, '_blank', 'noopener'); ubNote = 'Your browser downloads the new app. Open it when it has, and install it over this one: your settings stay.'; }
+    else if (act === 'update' && k === 'us') { window.open(UB_USERSCRIPT_URL, '_blank', 'noopener'); ubNote = verParts(VERSION)[0] === 0 && verParts(latestV())[0] === 1 ? 'Your userscript manager opens the new version in a tab. It may call it a downgrade (it compares 1 with 22), but it is the newer one: confirm it there, then reload FR24.' : 'Your userscript manager opens the new version in a tab: click Update there, then reload FR24.'; }
     // (unpacked: the extension's own update page, in a tab next to this one - it writes the new version into the extension's
     // folder, extension/update.js; the zip by hand only where that page cannot be opened)
     else if (act === 'update' && k === 'ext') {
@@ -178,7 +182,7 @@ html.tl-no-strip .tl-strip{display:none!important}`;
     else if (newer) btns.push(`<button class="tl-ub-b" data-ub-act="update">Update to v${esc(O.v)}</button>`);
     else btns.push(`<button class="tl-ub-b tl-ub-b2" data-ub-act="check"${ubAsking ? ' disabled' : ''}>Check for updates</button>`);
     if (ik.kind === 'ext') btns.push('<button class="tl-ub-b tl-ub-b2" data-ub-act="reloadExt" title="Load the extension again from its folder - after replacing its files with a new version">Reload extension</button>');
-    const how = ik.kind === 'us' ? 'Update opens the new version in your userscript manager, which offers to update.' : ik.kind === 'ext' ? 'Update puts the new version into the extension\'s folder for you. The first time, Chrome asks you to choose that folder and allow it to be edited.' : 'Installed from a store: your browser updates it by itself.';
+    const how = ik.kind === 'app' ? 'Update downloads the new version of the app, to install over this one.' : ik.kind === 'us' ? 'Update opens the new version in your userscript manager, which offers to update.' : ik.kind === 'ext' ? 'Update puts the new version into the extension\'s folder for you. The first time, Chrome asks you to choose that folder and allow it to be edited.' : 'Installed from a store: your browser updates it by itself.';
     const warn = ubInstalled ? `<div class="tl-ub-alert">v${esc(ubInstalled)} is installed. Refresh the page to start using it.</div>` : newer ? `<div class="tl-ub-alert">This version is out of date: <b>v${esc(O.v)}</b> is out, you have v${esc(VERSION)}.${O.req ? ' <b>This update is required</b>: this version is no longer supported.' : ''}</div>` : '';
     return `${warn}<div class="tl-ub-kv"><span>Installed</span><span>v${esc(VERSION)}</span></div><div class="tl-ub-kv"><span>Latest</span><span>${latest}</span></div>
       <div class="tl-ub-kv"><span>Type</span><span>${esc(ik.name)}</span></div><div class="tl-ub-btns">${btns.join('')}</div>

@@ -49,15 +49,16 @@ jobs:
         if: steps.v.outputs.skip != '1'
       - run: npm run build
         if: steps.v.outputs.skip != '1'
-      # (FR24's Android app: the LSPosed module, built from the same script. Signed with the project's own key when the
-      # repository has one - secrets MODULE_KEYSTORE_B64 (the keystore, base64), MODULE_KEYSTORE_PASSWORD, MODULE_KEY_ALIAS,
-      # MODULE_KEY_PASSWORD; docs/mobile.md - else with a debug key, which changes from one release to the next)
+      # (Android: the app - FR24's site with the script in it - and the LSPosed module for FR24's own app, both built from
+      # the same script. Signed with the project's own key when the repository has one - secrets MODULE_KEYSTORE_B64 (the
+      # keystore, base64), MODULE_KEYSTORE_PASSWORD, MODULE_KEY_ALIAS, MODULE_KEY_PASSWORD; docs/mobile.md - else with a
+      # debug key, which changes from one release to the next)
       - uses: actions/setup-java@v4
         if: steps.v.outputs.skip != '1'
         with:
           distribution: temurin
           java-version: 17
-      - name: The LSPosed module
+      - name: The Android app and the LSPosed module
         if: steps.v.outputs.skip != '1'
         env:
           KS_B64: ${{ secrets.MODULE_KEYSTORE_B64 }}
@@ -66,7 +67,8 @@ jobs:
           MODULE_KEY_PASSWORD: ${{ secrets.MODULE_KEY_PASSWORD }}
         run: |
           if [ -n "$KS_B64" ]; then printf '%s' "$KS_B64" | base64 -d > "$RUNNER_TEMP/module.jks"; export MODULE_KEYSTORE="$RUNNER_TEMP/module.jks"; else echo "no signing key set: the module is signed with a debug key"; fi
-          (cd android && ./gradlew --no-daemon :module:assembleRelease)
+          (cd android && ./gradlew --no-daemon :app:assembleRelease :module:assembleRelease)
+          cp android/app/build/outputs/apk/release/app-release.apk dist/fr24-ladd-unblocker-app.apk
           cp android/module/build/outputs/apk/release/module-release.apk dist/fr24-ladd-unblocker-module.apk
           rm -f "$RUNNER_TEMP/module.jks"
       - name: Release notes from the changelog
@@ -80,7 +82,7 @@ jobs:
             let i = s.indexOf('## [' + v + ']'); if (i < 0) i = s.indexOf('## [B' + v + ']'); if (i < 0) { console.log('Version ' + v); process.exit(0); }
             const j = s.indexOf('\n## [', i + 1); console.log(s.slice(s.indexOf('\n', i) + 1, j < 0 ? undefined : j).trim());
           " "$TAG" > notes.md
-          printf '\n\n---\n**Install:** Chrome / Edge - download `fr24-ladd-unblocker-extension.zip`, unzip it, then *Load unpacked* in `chrome://extensions` (Developer mode). Firefox - `fr24-ladd-unblocker-firefox.zip` is the build for Firefox Add-ons (or *Load Temporary Add-on* in `about:debugging`). Tampermonkey - open `fr24-ladd-unblocker.user.js`. FR24'"'"'s Android app (rooted, with LSPosed) - install `fr24-ladd-unblocker-module.apk`, enable it in LSPosed for Flightradar24, then close and reopen FR24 (docs/mobile.md).\n' >> notes.md
+          printf '\n\n---\n**Install:** Chrome / Edge - download `fr24-ladd-unblocker-extension.zip`, unzip it, then *Load unpacked* in `chrome://extensions` (Developer mode). Firefox - `fr24-ladd-unblocker-firefox.zip` is the build for Firefox Add-ons (or *Load Temporary Add-on* in `about:debugging`). Tampermonkey - open `fr24-ladd-unblocker.user.js`. Android - install `fr24-ladd-unblocker-app.apk` and open it: FR24'"'"'s site with the script in it, no root needed. FR24'"'"'s own Android app (rooted, with LSPosed) - install `fr24-ladd-unblocker-module.apk`, enable it in LSPosed for Flightradar24, then close and reopen FR24 (docs/mobile.md).\n' >> notes.md
       - name: Publish
         if: steps.v.outputs.skip != '1'
         env:
@@ -95,10 +97,10 @@ jobs:
           V="${TAG#v}"; MAJ="${V%%.*}"
           if [ "$MAJ" -ge 20 ]; then TITLE="FR24 LADD Unblocker B$V (beta)"; KIND="--prerelease"; else TITLE="FR24 LADD Unblocker v$V"; KIND="--latest"; fi
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" dist/fr24-ladd-unblocker-extension.zip dist/fr24-ladd-unblocker-firefox.zip dist/fr24-ladd-unblocker.user.js dist/fr24-ladd-unblocker-module.apk --clobber
+            gh release upload "$TAG" dist/fr24-ladd-unblocker-extension.zip dist/fr24-ladd-unblocker-firefox.zip dist/fr24-ladd-unblocker.user.js dist/fr24-ladd-unblocker-app.apk dist/fr24-ladd-unblocker-module.apk --clobber
             gh release edit "$TAG" --title "$TITLE" --notes-file notes.md
           else
-            gh release create "$TAG" dist/fr24-ladd-unblocker-extension.zip dist/fr24-ladd-unblocker-firefox.zip dist/fr24-ladd-unblocker.user.js dist/fr24-ladd-unblocker-module.apk --target "$SHA" --title "$TITLE" --notes-file notes.md $KIND
+            gh release create "$TAG" dist/fr24-ladd-unblocker-extension.zip dist/fr24-ladd-unblocker-firefox.zip dist/fr24-ladd-unblocker.user.js dist/fr24-ladd-unblocker-app.apk dist/fr24-ladd-unblocker-module.apk --target "$SHA" --title "$TITLE" --notes-file notes.md $KIND
           fi
       - name: The betas labelled as such
         if: steps.v.outputs.skip != '1'

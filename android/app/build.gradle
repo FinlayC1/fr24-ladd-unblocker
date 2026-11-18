@@ -1,0 +1,69 @@
+plugins {
+    id 'com.android.application'
+}
+
+// FR24 LADD Unblocker as an app of its own (MainActivity): FR24's site, full-screen, with the script in it - no root, no
+// LSPosed. Its version is the project's own (package.json), as the module's
+def pkgVersion = new groovy.json.JsonSlurper().parse(file('../../package.json')).version as String
+def vParts = pkgVersion.tokenize('.').collect { it as int }
+def vCode = vParts[0] * 10000 + vParts[1] * 100 + vParts[2]
+
+android {
+    namespace 'io.github.finlayc1.fr24ladd.app'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'io.github.finlayc1.fr24ladd.app'
+        minSdk 29
+        targetSdk 35
+        versionCode vCode
+        versionName pkgVersion
+    }
+
+    // (signed as the module is: the project's key from these variables when CI has it, else the debug key - docs/mobile.md)
+    signingConfigs {
+        release {
+            def ks = System.getenv('MODULE_KEYSTORE')
+            if (ks) {
+                storeFile file(ks)
+                storePassword System.getenv('MODULE_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('MODULE_KEY_ALIAS')
+                keyPassword System.getenv('MODULE_KEY_PASSWORD')
+            }
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig System.getenv('MODULE_KEYSTORE') ? signingConfigs.release : signingConfigs.debug
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    // (the script the app puts into FR24's pages, and the hosts its requests may go to: build.mjs's dist/app)
+    sourceSets { main { assets.srcDirs += ['build/generated/web'] } }
+    packaging {
+        resources { excludes += ['META-INF/LICENSE*', 'META-INF/NOTICE*', 'META-INF/*.kotlin_module', 'META-INF/*.version'] }
+    }
+    testOptions { unitTests.returnDefaultValues = true }
+    lint { abortOnError false }
+}
+
+def copyWeb = tasks.register('copyWeb', Copy) {
+    from('../../dist/app') { include 'app.js', 'hosts.txt' }
+    into layout.buildDirectory.dir('generated/web/web')
+    doFirst {
+        if (!file('../../dist/app/app.js').exists()) throw new GradleException('dist/app/app.js is missing: run "node build.mjs" in the repository first')
+    }
+}
+tasks.named('preBuild') { dependsOn copyWeb }
+
+dependencies {
+    // (the script put into each FR24 page at document start, and the bridge given to FR24's pages only: AndroidX WebKit)
+    implementation 'androidx.webkit:webkit:1.12.1'
+    testImplementation 'junit:junit:4.13.2'
+    // (Android's org.json is a stub on a computer: the real one for the tests)
+    testImplementation 'org.json:json:20250517'
+}
