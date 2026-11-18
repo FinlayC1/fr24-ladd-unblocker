@@ -141,10 +141,12 @@ function createFr24Raw(env) {
       fs.mkdirSync(dir, { recursive: true });
       fs.appendFileSync(fileOf(d, '.gzl'), Buffer.concat(bufs));
       fs.appendFileSync(fileOf(d, '.idx'), lines.join('\n') + '\n');
-      const hx = fids.filter(f => /^[0-9a-f]{6}$/.test(String(out[f].m.hex || '').toLowerCase())).map(f => String(out[f].m.hex).toLowerCase() + ' ' + f + ' ' + out[f].ts[0] + ' ' + out[f].ts[out[f].ts.length - 1]);
+      // (its aircraft as named in these points - or, sent again without it, as named when it was last written)
+      const hexOfF = f => String(out[f].m.hex || (done.get(f) || {}).hex || '').toLowerCase();
+      const hx = fids.filter(f => /^[0-9a-f]{6}$/.test(hexOfF(f))).map(f => hexOfF(f) + ' ' + f + ' ' + out[f].ts[0] + ' ' + out[f].ts[out[f].ts.length - 1]);
       if (hx.length) { fs.appendFileSync(fileOf(d, '.hex'), hx.join('\n') + '\n'); hexIdx.delete(d); }
       const x = idxs.get(d); if (x) for (const [o, l, part] of spans) { const i = x.spans.length; x.spans.push([o, l]); for (const f of part) (x.by.get(f) || x.by.set(f, []).get(f)).push(i); }
-      for (const f of fids) { const dn = done.get(f); done.set(f, { ts: merge(dn ? dn.ts : [], out[f].ts), at: nowS }); }
+      for (const f of fids) { const dn = done.get(f), h = String(out[f].m.hex || (dn && dn.hex) || '').toLowerCase(); done.set(f, { ts: merge(dn ? dn.ts : [], out[f].ts), at: nowS, hex: /^[0-9a-f]{6}$/.test(h) ? h : '' }); }
       stats.members += spans.length; stats.flights += fids.length; stats.written += n; stats.bytes = (stats.bytes || 0) + (off - start);
     } catch (e) { stats.err = String(e && e.message || e).slice(0, 160); if (env.log) env.log('fr24raw', d, stats.err); return 0; }
     return fids.length;

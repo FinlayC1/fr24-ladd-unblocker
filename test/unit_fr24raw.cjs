@@ -40,9 +40,21 @@ check('points without a position: refused', raw2.put(id, {}, [{ t: T, lat: 'x', 
 fs.appendFileSync(path.join(dir, day + '.gzl'), Buffer.from([0x1f, 0x8b, 0x08, 0x00]));
 fs.appendFileSync(path.join(dir, day + '.idx'), '3d1f6a2b ' + (fs.statSync(path.join(dir, day + '.gzl')).size - 4) + ' 4\n');
 check('... a broken member: the others still read', createFr24Raw({ store }).of(id, T).p.length === 42);
+// (1.3.12) a flight found by its aircraft and time: the day's .hex - the flights named in it, their first and last moments -
+// and those not written yet; another aircraft's, and another time's, not
+{
+  const hexLines = fs.readFileSync(path.join(dir, day + '.hex'), 'utf8').trim().split('\n');
+  check('(1.3.12) each written flight with an aircraft named: its line in the day\'s .hex (aircraft, id, first and last moments) - more of it sent without its aircraft: as named before', hexLines.length === 2 && hexLines[0] === '4078a3 3d1f6a2b ' + T + ' ' + (T + 600) && hexLines[1] === '4078a3 3d1f6a2b ' + (T + 1200) + ' ' + (T + 1200) && hexLines.every(l => !/3d1f6a2c/.test(l)), hexLines);
+  const r3 = createFr24Raw({ store }), f = r3.byHex('4078A3', T - 600, T + 7200);
+  check('... byHex: the aircraft\'s flight in that time, by FR24\'s id - its first and last moments from every member, after a restart', f.length === 1 && f[0].fid === '3d1f6a2b' && f[0].t0 === T && f[0].t1 === T + 1200, f);
+  r3.put(0x3d1f6a30, { hex: '4078a3' }, [{ t: T + 5000, lat: 53, lon: -1, alt: 2000 }]);
+  const f2 = r3.byHex('4078a3', T, T + 7200);
+  check('... and one not written yet', f2.length === 2 && f2[1].fid === '3d1f6a30' && f2[1].t0 === T + 5000, f2);
+  check('... another time, another aircraft, a span over three days, no address: none', r3.byHex('4078a3', T + 86400 * 3, T + 86400 * 3 + 60).length === 0 && r3.byHex('400000', T, T + 7200).length === 0 && r3.byHex('4078a3', T, T + 86400 * 4).length === 0 && r3.byHex('', T, T + 60).length === 0);
+}
 // (the days kept: 730 - an older day's files removed)
-fs.writeFileSync(path.join(dir, '2020-01-01.gzl'), ''); fs.writeFileSync(path.join(dir, '2020-01-01.idx'), '');
-check('old days removed, the kept ones not', raw2.prune(T) === 2 && fs.existsSync(path.join(dir, day + '.gzl')));
+fs.writeFileSync(path.join(dir, '2020-01-01.gzl'), ''); fs.writeFileSync(path.join(dir, '2020-01-01.idx'), ''); fs.writeFileSync(path.join(dir, '2020-01-01.hex'), '');
+check('old days removed (their .hex too: 1.3.12), the kept ones not', raw2.prune(T) === 3 && !fs.existsSync(path.join(dir, '2020-01-01.hex')) && fs.existsSync(path.join(dir, day + '.gzl')) && fs.existsSync(path.join(dir, day + '.hex')));
 // (the disk short of room: the points gathered let go)
 raw2.put(0x3d1f6a2d, {}, [{ t: T, lat: 1, lon: 1 }]); check('dropped, counted', raw2.drop() === 1 && raw2.pending === 0 && raw2.stats.skipped === 1);
 fs.rmSync(store, { recursive: true, force: true });

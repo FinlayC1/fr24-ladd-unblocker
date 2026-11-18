@@ -24,7 +24,7 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 - **The phone's location** (`Geo.java`; `src/app/shim.js`): the page's `navigator.geolocation` (`getCurrentPosition`, `watchPosition`, `clearWatch`) and `navigator.permissions.query({ name: 'geolocation' })` answered by the app. A fix the phone already has (half a minute old at most, or what the page allows) is given at once. Otherwise a new one comes from each provider that is on (fused, network, GPS); if none comes in time, the last fix of the last half hour is given, then "timed out". Location off: "position unavailable".
 - **Sign-in windows** (`MainActivity.java` `onCreateWindow`, `Policy.signIn`): a window FR24's page opens with a tap, to a sign-in provider, opens over the page and closes when the sign-in closes it, or with *Back*. FR24's own pages still open in the app's page, and anything else in the phone's browser. No `X-Requested-With` header, as Chrome sends none (`WebSettingsCompat.setRequestedWithHeaderOriginAllowList`, where the WebView has it).
 - **Log pages on a phone** (new `src/main/06-phone.js`): in the app, below 768 px wide, on `/data/aircraft/<reg>` and `/data/flights/<number>`. Built from the page itself (its header's labels and values, its pictures, its rows' cells, copied, not re-read as markup) and rebuilt as the page changes; the page's own buttons do the work. FR24's player is shown as FR24's page shows it, while it plays (its `hidden` class off).
-- **Monitor** `/fr24of?hex=&t0=&t1=` (`monitor/fr24raw.cjs` `byHex`): an aircraft's FR24 flights in a time, by FR24's ids, from every store. Each day's store now writes `YYYY-MM-DD.hex` beside its `.idx`: aircraft, FR24 id, first and last time. Kept and pruned with its day.
+- **Monitor** `/fr24of?hex=&t0=&t1=` (`monitor/fr24raw.cjs` `byHex`): an aircraft's FR24 flights in a time, by FR24's ids, from every store. Each day's store now writes `YYYY-MM-DD.hex` beside its `.idx`: aircraft, FR24 id, first and last time (a flight sent again without its aircraft is written under the one named before). Kept and pruned with its day. Days written before 1.3.12 have none.
 
 ### Changed
 - **The app's requests** (`AppNet.java`): up to 32 at once (the script keeps to each site's own limit itself), and the WebView's user agent where the script sets none (1.3.11 sent Android's own `Dalvik/...`).
@@ -50,6 +50,7 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
   - Versions compared, and a release's app read only from this project's own download.
   - Sign-in windows; the location's limits.
   - Twelve slow requests at once, and the user agent sent.
+- `test/unit_fr24raw.cjs` (22 checks, from 18): each day's `.hex` (a flight sent again without its aircraft written under the aircraft named before), `byHex` after a restart and for points not written yet, nothing for another aircraft or time, and `.hex` files pruned with their day.
 
 ## [1.3.11] - 2026-11-18
 
