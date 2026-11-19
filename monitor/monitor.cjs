@@ -36,6 +36,9 @@
 //  /rwyap?ap=&from=&to=          (1.2.7) the runway of every take-off and landing at an airport in a window, logged live
 //  /onground?ap=                 (1.4.0) every aircraft on the ground at an airport - FR24's or OurAirports' - from its
 //                                landing until it is seen in the air again, a week at most (onground.cjs)
+//  /fr24fn?fn=[&from=&to=]       (1.4.1) a flight number's flights as FR24's map showed them - FR24's id, callsign,
+//                                aircraft, route, first and last seen - 100 days back (fr24fn.cjs)
+//  /csfn?cs=a,b                  (1.4.1) each callsign's flight number as FR24's map last showed it
 //  /oaap                         (1.3) every OurAirports airport FR24 does not list (oaap.cjs), gzipped
 //  /apwx?ap=                     (1.3) an airport's weather now, for one FR24 has none for: the live weather at the
 //                                 airport and a METAR made from it (apwx.cjs)
@@ -749,6 +752,10 @@ try { RL.load(); } catch (e) { log('runways', String(e && e.message || e)); }
 const { createOnGround } = require('./onground.cjs');
 const OG = createOnGround({ E, store: STORE, log: (...a) => log('onground', ...a) });
 try { OG.load(); } catch (e) { log('onground', String(e && e.message || e)); }
+// (1.4.1) every flight of FR24's map by its flight number, and each callsign's flight number (fr24fn.cjs)
+const { createFnIndex } = require('./fr24fn.cjs');
+const FN = createFnIndex({ store: STORE, keepDays: +CFG.fnDays || 100, log: (...a) => log('fr24fn', ...a) });
+try { FN.load(); } catch (e) { log('fr24fn', String(e && e.message || e)); }
 // (a blocked flight's take-offs and landings, from its ADS-B track - its legs: [hex, 0 | 1, runway, time] at an airport.
 // 1.2.8: by airport, gathered once a minute for every airport at once - not every leg of every aircraft read per answer)
 let laddIdx = null, laddIdxAt = 0;
@@ -2060,7 +2067,7 @@ async function fr24Round() {
     ident.observe(res.flights, Date.now(), 'scan');
     naTrack(res.flights, Date.now());
     // (1.2.7: each flight near an airport - its positions there kept, its runway logged as it climbs out or comes in)
-    try { RL.observe(res.flights, Date.now() / 1000, (f, p) => fr24apt.put(f.id, { hex: f.hex || '', reg: f.reg || '', cs: f.cs || '', type: f.type || '' }, [p])); } catch (e) { log('runways', String(e && e.stack || e)); }
+    try { RL.observe(res.flights, Date.now() / 1000, (f, p) => fr24apt.put(f.id, fr24Meta(f), [p])); } catch (e) { log('runways', String(e && e.stack || e)); }
     try { OG.observe(res.flights, Date.now() / 1000); } catch (e) { log('onground', String(e && e.stack || e)); }
     try { scanPut(res.flights, Date.now()); } catch (e) { log('fr24scan', String(e && e.stack || e)); }
   }
@@ -2078,7 +2085,7 @@ function naTrack(list, nowMs) {
     const last = x.pts[x.pts.length - 1];
     if (!last || f.ts - last.t >= 60) { x.pts.push({ t: f.ts, lat: f.lat, lon: f.lon, alt: f.alt, gs: f.spd, trk: f.trk, gnd: false }); if (x.pts.length > 400) x.pts.splice(0, x.pts.length - 400); }
     // (1.2.4: each scan's position of it, as FR24 gave it, kept - fr24raw)
-    if (!(last && last.t === f.ts)) fr24raw.put(f.id, { hex: f.hex, reg: x.reg, cs: x.cs, type: x.type }, [{ t: f.ts, lat: f.lat, lon: f.lon, alt: f.alt, gs: f.spd, trk: f.trk, gnd: false }]);
+    if (!(last && last.t === f.ts)) fr24raw.put(f.id, Object.assign(fr24Meta(f), { hex: f.hex, reg: x.reg, cs: x.cs, type: x.type }), [{ t: f.ts, lat: f.lat, lon: f.lon, alt: f.alt, gs: f.spd, trk: f.trk, gnd: false }]);
   }
   for (const [id, x] of naF) if (nowMs - x.seen > 15 * 60000) naF.delete(id);
   F24.noRoute = naF.size;
@@ -2086,7 +2093,11 @@ function naTrack(list, nowMs) {
 // (1.3.9) Every flight a scan sees: its position into fr24scan, each once (the same report in two scans kept once)
 const SCN = { rounds: 0, points: 0, estimated: 0, freed: 0, freedDay: '', prunedAt: 0, guardAt: 0, cruise: { rounds: 0, requests: 0, failed: 0, err: '', flights: 0, ms: 0, at: 0, off: '' } };
 const scanLast = new Map();   // FR24 id -> { t: the time of its last position kept, at: when last seen }
+// (1.4.1: what FR24 says of a flight, kept with its positions - its flight number and route among it)
+const fr24Meta = f => ({ hex: f.hex || '', reg: f.reg || '', cs: f.cs || '', type: f.type || '', fn: f.fn || '', from: f.from || '', to: f.to || '' });
 function scanPut(list, nowMs) {
+  // (1.4.1: every flight a scan sees, by its flight number - fr24fn.cjs)
+  try { FN.observe(list, nowMs / 1000); } catch (e) { log('fr24fn', String(e && e.stack || e)); }
   if (+CFG.fr24ScanDays === 0 || CFG.fr24ScanDays === false) return 0;
   let n = 0;
   for (const f of list || []) {
@@ -2094,7 +2105,7 @@ function scanPut(list, nowMs) {
     if (f.src === 4) { SCN.estimated++; continue; }
     const last = scanLast.get(f.id); if (last && last.t >= f.ts) { last.at = nowMs; continue; }
     scanLast.set(f.id, { t: f.ts, at: nowMs });
-    n += fr24scan.put(f.id, { hex: f.hex || '', reg: f.reg || '', cs: f.cs || '', type: f.type || '' }, [{ t: f.ts, lat: f.lat, lon: f.lon, alt: f.alt, gs: f.spd, trk: f.trk, gnd: !!f.gnd, src: f.src }]);
+    n += fr24scan.put(f.id, fr24Meta(f), [{ t: f.ts, lat: f.lat, lon: f.lon, alt: f.alt, gs: f.spd, trk: f.trk, gnd: !!f.gnd, src: f.src }]);
   }
   SCN.rounds++; SCN.points += n;
   if (nowMs - SCN.prunedAt > 600000) { SCN.prunedAt = nowMs; for (const [id, x] of scanLast) if (nowMs - x.at > 30 * 60000) scanLast.delete(id); }
@@ -2149,7 +2160,7 @@ async function rwyHotRound() {
     const dLat = 0.36, dLon = 0.36 / Math.max(0.2, Math.cos(a.lat * Math.PI / 180));
     try {
       const r = await fr24.liveFeed({ n: a.lat + dLat, s: a.lat - dLat, w: a.lon - dLon, e: a.lon + dLon, services: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], traffic: 3, limit: 1500, maxage: 900, mask });
-      n += RL.observe(r.flights, Date.now() / 1000, (f, p) => fr24apt.put(f.id, { hex: f.hex || '', reg: f.reg || '', cs: f.cs || '', type: f.type || '' }, [p]));
+      n += RL.observe(r.flights, Date.now() / 1000, (f, p) => fr24apt.put(f.id, fr24Meta(f), [p]));
       try { OG.observe(r.flights, Date.now() / 1000); } catch (e) { log('onground', String(e && e.stack || e)); }
       RL.stats.hot = (RL.stats.hot || 0) + 1;
       scanPut(r.flights, Date.now());
@@ -2341,8 +2352,10 @@ function workTail(nowS, final) {
   }
   // (1.4.0: the aircraft on the ground - written every quarter of an hour and on stop)
   if (final || nowS - (OG.savedAt || 0) >= 900) { OG.savedAt = nowS; try { OG.save(nowS); } catch (e) { log('onground', String(e && e.message || e)); } }
+  // (1.4.1: the flights by flight number written as they end, and the callsigns' flight numbers kept)
+  if (final || nowS - (FN.savedAt || 0) >= 900) { FN.savedAt = nowS; try { FN.save(nowS); } catch (e) { log('fr24fn', String(e && e.message || e)); } }
   try { BD.save(nowS); } catch (e) { log('boards', String(e && e.message || e)); }
-  if (tracksPruned !== dayOf(nowS)) { tracksPruned = dayOf(nowS); tracks.prune(nowS); fr24raw.prune(nowS); fr24apt.prune(nowS); fr24scan.prune(nowS); }
+  if (tracksPruned !== dayOf(nowS)) { tracksPruned = dayOf(nowS); tracks.prune(nowS); fr24raw.prune(nowS); fr24apt.prune(nowS); fr24scan.prune(nowS); try { FN.prune(nowS); } catch (e) { log('fr24fn', String(e && e.message || e)); } }
   // (1.3.9: the scans' store gives way first - its oldest day removed, one each ten minutes, while the disk has less than
   // CFG.fr24ScanFreeGb free; yesterday's and today's never)
   if (!final && nowS - SCN.guardAt >= 600) {
@@ -2745,6 +2758,7 @@ function monStatus() {
     learned: learnedOut ? { ver: learnedOut.ver, from: learnedOut.from, asOf: learnedOut.asOf, days: learnedOut.days, flights: learnedOut.flights, fromBrowsers: learnedOut.crowd || 0, ops: learnedOut.ops, mb: Math.round(learnedOut.json.length / 1e5) / 10 } : null, backfillWaits: backWaits.n,
     shared: { routes: ident.stats.routes || 0, routesRefused: ident.stats.routeRefused || 0, confirmationsWithdrawn: ident.stats.routeWithdrawn || 0, routesShown: [...ident.ids.values()].filter(R => R.crowd).length, destsDropped: (ident.stats.routeAged || 0) + (ident.stats.routeContra || 0), learnRows: LC },
     onground: { aircraft: OG.size, airports: OG.airports, ground: OG.stats.ground, landed: OG.stats.landed, left: OG.stats.left, saved: OG.stats.saved, loaded: OG.stats.loaded, err: OG.stats.err || '' },
+    fr24fn: { following: FN.open, callsigns: FN.callsigns, seen: FN.stats.seen, flights: FN.stats.flights, written: FN.stats.written, queries: FN.stats.queries, err: FN.stats.err },
     runways: { logged: RL.stats.logged, live: RL.stats.live, trail: RL.stats.trail, fit: RL.stats.fit, flights: RL.stats.flights, hot: RL.stats.hot || 0, hotErr: RL.stats.hotErr || '', err: RL.stats.err, low: LOW, pace: PACE.factor, paceUntil: PACE.factor > 1 ? Math.round((PACE.until - now) / 1000) : 0 },
     fr24: { scanning: !!CFG.fr24Scan, headersFrom: fr24.st.hdr ? 'browser' : 'default', ok: fr24.st.ok, fails: fr24.st.fails, lastErr: fr24.st.lastErr, lastOkAgo: fr24.st.lastOkAt ? Math.round((now - fr24.st.lastOkAt) / 1000) : null, paused: fr24.st.pauseUntil > now ? Math.round((fr24.st.pauseUntil - now) / 1000) : 0, scans: F24.scans, last: F24.last, fields: FR.MASKS[Math.min(F24.mask, FR.MASKS.length - 1)].join(','), routeOk: F24.routeOk, hexOk: F24.hexOk, noRoute: naF.size,
       flights: ident.flights.size, named: ident.ids.size, unnamed: [...ident.flights.values()].filter(F => !ident.ids.has(F.id) && now - F.seen < 600000).length, matched: ident.stats.matched, revoked: ident.stats.revoked, lookups: ident.stats.lookups, trails: ident.stats.trails, trailQueue: ident.trailQ.length, dest: dest.stats, logged: F24.logged, fr24Track: F24T, fr24Raw: Object.assign({ pending: fr24raw.pending, held: fr24raw.held, runwaysKnown: rwyKnown.size }, fr24raw.stats), fr24Scan: Object.assign({ keepDays: +CFG.fr24ScanDays === 0 ? 0 : +CFG.fr24ScanDays || 365, minFreeGb: +CFG.fr24ScanFreeGb || 30, pending: fr24scan.pending, held: fr24scan.held, following: scanLast.size }, fr24scan.stats, { rounds: SCN.rounds, kept: SCN.points, estimated: SCN.estimated, freedDays: SCN.freed, freedDay: SCN.freedDay, cruise: Object.assign({ every: cruiseEvery() }, SCN.cruise) }),
@@ -2976,6 +2990,9 @@ function answer(u, nowS, ctx) {
   if (p === '/rwy') return { v: 1, list: rwyAnswer(String(q('f') || '').split(','), +q('ap') || 0, String(q('ts') || '').split(',').map(Number)) };
   // (1.2.7) an airport's runways of every take-off and landing of a window - its boards opened with them in: by FR24's id
   // of the flight (f), and a blocked flight's by its address and time (h: [hex, 0 | 1, runway, time])
+  // (1.4.1) a flight number's flights FR24's map showed - its log page beyond FR24's week - and callsigns' flight numbers
+  if (p === '/fr24fn') { const fn = String(q('fn') || ''); return FN.query(fn, +q('from') || 0, +q('to') || 0).then(list => ({ v: 1, fn: fn.toUpperCase().replace(/[^A-Z0-9]/g, ''), keep: +CFG.fnDays || 100, list })); }
+  if (p === '/csfn') return { v: 1, list: FN.csFn(String(q('cs') || '').split(',').slice(0, 100)) };
   if (p === '/onground') { const ap = +q('ap') || 0; return ap > 0 ? { v: 1, ap, at: Math.round(nowS), list: OG.list(ap, nowS).slice(0, 400) } : null; }
   if (p === '/rwyap') { const ap = +q('ap') || 0, to = Math.min(nowS + 3600, +q('to') || nowS), from = Math.max(to - 9 * 86400, +q('from') || nowS - 86400); return ap > 0 ? rwyApAnswer(ap, from, to, q('use') === '1', q('old') === '1', nowS) : null; }
   // (1.2.7) an airport's runways and the take-offs and landings of its last 24 hours with theirs - which runways are in use

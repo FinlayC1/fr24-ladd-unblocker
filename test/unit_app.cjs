@@ -15,6 +15,9 @@
 //   - (1.3.12) a log page on a phone in the app: laid out as a phone app lays it out (bar, pictures, details, flights by
 //     year, a flight opened, its Play - FR24's own player page, 1.3.13), following the page as it changes; FR24's "flight
 //     was not found" for a flight of ours taken away; wider than a phone, FR24's own page
+//   - (1.4.0/1.4.1) FR24's Playback anywhere in the app to FR24's own player page, whatever the page's width as it
+//     starts, and FR24's map's window.open of a log page with a flight in this page; map drawing's compatible mode on
+//     unless switched off; the player's back button ("Flights") back to the log it was played from
 //   - no error in the page
 // usage: node test/unit_app.cjs   (needs Playwright's Chromium)
 const fs = require('fs'), path = require('path');
@@ -308,7 +311,7 @@ const BRIDGE = () => {
     }
 
     // ======== 5. (1.4.0) the app's "Map drawing: compatible mode": FR24's map's WebGL asked for without keeping its last
-    // picture or smoothing its edges - only when switched on ===========================================================
+    // picture or smoothing its edges - (1.4.1) unless switched off ===================================================
     {
       const ctx = await browser.newContext({ viewport: { width: 412, height: 915 }, isMobile: true, hasTouch: true }), page = await ctx.newPage(), errors = [];
       page.on('pageerror', e => errors.push(String(e && e.message || e)));
@@ -318,14 +321,84 @@ const BRIDGE = () => {
       await page.route('**/*', route => route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><html><head></head><body></body></html>' }));
       const attrs = () => page.evaluate(() => { const c = document.createElement('canvas'), g = c.getContext('webgl2', { preserveDrawingBuffer: true, antialias: true, alpha: true }); const a = g && g.getContextAttributes(); return a ? { pdb: a.preserveDrawingBuffer, aa: a.antialias, alpha: a.alpha } : null; });
       await page.goto('https://www.flightradar24.com/m');
-      const off = await attrs();
-      check('compatible mode off (as it starts): FR24\'s WebGL as FR24 asks for it - its last picture kept', !!off && off.pdb === true, off);
-      await page.evaluate(() => localStorage.setItem('tweeks.fr24.ladd.opts1', JSON.stringify({ on: true, mapCompat: true })));
-      await page.reload();
       const on = await attrs();
-      check('... switched on (the next load): no last picture kept, no smoothing - the rest as asked (its transparency)', !!on && on.pdb === false && on.aa === false && on.alpha === true, on);
+      check('compatible mode on as the app starts (no switches saved): no last picture kept, no smoothing - the rest as asked (its transparency)', !!on && on.pdb === false && on.aa === false && on.alpha === true, on);
+      // (1.4.0's switches saved - its compatible mode off, as it was by default: on all the same)
+      await page.evaluate(() => localStorage.setItem('tweeks.fr24.ladd.opts1', JSON.stringify({ on: true, strip: true, mapCompat: false })));
+      await page.reload();
+      const was = await attrs();
+      check('... 1.4.0\'s switches saved, its compatible mode off by default: on', !!was && was.pdb === false && was.aa === false, was);
+      await page.evaluate(() => localStorage.setItem('tweeks.fr24.ladd.opts1', JSON.stringify({ on: true, mapSafe: false })));
+      await page.reload();
+      const off = await attrs();
+      check('... switched off (the next load): FR24\'s WebGL as FR24 asks for it - its last picture kept, its edges smoothed', !!off && off.pdb === true && off.aa === true, off);
+      await page.evaluate(() => localStorage.setItem('tweeks.fr24.ladd.opts1', JSON.stringify({ on: false })));
+      await page.reload();
+      const allOff = await attrs();
+      check('... the script switched off altogether: FR24\'s own', !!allOff && allOff.pdb === true, allOff);
       const c2d = await page.evaluate(() => !!document.createElement('canvas').getContext('2d'));
       check('... a page\'s 2D drawing untouched', c2d === true);
+      check('no error in the page', errors.length === 0, errors.slice(0, 5));
+      await ctx.close();
+    }
+
+    // ======== 6. (1.4.1) FR24's own Playback in the app, whatever the page's width as it starts: Android's WebView lays a
+    // page out 980 px wide until FR24's viewport tag is read - the log page opened with a flight was played in the old
+    // player. And FR24's map opens it in a new window (window.open): FR24's own player page in this one, no window ========
+    {
+      const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } }), page = await ctx.newPage(), errors = [];
+      page.on('pageerror', e => errors.push(String(e && e.message || e)));
+      await ctx.exposeBinding('__tlHost', async () => {});
+      await ctx.addInitScript(BRIDGE);
+      await ctx.addInitScript({ content: fs.readFileSync(APP, 'utf8') });
+      const pages = []; ctx.on('page', p => pages.push(p));
+      await page.route('**/*', route => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: '<!doctype html><html><head></head><body><div id="x">FR24</div></body></html>' }));
+      await page.goto('https://www.flightradar24.com/data/aircraft/g-ezft#3d4fa2c1');
+      const wide = await page.waitForURL('**/data/playback/3d4fa2c1', { timeout: 10000 }).then(() => page.url(), () => page.url());
+      check('a log page opened with a flight in its address, laid out wider than a phone as it starts: FR24\'s own player page of it', wide === 'https://www.flightradar24.com/data/playback/3d4fa2c1', wide);
+      // (FR24's map: its panel's Playback and its recent flights' - window.open of the aircraft's log page with the flight)
+      await page.goto('https://www.flightradar24.com/');
+      const opened = await page.evaluate(() => { const w = window.open('https://www.flightradar24.com/data/aircraft/g-ezft#3d4fa2c1'); return w === null; });
+      const viaOpen = await page.waitForURL('**/data/playback/3d4fa2c1', { timeout: 10000 }).then(() => page.url(), () => page.url());
+      check('FR24\'s map\'s Playback (window.open of the log page with the flight): FR24\'s own player page of it, in this page - no window opened', opened && viaOpen === 'https://www.flightradar24.com/data/playback/3d4fa2c1' && pages.length === 0, { viaOpen, pages: pages.length });
+      await page.goto('https://www.flightradar24.com/');
+      await page.evaluate(() => { window.open('/data/flights/u2414#ff4073ee6911e300'); });
+      const viaOpen2 = await page.waitForURL('**/data/flights?tl-pb=*', { timeout: 10000 }).then(() => page.url(), () => page.url());
+      check('... a flight number\'s log page with a flight known only to the script: FR24\'s flights page given it', viaOpen2 === 'https://www.flightradar24.com/data/flights?tl-pb=ff4073ee6911e300' && pages.length === 0, viaOpen2);
+      // (any other window the page opens: opened as before)
+      await page.goto('https://www.flightradar24.com/');
+      const other = await page.evaluate(() => { const w = window.open('https://www.flightradar24.com/data/aircraft/g-ezft'); const ok = !!w; try { if (w) w.close(); } catch (e) { /* ignore */ } return ok; });
+      check('... any other window (the log page without a flight): opened as the page asks', other === true && page.url() === 'https://www.flightradar24.com/', { other, url: page.url() });
+      check('no error in the page', errors.length === 0, errors.slice(0, 5));
+      await ctx.close();
+    }
+
+    // ======== 7. (1.4.1) FR24's player in the app: its back button ("Playback" - FR24's search for flights to play) says
+    // "Flights" and goes back to the flights it was played from: the log page before it, else the aircraft's ==============
+    {
+      const ctx = await browser.newContext({ viewport: { width: 412, height: 915 }, isMobile: true, hasTouch: true }), page = await ctx.newPage(), errors = [];
+      page.on('pageerror', e => errors.push(String(e && e.message || e)));
+      await ctx.exposeBinding('__tlHost', async (src, s) => { const m = JSON.parse(s); if (m.t === 'req') setTimeout(() => src.frame.evaluate(x => window.__tlDeliver(x), JSON.stringify({ t: 'res', id: m.id, status: 404, statusText: '', url: m.url, headers: '', text: '' })).catch(() => {}), 5); });
+      await ctx.addInitScript(BRIDGE);
+      await ctx.addInitScript({ content: fs.readFileSync(APP, 'utf8') });
+      // (FR24's player page of one of its own flights, as FR24's app has it: its data, its back link)
+      const PLAYER = '<!doctype html><html><head></head><body><div id="app"><a class="crumb" href="/data/playback"><svg width="8" height="8"></svg> Playback</a></div><script>document.getElementById("app").__vue_app__ = { config: { globalProperties: { $page: { component: "Data/NewFlightPlayback", url: location.pathname, props: { trailSource: "radar", trail: [{ timestamp: 1 }], callsign: "EZY87VN", flightNumber: "U23246", airline: { name: "easyJet" }, origin: { code: "CDG" }, destination: { code: "EDI" }, aircraft: { name: "Airbus A320-214", registration: "G-EZUR" }, flightTimes: {} } }, $inertia: { push: function () {}, replace: function () {} } } } };</script></body></html>';
+      const LOG = '<!doctype html><html><head></head><body><h1 id="log">G-EZUR</h1><a id="pl" href="/data/playback/3d4fa2c1">Play</a></body></html>';
+      await page.route('**/*', route => { const u = route.request().url().split('#')[0]; return /\/data\/playback\/3d4fa2c1$/.test(u) ? route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: PLAYER }) : /\/data\/aircraft\/g-ezur$/.test(u) ? route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: LOG }) : route.fulfill({ status: 404, body: '' }); });
+      // (opened by itself - the map's Playback: no log page before it)
+      await page.goto('https://www.flightradar24.com/data/playback/3d4fa2c1');
+      const label = await page.waitForFunction(() => { const a = document.querySelector('a.crumb'); return a && a.textContent.trim() === 'Flights' ? a.textContent.trim() : null; }, null, { timeout: 8000 }).then(h => h.jsonValue(), () => null);
+      check('FR24\'s player in the app: its back button says "Flights" (FR24\'s "Playback"), its arrow kept', label === 'Flights' && await page.evaluate(() => !!document.querySelector('a.crumb svg')), label);
+      await Promise.all([page.waitForURL('**/data/aircraft/g-ezur', { timeout: 8000 }).catch(() => null), page.click('a.crumb')]);
+      check('... opened by itself (from the map): back to the aircraft\'s log page - not FR24\'s search for flights to play', page.url() === 'https://www.flightradar24.com/data/aircraft/g-ezur', page.url());
+      // (played from the log page: back to it, as the phone's own back would)
+      await page.goto('https://www.flightradar24.com/data/aircraft/g-ezur');
+      await Promise.all([page.waitForURL('**/data/playback/3d4fa2c1', { timeout: 8000 }).catch(() => null), page.click('#pl')]);
+      await page.waitForFunction(() => { const a = document.querySelector('a.crumb'); return a && a.textContent.trim() === 'Flights'; }, null, { timeout: 8000 }).catch(() => null);
+      const len0 = await page.evaluate(() => history.length);
+      await Promise.all([page.waitForURL('**/data/aircraft/g-ezur', { timeout: 8000 }).catch(() => null), page.click('a.crumb')]);
+      const len1 = await page.evaluate(() => history.length).catch(() => -1);
+      check('... played from the log page: back to it - the way it came (history), not a new page on top', page.url() === 'https://www.flightradar24.com/data/aircraft/g-ezur' && len1 === len0, { url: page.url(), len0, len1 });
       check('no error in the page', errors.length === 0, errors.slice(0, 5));
       await ctx.close();
     }

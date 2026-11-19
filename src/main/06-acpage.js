@@ -42,7 +42,8 @@
   // Its KML and CSV beside it, as FR24's rows have them. Off its aircraft's page (a flight number's), the button is a link
   // to that page, where it plays
   function playCellHtml(l, hex, reg, flown) {
-    const id = pbSynId(hex, l.tOff || l.tStart), r = String(reg || '').toLowerCase();
+    // (1.4.1: a flight of FR24's own - a flight number's earlier flights, from the monitor's index - by FR24's id)
+    const id = /^[0-9a-f]{1,12}$/.test(l.fid || '') ? l.fid : pbSynId(hex, l.tOff || l.tStart), r = String(reg || '').toLowerCase();
     const href = r ? `/data/aircraft/${encodeURIComponent(r)}#${id}` : `#${id}`;
     const exp = k => `<a class="btn btn-sm btn-white btn-table-action fs-10 ${k.toLowerCase()}Button notranslate tl-export" href="#" data-tl-export="${k}" title="This flight's track as a ${k} file (LADD unblocker)"> ${k} </a>`;
     return `${exp('KML')} ${exp('CSV')}    <a class="btn btn-sm btn-playback btn-table-action text-white bkg-blue fs-10 tl-pbrow" data-flight-duration="${flown || ''}" data-flight-hex="${id}" data-live="false" data-timestamp="${l.tOff || l.tStart}" href="${esc(href)}" id="btn-playback-${id}" title="Show playback of flight"><i class="fa fa-play text-white fs-10"></i> &nbsp;Play </a>`;
@@ -114,6 +115,13 @@
     await Promise.all(miss.map(async x => {
       try {
         const ts = fin(x.t) && x.t > 1e9 ? Math.round(x.t) : Math.round(now() / 1000);
+        // (1.4.1: FR24's player of the flight sends its own track's points by that end - FR24's track as the page has it,
+        // fitted at once: no request of FR24's API, which the app's requests may not get an answer from)
+        if (Array.isArray(x.pts) && x.pts.length >= 3) {
+          const own = x.pts.filter(p => p && fin(p.t) && fin(p.lat) && fin(p.lon)).map(p => ({ t: p.t, lat: p.lat, lon: p.lon, alt: fin(p.alt) && p.alt > 0 ? p.alt : null, gnd: p.alt === 0, gs: fin(p.gs) ? p.gs : null, trk: fin(p.trk) ? p.trk : null }));
+          const v = await rwyFitPts(a, x.landing ? 1 : 0, ts, own, x.fid);
+          if (v) { out.push({ k: keyOf(x), rwy: v }); return; }
+        }
         const j = await gmRequest(`https://api.flightradar24.com/common/v1/flight-playback.json?flightId=${encodeURIComponent(x.fid)}&timestamp=${ts}`, { timeout: 15000 });
         const tr = j && j.result && j.result.response && j.result.response.data && j.result.response.data.flight && j.result.response.data.flight.track;
         if (!Array.isArray(tr) || !tr.length) return;
@@ -502,6 +510,8 @@
         // (a flight of a log rebuilt here: its track as its Play plays it)
         const pb = tr.querySelector('a.btn-playback.tl-pbrow'), sid = pb ? pb.dataset.flightHex || '' : '';
         if (PB_SYN.test(sid)) { const f = await pbFlight({ id: sid }); if (!f || !f.ok) throw new Error('no track of this flight'); saveFile(exportFile(kind, f.pts, f.cs || csOfRow(tr), sid)); return; }
+        // (1.4.1: a flight number's earlier flight, FR24's own: FR24's positions of it the monitor kept)
+        if (tr.classList.contains('tl-fn-old') && /^[0-9a-f]{1,12}$/.test(sid)) { const r = await pbRaw(sid, w.off); if (!r.pts.length) throw new Error('no track of this flight kept'); saveFile(exportFile(kind, r.pts, clean(r.m.cs || '') || csOfRow(tr), sid, 'Track from Flightradar24 as kept by the LADD unblocker\'s monitor.')); return; }
         const hex = await hexOfRow(tr, fid, w.off); if (!/^[0-9a-f]{6}$/.test(hex || '')) throw new Error('aircraft not known');
         // (its day's track - and the next day's, for a flight over midnight UTC)
         const ts = dayStr(w.on * 1000) !== dayStr(w.off * 1000) ? [w.off, Math.min(w.on, nowS())] : [w.off];
@@ -996,6 +1006,28 @@
     }
     postToPage('searchAdd', { rid: d.rid, rows });
   }
+  // (1.4.1) A flight number's flights before the week FR24 shows a free account - U2414's of a month ago - as the
+  // monitor's scans of FR24's map saw them (/fr24fn: FR24's id, callsign, aircraft, FR24's route, first and last seen):
+  // under FR24's own rows, in its own markup; each one's Play is FR24's own player of the flight by its id, its track
+  // FR24's positions the monitor kept. Times are those the scans saw it take off and come in by: "~"
+  async function fnOlderRows(tbody, fn) {
+    if (!monUp() || !tbody || tbody.querySelector('tr.tl-fn-old, tr.tl-fn-foot')) return 0;
+    const fr24Rows = [...tbody.querySelectorAll('tr.data-row')];
+    const ts = fr24Rows.map(tr => Number(tr.dataset.timestamp) || 0).filter(t => t > 1e9);
+    const oldest = ts.length ? Math.min(...ts) : nowS();
+    const have = new Set(); for (const a of tbody.querySelectorAll('a.btn-playback[data-flight-hex], a[id^="btn-playback-"]')) { const h = String(a.dataset.flightHex || a.id.replace(/^btn-playback-/, '')).toLowerCase(); if (h) have.add(h); }
+    const [j] = await Promise.all([monGet(`/fr24fn?fn=${encodeURIComponent(fn)}&to=${Math.round(oldest - 1800)}`, { timeout: 15000 }).catch(() => null), Promise.race([Promise.all([loadAirports().catch(() => null), loadOa().catch(() => null)]), sleep(6000)])]);
+    const list = (j && Array.isArray(j.list) ? j.list : []).filter(x => x && /^[0-9a-f]{1,12}$/.test(String(x.fid || '')) && !have.has(String(x.fid)) && fin(x.t0) && fin(x.t1) && x.t1 > x.t0 && x.t0 < oldest - 600);
+    if (!list.length || !tbody.isConnected || tbody.querySelector('tr.tl-fn-old')) return 0;
+    const ap = c => { c = clean(c).toUpperCase(); const a = /^[A-Z0-9]{3}$/.test(c) ? airports.byIata.get(c) : null; return a ? { id: a.id } : null; };
+    const rows = list.sort((a, b) => b.t0 - a.t0).map(x => {
+      const hex = /^[0-9a-f]{6}$/.test(x.hex || '') ? x.hex : '', hx = hex ? store.getHex(hex) || {} : {}, reg = clean(x.reg || hx.reg || '').toUpperCase();
+      const leg = { fid: String(x.fid), tStart: x.t0, tEnd: x.t1, tOff: x.t0, tOn: x.t1, tOffEst: true, tOnEst: true, from: ap(x.from), to: ap(x.to), ended: true, cs: clean(x.cs || '') };
+      return legRowHtml(leg, hex, reg, { reg, type: clean(x.type || hx.type || ''), desc: modelName(hx) || clean(x.type || '') }).replace('<tr class=" data-row tl-adsb-row', '<tr class=" data-row tl-adsb-row tl-fn-old');
+    });
+    tbody.insertAdjacentHTML('beforeend', rows.join('') + `<tr class="tl-foot tl-fn-foot"><td colspan="20">${list.length} earlier flight${list.length === 1 ? '' : 's'} of ${esc(fn)} as Flightradar24's map showed them, kept by the LADD unblocker's monitor (${Number(j.keep) || 100} days) · times are when they were seen taking off and coming in</td></tr>`);
+    return list.length;
+  }
   async function bootFlightPage() {
     const cs = csKey(decodeURIComponent((location.pathname.match(/^\/data\/flights\/([^/?#]+)/i) || [])[1] || ''));
     if (!cs) return;
@@ -1007,7 +1039,8 @@
     muteNotFound();
     // (FR24 lists this number itself: its rows stand, ours are not merged in - its playback's padlocked figures and its
     // rows' padlocked files filled)
-    if (document.querySelector('#tbl-datatable tbody tr.data-row')) { flightPagePlayback(document.querySelector('#tbl-datatable tbody'), cs); return; }
+    // (1.4.1: and its flights before FR24's week, as the monitor's scans of FR24's map kept them, under FR24's own)
+    if (document.querySelector('#tbl-datatable tbody tr.data-row')) { const tb = document.querySelector('#tbl-datatable tbody'); flightPagePlayback(tb, cs); fnOlderRows(tb, cs).catch(e => log('flight page, earlier flights', String(e && e.message || e))); return; }
     const note = [...sec.querySelectorAll('div.row')].find(d => /no data available for your request/i.test(d.textContent || ''));
     await loadAirports();
     // (no "is-user" class: FR24's stylesheet hides that table's rows until its own script takes it off - never, on ours)

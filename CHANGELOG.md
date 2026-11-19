@@ -4,6 +4,69 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 
 1.0.0 is the first release. The versions before it are the betas, labelled B: B22.31.12 is version 22.31.12.
 
+## [1.4.1] - 2026-11-19
+
+### In short
+- **Every Playback in the app opens our player.** That includes the Playback in a live aircraft's panel and in its recent flights, which still opened FR24's old player for a computer.
+- **The map draws cleanly when zoomed.** The app's *Map drawing: compatible mode* fixed aircraft and airport pins breaking up and smearing on a Samsung phone. It is now on by default; the switch can turn it off.
+- **Playback names its flight in full,** as FR24's own does:
+  - its airline and logo, or the aircraft's operator or owner (no more "Private owner" where the registers name one);
+  - its flight number beside the callsign, which opens the flight number's log;
+  - its airports, from the aircraft's log, the monitor's or its own track;
+  - its runways.
+- **A long flight plays whole on the phone.** JDI01, Cincinnati to Manchester, stopped at Newfoundland in the app but was complete on a computer.
+- **A flight number's log goes back past FR24's week.** Older flights come from the monitor's own record of FR24's map. That record starts with this version, so the history grows from the day the monitor is updated (`deploy.sh`).
+- **OurAirports fields can be searched** on FR24's flights page (EGOW, Woodvale).
+- **The player's back button says "Flights"** and goes back to the log the flight was played from. It said "Playback" and opened FR24's "Search for flights to play".
+
+### Added
+- **The monitor's flights by flight number** (`monitor/fr24fn.cjs`, `GET /fr24fn?fn=`, `GET /csfn?cs=`).
+  - FR24's map feed is now asked for each flight's number (`flight`, `monitor/fr24.cjs` `MASKS`).
+  - Every flight the scans see with a flight number is followed: FR24's id, callsign, aircraft, FR24's route, and when it was seen take off and land. It is written by flight number 45 minutes after it was last seen and kept 100 days (`fnDays`).
+  - Each airline callsign's flight number as FR24 last showed it (EZY327L: U2414), kept a year.
+  - FR24's positions of every flight now keep its flight number and route with them (`fr24raw.cjs`).
+  - `/status` shows its counts.
+- **A flight number's earlier flights** (`src/main/06-acpage.js` `fnOlderRows`): under FR24's own rows on its log page, in FR24's markup, newest first. Each one's Play is FR24's player of that flight by its id, its track FR24's positions the monitor kept. Its KML and CSV are made from them.
+- **FR24's own player of one of its own flights** (`src/page.js` `mxPbEnrich`; `src/main/06-pbpage.js` `pbInfo`): what FR24 leaves out is filled into its page data.
+  - The aircraft's operator or owner for "Private owner" (G-WAPA).
+  - The airports at its ends where FR24 has "N/A": from the aircraft's log, the monitor's, else where FR24's own track began and ended down at a field.
+  - Its flight number where FR24 has none.
+
+### Changed
+- **The app's Playback** (`src/page.js`):
+  - FR24's map opens a flight's playback in a new window (`window.open`) of the aircraft's log page. In the app that is now our player, in the same page, with no window.
+  - The app routes every Playback to our player whatever the page's width. Before, the check read the width before FR24's page had set it (the phone's WebView lays a page out 980 px wide at first), so the panel's Playback went to the old player.
+- **Map drawing: compatible mode** is on unless switched off (`mapSafe`; `src/app/shim.js`). The switch saved by 1.4.0 is no longer read.
+- **Our player's flight** (`src/main/06-pbpage.js` `pbFlight`):
+  - The aircraft's saved log is read before its flight is looked for. A page opened just to play it had nothing loaded, so no flight was found: no airports, and the track was cut at its first gap.
+  - Then the monitor's flights of it (`/legs`).
+  - Else the flight is built from its track as its log would build it, with a gap (an ocean) inside it.
+  - FR24's airports, OurAirports' fields and the landing sites are read first; the ends were "N/A" without them.
+  - Its airline comes from its callsign (with FR24's logo by the airline's id), else the operator or owner the registers name. The registers are asked if the aircraft is not known yet.
+  - Its flight number: FR24's own of the flight, else the monitor's for its callsign, else an airline's numbered callsign with its IATA code (UAL972: UA972).
+  - Its route falls back to FR24's, as the monitor kept it with the flight's positions.
+- **Runways on the player**:
+  - Our flights get theirs from their own track, fitted to the field's runways on the monitor (`/rwyfit`), when the monitor logged none.
+  - FR24's own flights send their track from the page for the same fit (CDG, Edinburgh). FR24's times written as dates are read too.
+- **The data pages read the OurAirports list as they open**, and an airport search waits up to three seconds for it. EGOW found nothing on FR24's flights page.
+
+### Tests
+- `test/unit_141.cjs` (new):
+  - JDI01 whole across the Atlantic on a page that had read nothing of it, with its airports, owner and landing runway;
+  - the same flight built from its track alone;
+  - LOG8NP's airports, airline, logo and flight number;
+  - callsigns' flight numbers;
+  - FR24's own player of G-WAPA filled in through the page and the userscript, with its take-off runway fitted from the page's track;
+  - the back button;
+  - a flight number's earlier flights under FR24's own;
+  - the flights page's airport search waiting for the OurAirports list.
+- `test/unit_fr24fn.cjs` (new): the monitor's flights by flight number - followed, written, asked for by time; a glimpse or a taxi-only flight never written; times in the air, not the taxi; callsigns' flight numbers; kept over a restart; old months gone; FR24's flight number read from its feed.
+- `test/unit_app.cjs`:
+  - FR24's Playback from a page laid out wide as it starts;
+  - FR24's map's `window.open` of a log page with a flight;
+  - compatible mode on by default and switched off;
+  - the player's back button in the app, both ways.
+
 ## [1.4.0] - 2026-11-18
 
 ### In short
