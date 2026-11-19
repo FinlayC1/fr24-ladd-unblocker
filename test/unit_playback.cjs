@@ -60,6 +60,12 @@ function makeWin(url, asked) {
   win.__posted = []; win.postMessage = data => { win.__posted.push(data); setTimeout(() => win.dispatchEvent(new win.MessageEvent('message', { data, origin: 'https://www.flightradar24.com', source: win })), 0); };
   win.__logs = []; win.console.debug = (...a) => win.__logs.push(a.map(x => typeof x === 'object' ? JSON.stringify(x) : String(x)).join(' ')); win.console.log = () => {}; win.console.error = (...a) => win.__logs.push('ERROR ' + a.join(' '));
   win.__tlTestHook = h => { win.__H = h; };
+  // (the page's clock the day after the fixture's flight, its seconds running on: a playback of a recent day, as when it
+  // was recorded - whatever day the test runs. The script reads a day older than adsb.lol's forty from airplanes.live or
+  // the monitor's archive, LOL_DAYS: on 19 Nov this test asked airplanes.live for 9 Oct and found nothing)
+  const RD = win.Date, SHIFT = Date.parse('2026-10-10T12:00:00Z') - Date.now();
+  class PinnedDate extends RD { constructor(...a) { if (a.length) super(...a); else super(RD.now() + SHIFT); } static now() { return RD.now() + SHIFT; } }
+  win.Date = PinnedDate;
   win.eval(SRC);
   return win;
 }
