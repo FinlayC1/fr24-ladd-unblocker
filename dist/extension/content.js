@@ -16891,7 +16891,9 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     const cs = l.cs && l.cs !== reg ? l.cs : (l.cs || '');
     const acDesk = ac && ac.reg ? ` ${esc(ac.type || '')} <a class="fbold fs-10" href="/data/aircraft/${esc(ac.reg.toLowerCase())}" title="${esc(ac.desc || ac.type || '')}">(${esc(ac.reg)})</a> ` : '';
     const acMob = ac && ac.reg ? `<a class="fbold" href="/data/aircraft/${esc(ac.reg.toLowerCase())}" title="${esc(ac.desc || ac.type || '')}">${esc(ac.reg)}</a>` : '';
-    return logRowHtml({ t0: l.tStart, tz, tzTo, flight: ac ? acDesk || '—' : cs ? `(${esc(cs)})` : '—', flightMob: ac ? acMob || '—' : '', dur: (flown ? (onEst || offEst ? '~' : '') + durStr(flown) : '—') + (l.laps > 1 ? ` · ${l.laps} laps` : ''),
+    // (1.4.1: an airline's flight by its flight number, as FR24's own rows - FR24's number of that callsign)
+    const fn = !ac && cs ? fnKnown(cs) : '', fnDesk = fn ? ` <a class="fbold" href="/data/flights/${esc(fn.toLowerCase())}" title="${esc(cs)} - its flight number as Flightradar24 shows it (LADD unblocker)">${esc(fn)}</a> ` : '';
+    return logRowHtml({ t0: l.tStart, tz, tzTo, flight: ac ? acDesk || '—' : fnDesk || (cs ? `(${esc(cs)})` : '—'), flightMob: ac ? acMob || '—' : '', dur: (flown ? (onEst || offEst ? '~' : '') + durStr(flown) : '—') + (l.laps > 1 ? ` · ${l.laps} laps` : ''),
       stdTs: 0, atdTs: tOff, staTs: 0, color: landed ? 'green' : 'gray', atdEst: offEst, onEst, estTitle: 'reckoned from the nearest position heard (no receiver heard this part)',
       statusPrefix: landed && tOn ? (onEst ? 'Landed ~' : 'Landed ') : '', statusTs: tOn || 0, statusText: landed ? (tOn ? `Landed ${onEst ? '~' : ''}${fmtLocal(tOn, tzTo)}` : 'Landed · time unknown') : (l.ended ? 'Landed (airport unknown)' : 'Unknown'),
       from: siteFrom ? SITE_CELLS : apCells(from, l.from && l.from.conf), to: siteTo ? SITE_CELLS : apCells(to, l.to && l.to.conf),
@@ -17672,7 +17674,8 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
           mapRouteHook = h => { if (h === hex0 && fromMap0()) { lv = fromMap0(); fill(); } };
           if (routeChan) routeChan.postMessage({ ask: hex0 });
           if (fromMap0()) { lv = fromMap0(); fill(); }
-          await loadToday(hex0, 60000, { priority: true }).catch(() => null); fill();
+          // (1.4.1: today's track fetched meanwhile - the older rows below were held back by it, a minute at most)
+          loadToday(hex0, 60000, { priority: true }).catch(() => null).then(() => fill());
           const liveTick = async () => { if (routeChan) routeChan.postMessage({ ask: hex0 }); let own = null; try { own = await pageLiveState(hex0, reg); } catch (e) { own = null; } lv = fromMap0() || own; fill(); };
           liveTick(); setInterval(liveTick, 60000);
           // FR24 gives a free account a week of the log ("more than 7 days ... with an upgrade"): three months more under
@@ -17685,6 +17688,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
           const renderOlder = (h, done, total) => {
             const legs = knownLegs(hex0).filter(l => (l.from || l.to || l.tEnd - l.tStart > 600) && (l.tOff || l.tStart) < cut - 1800 && (l.tOff || l.tStart) > nowS() - days * 86400).sort((a, b) => b.tStart - a.tStart);
             const html = legs.map(l => legRowHtml(l, hex0, reg)).join('');
+            wantFns(legs, () => renderOlder(null, 1, 1));
             if (html !== tail.dataset.html) {
               tbody.querySelectorAll('tr.tl-adsb-row').forEach(r => r.remove());
               if (!tail.parentNode) tbody.appendChild(tail);
@@ -17777,6 +17781,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
         hx = Object.assign(hx, store.getHex(hex) || {}); fillAircraftHeader(hx, reg);
         const legs = legsOf();
         const shown = liveState ? legs.filter(l => l.ended || l.tEnd < (liveState.departedAt || 0) - 60) : legs;
+        wantFns(shown, render);
         const html = (liveState ? liveRowHtml(liveState, hex, reg) : '') + shown.map(l => legRowHtml(l, hex, reg)).join('');
         if (!foot.parentNode) tbody.appendChild(foot);
         (loading.parentNode ? loading : foot).insertAdjacentHTML('beforebegin', html);
@@ -17915,7 +17920,8 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     const ts = fr24Rows.map(tr => Number(tr.dataset.timestamp) || 0).filter(t => t > 1e9);
     const oldest = ts.length ? Math.min(...ts) : nowS();
     const have = new Set(); for (const a of tbody.querySelectorAll('a.btn-playback[data-flight-hex], a[id^="btn-playback-"]')) { const h = String(a.dataset.flightHex || a.id.replace(/^btn-playback-/, '')).toLowerCase(); if (h) have.add(h); }
-    const [j] = await Promise.all([monGet(`/fr24fn?fn=${encodeURIComponent(fn)}&to=${Math.round(oldest - 1800)}`, { timeout: 15000 }).catch(() => null), Promise.race([Promise.all([loadAirports().catch(() => null), loadOa().catch(() => null)]), sleep(6000)])]);
+    // (1.4.1: its airports are FR24's own codes - FR24's list alone wanted, not OurAirports': its rows waited up to 6 s for it)
+    const [j] = await Promise.all([monGet(`/fr24fn?fn=${encodeURIComponent(fn)}&to=${Math.round(oldest - 1800)}`, { timeout: 15000 }).catch(() => null), Promise.race([loadAirports().catch(() => null), sleep(6000)])]);
     const list = (j && Array.isArray(j.list) ? j.list : []).filter(x => x && /^[0-9a-f]{1,12}$/.test(String(x.fid || '')) && !have.has(String(x.fid)) && fin(x.t0) && fin(x.t1) && x.t1 > x.t0 && x.t0 < oldest - 600);
     if (!list.length || !tbody.isConnected || tbody.querySelector('tr.tl-fn-old')) return 0;
     const ap = c => { c = clean(c).toUpperCase(); const a = /^[A-Z0-9]{3}$/.test(c) ? airports.byIata.get(c) : null; return a ? { id: a.id } : null; };
@@ -17933,13 +17939,16 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     addStyle();
     await store.kvReady;
     if (document.readyState === 'loading') await new Promise(r => document.addEventListener('DOMContentLoaded', r, { once: true }));
-    await Promise.race([loadOa().catch(() => false), sleep(4000)]);
+    // (1.4.1: the OurAirports list read meanwhile - FR24's own rows and the earlier flights under them not held back for
+    // it; a page of ours, FR24 having none of the number, waits for it below as before)
+    const oaP = loadOa().catch(() => false);
     const sec = document.getElementById('cnt-data-content'); if (!sec) return;
     muteNotFound();
     // (FR24 lists this number itself: its rows stand, ours are not merged in - its playback's padlocked figures and its
     // rows' padlocked files filled)
     // (1.4.1: and its flights before FR24's week, as the monitor's scans of FR24's map kept them, under FR24's own)
     if (document.querySelector('#tbl-datatable tbody tr.data-row')) { const tb = document.querySelector('#tbl-datatable tbody'); flightPagePlayback(tb, cs); fnOlderRows(tb, cs).catch(e => log('flight page, earlier flights', String(e && e.message || e))); return; }
+    await Promise.race([oaP, sleep(4000)]);
     const note = [...sec.querySelectorAll('div.row')].find(d => /no data available for your request/i.test(d.textContent || ''));
     await loadAirports();
     // (no "is-user" class: FR24's stylesheet hides that table's rows until its own script takes it off - never, on ours)
@@ -19149,6 +19158,31 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     csFnMemo.set(cs, { fn, at: now() }); if (csFnMemo.size > 2000) csFnMemo.delete(csFnMemo.keys().next().value);
     return fn;
   }
+  // (1.4.1) many callsigns' flight numbers at once - the log pages' rows: one ask of the monitor for those not known here
+  // (100 a time), then the numbered callsigns' IATA form; how many are known now
+  const CS_FN_RE = /^[A-Z]{3}\d[A-Z0-9]{0,4}$/, csFnBusy = new Set();
+  async function csFlightNumbers(list) {
+    const miss = [...new Set((list || []).map(c => clean(c).toUpperCase()))].filter(c => CS_FN_RE.test(c) && !csFnBusy.has(c) && !(csFnMemo.has(c) && now() - csFnMemo.get(c).at < 864e5));
+    if (!miss.length) return 0;
+    miss.forEach(c => csFnBusy.add(c));
+    let got = 0;
+    try {
+      const learnt = {};
+      if (await monReady()) for (let i = 0; i < miss.length; i += 100) { try { const j = await monGet('/csfn?cs=' + miss.slice(i, i + 100).map(encodeURIComponent).join(','), { timeout: 8000 }); Object.assign(learnt, (j && j.list) || {}); } catch (e) { /* none */ } }
+      if (miss.some(c => !learnt[c] && /^[A-Z]{3}\d{1,4}$/.test(c))) await Promise.race([fr24.loadAirlines().catch(() => null), sleep(3000)]);
+      for (const c of miss) {
+        let fn = typeof learnt[c] === 'string' && /^[A-Z0-9]{2,3}\d{1,5}[A-Z]?$/.test(learnt[c]) ? learnt[c] : '';
+        if (!fn && /^[A-Z]{3}\d{1,4}$/.test(c)) { const id = fr24.byIcao.get(c.slice(0, 3)), a = id && fr24.airlines ? fr24.airlines.get(id) : null; if (a && /^[A-Z0-9]{2}$/.test(a.iata || '')) fn = a.iata + String(Number(c.slice(3))); }
+        csFnMemo.set(c, { fn, at: now() }); if (fn) got++;
+      }
+      while (csFnMemo.size > 2000) csFnMemo.delete(csFnMemo.keys().next().value);
+    } finally { miss.forEach(c => csFnBusy.delete(c)); }
+    return got;
+  }
+  // (a callsign's flight number as known here now - '' none, or not asked yet)
+  const fnKnown = cs => { const m = csFnMemo.get(clean(cs).toUpperCase()); return (m && m.fn) || ''; };
+  // (the rows' callsigns: their flight numbers asked for, the rows drawn again when any came)
+  const wantFns = (legs, redraw) => { csFlightNumbers((legs || []).map(l => l && l.cs)).then(n => { if (n && redraw) redraw(); }).catch(e => log('flight numbers', String(e && e.message || e))); };
   // (an airline's callsign - three letters and a number: FR24's airline of that ICAO code, its id for the logo)
   const csAirlineId = cs => { const c = /^([A-Z]{3})\d/.exec(clean(cs).toUpperCase()); return (c && fr24.byIcao.get(c[1])) || 0; };
   // (the aircraft's operator or owner as the registers have it - asked of them, a few seconds at most: the page may have

@@ -23,6 +23,7 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 - **"N/A" is replaced much sooner on the phone,** and the phone's small panel (the normal view) shows the registered owner instead of "Private owner".
 - **A page opened just now no longer misses the monitor.** Runways, owners, the monitor's flights and the first "On ground" board were left out until its first check had answered.
 - **A blocked aircraft's log is there as its page opens.** M-PORT's page in the app sat empty for five seconds, then took ten more. Its flights and its owner, serial number and age now come from the monitor straight away.
+- **Flights before FR24's week show at once** under FR24's own rows, and show their flight number (U22265, not "(EZY64HA)"), as FR24's rows do. A flight number's earlier flights no longer wait for the OurAirports list.
 
 ### Added
 - **The monitor's flights by flight number** (`monitor/fr24fn.cjs`, `GET /fr24fn?fn=`, `GET /csfn?cs=`).
@@ -76,6 +77,9 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
   - The monitor is asked for the log of an aircraft looked at whether or not this device knows it is blocked. M-PORT, not yet known as blocked here, was read day by day from the public sites.
   - The monitor's days are taken before the landing-sites list is in; that list is waited for only before a day is built here.
   - Its header takes the owner, serial number and age from the monitor in one ask before the registers are asked (`monIdentity`).
+- **Rows rebuilt from public ADS-B** (`legRowHtml`): an airline callsign's flight shows its flight number, linked to its flight page. The numbers come from the monitor's record of FR24's callsigns, all of a page's in one ask (`csFlightNumbers`, `/csfn`), else an airline's numbered callsign in IATA form. Other flights keep their callsign.
+- **An aircraft FR24 lists itself:** its flights before FR24's week no longer wait for today's track (up to a minute) before they are loaded.
+- **A flight number's page:** neither FR24's rows nor the earlier flights under them wait for the OurAirports list (up to 4 s at the page, 6 s more for the earlier flights); those use FR24's own airport codes.
 - **The data pages read the OurAirports list as they open**, and an airport search waits up to three seconds for it. EGOW found nothing on FR24's flights page.
 
 ### Tests
@@ -89,7 +93,8 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
   - M-SKTO's log: the helipad over FR24's Liverpool, the next flight's end following it, FR24's own airport kept where the track went there or was lost in the air, FR24's whole track asked for only where the monitor's ends stop short of the ground, every row's ends in one ask;
   - FR24's player of M-SKTO: the helipad written into its page data;
   - the phone's small panel: the registered owner over "Private owner", written once, an airline FR24 names left alone;
-  - M-PORT's log page: its flights from the monitor and its header's owner, serial number and age, there at once with OurAirports' list, hexdb and the strips' list all slow;
+  - M-PORT's log page: its flights from the monitor and its header's owner, serial number and age, there at once with OurAirports' list, hexdb and the strips' list all slow; a charter's flight under an airline callsign shown by its flight number;
+  - G-SAJD, an aircraft FR24 lists: its flight nine days ago under FR24's rows at once, with today's track still coming, and its flight number;
   - the back button;
   - a flight number's earlier flights under FR24's own;
   - the flights page's airport search waiting for the OurAirports list.

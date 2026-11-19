@@ -255,12 +255,15 @@ const owners = (hex, reg, type, owner) => JSON.stringify({ list: [[hex, reg, typ
     const DAYF = t => { const d = new Date(t * 1000); return `${d.getUTCFullYear()}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${String(d.getUTCDate()).padStart(2, '0')}`; };
     const FAB = AP('FAB') || AP('LTN'), T = DAY0 + 9 * 3600;
     const histLeg = { day: DAYF(T), tStart: T, tEnd: T + 2400, tOff: T + 60, tOn: T + 2340, startedOnGround: true, ended: true, how: 'ground', from: { id: MAN.id, code: 'MAN', conf: 'ground' }, to: { id: FAB.id, code: FAB.iata, conf: 'ground' }, cs: 'MPORT', maxAlt: 31000 };
+    // (and one flown under an airline's callsign - a charter: its flight number FR24 shows for it, from the monitor)
+    const histLeg2 = Object.assign({}, histLeg, { tStart: T + 6 * 3600, tEnd: T + 6 * 3600 + 2400, tOff: T + 6 * 3600 + 60, tOn: T + 6 * 3600 + 2340, from: histLeg.to, to: histLeg.from, cs: 'EZY64HA' });
     const asked = [], t0 = Date.now(), slow = [];
     const answerP = u => {
       if (u.startsWith(MON + '/oaap')) { slow.push('oa'); return [6000, 200, JSON.stringify({ rows: [] })]; }
       if (/hexdb\.io\/reg-hex/.test(u)) { slow.push('hexdb'); return [5000, 200, '424B68']; }
       if (/raw\.githubusercontent\.com\/davidmegginson\/ourairports-data/.test(u)) { slow.push('sites'); return [9000, 404, '']; }
-      if (u.startsWith(MON + '/hist?hex=424b68')) return [5, 200, JSON.stringify({ hv: 8, list: [{ hex: '424b68', blk: 1, days: { [DAYF(T)]: 1 }, legs: [histLeg] }] })];
+      if (u.startsWith(MON + '/hist?hex=424b68')) return [5, 200, JSON.stringify({ hv: 8, list: [{ hex: '424b68', blk: 1, days: { [DAYF(T)]: DAYF(T) === DAYF(T + 6 * 3600) ? 2 : 1, [DAYF(T + 6 * 3600)]: DAYF(T) === DAYF(T + 6 * 3600) ? 2 : 1 }, legs: [histLeg, histLeg2] }] })];
+      if (u.startsWith(MON + '/csfn?cs=') && /EZY64HA/.test(u)) return [5, 200, JSON.stringify({ v: 1, list: { EZY64HA: 'U22265' } })];
       if (u.startsWith(MON + '/owners?hex=') && /424b68/.test(u)) return [5, 200, JSON.stringify({ list: [['424b68', 'M-PORT', 'GL5T', 'Bombardier Global 5000', 'Portman Aviation Ltd', 'Douglas', 'Isle of Man', 'IM', '9868', 2008, 0, '', '', 1, 1, 0]] })];
       return null;
     };
@@ -279,9 +282,35 @@ const owners = (hex, reg, type, owner) => JSON.stringify({ list: [[hex, reg, typ
     const tR = Date.now();
     const row = await until(() => w.document.querySelector('tr.tl-adsb-row'), 8000), ms = Date.now() - tR;
     check('M-PORT\'s log page (FR24 has none of its flights): its flights the monitor rebuilt, there at once - not after the slow lists (OurAirports\' 6 s, hexdb\'s 5 s, the strips\' 9 s here)', !!row && ms < 2500 && /Manchester|MAN/.test(row.textContent) && !w.document.querySelector('#tbl-datatable tbody tr td[colspan="12"]'), { ms, row: row && row.textContent.replace(/\s+/g, ' ').slice(0, 120), slow, sinceOpen: Date.now() - t0 });
+    const fnA = await until(() => w.document.querySelector('tr.tl-adsb-row a[href="/data/flights/u22265"]'), 4000);
+    check('... a flight under an airline\'s callsign: its flight number, as FR24\'s own rows give it - the monitor\'s for that callsign, its flight page linked; the others their callsign', !!fnA && fnA.textContent.trim() === 'U22265' && [...w.document.querySelectorAll('tr.tl-adsb-row')].some(r => /\(MPORT\)/.test(r.textContent)), [...w.document.querySelectorAll('tr.tl-adsb-row')].map(r => r.children[5] && r.children[5].textContent.trim()));
     const span = lb => [...w.document.querySelectorAll('#cnt-aircraft-info .row')].find(r => r.querySelector('label').textContent === lb).querySelector('span.details');
     const own = await until(() => /Portman/.test(span('AIRLINE').textContent) ? 1 : 0, 3000), ms2 = Date.now() - tR;
     check('... its header from the monitor in the same moment: its owner over "Private owner", its serial number and age - no padlock', !!own && ms2 < 3500 && /9868/.test(span('SERIAL NUMBER (MSN)').textContent) && /\d+ year/.test(span('AGE').textContent) && /Portman/.test(span('OPERATOR').textContent), { ms2, al: span('AIRLINE').textContent, msn: span('SERIAL NUMBER (MSN)').textContent, age: span('AGE').textContent });
+    const errs = w.__logs.filter(l => /^ERROR|TypeError|ReferenceError/.test(l));
+    check('... no script errors', !errs.length, errs.slice(0, 5));
+    w.close();
+  }
+  // ======== an aircraft FR24 lists itself: its flights before FR24's week, under its rows, not held back by today's track ===
+  {
+    const DAYF = t => { const d = new Date(t * 1000); return `${d.getUTCFullYear()}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${String(d.getUTCDate()).padStart(2, '0')}`; };
+    const TO = DAY0 - 9 * 86400 + 8 * 3600, TR = DAY0 + 8 * 3600;
+    const old = { day: DAYF(TO), tStart: TO, tEnd: TO + 3000, tOff: TO + 60, tOn: TO + 2940, startedOnGround: true, ended: true, how: 'ground', from: { id: LPL.id, code: 'LPL', conf: 'ground' }, to: { id: ABZ.id, code: 'ABZ', conf: 'ground' }, cs: 'LOG55' };
+    const answerQ = u => {
+      // (today's track: a minute coming - the public sites slow, or walling this browser)
+      if (/\/data\/traces\/[0-9a-f]{2}\/trace_full_400abc\.json/.test(u)) return [60000, 404, ''];
+      if (u.startsWith(MON + '/hist?hex=400abc')) return [5, 200, JSON.stringify({ hv: 8, list: [{ hex: '400abc', days: { [DAYF(TO)]: 1 }, legs: [old] }] })];
+      if (u.startsWith(MON + '/csfn?cs=') && /LOG55/.test(u)) return [5, 200, JSON.stringify({ v: 1, list: { LOG55: 'LM55' } })];
+      return null;
+    };
+    const row = `<tr class="data-row" data-timestamp="${TR}"><td></td><td></td><td data-timestamp="${TR}">${DAYF(TR)}</td><td>Liverpool <a href="/data/airports/lpl">(LPL)</a></td><td>Aberdeen <a href="/data/airports/abz">(ABZ)</a></td><td><a href="/data/flights/lm55">LM55</a></td><td>0:50</td><td>—</td><td data-timestamp="${TR}">08:00</td><td>—</td><td><div class="state-block green"></div></td><td data-timestamp="${TR + 3000}" data-prefix="Landed ">Landed 08:50</td><td><a class="btn btn-sm btn-playback" data-flight="3e2b0001">Play</a></td></tr>`;
+    const html = `<!doctype html><html><head><title>G-SAJD</title></head><body><div id="cnt-aircraft-info"><div class="row"><label>TYPE CODE</label> <span class="details">E145</span></div>
+      <div class="row"><label>MODE S</label> <span class="details" id="txt-mode-s">400ABC</span></div></div><table id="tbl-datatable"><tbody>${row}</tbody></table></body></html>`;
+    const asked = [], w = makeWin('https://www.flightradar24.com/data/aircraft/g-sajd', asked, u => answerQ(u) || answerX(u), html), L = await ready(w, asked), tR = Date.now();
+    const got = await until(() => w.document.querySelector('tr.tl-adsb-row'), 10000), ms = Date.now() - tR;
+    check('an aircraft FR24 lists (G-SAJD): its flight nine days ago, before FR24\'s week, under FR24\'s rows - not held back by today\'s track still coming (a minute here)', !!got && ms < 4000 && /Aberdeen|ABZ/.test(got.textContent), { ms, row: got && got.textContent.replace(/\s+/g, ' ').slice(0, 100) });
+    const fnA = await until(() => w.document.querySelector('tr.tl-adsb-row a[href="/data/flights/lm55"]'), 4000);
+    check('... its flight number, as FR24\'s own rows give it', !!fnA && fnA.textContent.trim() === 'LM55');
     const errs = w.__logs.filter(l => /^ERROR|TypeError|ReferenceError/.test(l));
     check('... no script errors', !errs.length, errs.slice(0, 5));
     w.close();

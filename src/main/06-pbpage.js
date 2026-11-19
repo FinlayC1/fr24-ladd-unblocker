@@ -109,6 +109,31 @@
     csFnMemo.set(cs, { fn, at: now() }); if (csFnMemo.size > 2000) csFnMemo.delete(csFnMemo.keys().next().value);
     return fn;
   }
+  // (1.4.1) many callsigns' flight numbers at once - the log pages' rows: one ask of the monitor for those not known here
+  // (100 a time), then the numbered callsigns' IATA form; how many are known now
+  const CS_FN_RE = /^[A-Z]{3}\d[A-Z0-9]{0,4}$/, csFnBusy = new Set();
+  async function csFlightNumbers(list) {
+    const miss = [...new Set((list || []).map(c => clean(c).toUpperCase()))].filter(c => CS_FN_RE.test(c) && !csFnBusy.has(c) && !(csFnMemo.has(c) && now() - csFnMemo.get(c).at < 864e5));
+    if (!miss.length) return 0;
+    miss.forEach(c => csFnBusy.add(c));
+    let got = 0;
+    try {
+      const learnt = {};
+      if (await monReady()) for (let i = 0; i < miss.length; i += 100) { try { const j = await monGet('/csfn?cs=' + miss.slice(i, i + 100).map(encodeURIComponent).join(','), { timeout: 8000 }); Object.assign(learnt, (j && j.list) || {}); } catch (e) { /* none */ } }
+      if (miss.some(c => !learnt[c] && /^[A-Z]{3}\d{1,4}$/.test(c))) await Promise.race([fr24.loadAirlines().catch(() => null), sleep(3000)]);
+      for (const c of miss) {
+        let fn = typeof learnt[c] === 'string' && /^[A-Z0-9]{2,3}\d{1,5}[A-Z]?$/.test(learnt[c]) ? learnt[c] : '';
+        if (!fn && /^[A-Z]{3}\d{1,4}$/.test(c)) { const id = fr24.byIcao.get(c.slice(0, 3)), a = id && fr24.airlines ? fr24.airlines.get(id) : null; if (a && /^[A-Z0-9]{2}$/.test(a.iata || '')) fn = a.iata + String(Number(c.slice(3))); }
+        csFnMemo.set(c, { fn, at: now() }); if (fn) got++;
+      }
+      while (csFnMemo.size > 2000) csFnMemo.delete(csFnMemo.keys().next().value);
+    } finally { miss.forEach(c => csFnBusy.delete(c)); }
+    return got;
+  }
+  // (a callsign's flight number as known here now - '' none, or not asked yet)
+  const fnKnown = cs => { const m = csFnMemo.get(clean(cs).toUpperCase()); return (m && m.fn) || ''; };
+  // (the rows' callsigns: their flight numbers asked for, the rows drawn again when any came)
+  const wantFns = (legs, redraw) => { csFlightNumbers((legs || []).map(l => l && l.cs)).then(n => { if (n && redraw) redraw(); }).catch(e => log('flight numbers', String(e && e.message || e))); };
   // (an airline's callsign - three letters and a number: FR24's airline of that ICAO code, its id for the logo)
   const csAirlineId = cs => { const c = /^([A-Z]{3})\d/.exec(clean(cs).toUpperCase()); return (c && fr24.byIcao.get(c[1])) || 0; };
   // (the aircraft's operator or owner as the registers have it - asked of them, a few seconds at most: the page may have
