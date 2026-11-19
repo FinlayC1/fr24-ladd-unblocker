@@ -683,6 +683,32 @@
     if (d.askBoard && live.size) { try { routeChan.postMessage({ boardRows: d.askBoard, rid: d.rid, rows: liveBoardRows(Number(d.askBoard)) }); } catch (e) { log('board rows', e); } }
     if (d.boardRows && askWait.has(d.rid)) askWait.get(d.rid)(d.rows);
   }
+  // (1.4.0) An airport's "On ground" from the monitor (onground.cjs): every aircraft there - FR24's airports and OurAirports'
+  // - from its landing until it is seen in the air again, a week at most; FR24 gives a free account its last hour, and
+  // none of an airport it does not list. As the boards' rows: its type's name, its airline by its callsign, where it came
+  // from by FR24's route, its tag where it is one of the blocked aircraft
+  async function ogRows(apId) {
+    if (!(Number(apId) > 0) || !monUp()) return [];
+    let j = null; try { j = await monGet(`/onground?ap=${Number(apId)}`, { timeout: 6000 }); } catch (e) { return []; }
+    await Promise.race([Promise.all([fr24.airlines ? null : fr24.loadAirlines().catch(() => {}), loadAcTypes().catch(() => false)]), sleep(1500)]);
+    const out = [];
+    for (const x of (j && Array.isArray(j.list) ? j.list : []).slice(0, 400)) {
+      if (!x || typeof x !== 'object') continue;
+      const hex = /^[0-9a-f]{6}$/.test(x.hex || '') ? x.hex : '', hx = hex ? store.getHex(hex) || {} : {};
+      const reg = clean(x.reg || hx.reg || '').toUpperCase(), ty = clean(x.type || hx.type || '').toUpperCase(), cs = clean(x.cs || '').toUpperCase();
+      if (!reg && !cs && !hex) continue;
+      const icao = (/^([A-Z]{3})\d/.exec(cs) || [])[1] || '', alId = (icao && fr24.byIcao && fr24.byIcao.get(icao)) || 0;
+      const from = clean(x.from || '').toUpperCase(), o = /^[A-Z0-9]{3}$/.test(from) && airports.byIata ? airports.byIata.get(from) : null;
+      out.push({ kind: 'onGround', src: 'og', fid: /^[0-9a-f]{1,12}$/.test(x.fid || '') ? x.fid : '', k: 'og' + (hex || reg.replace(/-/g, '') || cs), cs, reg, ty, hex, alId: alId || 0,
+        t: Number(x.land) || Number(x.since) || 0, ap: o ? o.id : 0, name: modelName(hx) || acTypeName(ty) || ty, badge: badgeOf(hx), est: !!x.est });
+    }
+    return out;
+  }
+  async function onOgWant(d) {
+    const ap = Number(d && d.ap) || 0; let list = [];
+    try { list = await ogRows(ap); } catch (e) { log('on ground', String(e && e.message || e)); }
+    postToPage('ogGot', { rid: d && d.rid, ap, list });
+  }
   // a board row as FR24's airport pages list a flight
   const airlineUrl = a => [a.iata, a.icao].filter(Boolean).join('-').toLowerCase();
   function dataItem(r, kind) {
@@ -795,11 +821,16 @@
     // the airport's kept rows (three days each way), then the flights the map tab follows now
     if (!fr24.airlines) await fr24.loadAirlines().catch(() => {});
     const b = await boardFresh(apId), pre = boardPrefixes(Object.values(b.arr).concat(Object.values(b.dep)));
-    const send = liveRows => {
+    // (1.4.0: and its "On ground" from the monitor - each aircraft once: a blocked one followed here as it is followed)
+    const ogP = ogRows(apId).catch(() => []);
+    const send = (liveRows, og) => {
       const kept = m => boardList(m, pre).filter(r => r.src !== 'fr24' && r.src !== 'sched');
       const merge = (list, kind) => { const out = new Map(list.map(r => [r.fid || r.k, r])); for (const r of liveRows) if (r.kind === kind) out.set(r.fid || r.k, r); return [...out.values()]; };
-      postToPage('airportData', { apId, board: { arrivals: merge(kept(b.arr), 'arrivals').map(r => dataItem(r, 'arrivals')), departures: merge(kept(b.dep), 'departures').map(r => dataItem(r, 'departures')), onGround: liveRows.filter(r => r.kind === 'onGround').map(r => dataItem(r, 'onGround')) } });
+      const gl = liveRows.filter(r => r.kind === 'onGround'), who = new Set(gl.map(r => r.hex || r.reg).filter(Boolean));
+      for (const r of og || []) if (!who.has(r.hex) && !who.has(r.reg)) { gl.push(r); who.add(r.hex || r.reg); }
+      postToPage('airportData', { apId, board: { arrivals: merge(kept(b.arr), 'arrivals').map(r => dataItem(r, 'arrivals')), departures: merge(kept(b.dep), 'departures').map(r => dataItem(r, 'departures')), onGround: gl.map(r => dataItem(r, 'onGround')) } });
     };
-    send(liveBoardRows(apId));
-    send(liveBoardRows(apId).concat(await askLiveBoard(apId, 400)));
+    send(liveBoardRows(apId), []);
+    const lr2 = liveBoardRows(apId).concat(await askLiveBoard(apId, 400));
+    send(lr2, await ogP);
   }

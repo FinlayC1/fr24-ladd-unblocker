@@ -4,6 +4,77 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 
 1.0.0 is the first release. The versions before it are the betas, labelled B: B22.31.12 is version 22.31.12.
 
+## [1.4.0] - 2026-11-18
+
+### In short
+- **Every Play in the app opens FR24's own player for a phone.** Search results, an aircraft's panel, airport boards, live flights: all of them, not FR24's old player for a computer.
+- **A blocked aircraft's playback opens straight away on a loading screen.** No more FR24's "Search for flights" page first, and it loads sooner.
+- **FR24's player draws the aircraft with its own icon,** a Citation or a helicopter, for the flights this script plays. It drew them all as a Boeing 737.
+- **No padlocks in FR24's player.**
+  - FR24's own flights show GPS altitude, airspeeds and vertical speed from the public ADS-B track.
+  - Its flight times card shows the runways the monitor logged.
+- **Runways for blocked aircraft on airport boards:** the take-off's and the landing's, in each flight's card.
+- **"On ground" at every airport, from the monitor.** It covers FR24's airports and OurAirports' fields.
+  - Every aircraft there from its landing until it takes off again, up to a week, not FR24's last hour.
+  - FR24's "To get more than 1 hour of aircraft on ground history" box is gone.
+  - This needs the monitor updated (`deploy.sh`).
+- **The app: a "Map drawing" line and a "Map drawing: compatible mode" switch** in the LADD Unblock window. They are for the aircraft and airport pins that break up or smear when the map is zoomed on some phones. The cause isn't found yet; the line says what draws the map, and the switch tries the likeliest fix.
+
+### Added
+- **The monitor's "On ground"** (`monitor/onground.cjs`, `GET /onground?ap=`). It is built from the monitor's scans of FR24's map. The world scans see aircraft in the air only; the airports being looked at are also scanned for ground traffic.
+  - An aircraft seen on the ground within 4 km of a field is on the ground there.
+  - So is one last seen coming in to a field and not seen in the air for four minutes after: within 12 km, below 2,000 ft over it, descending, or going there by FR24's route. FR24's route wins over the nearest field.
+  - It stays on the list until it is seen in the air again, anywhere, for up to a week. FR24's ground vehicles are left out.
+  - The list is written every quarter of an hour and on stop, so a restart keeps it. `/status` shows its counts.
+- **The boards' "On ground"** (`src/page.js` `ogAsk`, `ogAdd`; `src/main/06-boards.js` `ogRows`, `onOgWant`).
+  - The map's panel asks for the monitor's list alongside FR24's own and adds each aircraft FR24's list hasn't got: by flight, registration or address, in FR24's own row form, newest landing first.
+  - An OurAirports field's board gets the same list.
+  - Each row's type is named from the monitor's aircraft types (`acTypeName`), its airline from its callsign.
+  - The data pages' on-ground board gets the same rows. FR24's box under the list is hidden (`hideOgPromo`).
+- **The app's map drawing** (`src/main/06-window.js` `gpuInfo`, `src/app/shim.js`). *This browser* shows the phone's graphics, the largest texture they take, the screen's pixel ratio and the WebView's version.
+  - *Map drawing: compatible mode* (the app only, off by default) asks for FR24's map's WebGL without kept frames (`preserveDrawingBuffer`) and without smoothing (`antialias`), from the next load.
+
+### Changed
+- **Playback in the phone app** (`src/page.js`):
+  - A log page opened with a flight in its address goes on to FR24's own player page before anything of it is drawn. That is how FR24's own Playback opens a flight everywhere.
+  - A tapped link to one goes there at once.
+  - A flight known only to the script goes to FR24's flights page, which the page part turns into the player.
+- **FR24's flights page given a flight to play** (`mxPbVeilOn`):
+  - The page is covered with a loading screen until the player is in, or uncovered if nothing came of it.
+  - The flight made ready there is handed to FR24's player page, not asked for a second time.
+  - The userscript gets the public track, FR24's positions and the pictures all at once (`pbFlight`).
+- **FR24's player of a flight of this script's** (`mxPbStandIn`, `mxPbFlightMsg`): its answer of each moment carries the aircraft (address, registration, type, full name, icon).
+  - The icon is FR24's own number for the aircraft or its type, learnt from every flight of FR24's feed (`iconNote`, `iconFor`): the one most of a type are drawn with, not one airline's livery.
+  - A flight with no figures from its aircraft still gets one.
+- **FR24's player of one of its own flights:** FR24's padlocks over GPS altitude, airspeeds and vertical speed are lifted on its page too. The figures of each moment come from the flight's ADS-B track, as on the map's playback.
+- **Runways on FR24's player** (`mxPbRunways`, `pbRunways`):
+  - FR24's flights are asked of the monitor by their id and each end's airport.
+  - The script's own flights get theirs from the monitor's log, by flight or by aircraft address.
+  - The padlock is never kept.
+
+### Fixed
+- **A blocked aircraft's card on an airport board showed no runway** (`cardRwyFill`, `mxBoardRwy`, `noteCard`). The monitor's runways by the aircraft's address were found but never kept for the card. A card with no time takes the aircraft's latest there within six hours.
+
+### Tests
+- `test/unit_140.cjs` (new): the page part's new behaviour:
+  - FR24's icons learnt, and the player told the aircraft and its icon;
+  - runways and padlocks on FR24's own player;
+  - a blocked flight's board card runway by address;
+  - the flights page covered and uncovered;
+  - the app's addresses of a playback;
+  - FR24's on-ground list with the monitor's, by its own request.
+- `test/unit_onground.cjs` (new): the monitor's on-ground list:
+  - a landing seen, then seen on the ground, then off on taking off;
+  - a touch-and-go and an overflight never listed;
+  - FR24's route over the nearest field;
+  - an OurAirports heliport;
+  - one aircraft first seen without its address;
+  - kept over a restart, and gone after a week.
+- `test/unit_pbends.cjs`: the userscript's on-ground rows with their types' names; FR24's box under its list hidden.
+- `test/unit_app.cjs`:
+  - a log page with a flight in its address goes to FR24's player in the app;
+  - the compatible mode leaves FR24's WebGL as asked until switched on, then drops kept frames and smoothing only.
+
 ## [1.3.13] - 2026-11-18
 
 ### In short

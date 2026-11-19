@@ -217,6 +217,39 @@ const ageCell = w => { const c = [...w.document.querySelectorAll('[data-testid="
     check('... no script errors', !errs.length, errs.slice(0, 3));
     w.close();
   }
+  // ---- (1.4.0) the "On ground" of an airport from the monitor: the userscript's rows of it (type's name, its tag), and
+  // FR24's box under its own list ("To get more than 1 hour...") taken away - the list and FR24's disclaimer left
+  {
+    const MON = 'https://143-47-224-210.sslip.io';
+    const answer = u => {
+      if (u.startsWith(MON + '/status')) return [5, 200, JSON.stringify({ v: 3, ver: 'test' })];
+      if (u.startsWith(MON + '/actypes')) return [5, 200, JSON.stringify({ v: 1, at: 1, families: [{ code: 'BEECH', name: 'Beechcraft', types: [{ code: 'BE20', name: 'Beech B200' }] }] })];
+      if (u.startsWith(MON + '/onground?ap=2002')) return [5, 200, JSON.stringify({ v: 1, ap: 2002, list: [{ fid: '3d4f0001', hex: '400abc', reg: 'G-CEGP', type: 'BE20', cs: 'MDI28F', from: '', land: DAY0, since: DAY0, last: DAY0, gnd: false, est: false }, { fid: '', hex: '', reg: '', type: '', cs: '' }] })];
+      return null;
+    };
+    const asked = [], w = makeWin('https://www.flightradar24.com/53.40,-2.95/9', asked, { answer }); await ready(w);
+    await until(() => asked.some(x => x.url.startsWith(MON + '/status')), 8000); await sleep(400);
+    send(w, { __tweeksLadd: 'ogWant', rid: 'og-t', ap: 2002 });
+    const got = await until(() => (w.__posted.find(p => p.d && p.d.__tweeksLadd === 'ogGot' && p.d.rid === 'og-t') || {}).d, 8000);
+    const r0 = got && got.list && got.list[0];
+    check('the monitor\'s "On ground" of an airport as the userscript gives it: each aircraft with its type\'s name, its landing; none with nothing to show', !!r0 && got.list.length === 1 && r0.reg === 'G-CEGP' && r0.ty === 'BE20' && /King Air|Beech/i.test(r0.name || '') && r0.t === DAY0 && r0.fid === '3d4f0001', got && got.list);
+    w.document.body.insertAdjacentHTML('beforeend', '<div data-testid="airport-panel"><ul><li class="og-row">G-DRTC</li></ul><div class="og-box"><div><span>To get more than 1 hour of aircraft on ground history, please create a free account (2 hours) or upgrade to a Silver (7 days), Gold (30) or Business (90) plan.</span></div><button>7 days free trial | Learn more</button></div><p class="og-disc">Disclaimer: An aircraft will remain on the list until we can confirm that it has departed from the airport.</p></div>');
+    const hid = await until(() => w.document.querySelector('.og-box').style.display === 'none', 6000);
+    check('FR24\'s box under its "On ground" list (its hour, a trial): taken away - its list and disclaimer left', !!hid && w.document.querySelector('.og-row').style.display !== 'none' && w.document.querySelector('.og-disc').style.display !== 'none', w.document.querySelector('.og-box').getAttribute('style'));
+    w.close();
+  }
+  // ---- (1.4.0) FR24's search box on one of its data pages (an airport's): a blocked aircraft among its results tagged
+  // "LADD" as on the map - the map's own watch runs on the map only
+  {
+    const asked = [], w = makeWin('https://www.flightradar24.com/data/airports/lpl', asked), L = await ready(w);
+    L.store.mergeHex('43edb1', { reg: 'M-PORT', type: 'C68A', ladd: true });
+    await sleep(200);
+    w.document.body.insertAdjacentHTML('beforeend', '<div data-testid="search__results"><div data-testid="search__result-row"><a data-search-result="aircraft:M-PORT"><span data-testid="search__result-aircraft__name">M-PORT</span><span data-testid="search__result-aircraft__type">Cessna 680A</span></a></div><div data-testid="search__result-row"><a data-search-result="aircraft:G-DRTC"><span data-testid="search__result-aircraft__name">G-DRTC</span><span data-testid="search__result-aircraft__type">Boeing 737-808</span></a></div></div>');
+    const chip = await until(() => w.document.querySelector('[data-testid="search__result-row"] .tl-ladd-chip'), 6000);
+    const rows = [...w.document.querySelectorAll('[data-testid="search__result-row"]')];
+    check('FR24\'s search on one of its data pages (an airport\'s): the blocked aircraft tagged "LADD" as on the map; another not', !!chip && chip.textContent === 'LADD' && !!rows[0].querySelector('.tl-ladd-chip') && !rows[1].querySelector('.tl-ladd-chip'), rows.map(r => r.textContent));
+    w.close();
+  }
   // ---- (1.2.4) a flight's KML and CSV for FR24's own download buttons: made from FR24's track of it, in FR24's CSV columns
   {
     const asked = [], w = makeWin(PB_URL, asked); await ready(w);

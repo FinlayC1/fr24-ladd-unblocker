@@ -8,6 +8,27 @@
   const PB_SYN = /^ff([0-9a-f]{6})([0-9a-f]{8})$/;
   const pbSynId = (hex, t) => 'ff' + hex + ('00000000' + Math.max(0, Math.round(t || 0)).toString(16)).slice(-8);
   // (an airport as FR24's player names it: its code and city, where it is, its time zone)
+  // (1.4.0) A flight's runways - its take-off's at the field it left, its landing's where it landed: the monitor's log of
+  // FR24's tracks by the flight's id, else its blocked flights' by the aircraft's address and the time - for FR24's player
+  // (its flight times card had a padlock over them)
+  async function pbRunways(hex, fid, from, to, dep, arr) {
+    const out = { off: '', on: '' }; if (!monUp()) return out;
+    const one = async (ap, end, t) => {
+      if (!ap || !(Number(ap.id) > 0) || !(t > 1e9)) return '';
+      if (fid) { try { const j = await monGet(`/rwy?f=${fid}:${end}&ap=${ap.id}&ts=${Math.round(t)}`, { timeout: 5000 }); const v = j && j.list && j.list[`${fid}:${end}`]; if (typeof v === 'string' && v) return v.slice(0, 8); } catch (e) { /* by the aircraft */ } }
+      if (/^[0-9a-f]{6}$/.test(hex || '')) {
+        try {
+          const old = t < nowS() - 2 * 86400 ? '&old=1' : '';
+          const j = await monGet(`/rwyap?ap=${ap.id}&from=${Math.round(t - 3600)}&to=${Math.round(t + 3600)}${old}`, { timeout: 6000 });
+          let best = null; for (const x of (j && Array.isArray(j.h) ? j.h : [])) if (Array.isArray(x) && x[0] === hex && x[1] === end && fin(x[3]) && Math.abs(x[3] - t) <= 1800 && (!best || Math.abs(x[3] - t) < Math.abs(best[3] - t))) best = x;
+          if (best && typeof best[2] === 'string') return best[2].slice(0, 8);
+        } catch (e) { /* none */ }
+      }
+      return '';
+    };
+    [out.off, out.on] = await Promise.all([one(from, 0, dep), one(to, 1, arr)]);
+    return out;
+  }
   function pbAirport(a) {
     if (!a) return null;
     const tz = a.timezone && typeof a.timezone === 'object' ? a.timezone.name : typeof a.timezone === 'string' ? a.timezone : '';
@@ -134,9 +155,14 @@
     let t0 = leg ? leg.tStart - 120 : dep - 600, t1 = leg ? (leg.ended ? leg.tEnd + 120 : nowS()) : w.end > dep ? w.end + 600 : Number(d.arr) > dep ? Number(d.arr) + 600 : 0;
     if (!(t1 > t0) && raw.pts.length) t1 = raw.pts[raw.pts.length - 1].t + 60;
     if (!(t1 > t0)) t1 = Math.min(nowS(), t0 + 12 * 3600);
-    const adsb = /^[0-9a-f]{6}$/.test(hex) ? (day && t0 >= nowS() - 86400 ? day : await pbAdsb(hex, t0, t1)) : [];
+    // (1.4.0: the public track, FR24's positions of it and its pictures asked for together - each had waited for the one
+    // before: some five seconds of FR24's flights page before its player)
+    const hx0 = /^[0-9a-f]{6}$/.test(hex) ? store.getHex(hex) || {} : {};
+    const photoP = !(hx0.photos || []).some(p => p && (p.large || p.medium)) && hex ? monPhotos(hex).catch(() => null) : Promise.resolve(null);
     // (FR24's positions of it: its own id's - else, a flight of a rebuilt log, its aircraft's then - before ADS-B's)
-    const fr = raw.pts.length ? raw.pts : await pbFr24Of(hex, t0, t1);
+    const [adsb, fr] = await Promise.all([
+      /^[0-9a-f]{6}$/.test(hex) ? (day && t0 >= nowS() - 86400 ? Promise.resolve(day) : pbAdsb(hex, t0, t1).catch(() => [])) : Promise.resolve([]),
+      raw.pts.length ? Promise.resolve(raw.pts) : pbFr24Of(hex, t0, t1).catch(() => [])]);
     let pts = pbFr24First(fr, adsb).filter(p => p.t >= t0 && p.t <= t1);
     // (no leg of it known: the flight itself out of the record - not the day's other flights)
     if (!leg && pts.length) pts = pbCut(pts, dep);
@@ -149,12 +175,17 @@
     const apAt = p => { if (!p || !p.gnd) return null; const n = ENGINE.airportAt(p.lat, p.lon, 4); return n && n.airport ? apById(n.airport.id) || n.airport : null; };
     const from = leg && leg.from ? apById(leg.from.id) : (w.depAp && apById(w.depAp)) || apAt(pts[0]), to = leg && leg.to ? apById(leg.to.id) : leg ? null : apAt(pts[pts.length - 1]);
     let photos = (hx.photos || []).filter(p => p && (p.large || p.medium));
-    if (!photos.length && hex) { try { const mp = await monPhotos(hex); photos = goodPhotos((mp && mp.photos) || []).map(cleanPhoto); } catch (e) { /* none */ } }
+    const depT = (leg && (leg.tOff || leg.tStart)) || dep || pts[0].t, arrT = leg && leg.ended ? (leg.tOn || leg.tEnd) : 0;
+    const rwyP = pbRunways(/^[0-9a-f]{6}$/.test(hex) ? hex : '', fidNum ? id : '', from, to, depT, arrT).catch(() => ({ off: '', on: '' }));
+    if (!photos.length && hex) { try { const mp = await photoP; photos = goodPhotos((mp && mp.photos) || []).map(cleanPhoto); } catch (e) { /* none */ } }
+    const rwys = await rwyP;
     return {
       ok: true, id: fidNum ? id : syn ? id : pbSynId(hex, (leg && (leg.tOff || leg.tStart)) || dep), hex, reg: clean(hx.reg || raw.m.reg || d.reg || '').toUpperCase(), cs,
       flightNumber: clean(d.flightNumber || ''), model: modelName(hx) || clean(raw.m.type || ''), type: clean(hx.type || raw.m.type || ''), operator: shownOwner(hx, cs) || '', msn: clean(hx.msn || ''),
-      origin: pbAirport(from), destination: pbAirport(to),
-      dep: (leg && (leg.tOff || leg.tStart)) || dep || pts[0].t, arr: leg && leg.ended ? (leg.tOn || leg.tEnd) : 0,
+      // (1.4.0: its tag - LADD, PIA, MIL - for FR24's player's header, as everywhere else it is shown)
+      badge: badgeOf(hx),
+      origin: pbAirport(from), destination: pbAirport(to), rwyOff: rwys.off || '', rwyOn: rwys.on || '',
+      dep: depT, arr: arrT,
       pts: pts.map(p => ({ t: p.t, lat: Math.round(p.lat * 1e5) / 1e5, lon: Math.round(p.lon * 1e5) / 1e5, alt: p.gnd ? 0 : fin(p.alt) ? Math.round(p.alt) : null, gnd: !!p.gnd, gs: fin(p.gs) ? Math.round(p.gs) : null, trk: fin(p.trk) ? Math.round(p.trk) : null, vr: fin(p.vr) ? Math.round(p.vr) : null, sq: /^[0-7]{4}$/.test(p.sq || '') ? p.sq : '', ag: !p.gnd && fin(p.ag) ? Math.round(p.ag) : null, ias: fin(p.ias) && p.ias > 0 ? Math.round(p.ias) : null, tas: fin(p.tas) && p.tas > 0 ? Math.round(p.tas) : null })),
       photos: photos.slice(0, 5).map(p => ({ url: p.large || p.medium, link: p.link || '', copyright: p.credit || '' }))
     };

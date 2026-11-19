@@ -586,6 +586,32 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     }
   }
 
+  // (1.4.0) FR24's box under its "On ground" list - "To get more than 1 hour of aircraft on ground history, please create a
+  // free account..." and its trial button: the list is every aircraft there now (the monitor's, ogRows) - taken away, with
+  // its "maximum number of hours" twin
+  const OG_PROMO = /aircraft on ground history|maximum number of hours for aircraft on ground/i;
+  function hideOgPromo(scope) {
+    if (!opt.on || !(opt.boards || opt.noAds)) return 0;
+    scope = scope || document.querySelector('[data-testid="airport-panel"]'); if (!scope || !OG_PROMO.test(scope.textContent || '')) return 0;
+    let n = 0; const w = document.createTreeWalker(scope, NodeFilter.SHOW_TEXT);
+    for (let t = w.nextNode(); t; t = w.nextNode()) {
+      if (!OG_PROMO.test(t.nodeValue || '')) continue;
+      let box = t.parentElement;
+      for (let up = t.parentElement, i = 0; up && up !== scope && i < 6; up = up.parentElement, i++) if (up.querySelector('button, a') && (up.textContent || '').length < 600) { box = up; break; }
+      if (box && !box.dataset.tlOgPromo) { box.dataset.tlOgPromo = '1'; box.style.setProperty('display', 'none', 'important'); n++; }
+    }
+    return n;
+  }
+  // (1.4.0) FR24's search box on its other pages - its data pages, its player's, a log's: the tags as on the map's, each
+  // time FR24 draws its results (the map's own watch runs on the map only - off it, the rows went untagged)
+  function watchSearchTags() {
+    let due = false;
+    const run = () => { due = false; try { tagSearchResults(); } catch (e) { log('search tags', e); } try { hideOgPromo(document.querySelector('main') || document.body); } catch (e) { log('on ground', e); } };
+    const mo = new MutationObserver(() => { if (due || !(document.querySelector('[data-testid="search__results"]') || document.querySelector('[data-testid="airport-panel"], main'))) return; due = true; setTimeout(run, 0); });
+    const go = () => { if (document.body) mo.observe(document.body, { childList: true, subtree: true }); };
+    store.kvReady.then(() => { if (document.body) go(); else document.addEventListener('DOMContentLoaded', go, { once: true }); }).catch(() => {});
+  }
+
   // ---- the yellow LADD / PIA / MIL tag wherever an identified aircraft appears ------------------------------------------
   // (panel header and search results above; here the airport boards, their expanded cards and "Recent <reg> flights")
   const badgeOf = r => r ? (r.ladd ? 'LADD' : r.pia ? 'PIA' : r.mil ? 'MIL' : '') : '';
@@ -729,6 +755,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     }
   }
   function tagEverything(added) {
+    try { hideOgPromo(); } catch (e) { log('on ground', e); }
     try { tagSearchResults(); tagLastClicked(); tagBookmarks(); tagMostTracked(); tagBoards(added); const panel = document.querySelector(SEL.panel); if (panel) { const cid = currentId(); tagRecent(panel, live.get(cid) || pubRecs.get(cid)); } } catch (e) { log('tags', e); }
   }
   // Run straight from the observer: its callback comes after the DOM change and before the next paint, so a new row

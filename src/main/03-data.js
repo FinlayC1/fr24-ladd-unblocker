@@ -2233,6 +2233,12 @@
     })().catch(e => { log('aircraft types', String(e && e.message || e)); return !!acx.idx; }).finally(() => { acx.loading = null; });
     return acx.loading;
   }
+  // (1.4.0) a type's name by its ICAO code, from the same index: "BE20" -> "Beech B200" (the on-ground list's rows)
+  function acTypeName(ty) {
+    const c = String(ty || '').toUpperCase(); if (!c || !acx.idx) return '';
+    if (!acx.byCode || acx.byCodeAt !== acx.got) { acx.byCode = new Map(); for (const f of acx.idx.families || []) for (const t of (f && f.types) || []) if (t && t.code && t.name && !acx.byCode.has(t.code)) acx.byCode.set(String(t.code).toUpperCase(), String(t.name)); acx.byCodeAt = acx.got; }
+    return acx.byCode.get(c) || '';
+  }
   function onAcDir(d) {
     const key = String(d && d.key || '').slice(0, 40);
     loadAcTypes().then(ok => postToPage('acDirGot', { key, families: ok && acx.idx ? acx.idx.families : null, at: ok && acx.idx ? acx.idx.at : 0 }));
