@@ -7,7 +7,7 @@
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
   // (1.4.1: the app's "Map drawing: compatible mode" on unless switched off - mapSafe; 1.4.0's mapCompat, off by default
   // and kept with the rest whenever any switch was saved, is not read: the mode it chose fixes the map, so every phone has it)
-  const OPT_DEFAULTS = { on: true, strip: true, boards: true, search: true, acPages: true, alerts: true, noAds: true, mapx: true, count: true, mapSafe: true };
+  const OPT_DEFAULTS = { on: true, strip: true, boards: true, search: true, acPages: true, classic: true, alerts: true, noAds: true, mapx: true, count: true, mapSafe: true };
   const opt = (() => { let o = null; try { o = JSON.parse(localStorage.getItem(OPT_KEY) || 'null'); } catch (_) { o = null; } const r = Object.assign({}, OPT_DEFAULTS, o && typeof o === 'object' ? o : {}); delete r.mapCompat; return r; })();
   const NM_KM = 1.852;
   const AREA_RADIUS_NM = 220;           // aggregator "point" radius for viewport sweeps (APIs cap at 250)

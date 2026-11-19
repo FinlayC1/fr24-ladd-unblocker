@@ -172,6 +172,19 @@ On the map's airport panel, FR24 locks two pictures and leaves other parts out. 
 
 FR24 names its locked pictures `airport-panel__promo-…`. Where a picture has no such name, it is found under its title. The panel is redone whenever FR24 redraws it.
 
+### 3.7 FR24's log pages as they were (1.4.1)
+
+On 19 November 2026 FR24 replaced its aircraft pages (`/data/aircraft/<reg>`), flight-number pages (`/data/flights/<n>`) and playback page (`/data/playback/<id>`) with pages of its new app. Every one of them is drawn in the old design again on a computer (`06-classic.js`, switch `classic`):
+
+- **Data.** FR24's new pages are Inertia components (`Data/AircraftRegistration`, `Data/FlightHistory`). Their data is in `#app[data-page]` when the page arrives, so it is read before FR24's script draws anything. FR24's page is hidden until the old one is drawn: there is no flash of the new design.
+- **Markup.** The old pages' own markup, ids and classes: `#content.bootstrap.data-aircraft`, the breadcrumbs, `.section-header` with `#cnt-subpage-info` and `#cnt-aircraft-info`, `#cnt-playback`, `#tbl-datatable` with its 14-cell rows, `#fr24_ViewsToolbar`. Everything the script did on the old pages (`06-acpage.js`, `06-pbpage.js`) works on them unchanged.
+- **Look.** The old pages' stylesheets are loaded from FR24's server in their old order, before FR24's own (Bootstrap 3.3.7, `screen_new.css`, `nav-top.css`, `fr-components.css`, the page's own `pages/data/*.css`, `main.*.css`). FR24's new app stays in the document with only its header shown: the same header the old pages carried. Nothing of FR24's is copied into the script. The few icons the old pages took from a picture set FR24 no longer serves are plain shapes drawn here; the panel's logo is the header's own picture.
+- **Playback.** A row's Play does what the old page script did: the map 600 px high with the page over its foot, the panel filled from the row, then FR24's own track (`flight-playback.json`, with its median flight time and delay). A rebuilt row's flight plays its public ADS-B track (`pbFlight`). The map is drawn tile by tile from Esri's services (satellite with roads and places by default, like the old "Hybrid"), with FR24's own airport pins.
+- **Navigation.** FR24's playback page goes to the aircraft's page with the flight's id after `#`, where it plays, as the old site linked it. A move inside FR24's new app (its header's search) loads the page, so it is drawn the old way too.
+- **Not in the app**, which keeps its phone layout of FR24's new pages. A page FR24 still serves in the old design (a callsign it has no flight of) is left as it is.
+
+`test/unit_classic.cjs` checks the pages, the rows, the panel and the switch.
+
 ## 4. The monitor
 
 ### 4.1 Polling loop

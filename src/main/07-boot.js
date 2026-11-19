@@ -363,16 +363,18 @@
 
   }
   // (log and flight-number pages: the page bridge too - FR24's search box there lists what this script knows)
+  // (1.4.1: FR24's log pages drawn as they were first - 06-classic - the aircraft's and flight's own work then on them)
+  const classicP = (isAircraftPage || isFlightPage || /^\/data\/playback\//i.test(location.pathname)) ? classicBoot().catch(e => { log('classic page', e); return false; }) : Promise.resolve(false);
   if (isAircraftPage) {
     installBridge();
-    if (opt.acPages) bootAircraftPage().catch(e => log('aircraft page', e));
+    if (opt.acPages) classicP.then(() => bootAircraftPage()).catch(e => log('aircraft page', e));
     // (1.3.12: in the app on a phone, the page laid out as a phone app lays it out - 06-phone)
     try { phoneView(); } catch (e) { log('phone view', e); }
     // (1.3.7: a type's production list - FR24's server's page - its padlocked first flights (ages) filled)
     if (/^\/data\/aircraft\/[^/]+\/[^/]+/i.test(location.pathname)) setInterval(() => { prodListTick().catch(e => log('production list', String(e && e.message || e))); }, 1500);
   } else if (isFlightPage) {
     installBridge();
-    if (opt.acPages) bootFlightPage().catch(e => log('flight page', e));
+    if (opt.acPages) classicP.then(() => bootFlightPage()).catch(e => log('flight page', e));
     try { phoneView(); } catch (e) { log('phone view', e); }
   } else if (isDataPage) {
     // FR24's airport pages - general, boards, routes, statistics: only the bridge for their lists and what they ask for (the

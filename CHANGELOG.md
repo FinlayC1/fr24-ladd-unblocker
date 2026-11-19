@@ -7,6 +7,11 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 ## [1.4.1] - 2026-11-19
 
 ### In short
+- **FR24's log pages look as they did before its 19 November redesign.** On a computer, every aircraft page, flight-number page and playback is drawn in the old design again: FR24's header, the breadcrumbs, the grey title bar with the aircraft's facts and pictures, the table of flights with KML, CSV and Play, and the playback panel over the map.
+  - It uses FR24's own stylesheets for those pages, still on its server, so it looks exactly as it did.
+  - Everything this script did on the old pages works again: rebuilt logs, the flights before FR24's week, flight numbers blue and linked on rebuilt rows, the airports FR24 guessed replaced, and the padlocked figures filled.
+  - FR24's new playback page (`/data/playback/<id>`) opens the aircraft's page and plays there, as before.
+  - The new switch *Old-style log pages* turns it off.
 - **Every Playback in the app opens our player.** That includes the Playback in a live aircraft's panel and in its recent flights, which still opened FR24's old player for a computer.
 - **The map draws cleanly when zoomed.** The app's *Map drawing: compatible mode* fixed aircraft and airport pins breaking up and smearing on a Samsung phone. It is now on by default; the switch can turn it off.
 - **Playback names its flight in full,** as FR24's own does:
@@ -26,6 +31,14 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 - **Flights before FR24's week show at once** under FR24's own rows, and show their flight number (U22265, not "(EZY64HA)"), as FR24's rows do. A flight number's earlier flights no longer wait for the OurAirports list.
 
 ### Added
+- **FR24's old log pages** (`src/main/06-classic.js`). FR24's new pages (Inertia components `Data/AircraftRegistration`, `Data/FlightHistory`) carry their data in `#app[data-page]`; it is read as the page opens and drawn in the old pages' own markup, ids and classes.
+  - FR24's new page stays in the document, hidden except for its header, which is the same header the old pages had.
+  - The old pages' stylesheets load from FR24's server in their old order, before FR24's own: Bootstrap 3.3.7, `screen_new.css`, `nav-top.css`, `fr-components.css`, `pages/data/aircraft.aircraft.css` or `flights.flight.css`, `main.*.css`. Nothing of FR24's is copied into the script.
+  - Rows: FR24's statuses as the old pages wrote them ("Landed 16:25", "Estimated 21:19", "Estimated departure 22:12"), times local to each airport, KML and CSV by FR24's id, *Live* for a flight in the air, *Share* for one not flown yet.
+  - The playback panel and map: FR24's own track of the flight (`flight-playback.json`) with its median flight time and arrival delay; the map 600 px high with the page over its foot, as the old page script laid it out; play, pause, the slider, follow, great-circle route and the chart. The map is Esri's (satellite with roads and places, like the old "Hybrid"; the settings menu offers Terrain, Roadmap, Greyscale, Radar (dark) and Satellite) with FR24's own airport pins.
+  - The few icons the old pages took from a picture set FR24 no longer serves are drawn as plain shapes. The panel's logo is FR24's own, from its header.
+  - A move to another page inside FR24's new app (its header's search) loads that page, so it is drawn the old way too.
+  - Off in the app, which keeps its phone layout of FR24's new pages. Switch: `classic` in the LADD Unblock window.
 - **The monitor's flights by flight number** (`monitor/fr24fn.cjs`, `GET /fr24fn?fn=`, `GET /csfn?cs=`).
   - FR24's map feed is now asked for each flight's number (`flight`, `monitor/fr24.cjs` `MASKS`).
   - Every flight the scans see with a flight number is followed: FR24's id, callsign, aircraft, FR24's route, and when it was seen take off and land. It is written by flight number 45 minutes after it was last seen and kept 100 days (`fnDays`).
