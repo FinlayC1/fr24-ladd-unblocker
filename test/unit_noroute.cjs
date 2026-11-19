@@ -1,6 +1,6 @@
 // (1.1.0) Every flight FR24 draws without a destination, worked out on the monitor too:
-//   - the world scan asks FR24 for the route and the aircraft's address in each record; refused, the next step down (route
-//     alone, then type and registration as before) - the scan goes on;
+//   - the world scan asks FR24 for the flight number (1.4.1), the route and the aircraft's address in each record; refused,
+//     the next step down (route and address, route alone, then type and registration as before) - the scan goes on;
 //   - routes known only when FR24 sends them (a twentieth of the records at least): asked and not sent, none taken for
 //     "no destination";
 //   - a flight with a callsign or registration, airborne, no destination, its address known: kept as the scans see it,
@@ -22,21 +22,25 @@ const check = (name, ok, info) => { if (!ok) fails++; console.log((ok ? 'PASS  '
   // ---- the request
   { const q = FR.liveFeedRequest({ n: 60, s: 50, w: -10, e: 5, mask: FR.MASKS[0] }), fs0 = FR.parse(q), mask = FR.parse(fs0.find(f => f.fn === 10).val).map(f => Buffer.from(f.val).toString());
     const q2 = FR.liveFeedRequest({ n: 60, s: 50, w: -10, e: 5 }), mask2 = FR.parse(FR.parse(q2).find(f => f.fn === 10).val).map(f => Buffer.from(f.val).toString());
-    check('the world scan asks for the route and the aircraft\'s address in every record; without a mask, type and registration as before', mask.join() === 'type,reg,route,icao_address' && mask2.join() === 'type,reg', { mask, mask2 }); }
+    check('the world scan asks for the flight number, the route and the aircraft\'s address in every record; without a mask, type and registration as before', mask.join() === 'flight,type,reg,route,icao_address' && mask2.join() === 'type,reg', { mask, mask2 }); }
   // ---- refused: the next step down
   const F24 = M.F24ref(), CFG = M.CFG, asked = [];
   CFG.fr24Scan = true; CFG.fr24Gap = 0;
   const T = Math.floor(Date.now() / 1000);
   const rec = (id, o) => Object.assign({ id, lat: 51, lon: -1, trk: 90, alt: 20000, spd: 300, icon: 1, ts: T, gnd: false, cs: 'NJE' + id, src: 0, reg: 'CS-D' + id, type: 'C68A', hex: (0x490000 + id).toString(16), from: 'LTN', to: '' }, o);
-  let mode = 'refuse';
+  let mode = 'refuseFlight';
   M.fr24.liveFeed = async q => {
     asked.push((q.mask || []).join(','));
+    if (mode === 'refuseFlight' && (q.mask || []).includes('flight')) throw new Error('grpc 3 unknown field');
     if (mode === 'refuse' && (q.mask || []).includes('icao_address')) throw new Error('grpc 3 unknown field');
     if (mode === 'quiet') return { flights: Array.from({ length: 60 }, (_, i) => rec(100 + i, { from: '', to: '', hex: '' })), serverTime: T };
     return { flights: [rec(1), rec(2, { to: 'LHR' }), rec(3, { gnd: true, alt: 0 }), rec(4, { hex: '' }), rec(5, { cs: '', reg: '' })].concat(Array.from({ length: 60 }, (_, i) => rec(200 + i, { to: 'CDG' }))), serverTime: T };
   };
   await M.fr24Round();
-  check('FR24 refusing the fields asked for: one request only, then the next step down (the route alone)', asked.length === 1 && F24.mask === 1 && asked[0] === 'type,reg,route,icao_address', { asked, mask: F24.mask });
+  check('FR24 refusing the flight number: one request only, then the next step down (the route and the address)', asked.length === 1 && F24.mask === 1 && asked[0] === 'flight,type,reg,route,icao_address', { asked, mask: F24.mask });
+  asked.length = 0; mode = 'refuse';
+  await M.fr24Round();
+  check('... refusing the address as well: one request only, then the next step down (the route alone)', asked.length === 1 && F24.mask === 2 && asked[0] === 'type,reg,route,icao_address', { asked, mask: F24.mask });
   asked.length = 0; mode = 'quiet';
   await M.fr24Round();
   check('... asked and no record says where it goes: routes not taken as known - no flight kept as "no destination"', asked[0] === 'type,reg,route' && F24.routeOk === false && M.naF.size === 0, { routeOk: F24.routeOk, n: M.naF.size });

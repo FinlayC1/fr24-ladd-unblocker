@@ -688,7 +688,7 @@
   // none of an airport it does not list. As the boards' rows: its type's name, its airline by its callsign, where it came
   // from by FR24's route, its tag where it is one of the blocked aircraft
   async function ogRows(apId) {
-    if (!(Number(apId) > 0) || !monUp()) return [];
+    if (!(Number(apId) > 0) || !(await monReady())) return [];
     let j = null; try { j = await monGet(`/onground?ap=${Number(apId)}`, { timeout: 6000 }); } catch (e) { return []; }
     await Promise.race([Promise.all([fr24.airlines ? null : fr24.loadAirlines().catch(() => {}), loadAcTypes().catch(() => false)]), sleep(1500)]);
     const out = [];

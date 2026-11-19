@@ -40,11 +40,15 @@ Everything the extension does on FR24's site, on FR24's site as a phone gets it:
   number, the aircraft's pictures and details, then its flights by year, one line each - tap one for its times, status
   and its Play, KML and CSV; *Play* opens FR24's own player page for a phone, with its map and slider (1.3.13)
 - every Play opens FR24's own player for a phone - search results, an aircraft's panel, airport boards, live flights
-  (1.4.0); a blocked aircraft's opens on a loading screen while it is made ready, its aircraft drawn with its own icon
+  (1.4.0); a blocked aircraft's opens on a loading screen while it is made ready, its aircraft drawn with its own icon.
+  (1.4.1) The panel's own Playback and its recent flights' too (FR24 opens those with `window.open`), on a tablet as
+  well; the player names its flight in full - airline or owner, flight number, airports, runways - and its back
+  button, *Flights*, goes back to the log the flight was played from
 - no "Open in app" pill or app banner (1.3.12)
-- *Map drawing: compatible mode* in the LADD Unblock window (1.4.0, off by default): for aircraft and airport pins that
-  break up or smear when the map is zoomed - FR24's map drawn without keeping its last picture or smoothing its edges,
-  from the next load. *This browser* there says what draws the map (the phone's graphics, the WebView): send it with
+- *Map drawing: compatible mode* in the LADD Unblock window (1.4.0; on by default since 1.4.1): for aircraft and
+  airport pins that break up or smear when the map is zoomed - FR24's map drawn without keeping its last picture or
+  smoothing its edges, from the next load. It fixed them on a Samsung Xclipse (ANGLE on Vulkan); switch it off for
+  FR24's own drawing. *This browser* there says what draws the map (the phone's graphics, the WebView): send it with
   a report if the map draws wrong either way
 
 What is different from FR24's own app:

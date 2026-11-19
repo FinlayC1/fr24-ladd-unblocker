@@ -172,6 +172,19 @@ On the map's airport panel, FR24 locks two pictures and leaves other parts out. 
 
 FR24 names its locked pictures `airport-panel__promo-…`. Where a picture has no such name, it is found under its title. The panel is redone whenever FR24 redraws it.
 
+### 3.7 FR24's log pages as they were (1.4.1)
+
+On 19 November 2026 FR24 replaced its aircraft pages (`/data/aircraft/<reg>`), flight-number pages (`/data/flights/<n>`) and playback page (`/data/playback/<id>`) with pages of its new app. Every one of them is drawn in the old design again on a computer (`06-classic.js`, switch `classic`):
+
+- **Data.** FR24's new pages are Inertia components (`Data/AircraftRegistration`, `Data/FlightHistory`). Their data is in `#app[data-page]` when the page arrives, so it is read before FR24's script draws anything. FR24's page is hidden until the old one is drawn: there is no flash of the new design.
+- **Markup.** The old pages' own markup, ids and classes: `#content.bootstrap.data-aircraft`, the breadcrumbs, `.section-header` with `#cnt-subpage-info` and `#cnt-aircraft-info`, `#cnt-playback`, `#tbl-datatable` with its 14-cell rows, `#fr24_ViewsToolbar`. Everything the script did on the old pages (`06-acpage.js`, `06-pbpage.js`) works on them unchanged.
+- **Look.** The old pages' stylesheets are loaded from FR24's server in their old order, before FR24's own (Bootstrap 3.3.7, `screen_new.css`, `nav-top.css`, `fr-components.css`, the page's own `pages/data/*.css`, `main.*.css`). FR24's new app stays in the document with only its header shown: the same header the old pages carried. Nothing of FR24's is copied into the script. The few icons the old pages took from a picture set FR24 no longer serves are plain shapes drawn here; the panel's logo is the header's own picture.
+- **Playback.** A row's Play does what the old page script did: the map 600 px high with the page over its foot, the panel filled from the row, then FR24's own track (`flight-playback.json`, with its median flight time and delay). A rebuilt row's flight plays its public ADS-B track (`pbFlight`). The map is drawn tile by tile from Esri's services (satellite with roads and places by default, like the old "Hybrid"), with FR24's own airport pins.
+- **Navigation.** FR24's playback page goes to the aircraft's page with the flight's id after `#`, where it plays, as the old site linked it. A move inside FR24's new app (its header's search) loads the page, so it is drawn the old way too.
+- **Not in the app**, which keeps its phone layout of FR24's new pages. A page FR24 still serves in the old design (a callsign it has no flight of) is left as it is.
+
+`test/unit_classic.cjs` checks the pages, the rows, the panel and the switch.
+
 ## 4. The monitor
 
 ### 4.1 Polling loop
@@ -214,6 +227,12 @@ Since 1.4.0 the monitor also keeps every aircraft **on the ground** at every air
 - Any report of it in the air after that takes it off the list.
 
 The list is kept for up to a week and written every quarter of an hour. The boards' *On ground* adds it to FR24's own list (a free account gets FR24's last hour), and an OurAirports field's board shows it alone.
+
+Since 1.4.1 the monitor also keeps every flight of FR24's map **by its flight number** (`fr24fn.cjs`). The scans ask FR24's feed for each flight's number with the rest (`flight`, ExtendedFlightInfo field 1). A flight with one is followed while it is seen - its FR24 id, callsign, aircraft, FR24's route, and when it was first and last seen in the air - and written by its number 45 minutes after it was last seen, to a month's file of its number (256 files a month). It is kept 100 days (`fnDays`). `/fr24fn?fn=` gives a number's flights by time; a flight number's log page lists those before FR24's week under FR24's own rows, each played on FR24's positions the monitor kept. Each airline callsign's flight number as FR24 last showed it is kept a year (`/csfn?cs=`), for the playback of a flight FR24 no longer has. FR24's positions of every flight keep its number and route with them too.
+
+Since 1.4.1 the **runways a player shows come from the monitor alone** (`/rwyof`: both ends of a flight in one answer, by FR24's id, else by the aircraft and its times). Every take-off and landing is logged there as it happens, and one it has not logged it works out from the positions it keeps. Nothing is fitted in the browser and FR24's API is not asked for a track. A page opened just now waits a few seconds for the monitor's first check (`monReady`) instead of going without it.
+
+Since 1.4.1 an aircraft's log page also reads **where each of FR24's flights really began and ended** (`/fr24ends`, every row in one ask). FR24 names a nearby airport for many flights with no plan filed. Where FR24's own track is down at another field - on the ground, or a helicopter within 500 ft of it, slow - over 5 km from FR24's airport and 3 km nearer the track, that field replaces FR24's airport: in the log, the next flight's end copied from it, and FR24's player. A flight lost in the air keeps FR24's airport. Where the monitor's positions stop short of the ground, FR24's whole track is asked for to be sure.
 
 Since 1.2.10 the runway log has every airport's airliners, not only the airports someone is looking at. A **low scan** asks FR24's feed every 30 seconds for the flights in the air below the height each region's airports need (6,000 ft, 10,500 ft over the western US, 11,000 ft over Europe, Africa and the Middle East, 13,000 ft over Asia, 17,000 ft over Latin America), with FR24's own altitude filter (LiveFeed field 3, an altitude range). About 5,000 flights, in eight requests, North America cut so that each region takes one. Each is fed to the runway log and its callsign-less flights to the identification. The world scan runs every minute. When FR24 pushes back, every scan runs at half speed for six hours (a quarter after a second pushback).
 

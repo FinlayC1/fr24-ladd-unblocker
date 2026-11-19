@@ -71,13 +71,14 @@ function liveFeedRequest(q) {
 // (1.1.0) The fields asked for in every record - each step down taken when FR24 refuses the one before: the route and the
 // aircraft's address too (every flight it shows without a destination worked out here), the route alone, type and
 // registration only (as the userscript asks)
-const MASKS = [['type', 'reg', 'route', 'icao_address'], ['type', 'reg', 'route'], ['type', 'reg']];
+// (1.4.1: and the flight number - 'flight', ExtendedFlightInfo's field 1 - for the flights' index by number, fr24fn.cjs)
+const MASKS = [['flight', 'type', 'reg', 'route', 'icao_address'], ['type', 'reg', 'route', 'icao_address'], ['type', 'reg', 'route'], ['type', 'reg']];
 // One Flight record as the userscript's page.js reads it (patchFlight)
 function flightOf(fb) {
   const fs = parse(fb), id = num(fs, 1); if (!id) return null;
   const ex = sub(fs, 13), rt = sub(ex, 3), hex = num(ex, 14);
   return { id, lat: flt(fs, 2), lon: flt(fs, 3), trk: num(fs, 4), alt: int32(num(fs, 5)), spd: num(fs, 6), icon: num(fs, 7), ts: num(fs, 9), gnd: !!num(fs, 10),
-    cs: str(fs, 11), src: num(fs, 12), reg: str(ex, 2), type: str(ex, 4), hex: hex ? ('000000' + hex.toString(16)).slice(-6) : '', from: str(rt, 1), to: str(rt, 2) };
+    cs: str(fs, 11), src: num(fs, 12), reg: str(ex, 2), type: str(ex, 4), hex: hex ? ('000000' + hex.toString(16)).slice(-6) : '', from: str(rt, 1), to: str(rt, 2), fn: str(ex, 1) };
 }
 // LiveFeedResponse -> its flights (1 and 3), FR24's server time
 function decodeLiveFeed(msg) {

@@ -82,7 +82,8 @@ function createFr24Raw(env) {
   // (in a list of times in order: there? - and two such lists made one, each time once)
   const has = (ts, t) => { let lo = 0, hi = ts.length; while (lo < hi) { const m = (lo + hi) >> 1; if (ts[m] < t) lo = m + 1; else hi = m; } return lo < ts.length && ts[lo] === t; };
   function merge(a, b) { const out = []; let i = 0, j = 0; while (i < a.length || j < b.length) { const v = j >= b.length || (i < a.length && a[i] <= b[j]) ? a[i++] : b[j++]; if (out[out.length - 1] !== v) out.push(v); } return out; }
-  function cleanMeta(m) { const o = {}; for (const k of ['hex', 'reg', 'cs', 'type', 'fn']) if (m && typeof m[k] === 'string' && m[k]) o[k] = m[k].slice(0, 16); return o; }
+  // (1.4.1: and FR24's route of the flight - from, to: IATA codes - with its flight number)
+  function cleanMeta(m) { const o = {}; for (const k of ['hex', 'reg', 'cs', 'type', 'fn', 'from', 'to']) if (m && typeof m[k] === 'string' && m[k]) o[k] = m[k].slice(0, 16); return o; }
   // a flight's points (any order, any number) and what it is - added to those to be written
   function put(id, meta, pts) {
     const fid = fidOf(id); if (!fid || !Array.isArray(pts) || !pts.length) return 0;

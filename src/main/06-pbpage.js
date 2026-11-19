@@ -11,12 +11,24 @@
   // (1.4.0) A flight's runways - its take-off's at the field it left, its landing's where it landed: the monitor's log of
   // FR24's tracks by the flight's id, else its blocked flights' by the aircraft's address and the time - for FR24's player
   // (its flight times card had a padlock over them)
+  // (1.4.1: both ends in one answer of the monitor's - /rwyof: by FR24's id, else by the aircraft and its times, the
+  // blocked flights' log and FR24's flights of the aircraft then, each one's logged as it happened or worked out there
+  // from its positions kept. Nothing worked out here: every take-off and landing is on the monitor. A monitor before
+  // 1.4.1: asked end by end as before)
   async function pbRunways(hex, fid, from, to, dep, arr) {
-    const out = { off: '', on: '' }; if (!monUp()) return out;
+    const out = { off: '', on: '' }; if (!(await monReady())) return out;
+    hex = /^[0-9a-f]{6}$/.test(hex || '') ? hex : ''; fid = /^[0-9a-f]{1,12}$/.test(fid || '') ? fid : '';
+    const offOk = from && Number(from.id) > 0 && dep > 1e9, onOk = to && Number(to.id) > 0 && arr > 1e9;
+    if (!offOk && !onOk || (!hex && !fid)) return out;
+    const q = (fid ? 'fid=' + fid : '') + (hex ? (fid ? '&' : '') + 'hex=' + hex : '') + (offOk ? `&off=${from.id},${Math.round(dep)}` : '') + (onOk ? `&on=${to.id},${Math.round(arr)}` : '');
+    try {
+      const j = await monGet('/rwyof?' + q, { timeout: 8000 });
+      if (j && j.v) { out.off = typeof j.off === 'string' ? j.off.slice(0, 8) : ''; out.on = typeof j.on === 'string' ? j.on.slice(0, 8) : ''; return out; }
+    } catch (e) { if (!/HTTP 404/.test(String(e && e.message || e))) return out; }
     const one = async (ap, end, t) => {
       if (!ap || !(Number(ap.id) > 0) || !(t > 1e9)) return '';
       if (fid) { try { const j = await monGet(`/rwy?f=${fid}:${end}&ap=${ap.id}&ts=${Math.round(t)}`, { timeout: 5000 }); const v = j && j.list && j.list[`${fid}:${end}`]; if (typeof v === 'string' && v) return v.slice(0, 8); } catch (e) { /* by the aircraft */ } }
-      if (/^[0-9a-f]{6}$/.test(hex || '')) {
+      if (hex) {
         try {
           const old = t < nowS() - 2 * 86400 ? '&old=1' : '';
           const j = await monGet(`/rwyap?ap=${ap.id}&from=${Math.round(t - 3600)}&to=${Math.round(t + 3600)}${old}`, { timeout: 6000 });
@@ -26,7 +38,7 @@
       }
       return '';
     };
-    [out.off, out.on] = await Promise.all([one(from, 0, dep), one(to, 1, arr)]);
+    [out.off, out.on] = await Promise.all([one(offOk ? from : null, 0, dep), one(onOk ? to : null, 1, arr)]);
     return out;
   }
   function pbAirport(a) {
@@ -36,7 +48,7 @@
   }
   // (the monitor's FR24 positions of a flight, as the engine's points)
   async function pbRaw(fid, t) {
-    if (!/^[0-9a-f]{1,12}$/.test(fid) || !monUp()) return { pts: [], m: {} };
+    if (!/^[0-9a-f]{1,12}$/.test(fid) || !(await monReady())) return { pts: [], m: {} };
     try {
       const j = await monGet('/fr24raw?f=' + fid + (t > 1e9 ? '&t=' + Math.round(t) : ''), { timeout: 20000 }), C = (j && j.cols) || [], at = k => C.indexOf(k), pts = [];
       for (const r of Array.isArray(j && j.p) ? j.p : []) {
@@ -69,16 +81,91 @@
   // (1.3.12) a flight of a log rebuilt here - no FR24 id of its own: FR24's positions of its aircraft in that time, as the
   // monitor kept them (/fr24of: the aircraft's FR24 flights then; /fr24raw: each one's points) - none from a monitor
   // before 1.3.12, or of a day before it kept them by aircraft
-  async function pbFr24Of(hex, t0, t1) {
-    if (!/^[0-9a-f]{6}$/.test(hex) || !monUp() || !(t1 > t0)) return [];
+  // (1.4.1: and what FR24 said of the flight with them - its flight number and route, kept by a monitor of 1.4.1 on: the
+  // meta of the one FR24 flight with most points then)
+  async function pbFr24Of(hex, t0, t1, metaOut) {
+    if (!/^[0-9a-f]{6}$/.test(hex) || !(t1 > t0) || !(await monReady())) return [];
     let list = [];
     try { const j = await monGet(`/fr24of?hex=${hex}&t0=${Math.round(t0)}&t1=${Math.round(t1)}`, { timeout: 12000 }); list = Array.isArray(j && j.list) ? j.list : []; } catch (e) { return []; }
-    const by = new Map();
+    const by = new Map(); let most = 0;
     for (const x of list.filter(x => x && /^[0-9a-f]{1,12}$/.test(String(x.fid || ''))).slice(0, 4)) {
       const r = await pbRaw(String(x.fid), fin(x.t0) ? x.t0 : t0);
-      for (const p of r.pts) if (p.t >= t0 && p.t <= t1 && !by.has(p.t)) by.set(p.t, p);
+      let n = 0; for (const p of r.pts) if (p.t >= t0 && p.t <= t1 && !by.has(p.t)) { by.set(p.t, p); n++; }
+      if (metaOut && n > most && r.m) { most = n; Object.assign(metaOut, r.m, { fid: String(x.fid) }); }
     }
     return [...by.values()].sort((p, q) => p.t - q.t);
+  }
+  // ---- (1.4.1) what FR24's player names a flight by: its flight number, its airline (or the aircraft's operator / owner)
+  // FR24's own flight number of a callsign - the monitor learns every pair FR24's map shows (/csfn) - kept here a day
+  const csFnMemo = new Map();
+  async function csFlightNumber(cs) {
+    cs = clean(cs).toUpperCase(); if (!/^[A-Z]{3}\d[A-Z0-9]{0,4}$/.test(cs)) return '';
+    const m = csFnMemo.get(cs); if (m && now() - m.at < 864e5) return m.fn;
+    let fn = '';
+    if (await monReady()) { try { const j = await monGet('/csfn?cs=' + encodeURIComponent(cs), { timeout: 5000 }); const v = j && j.list && j.list[cs]; if (typeof v === 'string' && /^[A-Z0-9]{2,3}\d{1,5}[A-Z]?$/.test(v)) fn = v; } catch (e) { /* none */ } }
+    // (none learnt: an airline's numbered callsign is its flight number with its IATA code - UAL972 is UA972; one with
+    // letters in it - EZY327L, U2414 - is not, and has none here)
+    if (!fn && /^[A-Z]{3}\d{1,4}$/.test(cs)) { await Promise.race([fr24.loadAirlines().catch(() => null), sleep(3000)]); const id = fr24.byIcao.get(cs.slice(0, 3)), a = id && fr24.airlines ? fr24.airlines.get(id) : null; if (a && /^[A-Z0-9]{2}$/.test(a.iata || '')) fn = a.iata + String(Number(cs.slice(3))); }
+    csFnMemo.set(cs, { fn, at: now() }); if (csFnMemo.size > 2000) csFnMemo.delete(csFnMemo.keys().next().value);
+    return fn;
+  }
+  // (1.4.1) many callsigns' flight numbers at once - the log pages' rows: one ask of the monitor for those not known here
+  // (100 a time), then the numbered callsigns' IATA form; how many are known now
+  const CS_FN_RE = /^[A-Z]{3}\d[A-Z0-9]{0,4}$/, csFnBusy = new Set();
+  async function csFlightNumbers(list) {
+    const miss = [...new Set((list || []).map(c => clean(c).toUpperCase()))].filter(c => CS_FN_RE.test(c) && !csFnBusy.has(c) && !(csFnMemo.has(c) && now() - csFnMemo.get(c).at < 864e5));
+    if (!miss.length) return 0;
+    miss.forEach(c => csFnBusy.add(c));
+    let got = 0;
+    try {
+      const learnt = {};
+      if (await monReady()) for (let i = 0; i < miss.length; i += 100) { try { const j = await monGet('/csfn?cs=' + miss.slice(i, i + 100).map(encodeURIComponent).join(','), { timeout: 8000 }); Object.assign(learnt, (j && j.list) || {}); } catch (e) { /* none */ } }
+      if (miss.some(c => !learnt[c] && /^[A-Z]{3}\d{1,4}$/.test(c))) await Promise.race([fr24.loadAirlines().catch(() => null), sleep(3000)]);
+      for (const c of miss) {
+        let fn = typeof learnt[c] === 'string' && /^[A-Z0-9]{2,3}\d{1,5}[A-Z]?$/.test(learnt[c]) ? learnt[c] : '';
+        if (!fn && /^[A-Z]{3}\d{1,4}$/.test(c)) { const id = fr24.byIcao.get(c.slice(0, 3)), a = id && fr24.airlines ? fr24.airlines.get(id) : null; if (a && /^[A-Z0-9]{2}$/.test(a.iata || '')) fn = a.iata + String(Number(c.slice(3))); }
+        csFnMemo.set(c, { fn, at: now() }); if (fn) got++;
+      }
+      while (csFnMemo.size > 2000) csFnMemo.delete(csFnMemo.keys().next().value);
+    } finally { miss.forEach(c => csFnBusy.delete(c)); }
+    return got;
+  }
+  // (a callsign's flight number as known here now - '' none, or not asked yet)
+  const fnKnown = cs => { const m = csFnMemo.get(clean(cs).toUpperCase()); return (m && m.fn) || ''; };
+  // (the rows' callsigns: their flight numbers asked for, the rows drawn again when any came)
+  const wantFns = (legs, redraw) => { csFlightNumbers((legs || []).map(l => l && l.cs)).then(n => { if (n && redraw) redraw(); }).catch(e => log('flight numbers', String(e && e.message || e))); };
+  // (an airline's callsign - three letters and a number: FR24's airline of that ICAO code, its id for the logo)
+  const csAirlineId = cs => { const c = /^([A-Z]{3})\d/.exec(clean(cs).toUpperCase()); return (c && fr24.byIcao.get(c[1])) || 0; };
+  // (the aircraft's operator or owner as the registers have it - asked of them, a few seconds at most: the page may have
+  // opened just to play the flight, nothing of the aircraft read yet)
+  async function pbOperator(hex, reg, cs) {
+    await Promise.race([Promise.all([fr24.loadAirlines().catch(() => null), /^[0-9a-f]{6}$/.test(hex) ? publicIdentity(hex, reg).catch(() => null) : null]), sleep(5000)]);
+    const alId = csAirlineId(cs), al = alId ? fr24.airlineName(alId) : '';
+    const hx = /^[0-9a-f]{6}$/.test(hex) ? store.getHex(hex) || {} : {};
+    return { name: al || shownOwner(hx, cs) || '', alId: al ? alId : operatorIdOf(hx, cs) || 0 };
+  }
+  // (the aircraft's own log read before it is looked in - the page may have opened just to play it: knownLegs reads only
+  // what is in memory. Then the monitor's flights of it for one this browser has not got - JDI01, Cincinnati to
+  // Manchester: on a phone, where its log had never been read, no flight was found, no airports, and the track was cut
+  // at the Atlantic's hole; whole on the computer, where its log page had it read)
+  async function pbLegNear(hex, dep) {
+    if (!/^[0-9a-f]{6}$/.test(hex) || !(dep > 0)) return null;
+    await Promise.race([Promise.all([store.getHist(hex).catch(() => null), warmToday([hex]).catch(() => null)]), sleep(4000)]);
+    const near = legs => { let leg = null, best = 3 * 3600; for (const l of legs || []) { if (!l || !(l.tStart > 0)) continue; const dt = Math.abs((l.tOff || l.tStart) - dep); if (dt < best) { best = dt; leg = l; } } return leg; };
+    let leg = near(knownLegs(hex));
+    if (!leg && await monReady()) {
+      try { const j = await monGet('/legs?hex=' + hex, { timeout: 6000 }); leg = near(Array.isArray(j && j.legs) ? j.legs.filter(l => l && fin(l.tStart) && fin(l.tEnd)) : []); if (leg) leg = Object.assign({ mon: true }, leg); } catch (e) { /* none */ }
+    }
+    return leg;
+  }
+  // (no flight of it known anywhere: the flight made of its track here, as its log would make it - its ends, and a hole in
+  // the record a flight crosses - an ocean - inside it, not where it was cut)
+  function pbLegOfPts(hex, pts, dep) {
+    try {
+      const ac = acOfHex(hex), cls = ENGINE.classify(ac), heli = cls === 'heli';
+      const sums = ENGINE.chainLegs(ENGINE.stitchLegs(summarize(ENGINE.legsFromPoints(pts, { heli, patrol: cls === 'fighter' || cls === 'milheavy', cls, type: ac.type, rangeKm: ENGINE.typeRangeKm(ac), dataEnd: Math.min(nowS(), pts[pts.length - 1].t + 3600) }), hex)), legCtx(hex));
+      return sums.find(s => dep >= s.tStart - 600 && dep <= s.tEnd) || sums.find(s => s.tStart > dep && s.tStart - dep < 3 * 3600) || null;
+    } catch (e) { log('playback leg', String(e && e.message || e)); return null; }
   }
   // (two records of one flight made one: the fuller first, the other's points where it has none for 30 s and more)
   function pbMergePts(a, b) {
@@ -127,6 +214,9 @@
   async function pbFlight(d) {
     const id = clean(d.id).toLowerCase(), syn = PB_SYN.exec(id), fidNum = !syn && /^[0-9a-f]{1,12}$/.test(id) ? parseInt(id, 16) : 0;
     let hex = syn ? syn[1] : clean(d.hex).toLowerCase(), hint = syn ? parseInt(syn[2], 16) : Number(d.dep) || Number(d.at) || 0;
+    // (1.4.1: the airports, OurAirports' fields and heliports and the landing sites, read before any end is named - a page
+    // opened just to play the flight had none of them yet: every end "N/A" (G-GARE out of Farnborough), and no runway)
+    const placesP = Promise.race([Promise.all([loadAirports().catch(() => null), loadOa().catch(() => null), loadSites().catch(() => null)]), sleep(8000)]);
     // (FR24's own flight: the monitor's positions of it - which say which aircraft it was - and its live record here)
     const raw = fidNum ? await pbRaw(id, hint) : { pts: [], m: {} };
     if (!/^[0-9a-f]{6}$/.test(hex) && fidNum && live.get(fidNum)) hex = clean(live.get(fidNum).hex).toLowerCase();
@@ -148,40 +238,53 @@
     let day = null;
     if (!(dep > 0) && /^[0-9a-f]{6}$/.test(hex)) { day = await pbAdsb(hex, nowS() - 86400, nowS()); dep = pbLatestOff(day); }
     if (!(dep > 0)) return { ok: false };
-    const legs = /^[0-9a-f]{6}$/.test(hex) ? knownLegs(hex) : [];
-    let leg = null, best = 3 * 3600;
-    for (const l of legs) { const dt = Math.abs((l.tOff || l.tStart) - dep); if (l.tStart > 0 && dt < best) { best = dt; leg = l; } }
+    // (1.4.1: its log read first, then the monitor's flights of it - pbLegNear)
+    let leg = await pbLegNear(hex, dep);
     // (the time it took: its leg's, else what FR24's page or the record says - and for a flight still in the air, until now)
     let t0 = leg ? leg.tStart - 120 : dep - 600, t1 = leg ? (leg.ended ? leg.tEnd + 120 : nowS()) : w.end > dep ? w.end + 600 : Number(d.arr) > dep ? Number(d.arr) + 600 : 0;
     if (!(t1 > t0) && raw.pts.length) t1 = raw.pts[raw.pts.length - 1].t + 60;
-    if (!(t1 > t0)) t1 = Math.min(nowS(), t0 + 12 * 3600);
+    // (1.4.1: nothing known of when it ended: sixteen hours of its record - the longest flights - to find its landing in)
+    if (!(t1 > t0)) t1 = Math.min(nowS(), t0 + 16 * 3600);
     // (1.4.0: the public track, FR24's positions of it and its pictures asked for together - each had waited for the one
     // before: some five seconds of FR24's flights page before its player)
     const hx0 = /^[0-9a-f]{6}$/.test(hex) ? store.getHex(hex) || {} : {};
     const photoP = !(hx0.photos || []).some(p => p && (p.large || p.medium)) && hex ? monPhotos(hex).catch(() => null) : Promise.resolve(null);
     // (FR24's positions of it: its own id's - else, a flight of a rebuilt log, its aircraft's then - before ADS-B's)
+    const meta = Object.assign({}, raw.m || {});
     const [adsb, fr] = await Promise.all([
       /^[0-9a-f]{6}$/.test(hex) ? (day && t0 >= nowS() - 86400 ? Promise.resolve(day) : pbAdsb(hex, t0, t1).catch(() => [])) : Promise.resolve([]),
-      raw.pts.length ? Promise.resolve(raw.pts) : pbFr24Of(hex, t0, t1).catch(() => [])]);
+      raw.pts.length ? Promise.resolve(raw.pts) : pbFr24Of(hex, t0, t1, meta).catch(() => [])]);
+    await placesP;
     let pts = pbFr24First(fr, adsb).filter(p => p.t >= t0 && p.t <= t1);
-    // (no leg of it known: the flight itself out of the record - not the day's other flights)
+    // (no leg of it known: the flight made of the record here, its ends as its log would have them (1.4.1); else the
+    // flight itself out of the record - not the day's other flights)
+    if (!leg && pts.length > 1 && /^[0-9a-f]{6}$/.test(hex)) { const s = pbLegOfPts(hex, pts, dep); if (s && s.tEnd > s.tStart) { leg = s; pts = pts.filter(p => p.t >= s.tStart - 600 && p.t <= (s.ended ? s.tEnd + 600 : t1)); } }
     if (!leg && pts.length) pts = pbCut(pts, dep);
     if (pts.length < 2) return { ok: false };
     pts = pbThin(pts);
-    const hx = /^[0-9a-f]{6}$/.test(hex) ? store.getHex(hex) || {} : {};
     // (its callsign: its leg's, its live record's, what the page or the monitor says - else what the aircraft sent)
-    const lv = fidNum ? live.get(fidNum) : null, cs = clean((leg && leg.cs) || (lv && csOfRec(lv)) || d.cs || raw.m.cs || (pts.find(p => p.cs) || {}).cs || '').toUpperCase();
-    // (its airports: its leg's; else where its track begins and ends on the ground - a field within 4 km)
+    const lv = fidNum ? live.get(fidNum) : null, cs = clean((leg && leg.cs) || (lv && csOfRec(lv)) || d.cs || meta.cs || (pts.find(p => p.cs) || {}).cs || '').toUpperCase();
+    // (its airports: its leg's; else where its track begins and ends on the ground - a field within 4 km; else FR24's
+    // route of the flight, as kept with its positions)
     const apAt = p => { if (!p || !p.gnd) return null; const n = ENGINE.airportAt(p.lat, p.lon, 4); return n && n.airport ? apById(n.airport.id) || n.airport : null; };
-    const from = leg && leg.from ? apById(leg.from.id) : (w.depAp && apById(w.depAp)) || apAt(pts[0]), to = leg && leg.to ? apById(leg.to.id) : leg ? null : apAt(pts[pts.length - 1]);
+    const apIata = c => { c = clean(c).toUpperCase(); return /^[A-Z0-9]{3}$/.test(c) ? airports.byIata.get(c) || null : null; };
+    const from = (leg && leg.from ? apById(leg.from.id) : (w.depAp && apById(w.depAp)) || apAt(pts[0])) || apIata(meta.from);
+    const to = (leg ? (leg.to ? apById(leg.to.id) : null) : apAt(pts[pts.length - 1])) || apIata(meta.to);
+    // (its landing: its leg's; else, its track ending down at a field, its last moment in the air)
+    const lastAir = to && pts[pts.length - 1].gnd ? pts.slice().reverse().find(p => !p.gnd) : null;
+    const depT = (leg && (leg.tOff || leg.tStart)) || dep || pts[0].t, arrT = leg && leg.ended ? (leg.tOn || leg.tEnd) : lastAir ? lastAir.t : 0;
+    // (its runways, asked at once - ten seconds at most: the flight is not held back for them)
+    const rwyP = Promise.race([pbRunways(/^[0-9a-f]{6}$/.test(hex) ? hex : '', fidNum ? id : '', from, to, depT, arrT), sleep(10000).then(() => null)]).then(r => r || { off: '', on: '' }, () => ({ off: '', on: '' }));
+    // (1.4.1: who it flew for - the airline its callsign names, else the operator or owner the registers name - and its
+    // flight number: the page's, FR24's own of the flight, else FR24's of its callsign - meanwhile)
+    const [op, fn] = await Promise.all([pbOperator(hex, clean(d.reg || meta.reg || ''), cs), (async () => clean(d.flightNumber || meta.fn || '').toUpperCase() || csFlightNumber(cs))()]);
+    const hx = /^[0-9a-f]{6}$/.test(hex) ? store.getHex(hex) || {} : {};
     let photos = (hx.photos || []).filter(p => p && (p.large || p.medium));
-    const depT = (leg && (leg.tOff || leg.tStart)) || dep || pts[0].t, arrT = leg && leg.ended ? (leg.tOn || leg.tEnd) : 0;
-    const rwyP = pbRunways(/^[0-9a-f]{6}$/.test(hex) ? hex : '', fidNum ? id : '', from, to, depT, arrT).catch(() => ({ off: '', on: '' }));
     if (!photos.length && hex) { try { const mp = await photoP; photos = goodPhotos((mp && mp.photos) || []).map(cleanPhoto); } catch (e) { /* none */ } }
     const rwys = await rwyP;
     return {
-      ok: true, id: fidNum ? id : syn ? id : pbSynId(hex, (leg && (leg.tOff || leg.tStart)) || dep), hex, reg: clean(hx.reg || raw.m.reg || d.reg || '').toUpperCase(), cs,
-      flightNumber: clean(d.flightNumber || ''), model: modelName(hx) || clean(raw.m.type || ''), type: clean(hx.type || raw.m.type || ''), operator: shownOwner(hx, cs) || '', msn: clean(hx.msn || ''),
+      ok: true, id: fidNum ? id : syn ? id : pbSynId(hex, (leg && (leg.tOff || leg.tStart)) || dep), hex, reg: clean(hx.reg || meta.reg || d.reg || '').toUpperCase(), cs,
+      flightNumber: fn && fn !== cs ? fn : '', model: modelName(hx) || clean(meta.type || ''), type: clean(hx.type || meta.type || ''), operator: op.name, alId: op.alId || 0, msn: clean(hx.msn || ''),
       // (1.4.0: its tag - LADD, PIA, MIL - for FR24's player's header, as everywhere else it is shown)
       badge: badgeOf(hx),
       origin: pbAirport(from), destination: pbAirport(to), rwyOff: rwys.off || '', rwyOn: rwys.on || '',
@@ -194,4 +297,63 @@
     let out = { ok: false };
     try { out = await pbFlight(d || {}); } catch (e) { log('playback page', String(e && e.message || e)); }
     postToPage('pbPageGot', Object.assign({ rid: d && d.rid }, out));
+  }
+  // ---- (1.4.1) FR24's own player of one of its own flights: what it leaves out - "Private owner" where the registers
+  // name the aircraft's operator or owner (G-WAPA), "N/A" for an airport it has none of (a helicopter off a pad FR24 does
+  // not list), its flight number - from this script's: the aircraft's log, the monitor's, and where FR24's own track of
+  // the flight began and ended, down at a field (the page sends its ends: d.ends [first, last] { t, lat, lon, alt, gs })
+  async function pbInfo(d, early) {
+    const fid = clean(d && d.fid).toLowerCase(); if (!/^[0-9a-f]{1,12}$/.test(fid)) return { ok: false };
+    const placesP = Promise.race([Promise.all([loadAirports().catch(() => null), loadOa().catch(() => null), loadSites().catch(() => null)]), sleep(8000)]);
+    const fidNum = parseInt(fid, 16), dep = Number(d.dep) > 1e9 ? Number(d.dep) : 0;
+    // (1.4.1: the monitor's positions of it asked for only when wanted, and not waited for where the page's own track says
+    // where it began and ended - its N/A replaced at once: on a phone it was waiting for the monitor, then the log)
+    let rawP = null; const rawOf = () => rawP || (rawP = pbRaw(fid, dep).catch(() => ({ pts: [], m: {} })));
+    const ids = m => {
+      const reg = clean(d.reg || m.reg || '').toUpperCase(), cs = clean(d.cs || m.cs || '').toUpperCase();
+      let hex = clean(d.hex || (live.get(fidNum) || {}).hex || m.hex || '').toLowerCase();
+      if (!/^[0-9a-f]{6}$/.test(hex) && reg) hex = clean((store.byReg(reg) || {}).hex).toLowerCase() || (/^N\d/.test(reg) ? clean(nNumberHex(reg)).toLowerCase() : '');
+      return { reg, cs, hex: /^[0-9a-f]{6}$/.test(hex) ? hex : '' };
+    };
+    const out = { ok: true, fid };
+    const jobs = [];
+    if (d.wantOwner) jobs.push(rawOf().then(raw => { const x = ids(raw.m || {}); return pbOperator(x.hex, x.reg, x.cs); }).then(op => { if (op.name) { out.operator = op.name; out.alId = op.alId || 0; } }));
+    if (d.wantFn) jobs.push((async () => { const raw = await rawOf(), x = ids(raw.m || {}); if (!x.cs) return; const fn = clean((raw.m || {}).fn || '').toUpperCase() || await csFlightNumber(x.cs); if (fn && fn !== x.cs) out.flightNumber = fn; })());
+    if (d.wantFrom || d.wantTo || d.wantCheck) jobs.push((async () => {
+      await placesP;
+      const x0 = ids({}), ac = x0.hex ? acOfHex(x0.hex) : {}, type = clean(d.type || ac.type || '').toUpperCase();
+      const heli = ENGINE.classify(Object.assign({}, ac, type ? { type } : null)) === 'heli';
+      const at = p => { const x = p && pbFr24Place(p, heli, !!ac.mil); return x && x.id ? apById(x.id) : null; };
+      // (where FR24's own track of it - the page's - began and ended, down at a field: as the map's playback names them)
+      const P = Array.isArray(d.ends) ? d.ends : [];
+      let from = at(P[0]), to = at(P[1]);
+      // (1.4.1) FR24's own airport of an end its track never came near - the track down at another field, over 5 km from
+      // FR24's: that field (M-SKTO, 19 Nov: FR24's "Blackpool -> Liverpool", its track down in Gillmoss at Axis Business
+      // Park's helipad). Its landing only once it is over: the track's end ten minutes old
+      const fr24Ap = c => { c = clean(c).toUpperCase(); return /^[A-Z0-9]{3}$/.test(c) ? airports.byIata.get(c) || null : /^[A-Z0-9]{4}$/.test(c) ? ENGINE.byIcao(c) || null : null; };
+      if (d.wantCheck) {
+        const fa = !d.wantFrom && fr24Ap(d.fr24From), fb = !d.wantTo && fr24Ap(d.fr24To);
+        if (fa && from && fa.id !== from.id && beatsAp(fa, from, P[0], heli)) { out.origin = pbAirport(from); out.originOver = true; }
+        if (fb && to && fb.id !== to.id && P[1] && fin(P[1].t) && nowS() - P[1].t > 600 && beatsAp(fb, to, P[1], heli)) { out.destination = pbAirport(to); out.destOver = true; }
+      }
+      if (d.wantFrom && from) out.origin = pbAirport(from); if (d.wantTo && to) out.destination = pbAirport(to);
+      if (early && (out.origin || out.destination)) early(Object.assign({}, out));
+      if (!((d.wantFrom && !from) || (d.wantTo && !to))) return;
+      // (else the aircraft's flight then - its log's, the monitor's - and the monitor's FR24 positions of it)
+      const raw = await rawOf(), m = raw.m || {}, x = ids(m);
+      const t0 = dep || (raw.pts.length ? raw.pts[0].t : 0), leg = x.hex && t0 ? await pbLegNear(x.hex, t0) : null;
+      if (!from && leg && leg.from) from = apById(leg.from.id); if (!to && leg && leg.to && leg.ended) to = apById(leg.to.id);
+      if (!from) from = at(raw.pts[0]); if (!to) to = at(raw.pts[raw.pts.length - 1]);
+      const apIata = c => { c = clean(c).toUpperCase(); return /^[A-Z0-9]{3}$/.test(c) ? airports.byIata.get(c) || null : null; };
+      if (!from) from = apIata(m.from); if (!to) to = apIata(m.to);
+      if (d.wantFrom && from) out.origin = pbAirport(from); if (d.wantTo && to) out.destination = pbAirport(to);
+    })());
+    await Promise.all(jobs.map(j => j.catch(e => log('playback info', String(e && e.message || e)))));
+    return out;
+  }
+  async function onPbInfo(d) {
+    let out = { ok: false };
+    // (1.4.1: its ends sent as soon as they are known - its operator and flight number after, as they come)
+    try { out = await pbInfo(d || {}, part => postToPage('pbInfoGot', Object.assign({ rid: d && d.rid, partial: true }, part))); } catch (e) { log('playback info', String(e && e.message || e)); }
+    postToPage('pbInfoGot', Object.assign({ rid: d && d.rid }, out));
   }

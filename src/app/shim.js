@@ -171,12 +171,14 @@ var TL_HOST_ACCESS = (function () {
     }
   } catch (e) { /* the WebView's own */ }
 })();
-// (1.4.0) "Map drawing: compatible mode" (the LADD Unblock window, the app only; off by default): FR24's map drawn in
-// WebGL - its aircraft, airport pins and their shadows (deck.gl, luma.gl) - asked for without keeping its last picture
+// (1.4.0) "Map drawing: compatible mode" (the LADD Unblock window, the app only): FR24's map drawn in WebGL - its
+// aircraft, airport pins and their shadows (deck.gl, luma.gl) - asked for without keeping its last picture
 // (preserveDrawingBuffer) and without smoothing its edges (antialias): both a phone's graphics can get wrong, pieces of
-// the pictures before left on screen as the map zooms. Read from the window's switches as this page starts
+// the pictures before left on screen as the map zooms. Read from the window's switches as this page starts.
+// (1.4.1: on unless switched off - mapSafe; it fixed the map where it broke up - Samsung's Xclipse graphics, ANGLE on
+// Vulkan - and changes nothing a phone shows where it did not)
 (function () {
-  var on = false; try { var o = JSON.parse(localStorage.getItem('tweeks.fr24.ladd.opts1') || 'null'); on = !!(o && o.on !== false && o.mapCompat === true); } catch (e) { on = false; }
+  var on = true; try { var o = JSON.parse(localStorage.getItem('tweeks.fr24.ladd.opts1') || 'null'); on = !(o && typeof o === 'object' && (o.on === false || o.mapSafe === false)); } catch (e) { on = true; }
   if (!on) return;
   try {
     var C = window.HTMLCanvasElement && HTMLCanvasElement.prototype, oGet = C && C.getContext;
