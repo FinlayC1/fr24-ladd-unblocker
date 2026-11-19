@@ -976,7 +976,7 @@
       await Promise.all([store.getHist(hex), warmToday([hex])]);
       liveState = fromMap(); render();
       pageLiveState(hex, reg).then(ls => { if (ls && current === run) { liveState = own(ls); render(); } }).catch(e => log('live state', e));
-      await loadHistory(hex, HISTORY_DAYS, () => render(), { front: true });
+      await loadHistory(hex, HISTORY_DAYS, () => render(), { front: true, monAny: true });
       run.loaded = true;
       try { const ls = await pageLiveState(hex, reg); if (current === run) liveState = own(ls); } catch (e) { /* keep */ }
       render();

@@ -299,6 +299,8 @@ const owners = (hex, reg, type, owner) => JSON.stringify({ list: [[hex, reg, typ
     const answerQ = u => {
       // (today's track: a minute coming - the public sites slow, or walling this browser)
       if (/\/data\/traces\/[0-9a-f]{2}\/trace_full_400abc\.json/.test(u)) return [60000, 404, ''];
+      // (the monitor with its world log - every aircraft's days of adsb.lol's archive, as the one in use has)
+      if (u.startsWith(MON + '/status')) return [5, 200, JSON.stringify({ v: 3, ver: 'test', archive: { on: true, world: { days: 300, on: 280 } } })];
       if (u.startsWith(MON + '/hist?hex=400abc')) return [5, 200, JSON.stringify({ hv: 8, list: [{ hex: '400abc', days: { [DAYF(TO)]: 1 }, legs: [old] }] })];
       if (u.startsWith(MON + '/csfn?cs=') && /LOG55/.test(u)) return [5, 200, JSON.stringify({ v: 1, list: { LOG55: 'LM55' } })];
       return null;

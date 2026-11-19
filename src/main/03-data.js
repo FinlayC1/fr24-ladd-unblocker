@@ -1608,8 +1608,9 @@
   function monHist(hex, since, any) {
     // (the monitor keeps the days of the blocked aircraft and, from adsb.lol's archives, of every LADD and military one -
     // and with its world log, of every aircraft)
-    // (1.4.1: `any` - an aircraft looked at, asked whatever is known of it here: M-PORT's log page, the aircraft not yet
-    // known here as blocked, went day by day to the public sites - the monitor had every day of it built)
+    // (1.4.1: `any` - the log page of an aircraft FR24 shows no flights of, asked whatever is known of it here: M-PORT's,
+    // the aircraft not yet known here as blocked, went day by day to the public sites - the monitor had every day of it
+    // built. An ordinary aircraft is asked only of a monitor with the world log, as before)
     const hx0 = store.getHex(hex) || {}, c = monCheck();
     return Promise.resolve(c && c.catch(() => null)).then(() => !monUp() || !(any || hx0.ladd || hx0.mil || worldUp()) ? null : new Promise(res => {
       const e = histAsk.q.get(hex) || { rs: [], since: since || '' }; e.rs.push(res); if (!since || (e.since && since < e.since)) e.since = since || ''; histAsk.q.set(hex, e);
@@ -1692,7 +1693,7 @@
       // 25 Oct, only FR24 saw it leave Lagos)
       if (todo.length || (looked && now() - (monFrAsked.get(hex) || 0) > 30 * 60000)) {
         monFrAsked.set(hex, now()); if (monFrAsked.size > 500) monFrAsked.delete(monFrAsked.keys().next().value);
-        const mh = await monHist(hex, todo.length ? todo[todo.length - 1] : dayStr(now()), looked).catch(() => null);
+        const mh = await monHist(hex, todo.length ? todo[todo.length - 1] : dayStr(now()), !!(opts && opts.monAny)).catch(() => null);
         if (mh && mh.days && typeof mh.days === 'object') {
           const byDay = new Map(); for (const l of Array.isArray(mh.legs) ? mh.legs : []) if (l && l.day && fin(l.tStart)) (byDay.get(l.day) || byDay.set(l.day, []).get(l.day)).push(l);
           const part = new Set(Array.isArray(mh.part) ? mh.part : []), lo = new Set(Array.isArray(mh.lo) ? mh.lo : []);
