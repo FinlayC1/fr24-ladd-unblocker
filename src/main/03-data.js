@@ -246,6 +246,7 @@
     // the airfields FR24 does not list, for the route engine: where light aircraft land and take off, fly circuits - and
     // where they may be going (Borkenberge, Slany, a farm strip)
     try { ENGINE.setFields(rows.filter(r => r[2] === 'S' || r[2] === 'M').map(r => ({ lat: r[0], lon: r[1], alt: r[6], ident: r[4], name: r[3], city: r[5] }))); } catch (e) { log('airfields', e); }
+    placesArrived();
   }
   function loadSites() {
     if (sites.grid) return Promise.resolve(true);
@@ -430,6 +431,12 @@
     // (1.3.6) its heliports for the route engine: a helicopter down on one has landed there (engine.js setHeliports) -
     // M-SKTO's landings at Axis Business Park's helipad were "-" in its log and playback
     try { ENGINE.setHeliports(c.rows.filter(r => Array.isArray(r) && r[9] === 'H').map(r => ({ id: r[0], ident: r[2], code: r[1], name: r[3], city: r[4], lat: r[6], lon: r[7], alt: r[8] }))); } catch (e) { log('heliports', String(e && e.message || e)); }
+    placesArrived();
+  }
+  // (1.4.1) heliports or strips just in: the flight on screen worked out again at once - its "N/A" end, an OurAirports
+  // field or pad it took off from, filled now, not at the next round a quarter of a minute later
+  function placesArrived() {
+    setTimeout(() => { try { for (const id of new Set([currentId(), shownId])) if (id != null) scheduleReplan(id, 30); syncPanelSoon(); } catch (e) { log('places in', String(e && e.message || e)); } }, 0);
   }
   // (1.3.6) the list's row of an airport the engine names - one of the list's own, or a field the engine knows by its
   // ident: its code there is what its page goes by
@@ -812,7 +819,8 @@
     // (and a register that did not answer last time - its serial number and build year with it - asked again in 5 minutes)
     const msnDue = regDue && !hx.msn && !!hx.ownerFailAt;
     // (1.1.1: and the monitor not asked about it lately - it has every aircraft of the world's databases and registers)
-    const monDue = monUp() && now() - (hx.monOwnAt || 0) > 6 * 3600e3 && !(hx.msn && hx.year > 1900 && shownOwner(hx, hx.cs));
+    // (1.4.1: wanted whether or not the monitor's check has answered yet - a page opened just now; waited for in the job)
+    const monDue = now() - (hx.monOwnAt || 0) > 6 * 3600e3 && !(hx.msn && hx.year > 1900 && shownOwner(hx, hx.cs));
     // (1.3.6: an aircraft opened with its serial number still not known - T7-EZZ's: no register of San Marino's is asked,
     // and the first look found none - looked for again a day later, not a month: FR24's own list of it, JetPhotos)
     // (1.3.12: and at once, whenever it was looked for, once more places are looked in than then - MSN_TRY_V)
@@ -825,7 +833,7 @@
       // (1.1.1) the monitor next - every aircraft in the world's databases and registers, merged there: its serial number,
       // age and owner in FR24's frame of it at once, before any register is asked here - an aircraft on screen before it is
       // even opened (many in one request)
-      if (monDue) {
+      if (monDue && await monReady(6000)) {
         const mr = await monOwner(hex).catch(() => null), t = Object.assign({ hex }, store.getHex(hex) || hx), o = { monOwnAt: now() };
         if (mr && await applyMonOwner(t, mr)) for (const k of ['reg', 'type', 'desc', 'owner', 'ownerCity', 'msn', 'year', 'country', 'countryId', 'ownerAskedAt', 'faaAt']) if (t[k] && t[k] !== hx[k]) o[k] = t[k];
         // (1.2.6: a year the monitor worked out kept as the estimate it is - "~" - not as a register's)
@@ -1189,7 +1197,8 @@
   // back to the monitor with its next report (and FR24's operator for the aircraft too).
   const ownWait = new Map(); let ownT = 0;
   function monOwner(hex) {
-    if (!monUp()) return Promise.resolve(null);
+    // (1.4.1: the monitor's check waited for on a page opened just now - not given up on at once)
+    if (!monUp()) return monReady(6000).then(ok => ok ? monOwner(hex) : null);
     let w = ownWait.get(hex); if (w) return w.p;
     w = { sent: false }; w.p = new Promise(r => { w.res = r; }); ownWait.set(hex, w);
     if (!ownT) ownT = setTimeout(flushOwnAsk, 150);
@@ -1227,7 +1236,9 @@
   }
   // (what this browser found of a blocked aircraft, for the monitor)
   function ownerToMonitor(rec, idn) {
-    if (!rec || !rec.hex || !monUp()) return;
+    // (1.4.1: kept for the next report whether or not the monitor's first check has answered yet - a page opened just now;
+    // nothing goes while the monitor is turned off)
+    if (!rec || !rec.hex || !monRemote()) return;
     if (!(live.has(rec.id) || rec.ladd || rec.pia || rec.srv || (store.getHex(rec.hex) || {}).ladd)) { identityToMonitor(rec); return; }
     const o = Object.assign({}, ownersOut.get(rec.hex));
     for (const k of ['reg', 'type', 'desc', 'owner', 'ownerCity', 'country', 'countryIso', 'msn', 'operatorId', 'operatorIcao', 'operatorName']) if (rec[k]) o[k] = rec[k];
@@ -1242,7 +1253,7 @@
   // and page that asks)
   const idSent = new Map();
   function identityToMonitor(hx) {
-    const hex = String((hx && hx.hex) || '').toLowerCase(); if (!/^[0-9a-f]{6}$/.test(hex) || !monUp()) return;
+    const hex = String((hx && hx.hex) || '').toLowerCase(); if (!/^[0-9a-f]{6}$/.test(hex) || !monRemote()) return;
     const msn = typeof hx.msn === 'string' ? clean(hx.msn) : '', year = hx.year > 1900 && hx.year < 2100 && !hx.yearEst ? Math.round(hx.year) : 0;
     if (!msn && !year) return;
     const o = Object.assign({}, ownersOut.get(hex)), before = JSON.stringify(o);
@@ -1259,7 +1270,7 @@
     // (the monitor first: an aircraft it - or any browser - already looked up is not asked about again here)
     { const due = () => (!shownOwner(rec, rec.cs) && /^(G-|M-|HB-|N\d)/i.test(rec.reg || '') && now() - (rec.ownerAskedAt || 0) > 864e5) || ((!rec.reg || !rec.type || !rec.countryId || (/^N\d/.test(rec.reg || '') && !rec.faaAt)) && now() - (rec.idAt || 0) > 3 * 864e5) || (rec.reg && !rec.operatorId && !rec.fr24At);
       // (1.1.1: and its serial number or age not known here - the monitor has every aircraft in the world's databases)
-      if (monUp() && (due() || !rec.msn || !(rec.year > 1900)) && now() - (rec.monOwnAt || 0) > 6 * 3600e3) {
+      if ((due() || !rec.msn || !(rec.year > 1900)) && now() - (rec.monOwnAt || 0) > 6 * 3600e3 && await monReady(6000)) {
         rec.monOwnAt = now();
         const r = await monOwner(rec.hex);
         if (r && await applyMonOwner(rec, r)) changed = true;
@@ -1360,7 +1371,9 @@
     }
   }
   function monPhotos(hex) {
-    if (!monUp() || !blockedHex(hex)) return Promise.resolve(null);
+    if (!blockedHex(hex)) return Promise.resolve(null);
+    // (1.4.1: the monitor's check waited for on a page opened just now - a few seconds)
+    if (!monUp()) return monReady(4000).then(ok => ok ? monPhotos(hex) : null);
     return Promise.race([new Promise(res => { const l = photoAsk.q.get(hex) || []; l.push(res); photoAsk.q.set(hex, l); if (!photoAsk.t) photoAsk.t = setTimeout(flushMonPhotos, 40); }), sleep(1500).then(() => null)]);
   }
   function flushMonPhotos() {

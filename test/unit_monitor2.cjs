@@ -320,6 +320,20 @@ const rep = (hex, o) => Object.assign({ hex, lat: 53.4, lon: -2.3, alt_baro: 120
     const r = M.report({ photos: [['a63864', [ph]], ['zz', [ph]]] }, Date.now(), { admin: false, ip: '192.0.2.7' });
     const g = M.answer(new URL('http://x/photos?hex=a63864,a00000'), Date.now() / 1000, { admin: false, ip: '192.0.2.8' });
     check('/report: a browser\'s pictures of a blocked aircraft taken; /photos: handed to any browser', r.ok && r.photos === 1 && g.list.length === 1 && g.list[0].hex === 'a63864' && g.list[0].photos[0].large === ph.large, { r, g }); }
+  // ---- (1.4.1) a flight's runways at both ends in one answer, for a playback (/rwyof): by FR24's id, else its aircraft --
+  { const AP = c => E.airports.find(a => a.iata === c), LPL = AP('LPL'), MAN = AP('MAN'), T = Math.floor(Date.now() / 1000) - 7200;
+    M.RL.put('3d7a0001', 0, '27', LPL.id, T, 'trail'); M.RL.put('3d7a0001', 1, '23R', MAN.id, T + 1800, 'trail');
+    const a1 = M.answer(new URL(`http://x/rwyof?fid=3d7a0001&off=${LPL.id},${T}&on=${MAN.id},${T + 1800}`), Date.now() / 1000);
+    check('/rwyof: a flight\'s take-off and landing runways in one answer, by FR24\'s id - as logged', a1.v === 1 && a1.off === '27' && a1.on === '23R', a1);
+    // (no id of FR24's for it - a blocked flight played from its track: FR24's flights of that aircraft then, from the
+    // positions the scans keep)
+    M.fr24scan.put('3d7a0002', { hex: '406a1c', reg: 'G-TEST', cs: 'GTEST' }, [{ t: T + 100, lat: LPL.lat, lon: LPL.lon, alt: 0, gnd: true }, { t: T + 2000, lat: MAN.lat, lon: MAN.lon, alt: 0, gnd: true }]);
+    M.RL.put('3d7a0002', 1, '05L', MAN.id, T + 1990, 'scan');
+    const a2 = M.answer(new URL(`http://x/rwyof?hex=406a1c&on=${MAN.id},${T + 2030}`), Date.now() / 1000);
+    check('... none of FR24\'s ids known: by the aircraft and the time - its FR24 flight then, its runway as logged', a2.off === '' && a2.on === '05L', a2);
+    const a3 = M.answer(new URL(`http://x/rwyof?fid=3d7a0099&hex=406a1d&off=${LPL.id},${T}&on=bad`), Date.now() / 1000);
+    check('... nothing known of it, or an end asked for wrongly: empty, never a throw', a3.v === 1 && a3.off === '' && a3.on === '', a3);
+    check('... a runway asked for away from its time (a day later): not that flight\'s', !M.rwyOfFlight('', '406a1c', [{ end: 1, ap: MAN.id, t: T + 86400 }])[1]); }
   // ---- what is kept on disk ---------------------------------------------------------------------------------------
   { M.flew.set('2026-10-13', new Set(['c00001'])); M.histQ.push({ hex: 'c00001', day: '2026-10-12', tries: 1, at: 5 });
     M.saveState();

@@ -729,7 +729,7 @@
   // monitor gave them (/names: [id, hex, reg, type, callsign, ...]), and their routes (/calc), by FR24's ids
   async function onTopNeed(d) {
     const ids = (Array.isArray(d && d.ids) ? d.ids : []).map(Number).filter(x => x > 0).slice(0, 12), names = {}, routes = {};
-    if (!ids.length || !monUp()) return;
+    if (!ids.length || !(await monReady())) return;
     try {
       const j = await monGet('/names?ids=' + ids.join(','), { timeout: 6000 });
       for (const r of (j && Array.isArray(j.list) ? j.list : [])) {

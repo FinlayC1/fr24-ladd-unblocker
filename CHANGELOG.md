@@ -18,6 +18,10 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 - **A flight number's log goes back past FR24's week.** Older flights come from the monitor's own record of FR24's map. That record starts with this version, so the history grows from the day the monitor is updated (`deploy.sh`).
 - **OurAirports fields can be searched** on FR24's flights page (EGOW, Woodvale).
 - **The player's back button says "Flights"** and goes back to the log the flight was played from. It said "Playback" and opened FR24's "Search for flights to play".
+- **Runways come from the monitor alone, as the page opens.** Every take-off and landing is logged there. Nothing is worked out in the browser and FR24 is not asked.
+- **OurAirports fields win over the airports FR24 guesses.** FR24 had M-SKTO "Blackpool -> Liverpool" on 19 Nov, but its own track came down on Axis Business Park's helipad in Gillmoss, 11 km away. The log and FR24's player now show the helipad.
+- **"N/A" is replaced much sooner on the phone,** and the phone's small panel (the normal view) shows the registered owner instead of "Private owner".
+- **A page opened just now no longer misses the monitor.** Runways, owners, the monitor's flights and the first "On ground" board were left out until its first check had answered.
 
 ### Added
 - **The monitor's flights by flight number** (`monitor/fr24fn.cjs`, `GET /fr24fn?fn=`, `GET /csfn?cs=`).
@@ -29,8 +33,17 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 - **A flight number's earlier flights** (`src/main/06-acpage.js` `fnOlderRows`): under FR24's own rows on its log page, in FR24's markup, newest first. Each one's Play is FR24's player of that flight by its id, its track FR24's positions the monitor kept. Its KML and CSV are made from them.
 - **FR24's own player of one of its own flights** (`src/page.js` `mxPbEnrich`; `src/main/06-pbpage.js` `pbInfo`): what FR24 leaves out is filled into its page data.
   - The aircraft's operator or owner for "Private owner" (G-WAPA).
-  - The airports at its ends where FR24 has "N/A": from the aircraft's log, the monitor's, else where FR24's own track began and ended down at a field.
+  - The airports at its ends where FR24 has "N/A": where FR24's own track on the page began and ended down at a field, sent back at once; else the aircraft's log or the monitor's.
+  - An airport FR24 gives that its own track never came near: the field it came down at instead (below).
   - Its flight number where FR24 has none.
+- **A flight's runways at both ends in one answer** (`GET /rwyof?fid=&hex=&off=<airport>,<time>&on=<airport>,<time>`, `monitor.cjs` `rwyOfFlight`): by FR24's id, else by the aircraft and its times (the blocked flights' log, then FR24's flights of the aircraft then). Each one is as logged, else worked out on the monitor from the positions it keeps.
+- **FR24's flights' first and last positions, forty at once** (`GET /fr24ends?f=<fid>[:<time>],...`, `monitor.cjs` `fr24Ends`), from every store of FR24's positions.
+- **OurAirports fields over FR24's guessed airports** (`src/main/06-acpage.js` `beatsFr24`, `beatsAp`): FR24 names a nearby airport for many flights with no plan filed.
+  - An end is replaced only where FR24's own track is down there: on the ground, or a helicopter within 500 ft of the field, and slow.
+  - The field must be over 5 km from FR24's airport and 3 km nearer the track's end. A flight lost in the air keeps FR24's airport.
+  - In the aircraft's log the cell's title says what FR24 gave. The next flight's end copied from it follows it.
+  - FR24's player of the flight the same (its destination only once the track ended ten minutes ago).
+- **The phone's small panel** (`src/main/05-ui.js` `smallOwner`): the registered owner over FR24's "Private owner" while the full panel is not drawn. The registers are asked once if it is not known yet.
 
 ### Changed
 - **The app's Playback** (`src/page.js`):
@@ -45,9 +58,18 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
   - Its airline comes from its callsign (with FR24's logo by the airline's id), else the operator or owner the registers name. The registers are asked if the aircraft is not known yet.
   - Its flight number: FR24's own of the flight, else the monitor's for its callsign, else an airline's numbered callsign with its IATA code (UAL972: UA972).
   - Its route falls back to FR24's, as the monitor kept it with the flight's positions.
-- **Runways on the player**:
-  - Our flights get theirs from their own track, fitted to the field's runways on the monitor (`/rwyfit`), when the monitor logged none.
-  - FR24's own flights send their track from the page for the same fit (CDG, Edinburgh). FR24's times written as dates are read too.
+- **Runways on the player come from the monitor alone**:
+  - Our flights ask once for both ends (`/rwyof`). A monitor before 1.4.1 is asked end by end as before.
+  - FR24's own flights ask by FR24's id at once, and again every minute and a half while none has come. FR24's times written as dates are read too.
+  - Nothing is fitted in the browser and FR24's API is not asked for a track (`onRwyWant`). The track fits of the first 1.4.1 build are gone.
+- **The monitor's first check is waited for** (`monReady`, up to a few seconds) before a one-off ask goes without it. `monUp()` was false on a page opened just now, so its runways, the flight's FR24 positions, the monitor's flights of the aircraft, its owner and the first "On ground" board were left out for good.
+- **The aircraft's log rows** (`fillFr24Rows`):
+  - Every row's own track's ends come from the monitor in one ask as the page opens. FR24's playback is asked only for a flight whose ends are wanted that the monitor has nothing of, or has only short of the ground.
+  - The flight in the air now gets its FROM from where its own track began.
+  - FR24's TYPE CODE is read from its own row; the rows' text ran together, so a helicopter could be taken for an aeroplane.
+- **FR24's player of one of its own flights** sends its ends back as soon as they are known. The owner and flight number follow. On a phone the ends waited for the monitor and the log first.
+- **Heliports and strips arriving** (OurAirports' list, the landing sites) work out the flight on screen again at once, instead of at the next round 15 seconds later.
+- **The phone's small panel** writes FR24's own words back only where ours is still shown there.
 - **The data pages read the OurAirports list as they open**, and an airport search waits up to three seconds for it. EGOW found nothing on FR24's flights page.
 
 ### Tests
@@ -56,10 +78,15 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
   - the same flight built from its track alone;
   - LOG8NP's airports, airline, logo and flight number;
   - callsigns' flight numbers;
-  - FR24's own player of G-WAPA filled in through the page and the userscript, with its take-off runway fitted from the page's track;
+  - FR24's own player of G-WAPA filled in through the page and the userscript, with its take-off runway from the monitor by FR24's id;
+  - JDI01's runways asked of the monitor in one ask for both ends;
+  - M-SKTO's log: the helipad over FR24's Liverpool, the next flight's end following it, FR24's own airport kept where the track went there or was lost in the air, FR24's whole track asked for only where the monitor's ends stop short of the ground, every row's ends in one ask;
+  - FR24's player of M-SKTO: the helipad written into its page data;
+  - the phone's small panel: the registered owner over "Private owner", written once, an airline FR24 names left alone;
   - the back button;
   - a flight number's earlier flights under FR24's own;
   - the flights page's airport search waiting for the OurAirports list.
+- `test/unit_monitor2.cjs`: `/rwyof` by FR24's id, by the aircraft and its time, nothing known, and a time a day away.
 - `test/unit_fr24fn.cjs` (new): the monitor's flights by flight number - followed, written, asked for by time; a glimpse or a taxi-only flight never written; times in the air, not the taxi; callsigns' flight numbers; kept over a restart; old months gone; FR24's flight number read from its feed.
 - `test/unit_app.cjs`:
   - FR24's Playback from a page laid out wide as it starts;

@@ -56,7 +56,8 @@
   // on it meanwhile - each moment adds to its path, carried across the holes in the tracks - until one aircraft fits.
   const PB_REASK_MS = 45000;
   async function pbFromMonitor(ts) {
-    if (!monUp()) return 0;
+    // (1.4.1: the monitor's first check waited for on a page opened just now)
+    if (!(await monReady(4000))) return 0;
     const t = now(), fl = [...pb.flights.values()].filter(f => f.ts === ts && !pb.named.has(f.id) && t - (pb.monAsked.get(f.id) || 0) >= PB_REASK_MS).slice(0, 1500);
     if (!fl.length) return 0;
     for (const f of fl) pb.monAsked.set(f.id, t);

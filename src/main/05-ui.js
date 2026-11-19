@@ -806,7 +806,8 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   }
   function smallBack(el) {
     if (!el || !('tlVal' in el.dataset)) return;
-    if ('tlOrig' in el.dataset) writeOwn(el, el.dataset.tlOrig);
+    // (1.4.1: written back only where ours is still shown - FR24 drawing another flight into it has its own words there)
+    if ('tlOrig' in el.dataset && clean(textOf(el)).replace(/\?$/, '') === el.dataset.tlVal) writeOwn(el, el.dataset.tlOrig);
     delete el.dataset.tlVal; delete el.dataset.tlOrig; el.removeAttribute('title');
     el.querySelectorAll('.tl-inf').forEach(m => m.remove());
   }
@@ -833,13 +834,29 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       ['airline', big && (q(big, SEL.airline) || big.querySelector('.tl-airline'))], ['registration', big && q(big, SEL.registration)], ['model', big && q(big, SEL.model)]];
     for (const [k, b] of fields) {
       const el = smallEl(sp.root, k); if (!el) continue;
-      const val = b && (b.classList.contains('tl-airline') ? clean(b.textContent) : 'tlVal' in b.dataset ? b.dataset.tlVal : '');
+      let val = b && (b.classList.contains('tl-airline') ? clean(b.textContent) : 'tlVal' in b.dataset ? b.dataset.tlVal : '');
+      // (1.4.1) an ordinary aircraft's "Private owner" here while its full panel is not drawn - pulled up only: its
+      // registered owner / operator all the same (M-SKTO's small panel kept FR24's "Private owner")
+      if (!val && k === 'airline') { val = smallOwner(sp.root, el); if (val) { setText(el, val, 'Registered owner / operator (LADD unblocker)', PRIVATE_WORDS); continue; } }
       if (!val) { smallBack(el); continue; }
       setText(el, val, b.title || el.title);
       if (el.dataset.tlVal !== val) continue;   // (FR24's own value there: left as it is)
       const mB = b.querySelector('.tl-inf'), mS = el.querySelector('.tl-inf');
       if (mB && !mS) el.appendChild(mB.cloneNode(true)); else if (!mB && mS) mS.remove();
     }
+  }
+  // (the small panel's aircraft: the flight selected - FR24's stream named it - else its registration as kept; its owner
+  // where FR24 says "Private owner", asked of the registers and the monitor once when not known yet)
+  const smallAsked = new Set(), PRIVATE_WORDS = ['Private owner', 'Private Owner', 'PRIVATE OWNER', 'private owner'];
+  function smallOwner(root, el) {
+    // (what FR24 says there: ours shown - what it said under it; else what it says now)
+    const cur = clean(textOf(el)), fr24Says = 'tlVal' in el.dataset && cur === el.dataset.tlVal ? clean(el.dataset.tlOrig) : cur; if (!/^private owner$/i.test(fr24Says)) return '';
+    const rgEl = smallEl(root, 'registration'), rg = clean(rgEl && textOf(rgEl)).toUpperCase(), id = currentId(), pr = id != null ? pubRecs.get(id) || live.get(id) : null;
+    if (pr && pr.reg && rg && pr.reg !== rg) return '';
+    const hex = clean((pr && pr.hex) || (rg && (store.byReg(rg) || {}).hex) || '').toLowerCase(); if (!/^[0-9a-f]{6}$/.test(hex)) return '';
+    const hx = withStored(Object.assign({ hex }, pr || {})), name = shownOwner(hx, hx.cs);
+    if (!name && !smallAsked.has(hex)) { smallAsked.add(hex); publicIdentity(hex, rg || hx.reg || '').then(() => syncPanelSoon()).catch(e => log('small panel owner', e)); }
+    return name || '';
   }
   // (an error while filling the panel is shown in it - with the version - instead of leaving it silently unfilled)
   function syncPanel() {

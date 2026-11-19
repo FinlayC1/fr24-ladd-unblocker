@@ -1190,7 +1190,7 @@
   async function onWantSq(d) {
     const hex = String(d && d.hex || '').toLowerCase(); if (!/^[0-9a-f]{6}$/.test(hex)) return;
     let got = false;
-    if (monUp()) {
+    if (await monReady(4000)) {
       const j = await monGet(`/tel?hex=${hex}`, { timeout: 8000 }).catch(() => null);
       const l = j && j.last && j.last[hex];
       if (Array.isArray(l) && /^[0-7]{4}$/.test(String(l[0])) && fin(l[1])) { postToPage('lastSq', { hex, sq: String(l[0]), at: l[1] * 1000 }); got = true; }

@@ -534,6 +534,15 @@
     monChecking.catch(() => {});
     return monChecking;
   }
+  // (1.4.1) the monitor's check waited for - a few seconds at most - before a one-off ask goes without it: a page opened
+  // just now has not had its answer yet, and monUp() was false for it - the player page's runways asked for once and
+  // answered "none" for good (EZY87VN: Edinburgh's runways all logged on the monitor), its flight's FR24 positions, the
+  // monitor's flights of the aircraft and its owner all left out, the first "On ground" board empty
+  function monReady(ms) {
+    if (monOk) return Promise.resolve(true);
+    const c = monCheck(); if (!c) return Promise.resolve(monOk);
+    return Promise.race([c.then(() => monOk, () => monOk), sleep(ms || 8000).then(() => monOk)]);
+  }
   // (the first ask after the page opens waits for the monitor's check - it was refused while that was still on its way,
   // so the first board, parked lookup and routes page of every page load went without the monitor)
   // (opts.idle: a background answer - read in an idle moment with the map left alone)
