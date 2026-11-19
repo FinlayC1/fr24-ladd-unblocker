@@ -807,6 +807,18 @@
     walk(j && j.props, 0);
     return found;
   }
+  // (1.1.1) what the monitor has of an aircraft - every aircraft of the world's databases and registers, merged there: its
+  // registration, owner, serial number and age - kept here and handed to the page; the record as it is now
+  // (1.4.1: also the first thing a blocked aircraft's log page asks - its header filled from it at once)
+  async function monIdentity(hex, hx) {
+    hx = hx || store.getHex(hex) || {};
+    const mr = await monOwner(hex).catch(() => null), t = Object.assign({ hex }, store.getHex(hex) || hx), o = { monOwnAt: now() };
+    if (mr && await applyMonOwner(t, mr)) for (const k of ['reg', 'type', 'desc', 'owner', 'ownerCity', 'msn', 'year', 'country', 'countryId', 'ownerAskedAt', 'faaAt']) if (t[k] && t[k] !== hx[k]) o[k] = t[k];
+    // (1.2.6: a year the monitor worked out kept as the estimate it is - "~" - not as a register's)
+    if (o.year) { o.yearEst = !!t.yearEst; o.yearHow = t.yearHow || ''; }
+    const m = store.mergeHex(hex, o); if (Object.keys(o).length > 1) pushPubIds([hex]);
+    return m || Object.assign({}, hx, o);
+  }
   // `bg`: prefetch for aircraft on screen - registry databases only (the photo site is left alone), low priority
   function publicIdentity(hex, reg, opts) {
     hex = String(hex || '').toLowerCase(); if (!/^[0-9a-f]{6}$/.test(hex)) return Promise.resolve(null);
@@ -836,11 +848,7 @@
       // age and owner in FR24's frame of it at once, before any register is asked here - an aircraft on screen before it is
       // even opened (many in one request)
       if (monDue && await monReady(6000)) {
-        const mr = await monOwner(hex).catch(() => null), t = Object.assign({ hex }, store.getHex(hex) || hx), o = { monOwnAt: now() };
-        if (mr && await applyMonOwner(t, mr)) for (const k of ['reg', 'type', 'desc', 'owner', 'ownerCity', 'msn', 'year', 'country', 'countryId', 'ownerAskedAt', 'faaAt']) if (t[k] && t[k] !== hx[k]) o[k] = t[k];
-        // (1.2.6: a year the monitor worked out kept as the estimate it is - "~" - not as a register's)
-        if (o.year) { o.yearEst = !!t.yearEst; o.yearHow = t.yearHow || ''; }
-        hx = store.mergeHex(hex, o) || hx; if (Object.keys(o).length > 1) pushPubIds([hex]);
+        hx = (await monIdentity(hex, hx)) || hx;
         // (all of it known now, a register's answer among it: no register asked again here for a month)
         if (!bg && hx.msn && hx.year > 1900 && shownOwner(hx, hx.cs) && !ownerDue) { const m = store.mergeHex(hex, { pubAt: now(), pubFull: true }); return m || hx; }
       }
@@ -1597,11 +1605,13 @@
   // not had here). null: no monitor, or nothing of it there. Right after the page opens, once its check has answered.
   const histAsk = { q: new Map(), t: 0 };
   const worldUp = () => !!(monOk && monBase && monStat && monStat.archive && monStat.archive.world && monStat.archive.world.days > 0);
-  function monHist(hex, since) {
+  function monHist(hex, since, any) {
     // (the monitor keeps the days of the blocked aircraft and, from adsb.lol's archives, of every LADD and military one -
     // and with its world log, of every aircraft)
+    // (1.4.1: `any` - an aircraft looked at, asked whatever is known of it here: M-PORT's log page, the aircraft not yet
+    // known here as blocked, went day by day to the public sites - the monitor had every day of it built)
     const hx0 = store.getHex(hex) || {}, c = monCheck();
-    return Promise.resolve(c && c.catch(() => null)).then(() => !monUp() || !(hx0.ladd || hx0.mil || worldUp()) ? null : new Promise(res => {
+    return Promise.resolve(c && c.catch(() => null)).then(() => !monUp() || !(any || hx0.ladd || hx0.mil || worldUp()) ? null : new Promise(res => {
       const e = histAsk.q.get(hex) || { rs: [], since: since || '' }; e.rs.push(res); if (!since || (e.since && since < e.since)) e.since = since || ''; histAsk.q.set(hex, e);
       if (!histAsk.t) histAsk.t = setTimeout(flushMonHist, 60);
     }));
@@ -1631,7 +1641,9 @@
     st.promise = (async () => {
       await logWipeDone;
       await loadAirports();
-      await Promise.race([loadSites(), sleep(8000)]);        // (landings at unlisted fields are read as such)
+      // (landings at unlisted fields are read as such - waited for only before a day is built here: the monitor's days come
+      // built, at once (1.4.1: a blocked aircraft's log page waited up to 8 s for this list before asking the monitor))
+      const sitesP = Promise.race([loadSites(), sleep(8000)]);
       let h = (await store.getHist(hex)) || { legs: [], days: {}, savedAt: 0, v: HIST_V };
       if (h.v !== HIST_V) h = { legs: [], days: {}, savedAt: 0, v: HIST_V };   // logs from an older build are rebuilt from scratch
       h.days = h.days || {}; h.legs = h.legs || [];
@@ -1680,7 +1692,7 @@
       // 25 Oct, only FR24 saw it leave Lagos)
       if (todo.length || (looked && now() - (monFrAsked.get(hex) || 0) > 30 * 60000)) {
         monFrAsked.set(hex, now()); if (monFrAsked.size > 500) monFrAsked.delete(monFrAsked.keys().next().value);
-        const mh = await monHist(hex, todo.length ? todo[todo.length - 1] : dayStr(now())).catch(() => null);
+        const mh = await monHist(hex, todo.length ? todo[todo.length - 1] : dayStr(now()), looked).catch(() => null);
         if (mh && mh.days && typeof mh.days === 'object') {
           const byDay = new Map(); for (const l of Array.isArray(mh.legs) ? mh.legs : []) if (l && l.day && fin(l.tStart)) (byDay.get(l.day) || byDay.set(l.day, []).get(l.day)).push(l);
           const part = new Set(Array.isArray(mh.part) ? mh.part : []), lo = new Set(Array.isArray(mh.lo) ? mh.lo : []);
@@ -1711,6 +1723,7 @@
       // (the monitor's check answered first - its archive is where the days come from while the sites wall this browser; an
       // ordinary aircraft's log asked nothing else of it before)
       if (todo.length) { const mc = monCheck(); if (mc) await mc.catch(() => null); }
+      if (todo.length) await sitesP;
       const legsOf = (pts, day) => ENGINE.legsFromPoints(pts, { heli, patrol, cls: cls0, type: ac0.type, rangeKm: ENGINE.typeRangeKm(ac0), dataEnd: dayEndS(day) });
       // Each day: adsb.lol's file (the last 40 days) and airplanes.live's (the aircraft looked at - also when it is looked at
       // while this load runs - or older than adsb.lol keeps), merged

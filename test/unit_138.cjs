@@ -332,10 +332,16 @@ const od = r => r ? r.kind + ':' + r.o + '-' + r.d : null;
         const w = makeWin('https://www.flightradar24.com/data/aircraft/g-resh', html), L = await ready(w);
         const QKC = L.engine.byIcao('EGCK'), DGX = L.engine.byIcao('EGSY');
         L.store.mergeHex('408162', { reg: 'G-RESH', type: 'A139' });
+        // (the page's own load of its log done first - nothing to be had offline - so it does not save its own over this one:
+        // 1.4.1's page starts it at once, no longer behind the OurAirports list)
+        await until(() => L.store.peekHist('408162'), 8000); await sleep(500);
         L.store.setHist('408162', { v: 8, savedAt: Date.now(), days: { '2026/11/14': true }, legs: [
           { day: '2026/11/14', tStart: D + 60090, tEnd: D + 64929, tOff: D + 60059, tOn: D + 64929, startedOnGround: false, ended: true, how: 'ground', from: { id: DGX.id, code: 'DGX', conf: 'low' }, to: { id: QKC.id, code: 'QKC', conf: 'ground' }, endLat: 53.1022, endLon: -4.3358, endAlt: 175, cs: 'SRG387', maxAlt: 3775 },
           { day: '2026/11/14', tStart: D + 65962, tEnd: D + 66454, tOff: D + 65962, startedOnGround: true, ended: true, how: 'gap-low', from: { id: QKC.id, code: 'QKC', conf: 'ground' }, to: null, endLat: 53.126, endLon: -4.0175, endAlt: 1875, cs: 'SRG387' }] });
         await sleep(1500);
+        // (the log put in after the page has opened - 1.4.1's page no longer waits for the OurAirports list first: the rows
+        // gone over again as FR24 drawing them again has them, the page's own history load doing the same as it goes)
+        { const tb = w.document.querySelector('#tbl-datatable tbody'), x = tb.appendChild(w.document.createElement('tr')); await sleep(50); x.remove(); }
         const toCell = () => (w.document.querySelector('[data-flight="429a0001"]').closest('tr').children[4] || {}).textContent || '';
         const got = await until(() => /Caernarfon/.test(toCell()) ? toCell() : null, 6000);
         check('(G-RESH, 14 Nov) FR24 lost it over Snowdonia, "Landed 17:31"; its public track down at Caernarfon at 18:02, before its next flight: its row to Caernarfon - not "Caernarfon?" from that next flight', !!got && /Caernarfon/.test(got) && !/\?/.test(got), toCell());

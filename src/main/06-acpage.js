@@ -784,9 +784,11 @@
     if (document.readyState === 'loading') await new Promise(r => document.addEventListener('DOMContentLoaded', r, { once: true }));
     const table = document.getElementById('tbl-datatable'); if (!table) return;
     muteNotFound();
-    // (1.3.6: the OurAirports airports - their heliports among the route engine's places, their pages for their codes - read
-    // first: 4 s at most)
-    await Promise.race([loadOa().catch(() => false), sleep(4000)]);
+    // (1.3.6: the OurAirports airports - their heliports among the route engine's places, their pages for their codes)
+    // (1.4.1: read meanwhile, not waited for - the page held its log back up to 4 s for them on a phone: the rows are drawn
+    // again as they come, page.onPlaces)
+    const page = { onPlaces: null };
+    loadOa().catch(() => false).then(() => { try { if (page.onPlaces) page.onPlaces(); } catch (e) { log('aircraft page places', e); } });
     // our Live buttons open their own link; FR24's table handlers never see the click (our Play is FR24's own: FR24 plays it)
     document.addEventListener('click', ev => {
       const a = ev.target && ev.target.closest && ev.target.closest('#tbl-datatable a.tl-live'); if (!a) return;
@@ -826,7 +828,7 @@
           { const lb = [...document.querySelectorAll('#cnt-aircraft-info label')].find(x => /^\s*TYPE CODE\s*$/i.test(x.textContent || '')), tv = clean(lb && lb.nextElementSibling && lb.nextElementSibling.textContent).toUpperCase();
             const tc = /^[A-Z0-9]{2,4}$/.test(tv) ? [0, tv] : ((document.getElementById('cnt-aircraft-info') || {}).textContent || '').match(/TYPE CODE\s+([A-Z0-9]{2,4})\b/); const pc = ENGINE.classify({ type: (store.getHex(hex0) || {}).type || (tc ? tc[1] : '') }); pageHeli = pc === 'heli'; pageLight = pageHeli || pc === 'piston' || pc === 'glider'; }
           const fill = () => { try { fillFr24Rows(tbody, hex0, lv); fillPlayback(); } catch (e) { log('aircraft page rows', e); } };
-          fr24Refill = fill;
+          fr24Refill = fill; page.onPlaces = fill;
           loadSites().then(() => fill()).catch(() => {});
           new MutationObserver(fill).observe(tbody, { childList: true });
           // (the playback panel: FR24 rewrites its ends when another flight is played)
@@ -883,10 +885,15 @@
     const pageHex = clean((document.getElementById('txt-mode-s') || {}).textContent).toLowerCase();
     const titleMsn = clean((document.title.match(/\[([^\]]+)\]/) || [])[1]);
     const cands = [], addCand = h => { h = clean(h).toLowerCase(); if (/^[0-9a-f]{6}$/.test(h) && !cands.includes(h)) cands.push(h); };
-    await Promise.race([store.ready, sleep(2500)]);
+    // (1.4.1: the address known at once - the one seen flying under the registration, else FR24's own on the page - and
+    // hexdb's asked meanwhile, for the next try: the three were waited for one after another, the store 2.5 s and hexdb 4 s,
+    // before the log began - M-PORT's page empty five seconds in the app)
+    const hexdbP = Promise.race([gmRequest(`https://hexdb.io/reg-hex?reg=${encodeURIComponent(reg)}`, { json: false, accept: 'text/plain', timeout: 6000 }), sleep(4000).then(() => '')]).then(h => String(h || '').trim(), () => '');
+    await Promise.race([store.ready, sleep(pageHex ? 800 : 2500)]);
     addCand((store.byReg(reg) || {}).hex);
-    try { const h = await Promise.race([gmRequest(`https://hexdb.io/reg-hex?reg=${encodeURIComponent(reg)}`, { json: false, accept: 'text/plain', timeout: 6000 }), sleep(4000).then(() => '')]); addCand(String(h || '').trim()); } catch (e) { /* ignore */ }
+    if (!cands.length && !/^[0-9a-f]{6}$/.test(pageHex)) addCand(await hexdbP);
     addCand(pageHex);
+    hexdbP.then(addCand);
     const moreCands = async () => {
       try { const info = await fr24.aircraftInfo(reg); if (info && info.hex) addCand(info.hex); } catch (e) { /* ignore */ }
       try { const a = (await gmRequest(`https://api.adsbdb.com/v0/aircraft/${encodeURIComponent(reg)}`)).response; addCand(a && a.aircraft && a.aircraft.mode_s); } catch (e) { /* ignore */ }
@@ -912,6 +919,8 @@
       let hx = Object.assign({ hex, reg }, (await store.hexAsync(hex)) || {}, { otherAirframe: other });
       if (!hx.msn && titleMsn && !other) hx.msn = titleMsn;   // (FR24's title names its register's airframe)
       fillAircraftHeader(hx, reg);
+      // (1.4.1) what the monitor has of it - owner, serial number, age - first, in one ask: the registers after
+      if (!other) monIdentity(hex, hx).then(m => { if (m && current === run) { hx = Object.assign(hx, store.getHex(hex) || m); fillAircraftHeader(hx, reg); } }).catch(e => log('aircraft page monitor identity', e));
       // (1.0.2) FR24's page knows the aircraft and shows none of its flights: blocked, if it has flown lately (the monitor's
       // word first) - its LADD tag here and in search from then on (M-PORT's log page had none)
       if (!other && !(hx.ladd || hx.pia || hx.mil)) noteFr24Blocked(hex, reg).then(() => { if (current === run) { hx = Object.assign(hx, store.getHex(hex) || {}); fillAircraftHeader(hx, reg); } });
@@ -951,7 +960,7 @@
         if ((days >= HISTORY_DAYS - 1 || run.loaded) && (legs.length || liveState || run.last || run.loaded)) loading.remove();
         else loading.firstChild.innerHTML = `<span class="tl-spin"></span>&nbsp; Loading older flights… (${days} of ${HISTORY_DAYS} days)`;
       };
-      run.render = render;
+      run.render = render; page.onPlaces = () => { if (current === run) render(); };
       // the flight in progress as the map tab has it (asked; it answers at once) - before anything is worked out here
       const fromMap = () => { const m = mapRoutes.get(hex); return m && now() - m.at < 5 * 60000 && !m.route.landed ? m.route : null; };
       const own = ls => fromMap() || ls;

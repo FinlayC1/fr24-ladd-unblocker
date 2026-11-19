@@ -22,6 +22,7 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 - **OurAirports fields win over the airports FR24 guesses.** FR24 had M-SKTO "Blackpool -> Liverpool" on 19 Nov, but its own track came down on Axis Business Park's helipad in Gillmoss, 11 km away. The log and FR24's player now show the helipad.
 - **"N/A" is replaced much sooner on the phone,** and the phone's small panel (the normal view) shows the registered owner instead of "Private owner".
 - **A page opened just now no longer misses the monitor.** Runways, owners, the monitor's flights and the first "On ground" board were left out until its first check had answered.
+- **A blocked aircraft's log is there as its page opens.** M-PORT's page in the app sat empty for five seconds, then took ten more. Its flights and its owner, serial number and age now come from the monitor straight away.
 
 ### Added
 - **The monitor's flights by flight number** (`monitor/fr24fn.cjs`, `GET /fr24fn?fn=`, `GET /csfn?cs=`).
@@ -70,6 +71,11 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 - **FR24's player of one of its own flights** sends its ends back as soon as they are known. The owner and flight number follow. On a phone the ends waited for the monitor and the log first.
 - **Heliports and strips arriving** (OurAirports' list, the landing sites) work out the flight on screen again at once, instead of at the next round 15 seconds later.
 - **The phone's small panel** writes FR24's own words back only where ours is still shown there.
+- **A blocked aircraft's log page** (`bootAircraftPage`, `loadHistory`):
+  - It no longer waits, one after another, for the OurAirports list (up to 4 s), the saved records (2.5 s) and hexdb's lookup of the address (4 s). It starts with the address seen flying under the registration, else FR24's own on the page. hexdb's answer is used if that address shows no flights. The rows are drawn again when the OurAirports list comes in.
+  - The monitor is asked for the log of an aircraft looked at whether or not this device knows it is blocked. M-PORT, not yet known as blocked here, was read day by day from the public sites.
+  - The monitor's days are taken before the landing-sites list is in; that list is waited for only before a day is built here.
+  - Its header takes the owner, serial number and age from the monitor in one ask before the registers are asked (`monIdentity`).
 - **The data pages read the OurAirports list as they open**, and an airport search waits up to three seconds for it. EGOW found nothing on FR24's flights page.
 
 ### Tests
@@ -83,9 +89,11 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
   - M-SKTO's log: the helipad over FR24's Liverpool, the next flight's end following it, FR24's own airport kept where the track went there or was lost in the air, FR24's whole track asked for only where the monitor's ends stop short of the ground, every row's ends in one ask;
   - FR24's player of M-SKTO: the helipad written into its page data;
   - the phone's small panel: the registered owner over "Private owner", written once, an airline FR24 names left alone;
+  - M-PORT's log page: its flights from the monitor and its header's owner, serial number and age, there at once with OurAirports' list, hexdb and the strips' list all slow;
   - the back button;
   - a flight number's earlier flights under FR24's own;
   - the flights page's airport search waiting for the OurAirports list.
+- `test/unit_138.cjs`: the G-RESH log put in once the page's own load of it is done (the page now starts it at once).
 - `test/unit_monitor2.cjs`: `/rwyof` by FR24's id, by the aircraft and its time, nothing known, and a time a day away.
 - `test/unit_fr24fn.cjs` (new): the monitor's flights by flight number - followed, written, asked for by time; a glimpse or a taxi-only flight never written; times in the air, not the taxi; callsigns' flight numbers; kept over a restart; old months gone; FR24's flight number read from its feed.
 - `test/unit_app.cjs`:

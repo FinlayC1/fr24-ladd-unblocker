@@ -250,6 +250,42 @@ const owners = (hex, reg, type, owner) => JSON.stringify({ list: [[hex, reg, typ
     check('... no script errors', !errs2.length, errs2.slice(0, 5));
     w2.close();
   }
+  // ======== a blocked aircraft's log page (M-PORT, FR24: "could not find data"): there at once, the slow lists not waited for
+  {
+    const DAYF = t => { const d = new Date(t * 1000); return `${d.getUTCFullYear()}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${String(d.getUTCDate()).padStart(2, '0')}`; };
+    const FAB = AP('FAB') || AP('LTN'), T = DAY0 + 9 * 3600;
+    const histLeg = { day: DAYF(T), tStart: T, tEnd: T + 2400, tOff: T + 60, tOn: T + 2340, startedOnGround: true, ended: true, how: 'ground', from: { id: MAN.id, code: 'MAN', conf: 'ground' }, to: { id: FAB.id, code: FAB.iata, conf: 'ground' }, cs: 'MPORT', maxAlt: 31000 };
+    const asked = [], t0 = Date.now(), slow = [];
+    const answerP = u => {
+      if (u.startsWith(MON + '/oaap')) { slow.push('oa'); return [6000, 200, JSON.stringify({ rows: [] })]; }
+      if (/hexdb\.io\/reg-hex/.test(u)) { slow.push('hexdb'); return [5000, 200, '424B68']; }
+      if (/raw\.githubusercontent\.com\/davidmegginson\/ourairports-data/.test(u)) { slow.push('sites'); return [9000, 404, '']; }
+      if (u.startsWith(MON + '/hist?hex=424b68')) return [5, 200, JSON.stringify({ hv: 8, list: [{ hex: '424b68', blk: 1, days: { [DAYF(T)]: 1 }, legs: [histLeg] }] })];
+      if (u.startsWith(MON + '/owners?hex=') && /424b68/.test(u)) return [5, 200, JSON.stringify({ list: [['424b68', 'M-PORT', 'GL5T', 'Bombardier Global 5000', 'Portman Aviation Ltd', 'Douglas', 'Isle of Man', 'IM', '9868', 2008, 0, '', '', 1, 1, 0]] })];
+      return null;
+    };
+    const html = `<!doctype html><html><head><title>M-PORT - Bombardier Global 5000 - Flightradar24</title></head><body><div id="cnt-subpage-info"><h1>M-PORT</h1></div>
+      <div id="cnt-aircraft-info">
+        <div class="row"><label>AIRCRAFT</label> <span class="details">Bombardier Global 5000</span></div>
+        <div class="row"><label>AIRLINE</label> <span class="details">Private owner</span></div>
+        <div class="row"><label>OPERATOR</label> <span class="details">-</span></div>
+        <div class="row"><label>TYPE CODE</label> <span class="details">GL5T</span></div>
+        <div class="row"><label>MODE S</label> <span class="details" id="txt-mode-s">424B68</span></div>
+        <div class="row"><label>SERIAL NUMBER (MSN)</label> <span class="details"><i class="icon-fr24-lock"></i></span></div>
+        <div class="row"><label>AGE</label> <span class="details"><i class="icon-fr24-lock"></i></span></div>
+      </div>
+      <table id="tbl-datatable"><tbody><tr><td colspan="12">Sorry, but we could not find data for specified flight</td></tr></tbody></table></body></html>`;
+    const w = makeWin('https://www.flightradar24.com/data/aircraft/m-port', asked, u => answerP(u) || answerX(u), html), L = await ready(w, asked);
+    const tR = Date.now();
+    const row = await until(() => w.document.querySelector('tr.tl-adsb-row'), 8000), ms = Date.now() - tR;
+    check('M-PORT\'s log page (FR24 has none of its flights): its flights the monitor rebuilt, there at once - not after the slow lists (OurAirports\' 6 s, hexdb\'s 5 s, the strips\' 9 s here)', !!row && ms < 2500 && /Manchester|MAN/.test(row.textContent) && !w.document.querySelector('#tbl-datatable tbody tr td[colspan="12"]'), { ms, row: row && row.textContent.replace(/\s+/g, ' ').slice(0, 120), slow, sinceOpen: Date.now() - t0 });
+    const span = lb => [...w.document.querySelectorAll('#cnt-aircraft-info .row')].find(r => r.querySelector('label').textContent === lb).querySelector('span.details');
+    const own = await until(() => /Portman/.test(span('AIRLINE').textContent) ? 1 : 0, 3000), ms2 = Date.now() - tR;
+    check('... its header from the monitor in the same moment: its owner over "Private owner", its serial number and age - no padlock', !!own && ms2 < 3500 && /9868/.test(span('SERIAL NUMBER (MSN)').textContent) && /\d+ year/.test(span('AGE').textContent) && /Portman/.test(span('OPERATOR').textContent), { ms2, al: span('AIRLINE').textContent, msn: span('SERIAL NUMBER (MSN)').textContent, age: span('AGE').textContent });
+    const errs = w.__logs.filter(l => /^ERROR|TypeError|ReferenceError/.test(l));
+    check('... no script errors', !errs.length, errs.slice(0, 5));
+    w.close();
+  }
   // ======== a phone's small panel at the foot of the map (its full panel not pulled up): M-SKTO's "Private owner" =========
   {
     const asked = [], w = makeWin('https://www.flightradar24.com/53.47,-2.90/12', asked, answerX), L = await ready(w, asked);
