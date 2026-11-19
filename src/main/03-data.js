@@ -246,7 +246,8 @@
     // the airfields FR24 does not list, for the route engine: where light aircraft land and take off, fly circuits - and
     // where they may be going (Borkenberge, Slany, a farm strip)
     try { ENGINE.setFields(rows.filter(r => r[2] === 'S' || r[2] === 'M').map(r => ({ lat: r[0], lon: r[1], alt: r[6], ident: r[4], name: r[3], city: r[5] }))); } catch (e) { log('airfields', e); }
-    placesArrived();
+    // (1.4.1: the page's flight on screen worked out again with them - set outside this block; the monitor sets none)
+    if (typeof sites.onBuilt === 'function') sites.onBuilt();
   }
   function loadSites() {
     if (sites.grid) return Promise.resolve(true);
@@ -273,6 +274,7 @@
   }
   const heliportNear = (lat, lon, km) => { const n = siteNear(lat, lon, km, 'H'); return n ? { lat: n.row[0], lon: n.row[1], dist: n.dist, name: n.row[3] } : null; };
   // ==/ROUTE-SITES==
+  sites.onBuilt = () => placesArrived();
   // ---- places OurAirports does not have, from OpenStreetMap (Overpass): hospital helipads and offshore platforms ------
   // A helicopter down at Southmead Hospital was "a private site near Bristol" - the pad is in OpenStreetMap, not in
   // OurAirports. One small query per spot (0.001°), asked in the background and kept on disk; answers: a named helipad
