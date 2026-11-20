@@ -662,8 +662,10 @@
     const mine = (r => !!(r && r.token))(monRemote());
     const hdr = mine && feedHdr && !feedHdrSent ? feedHdr : null, own = [...ownersOut].slice(0, 500), pbIds = [...pbOut.values()].slice(0, 500);
     const routes = [...routesOut.values()].slice(0, 300), learn = learnOutTake(300), pics = [...photosOut].slice(0, 100);
-    if (!flights.length && !ids.length && !hdr && !own.length && !pbIds.length && !routes.length && !learn.length && !pics.length) return;
-    const j = await monPost('/report', { hdr: hdr || undefined, ua: hdr ? navigator.userAgent : undefined, flights, ids, owners: own.length ? own : undefined, pbIds: pbIds.length ? pbIds : undefined, routes: routes.length ? routes : undefined, learn: learn.length ? learn.map(x => x.slice(0, 12)) : undefined, photos: pics.length ? pics : undefined }).catch(e => { log('report to monitor', String(e && e.message || e)); return null; });
+    // (1.4.2: callsigns' flight numbers FR24's own rows showed this page - 06-pbpage noteCsFn)
+    const csfn = csfnOut.splice(0, 500);
+    if (!flights.length && !ids.length && !hdr && !own.length && !pbIds.length && !routes.length && !learn.length && !pics.length && !csfn.length) return;
+    const j = await monPost('/report', { hdr: hdr || undefined, ua: hdr ? navigator.userAgent : undefined, flights, ids, owners: own.length ? own : undefined, pbIds: pbIds.length ? pbIds : undefined, routes: routes.length ? routes : undefined, learn: learn.length ? learn.map(x => x.slice(0, 12)) : undefined, photos: pics.length ? pics : undefined, csfn: csfn.length ? csfn : undefined }).catch(e => { log('report to monitor', String(e && e.message || e)); return null; });
     if (j && j.ok && hdr) feedHdrSent = true;
     if (j && j.ok) {
       for (const [h, o] of own) if (ownersOut.get(h) === o) ownersOut.delete(h); for (const r of pbIds) if (pbOut.get(r[0]) === r) pbOut.delete(r[0]);
@@ -673,7 +675,7 @@
       if (routesSent.size > 3000) for (const k of [...routesSent.keys()].slice(0, 1000)) routesSent.delete(k);
       // (a monitor older than 22.25 learns none of them: none marked sent)
       if (typeof j.learned === 'number' && j.learnSeq > 0) learnSentMark(learn, j.learnNot, j.learnSeq);
-    } else learnOutBack(learn);
+    } else { learnOutBack(learn); const room = 500 - csfnOut.length; if (csfn.length && room > 0) csfnOut.unshift(...csfn.slice(-room)); }
   }
   // (1.3: switched off too - what FR24 itself shows this page goes to the monitor whatever the switch says)
   setInterval(() => { idleSlice().then(reportToMonitor).catch(() => {}); }, 60000);

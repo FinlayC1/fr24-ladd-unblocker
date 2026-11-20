@@ -124,6 +124,7 @@ function createBoards(env) {
     const b = load(apId), m = kind === 'arrivals' ? b.arr : b.dep; let n = 0;
     for (const r0 of rows.slice(0, 2000)) {
       const r = cleanRow(r0, nowS); if (!r) { S.refused++; continue; }
+      if (env.onRow) try { env.onRow(r); } catch (e) { /* the hook's own */ }
       const key = r.src + '|' + r.k, cur = m.get(key), nx = cur ? mergeRow(cur, r) : r;
       if (cur) { const a = Object.assign({}, cur), z = Object.assign({}, nx); delete a.u; delete z.u; if (same(a, z)) continue; }
       nx.u = Math.round(nowS); m.set(key, nx); n++;
@@ -226,7 +227,18 @@ function createBoards(env) {
       return 0;
     } finally { busy = false; }
   }
-  return { put, rows, want, counts, save, pump, load, stats: S, wanted, C };
+  // (1.4.2) every row kept on disk, each airport's file in turn - a pause between them - for what is learnt from them
+  // (fr24fn.cjs noteCs: the callsigns' flight numbers of the boards kept before it was)
+  async function sweep(each) {
+    let names = []; try { names = (await fs.promises.readdir(dir)).filter(f => /^\d+\.json\.gz$/.test(f)); } catch (e) { return 0; }
+    let n = 0;
+    for (const f of names) {
+      try { const o = JSON.parse(zlib.gunzipSync(await fs.promises.readFile(path.join(dir, f))).toString('utf8')); for (const r of [].concat((o && o.arr) || [], (o && o.dep) || [])) { if (r && typeof r === 'object') { each(r); n++; } } } catch (e) { /* a file being written: next time */ }
+      await new Promise(r => setImmediate(r));
+    }
+    return n;
+  }
+  return { put, rows, want, counts, save, pump, load, sweep, stats: S, wanted, C };
 }
 
 module.exports = { createBoards, cleanRow, mergeRow, schedRows, WIN };

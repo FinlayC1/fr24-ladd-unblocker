@@ -192,6 +192,7 @@
       case 'trackFile': onTrackFile(d).catch(e => { log('track file', String(e && e.message || e)); postToPage('trackFileGot', { rid: d && d.rid, ok: false }); }); break;
       case 'ogWant': onOgWant(d).catch(e => { log('on ground', String(e && e.message || e)); postToPage('ogGot', { rid: d && d.rid, ap: d && d.ap, list: [] }); }); break;
       case 'pbPage': onPbPage(d).catch(e => { log('playback page', String(e && e.message || e)); postToPage('pbPageGot', { rid: d && d.rid, ok: false }); }); break;
+      case 'clMapSt': onClMapSt(d); break;
       case 'pbInfo': onPbInfo(d).catch(e => { log('playback info', String(e && e.message || e)); postToPage('pbInfoGot', { rid: d && d.rid, ok: false }); }); break;
       case 'sched': onSched(d); break;
       case 'airAsk': onAirAsk(d).catch(e => log('airspace', e)); break;
@@ -356,7 +357,13 @@
   mxHidePrivacyAds();
   if (opt.noAds) addAdStyle();
   if (opt.noAds && (isDataPage || isFlightPage || isAircraftPage)) muteAdNotice();
-  if (isDataPage || isFlightPage || isAircraftPage) { addStyle(); watchSearchTags(); }
+  if (isDataPage || isFlightPage || isAircraftPage) {
+    addStyle(); watchSearchTags();
+    // (1.4.2: what changed written out when the page is left or hidden, as on the map - the log days read, the flights'
+    // ends, the boards noted in its last moment were lost when the page was left within a second of them)
+    window.addEventListener('pagehide', () => store.flushNow());
+    document.addEventListener('visibilitychange', () => { if (document.hidden) store.flushNow(); });
+  }
   // (the population tables unpack once FR24 has drawn the page - a few hundred ms of work that must not hold up its own
   // start - and the routes on screen are worked out again with them)
   if (!isDataPage && !isFlightPage) {
@@ -368,6 +375,7 @@
   if (isAircraftPage) {
     installBridge();
     if (opt.acPages) classicP.then(() => bootAircraftPage()).catch(e => log('aircraft page', e));
+    else classicP.then(() => clHoldsIn()).catch(() => {});
     // (1.3.12: in the app on a phone, the page laid out as a phone app lays it out - 06-phone)
     try { phoneView(); } catch (e) { log('phone view', e); }
     // (1.3.7: a type's production list - FR24's server's page - its padlocked first flights (ages) filled)
@@ -375,6 +383,7 @@
   } else if (isFlightPage) {
     installBridge();
     if (opt.acPages) classicP.then(() => bootFlightPage()).catch(e => log('flight page', e));
+    else classicP.then(() => clHoldsIn()).catch(() => {});
     try { phoneView(); } catch (e) { log('phone view', e); }
   } else if (isDataPage) {
     // FR24's airport pages - general, boards, routes, statistics: only the bridge for their lists and what they ask for (the

@@ -383,7 +383,7 @@
       // (save: an address - the public monitor's when left empty - and the secret, if any; public monitor: back to it;
       // turn off: no monitor at all)
       const url = monAddr((document.getElementById('tl-mon-url') || {}).value) || MON_DEFAULT_URL, token = String((document.getElementById('tl-mon-token') || {}).value || '').trim();
-      store.kvSet('monRemote', act === 'monClear' ? {} : act === 'monOff' ? { off: true } : url === MON_DEFAULT_URL && !token ? {} : { url, token }); monBase = ''; monOk = false;
+      store.kvSet('monRemote', act === 'monClear' ? {} : act === 'monOff' ? { off: true } : url === MON_DEFAULT_URL && !token ? {} : { url, token }); monBase = ''; monOk = false; monLsSet(null);
       // (the browser extension reaches only the hosts its manifest lists: a monitor elsewhere is asked for - the browser
       // opens a page where the user allows it - and looked at again once allowed)
       const asked = act === 'monSave' && typeof TL_HOST_ACCESS === 'function' && !MON_DEFAULTS.includes(url) && !/\.sslip\.io$/.test(new URL(url).host) ? TL_HOST_ACCESS(new URL(url).origin) : Promise.resolve(true);

@@ -11,9 +11,11 @@
     const m = location.pathname.match(/^\/data\/(aircraft|flights)\/([^/?#]+)\/?$/i); if (!m) return;
     const kind = m[1].toLowerCase() === 'aircraft' ? 'AIRCRAFT' : 'FLIGHT', name = decodeURIComponent(m[2]).toUpperCase();
     let tries = 0;
+    // (1.4.2: made from the old page FR24's new one is turned back into (06-classic) - once it is shown, everything in it
+    // at once: its rows' landing places, serial number and age are in by then)
     const start = () => {
       const table = document.getElementById('tbl-datatable');
-      if (!table || !document.body) { if (++tries < 120) setTimeout(start, 500); return; }
+      if (!table || !document.body || document.querySelector('#content.tl-cl-wait')) { if (++tries < 600) setTimeout(start, 100); return; }
       pvBuild(table, kind, name);
     };
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true }); else start();

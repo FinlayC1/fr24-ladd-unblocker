@@ -97,6 +97,8 @@ function createWorld(dir) {
         try { fs.writeSync(wfd, pre); for (const z of blocks) fs.writeSync(wfd, z); fs.fsyncSync(wfd); } finally { fs.closeSync(wfd); }
         const was = fs.existsSync(fileOf(day)) ? fs.statSync(fileOf(day)).size : 0;
         fs.renameSync(tmp, fileOf(day)); try { fs.unlinkSync(tmpRows); } catch (e) { /* gone */ }
+        // (1.4.2: its callsign index made again from it)
+        try { fs.unlinkSync(csiFile(day)); } catch (e) { /* none yet */ } csiMem.delete(day);
         const h = { v: WORLD_V, day, n: list.length, nb: recs.length, legs, at: Date.now(), len: head.length };
         days.set(day, h); stats.days = days.size; stats.built++; stats.bytes += pre.length + off - was; stats.last = { day, n: list.length, legs, mb: +((pre.length + off) / 1e6).toFixed(1) };
         return h;
@@ -151,7 +153,48 @@ function createWorld(dir) {
     } finally { fs.closeSync(fd); }
     return n;
   }
-  return { dir, days, has, writer, lookup, lookupRaw, decode, each, scan, stats, fileOf };
+  // (1.4.2) A day's airline callsigns - the aircraft that flew each one: STORE/world/<day>.csi, gzipped lines
+  // "<callsign>\t<hex>,<hex>...". A flight number's flights before the monitor's own index of them began (fr24fn.cjs): its
+  // callsigns' aircraft of each day, then their flights of that day - never the whole day read for one ask.
+  const CSI_RE = /^[A-Z]{3}\d[A-Z0-9]{0,4}$/, csiFile = day => path.join(dir, day + '.csi'), csiMem = new Map();
+  const hasCsi = day => fs.existsSync(csiFile(day));
+  async function buildCsi(day, breath) {
+    const h = days.get(day); if (!h) return 0;
+    let fd; try { fd = fs.openSync(fileOf(day), 'r'); } catch (e) { return 0; }
+    const by = new Map();
+    try {
+      const base = 4 + h.len, recs = Buffer.alloc(h.nb * REC); fs.readSync(fd, recs, 0, recs.length, base);
+      for (let k = 0; k < h.nb; k++) {
+        const off = recs.readUInt32LE(k * REC + 4), len = recs.readUInt32LE(k * REC + 8), z = Buffer.alloc(len);
+        fs.readSync(fd, z, 0, len, base + h.nb * REC + off);
+        for (const line of zlib.gunzipSync(z).toString('utf8').split('\n')) {
+          const i = line.indexOf('\t'); if (i < 0) continue;
+          const j = line.indexOf('\t', i + 1), hex = line.slice(0, i);
+          let legs = []; try { legs = JSON.parse(line.slice(i + 1, j < 0 ? undefined : j)); } catch (e) { continue; }
+          for (const a of legs) { const c = Array.isArray(a) ? String(a[14] || '').toUpperCase().trim() : ''; if (!CSI_RE.test(c)) continue; let l = by.get(c); if (!l) by.set(c, l = []); if (!l.includes(hex)) l.push(hex); }
+        }
+        if (breath) await breath();
+      }
+    } finally { fs.closeSync(fd); }
+    const txt = [...by].map(([c, l]) => c + '\t' + l.join(',')).join('\n') + '\n', tmp = csiFile(day) + '.tmp';
+    fs.writeFileSync(tmp, zlib.gzipSync(Buffer.from(txt, 'utf8'))); fs.renameSync(tmp, csiFile(day));
+    csiMem.delete(day); stats.csi = (stats.csi || 0) + 1;
+    return by.size;
+  }
+  // (the aircraft of each of the callsigns on a day - the last eight days' indexes read kept)
+  function csiLookup(day, list) {
+    let m = csiMem.get(day);
+    if (!m) {
+      m = new Map();
+      try { for (const l of zlib.gunzipSync(fs.readFileSync(csiFile(day))).toString('utf8').split('\n')) { const i = l.indexOf('\t'); if (i > 0) m.set(l.slice(0, i), l.slice(i + 1).split(',').filter(x => /^[0-9a-f]{6}$/.test(x))); } } catch (e) { return null; }
+      csiMem.set(day, m); if (csiMem.size > 8) csiMem.delete(csiMem.keys().next().value);
+    }
+    const out = new Map(); for (const c of list || []) { const l = m.get(c); if (l && l.length) out.set(c, l); }
+    return out;
+  }
+  // (the newest day with no index yet - the background builds them one at a time)
+  const csiDue = () => [...days.keys()].sort().reverse().find(d => !hasCsi(d)) || '';
+  return { dir, days, has, writer, lookup, lookupRaw, decode, each, scan, stats, fileOf, buildCsi, csiLookup, hasCsi, csiDue };
 }
 
 // Free space where the store is, in bytes (Infinity: not known)

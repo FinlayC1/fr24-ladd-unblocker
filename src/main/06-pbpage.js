@@ -98,11 +98,33 @@
   // ---- (1.4.1) what FR24's player names a flight by: its flight number, its airline (or the aircraft's operator / owner)
   // FR24's own flight number of a callsign - the monitor learns every pair FR24's map shows (/csfn) - kept here a day
   const csFnMemo = new Map();
+  // (1.4.2) Each callsign's flight number as FR24's own rows showed it here - a log page's flights (FR24's week of them), an
+  // airport's board, a played flight: known at once for the rows rebuilt from ADS-B under them, kept 60 days (the latest
+  // 5000), and sent to the monitor for every other browser (report csfn - fr24fn.cjs noteCs). The rows rebuilt from
+  // ADS-B had a callsign where FR24's own rows beside them had the same flight's number.
+  const CSFN_KEY = 'csFnSeen1', CSFN_KEEP = 60 * 864e5, FN_OK = /^[A-Z0-9]{2,3}\d{1,5}[A-Z]?$/;
+  const csfnSeen = new Map(), csfnOut = [];
+  let csfnT = 0;
+  store.kvReady.then(() => { const o = store.kvGet(CSFN_KEY), lo = now() - CSFN_KEEP; if (o && typeof o === 'object') for (const k of Object.keys(o)) { const v = o[k]; if (Array.isArray(v) && typeof v[0] === 'string' && FN_OK.test(v[0]) && fin(v[1]) && v[1] > lo && !(csfnSeen.has(k) && csfnSeen.get(k)[1] >= v[1])) csfnSeen.set(k, v); } }).catch(() => {});
+  function noteCsFn(cs0, fn0, t, local) {
+    const cs = clean(cs0).toUpperCase(), fn = clean(fn0).toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (!/^[A-Z]{3}\d[A-Z0-9]{0,4}$/.test(cs) || !FN_OK.test(fn) || fn === cs) return false;
+    const at = fin(t) && t > 1e9 ? Math.min(t * 1000, now()) : now(), o = csfnSeen.get(cs);
+    if (o && (o[1] > at || (o[0] === fn && at - o[1] < 3600e3))) return false;
+    csfnSeen.delete(cs); csfnSeen.set(cs, [fn, at]); while (csfnSeen.size > 5000) csfnSeen.delete(csfnSeen.keys().next().value);
+    const m = csFnMemo.get(cs); if (!m || m.fn !== fn) csFnMemo.set(cs, { fn, at: now() });
+    if (!local) { csfnOut.push([cs, fn, Math.round(at / 1000)]); if (csfnOut.length > 500) csfnOut.shift(); }
+    if (!csfnT) csfnT = setTimeout(() => { csfnT = 0; store.kvSet(CSFN_KEY, Object.fromEntries(csfnSeen)); }, 1500);
+    return true;
+  }
+  // (a callsign's flight number FR24's rows showed here - within the 60 days kept)
+  const csfnOf = cs => { const v = csfnSeen.get(cs); return v && now() - v[1] < CSFN_KEEP ? v[0] : ''; };
   async function csFlightNumber(cs) {
     cs = clean(cs).toUpperCase(); if (!/^[A-Z]{3}\d[A-Z0-9]{0,4}$/.test(cs)) return '';
     const m = csFnMemo.get(cs); if (m && now() - m.at < 864e5) return m.fn;
     let fn = '';
     if (await monReady()) { try { const j = await monGet('/csfn?cs=' + encodeURIComponent(cs), { timeout: 5000 }); const v = j && j.list && j.list[cs]; if (typeof v === 'string' && /^[A-Z0-9]{2,3}\d{1,5}[A-Z]?$/.test(v)) fn = v; } catch (e) { /* none */ } }
+    if (!fn) fn = csfnOf(cs);
     // (none learnt: an airline's numbered callsign is its flight number with its IATA code - UAL972 is UA972; one with
     // letters in it - EZY327L, U2414 - is not, and has none here)
     if (!fn && /^[A-Z]{3}\d{1,4}$/.test(cs)) { await Promise.race([fr24.loadAirlines().catch(() => null), sleep(3000)]); const id = fr24.byIcao.get(cs.slice(0, 3)), a = id && fr24.airlines ? fr24.airlines.get(id) : null; if (a && /^[A-Z0-9]{2}$/.test(a.iata || '')) fn = a.iata + String(Number(cs.slice(3))); }
@@ -122,7 +144,7 @@
       if (await monReady()) for (let i = 0; i < miss.length; i += 100) { try { const j = await monGet('/csfn?cs=' + miss.slice(i, i + 100).map(encodeURIComponent).join(','), { timeout: 8000 }); Object.assign(learnt, (j && j.list) || {}); } catch (e) { /* none */ } }
       if (miss.some(c => !learnt[c] && /^[A-Z]{3}\d{1,4}$/.test(c))) await Promise.race([fr24.loadAirlines().catch(() => null), sleep(3000)]);
       for (const c of miss) {
-        let fn = typeof learnt[c] === 'string' && /^[A-Z0-9]{2,3}\d{1,5}[A-Z]?$/.test(learnt[c]) ? learnt[c] : '';
+        let fn = typeof learnt[c] === 'string' && /^[A-Z0-9]{2,3}\d{1,5}[A-Z]?$/.test(learnt[c]) ? learnt[c] : csfnOf(c);
         if (!fn && /^[A-Z]{3}\d{1,4}$/.test(c)) { const id = fr24.byIcao.get(c.slice(0, 3)), a = id && fr24.airlines ? fr24.airlines.get(id) : null; if (a && /^[A-Z0-9]{2}$/.test(a.iata || '')) fn = a.iata + String(Number(c.slice(3))); }
         csFnMemo.set(c, { fn, at: now() }); if (fn) got++;
       }
@@ -131,9 +153,9 @@
     return got;
   }
   // (a callsign's flight number as known here now - '' none, or not asked yet)
-  const fnKnown = cs => { const m = csFnMemo.get(clean(cs).toUpperCase()); return (m && m.fn) || ''; };
+  const fnKnown = cs => { const c = clean(cs).toUpperCase(), m = csFnMemo.get(c); return (m && m.fn) || csfnOf(c); };
   // (the rows' callsigns: their flight numbers asked for, the rows drawn again when any came)
-  const wantFns = (legs, redraw) => { csFlightNumbers((legs || []).map(l => l && l.cs)).then(n => { if (n && redraw) redraw(); }).catch(e => log('flight numbers', String(e && e.message || e))); };
+  const wantFns = (legs, redraw) => csFlightNumbers((legs || []).map(l => l && l.cs)).then(n => { if (n && redraw) redraw(); }).catch(e => log('flight numbers', String(e && e.message || e)));
   // (an airline's callsign - three letters and a number: FR24's airline of that ICAO code, its id for the logo)
   const csAirlineId = cs => { const c = /^([A-Z]{3})\d/.exec(clean(cs).toUpperCase()); return (c && fr24.byIcao.get(c[1])) || 0; };
   // (the aircraft's operator or owner as the registers have it - asked of them, a few seconds at most: the page may have
