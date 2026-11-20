@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Flightradar24 LADD / N-A Unblocker (feed-level)
 // @namespace    tweeks.io
-// @version      1.4.1
+// @version      1.4.2
 // @description  Identifies every LADD / N/A / blocked military aircraft on Flightradar24 from public ADS-B, and injects callsign, registration, operator, age, country, MSN, squawk, vertical speed, GPS altitude, airspeeds, wind, photos, a reasoned origin/destination with a wind-corrected ETA (also for ordinary flights FR24 shows as N/A - military, private, GA, helicopters, with private landing sites; learned from 63 days of every aircraft worldwide, with live weather and closures), airport-board entries and a rebuilt 7-month flight log straight into FR24's own data - so it all renders like normal FR24 traffic.
 // @author       Finlay Clarke
 // @updateURL    https://raw.githubusercontent.com/FinlayC1/fr24-ladd-unblocker/main/dist/fr24-ladd-unblocker.user.js
@@ -100,7 +100,7 @@
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "1.4.1";
+    var BRIDGE_V = "1.4.2";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed but the
@@ -10339,7 +10339,7 @@
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '1.4.1';
+  const VERSION = '1.4.2';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
@@ -18315,7 +18315,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     // (1.1.0) FR24's own rows read here - its map board's, its schedule's, its flight numbers' lists - go to the monitor for
     // every other browser; those that came from it do not go back
     if (row.fromMon) { row = Object.assign({}, row); delete row.fromMon; delete row.u; }
-    else if (row.src === 'fr24' || row.src === 'sched') boardUp(apId, kind, row);
+    else if ((row.src === 'fr24' || row.src === 'sched') && !row.drop) boardUp(apId, kind, row);
     (boardPend.get(apId) || boardPend.set(apId, []).get(apId)).push([kind, row]);
     // (kept in a while, in one go - within a second or two for a board that is open)
     const wait = boardAsked.has(apId) ? 1500 : 20000;
@@ -18956,21 +18956,28 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // the same flight at another airport is withdrawn: M-SKTO's "Newcastle -> Ince Blundell" of 19 Nov, heard low 12 km
   // from the helipad FR24 has it down on, was on Ince Blundell's board, and its Axis Business Park flights missing
   const fr24Spans = new Map();   // hex -> [{ fid, t0, t1, o, d }]
+  const spanByFid = new Map();   // (1.4.2) FR24 id -> its entry there (FR24's own rows of it, by its id)
+  const spanFid = x => { if (x && x.fid) { spanByFid.delete(x.fid); spanByFid.set(x.fid, x); while (spanByFid.size > 20000) spanByFid.delete(spanByFid.keys().next().value); } };
   let spansDirty = false, spansT = 0;
-  store.kvReady.then(() => { const o = store.kvGet('fr24Spans1') || {}; const lo = nowS() - BOARD_BACK - 86400; for (const h of Object.keys(o)) if (/^[0-9a-f]{6}$/.test(h) && Array.isArray(o[h])) { const l = o[h].filter(x => x && x.t1 > lo); if (l.length && !fr24Spans.has(h)) fr24Spans.set(h, l); } }).catch(() => {});
+  store.kvReady.then(() => { const o = store.kvGet('fr24Spans1') || {}; const lo = nowS() - BOARD_BACK - 86400; for (const h of Object.keys(o)) if (/^[0-9a-f]{6}$/.test(h) && Array.isArray(o[h])) { const l = o[h].filter(x => x && x.t1 > lo); if (l.length && !fr24Spans.has(h)) { fr24Spans.set(h, l); l.forEach(spanFid); } } }).catch(() => {});
   function noteFr24Span(hex, x) {
     if (!/^[0-9a-f]{6}$/.test(hex || '') || !x || !(x.t0 > 0)) return;
     const l = fr24Spans.get(hex) || []; const i = l.findIndex(y => (x.fid && y.fid === x.fid) || Math.abs(y.t0 - x.t0) < 600);
     const v = { fid: x.fid || '', t0: Math.round(x.t0), t1: Math.round(x.t1 || x.t0), o: x.o || 0, d: x.d || 0 };
-    if (i >= 0) { const y = l[i]; if (y.o === v.o && y.d === v.d && y.t1 === v.t1 && y.fid === v.fid) return; l[i] = Object.assign({}, y, Object.fromEntries(Object.entries(v).filter(([, w]) => w))); } else l.push(v);
+    if (i >= 0) { const y = l[i]; if (y.o === v.o && y.d === v.d && y.t1 === v.t1 && y.fid === v.fid) return; l[i] = Object.assign({}, y, Object.fromEntries(Object.entries(v).filter(([, w]) => w))); spanFid(l[i]); } else { l.push(v); spanFid(v); }
     l.sort((p, q) => p.t0 - q.t0); fr24Spans.set(hex, l.slice(-80)); spansDirty = true;
     if (!spansT) spansT = setTimeout(() => { spansT = 0; if (!spansDirty) return; spansDirty = false; const lo = nowS() - BOARD_BACK - 86400, o = {}; for (const [h, ls] of fr24Spans) { const k = ls.filter(y => y.t1 > lo); if (k.length) o[h] = k; } store.kvSet('fr24Spans1', o); }, 3000);
   }
   // (a row of ours - rebuilt from a track, followed live - of a flight FR24's own has at another airport: not this board's)
   function spanElsewhere(r, apId, kind) {
-    if (!apId || !kind || !r || !r.hex || (r.src !== 'log' && r.src !== 'live')) return false;
-    const l = fr24Spans.get(r.hex); if (!l) return false;
+    if (!apId || !kind || !r) return false;
     const arr = kind === 'arrivals';
+    // (1.4.2: FR24's own row of the flight - its board's, its schedule's - where the flight was set right as down at another
+    // airport: left out there, as the monitor leaves it out of its boards)
+    // (a diversion stays on the board of where it was going, as FR24 shows it: "Diverted")
+    if (r.fid && (r.src === 'fr24' || r.src === 'sched')) { if (/divert/i.test(String(r.st || ''))) return false; const x = spanByFid.get(String(r.fid)); const ap = x ? (arr ? x.d : x.o) : 0; return !!ap && ap !== apId; }
+    if (!r.hex || (r.src !== 'log' && r.src !== 'live')) return false;
+    const l = fr24Spans.get(r.hex); if (!l) return false;
     for (const x of l) {
       const t = arr ? x.t1 : x.t0, ap = arr ? x.d : x.o;
       if (ap && Math.abs(r.t - t) < 1800 && ap !== apId) return true;
@@ -21560,7 +21567,7 @@ html.tl-pv-play #tl-pv .tl-pv-backpill{display:flex}
   // (the version whose "what's new" was put away, and the one whose dot on the button the window was opened for)
   const UB_SEEN_KEY = 'tweeks.fr24.ladd.seenver', UB_DOT_KEY = 'tweeks.fr24.ladd.dotver';
   // (the newest CHANGELOG section's headlines, written in by build.mjs: { v, items })
-  const UB_WHATS_NEW = {"v":"1.4.1","items":["**FR24's log pages look as they did before its 19 November redesign.** On a computer, every aircraft page, flight-number page and playback is drawn in the old design again: FR24's header, the breadcrumbs, the grey title bar with the aircraft's facts and pictures, the table of flights with KML, CSV and Play, and the playback panel over the map.","**Every Playback in the app opens our player.** That includes the Playback in a live aircraft's panel and in its recent flights, which still opened FR24's old player for a computer.","**The map draws cleanly when zoomed.** The app's *Map drawing: compatible mode* fixed aircraft and airport pins breaking up and smearing on a Samsung phone. It is now on by default; the switch can turn it off.","**Playback names its flight in full,** as FR24's own does:","**A long flight plays whole on the phone.** JDI01, Cincinnati to Manchester, stopped at Newfoundland in the app but was complete on a computer.","**A flight number's log goes back past FR24's week.** Older flights come from the monitor's own record of FR24's map. That record starts with this version, so the history grows from the day the monitor is updated (deploy.sh)."]};
+  const UB_WHATS_NEW = {"v":"1.4.2","items":["**Log pages open all at once.** An aircraft's page, a flight number's page and a blocked aircraft's log are shown when everything in them is in: the rows' airports (OurAirports fields included), the serial number, the age and the flights before FR24's week. Nothing changes after the page appears.","**The app's own phone layout of log pages is back.** Since FR24's redesign the app showed FR24's new log pages on every aircraft and flight number. The old pages are rebuilt in the app too, and laid out for a phone as before: the flights by year, each opening to its times and Play. Play still opens FR24's own player for a phone.","**Blocked aircraft's logs come from the monitor in the app again** (M-PORT showed FR24's \"No flights found\").","**FR24's search box works again.** The script's own background lookups in FR24's search (each aircraft's operator) went a third of a second apart and were repeated after every refusal, until FR24 refused the browser's searches altogether, the user's own included. They are now made only for aircraft being looked at, two seconds apart, and stop for 15 minutes when FR24 refuses one.","**Airport boards at OurAirports fields are complete.** The monitor now checks each light aircraft's and helicopter's flights against FR24's own. M-SKTO's Blackpool to Newcastle flight of 19 Nov, with 18 minutes on Axis Business Park's helipad that no receiver heard, is two flights. Its return \"to Ince Blundell\", heard low 12 km away, ends at the helipad where FR24's track has it down.","**Boards agree between browsers.** A flight set right as landing somewhere other than where FR24 guessed is left off the airport FR24 named, on the monitor's boards and in every browser. Before, only a browser that had opened the aircraft's log did so. A diversion stays where it was going, as FR24 shows it."]};
   // (an aircraft with an open padlock: FR24's outline style - 24 grid, 1.5 stroke in the text colour)
   const UB_ICON = '<svg data-tl-ub-icon="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
   const UB_X = '<svg viewBox="0 0 14 14" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5l11 11M12.5 1.5l-11 11"/></svg>';

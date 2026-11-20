@@ -32,7 +32,7 @@
     // (1.1.0) FR24's own rows read here - its map board's, its schedule's, its flight numbers' lists - go to the monitor for
     // every other browser; those that came from it do not go back
     if (row.fromMon) { row = Object.assign({}, row); delete row.fromMon; delete row.u; }
-    else if (row.src === 'fr24' || row.src === 'sched') boardUp(apId, kind, row);
+    else if ((row.src === 'fr24' || row.src === 'sched') && !row.drop) boardUp(apId, kind, row);
     (boardPend.get(apId) || boardPend.set(apId, []).get(apId)).push([kind, row]);
     // (kept in a while, in one go - within a second or two for a board that is open)
     const wait = boardAsked.has(apId) ? 1500 : 20000;
@@ -673,21 +673,28 @@
   // the same flight at another airport is withdrawn: M-SKTO's "Newcastle -> Ince Blundell" of 19 Nov, heard low 12 km
   // from the helipad FR24 has it down on, was on Ince Blundell's board, and its Axis Business Park flights missing
   const fr24Spans = new Map();   // hex -> [{ fid, t0, t1, o, d }]
+  const spanByFid = new Map();   // (1.4.2) FR24 id -> its entry there (FR24's own rows of it, by its id)
+  const spanFid = x => { if (x && x.fid) { spanByFid.delete(x.fid); spanByFid.set(x.fid, x); while (spanByFid.size > 20000) spanByFid.delete(spanByFid.keys().next().value); } };
   let spansDirty = false, spansT = 0;
-  store.kvReady.then(() => { const o = store.kvGet('fr24Spans1') || {}; const lo = nowS() - BOARD_BACK - 86400; for (const h of Object.keys(o)) if (/^[0-9a-f]{6}$/.test(h) && Array.isArray(o[h])) { const l = o[h].filter(x => x && x.t1 > lo); if (l.length && !fr24Spans.has(h)) fr24Spans.set(h, l); } }).catch(() => {});
+  store.kvReady.then(() => { const o = store.kvGet('fr24Spans1') || {}; const lo = nowS() - BOARD_BACK - 86400; for (const h of Object.keys(o)) if (/^[0-9a-f]{6}$/.test(h) && Array.isArray(o[h])) { const l = o[h].filter(x => x && x.t1 > lo); if (l.length && !fr24Spans.has(h)) { fr24Spans.set(h, l); l.forEach(spanFid); } } }).catch(() => {});
   function noteFr24Span(hex, x) {
     if (!/^[0-9a-f]{6}$/.test(hex || '') || !x || !(x.t0 > 0)) return;
     const l = fr24Spans.get(hex) || []; const i = l.findIndex(y => (x.fid && y.fid === x.fid) || Math.abs(y.t0 - x.t0) < 600);
     const v = { fid: x.fid || '', t0: Math.round(x.t0), t1: Math.round(x.t1 || x.t0), o: x.o || 0, d: x.d || 0 };
-    if (i >= 0) { const y = l[i]; if (y.o === v.o && y.d === v.d && y.t1 === v.t1 && y.fid === v.fid) return; l[i] = Object.assign({}, y, Object.fromEntries(Object.entries(v).filter(([, w]) => w))); } else l.push(v);
+    if (i >= 0) { const y = l[i]; if (y.o === v.o && y.d === v.d && y.t1 === v.t1 && y.fid === v.fid) return; l[i] = Object.assign({}, y, Object.fromEntries(Object.entries(v).filter(([, w]) => w))); spanFid(l[i]); } else { l.push(v); spanFid(v); }
     l.sort((p, q) => p.t0 - q.t0); fr24Spans.set(hex, l.slice(-80)); spansDirty = true;
     if (!spansT) spansT = setTimeout(() => { spansT = 0; if (!spansDirty) return; spansDirty = false; const lo = nowS() - BOARD_BACK - 86400, o = {}; for (const [h, ls] of fr24Spans) { const k = ls.filter(y => y.t1 > lo); if (k.length) o[h] = k; } store.kvSet('fr24Spans1', o); }, 3000);
   }
   // (a row of ours - rebuilt from a track, followed live - of a flight FR24's own has at another airport: not this board's)
   function spanElsewhere(r, apId, kind) {
-    if (!apId || !kind || !r || !r.hex || (r.src !== 'log' && r.src !== 'live')) return false;
-    const l = fr24Spans.get(r.hex); if (!l) return false;
+    if (!apId || !kind || !r) return false;
     const arr = kind === 'arrivals';
+    // (1.4.2: FR24's own row of the flight - its board's, its schedule's - where the flight was set right as down at another
+    // airport: left out there, as the monitor leaves it out of its boards)
+    // (a diversion stays on the board of where it was going, as FR24 shows it: "Diverted")
+    if (r.fid && (r.src === 'fr24' || r.src === 'sched')) { if (/divert/i.test(String(r.st || ''))) return false; const x = spanByFid.get(String(r.fid)); const ap = x ? (arr ? x.d : x.o) : 0; return !!ap && ap !== apId; }
+    if (!r.hex || (r.src !== 'log' && r.src !== 'live')) return false;
+    const l = fr24Spans.get(r.hex); if (!l) return false;
     for (const x of l) {
       const t = arr ? x.t1 : x.t0, ap = arr ? x.d : x.o;
       if (ap && Math.abs(r.t - t) < 1800 && ap !== apId) return true;

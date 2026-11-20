@@ -316,6 +316,16 @@ function fr24Down(row, cols, heli) {
   return { id: a.id, code: a.iata || a.icao || a.code || '', conf: gnd ? 'ground' : 'low', t: row[0] };
 }
 const F24FIX = { checked: 0, split: 0, moved: 0, err: '' };
+// (1.4.2) the flights set right here, by FR24's id: where FR24's own positions have them down - o where one began, d where
+// it ended (an airport id; 0 not set right). An airport's board leaves FR24's rows of them at another airport out (/board):
+// FR24's schedule had M-SKTO's Blackpool flight of 19 Nov into Liverpool, its own track down on Axis Business Park's pad -
+// one browser that had opened the aircraft's log showed it at Axis only, every other one at Liverpool too
+const F24ENDS = new Map();
+function f24EndNote(fid, k, id) {
+  if (!fid || !id) return;
+  const o = F24ENDS.get(fid) || { o: 0, d: 0, at: 0 }; o[k] = id; o.at = Date.now(); F24ENDS.delete(fid); F24ENDS.set(fid, o);
+  while (F24ENDS.size > 20000) F24ENDS.delete(F24ENDS.keys().next().value);
+}
 // (an end here weaker than FR24's sighting: none, guessed from the flights around it, or only heard low somewhere near - "low"
 // is below 3,000 ft within 15 km; FR24's is the aircraft slow on or just over the field itself. One heard on the ground stands)
 const fixWeak = e => !e || e.conf !== 'ground';
@@ -339,14 +349,15 @@ function fr24Fix(hex, leg, heli) {
     const a = fx[i], b = fx[i + 1], place = a.e || b.s;
     if (!place || b.t0 - a.t1 < 120 || !(a.t1 > (cur.tOff || cur.tStart) + 300) || !(b.t0 < tB - 300)) continue;
     out.push(Object.assign({}, cur, { to: end(place, 'fr24End'), tOn: a.t1, tEnd: a.t1, ended: true, open: false, rwyOn: null, fid: a.fid, fr24Fix: 1 }));
+    f24EndNote(a.fid, 'd', place.id); f24EndNote(b.fid, 'o', place.id);
     cur = Object.assign({}, leg, { from: end(place, 'fr24Start'), tStart: b.t0, tOff: b.t0, startedOnGround: place.conf === 'ground', rwyOff: null, fid: b.fid, fr24Fix: 1 });
     F24FIX.split++;
   }
   out.push(cur);
   // (the first flight's start and the last one's end where FR24 has it down, over a weaker end here)
   const f0 = fx[0], fN = fx[fx.length - 1], o0 = out[0], oN = out[out.length - 1];
-  if (f0.s && Math.abs(f0.t0 - (o0.tOff || o0.tStart)) < 1800 && (!o0.from || o0.from.id !== f0.s.id) && fixWeak(o0.from, f0.s)) { o0.from = end(f0.s, 'fr24Start'); o0.fr24Fix = 1; F24FIX.moved++; }
-  if (fN.e && (oN.ended || !oN.open) && Math.abs(fN.t1 - (oN.tOn || oN.tEnd)) < 1800 && (!oN.to || oN.to.id !== fN.e.id) && fixWeak(oN.to, fN.e)) { oN.to = end(fN.e, 'fr24End'); oN.ended = true; oN.fr24Fix = 1; F24FIX.moved++; }
+  if (f0.s && Math.abs(f0.t0 - (o0.tOff || o0.tStart)) < 1800 && (!o0.from || o0.from.id !== f0.s.id) && fixWeak(o0.from, f0.s)) { o0.from = end(f0.s, 'fr24Start'); o0.fr24Fix = 1; F24FIX.moved++; f24EndNote(f0.fid, 'o', f0.s.id); }
+  if (fN.e && (oN.ended || !oN.open) && Math.abs(fN.t1 - (oN.tOn || oN.tEnd)) < 1800 && (!oN.to || oN.to.id !== fN.e.id) && fixWeak(oN.to, fN.e)) { oN.to = end(fN.e, 'fr24End'); oN.ended = true; oN.fr24Fix = 1; F24FIX.moved++; f24EndNote(fN.fid, 'd', fN.e.id); }
   if (!o0.fid && fx.length === 1) o0.fid = f0.fid;
   return out;
 }
@@ -3120,7 +3131,9 @@ function answer(u, nowS, ctx) {
   if (p === '/board') {
     const ap = +q('ap'), from = +(q('from') || nowS - 3 * 86400), to = +(q('to') || nowS); if (ap < 1e7) BD.want(ap);
     const out = { v: 2, aircraft: boardLegs(ap, from, Math.min(to, nowS)) };
-    if (q('rows') === '1') { const r = BD.rows(ap, from, to, +(q('since') || 0)); out.rows = { arrivals: r.arrivals, departures: r.departures }; out.fr24At = r.fr24At; out.now = Math.round(nowS); }
+    // (1.4.2: FR24's rows of a flight set right here as down at another airport - F24ENDS - left out)
+    const here = (x, k) => { const e = x && x.fid && !/divert/i.test(String(x.st || '')) ? F24ENDS.get(String(x.fid)) : null; return !e || !e[k] || e[k] === ap; };
+    if (q('rows') === '1') { const r = BD.rows(ap, from, to, +(q('since') || 0)); out.rows = { arrivals: r.arrivals.filter(x => here(x, 'd')), departures: r.departures.filter(x => here(x, 'o')) }; out.fr24At = r.fr24At; out.now = Math.round(nowS); }
     return out;
   }
   if (p === '/flights') return { list: flightsOfCs(q('cs')) };
@@ -3400,5 +3413,5 @@ if (require.main === module) {
   // (airports' schedules read from FR24 here, for the boards browsers open)
   setInterval(() => { BD.pump().catch(e => log('boards', String(e))); }, 5000);
 }
-module.exports = { fr24Fix, fr24FixKept, fr24Down, F24FIX, FN, fnWorldRows, report, keepRunways, OS, OSE, OSK, oskyWants, pollOpenSky, ACT, acTypesBuild, oaHeliports, OAAP, OARW, OADIR, oaFieldsDir, recentLog, dayLook, APWX, AF, PROF, afTargets, CSR, csTargets, datalink, work, workSlow, saveSlow, setLadd: list => { lastLadd = { at: Date.now(), ac: list }; }, boardPlan, rwyFit, rwyKnown, rwyAnswer, rwyOfFlight, fr24Ends, rwySave, RL, rwyApAnswer, rwyApWarm, laddRwys, rwyHotRound, rwyLowRound, LOW, PACE, pace, fr24Client: () => fr24, fr24raw, fr24RawRound, fr24scan, fr24apt, scanPut, scanLast, rawOf, cruiseRound, cruiseEvery, CRUISE_SERVICES, SCN, wxmap, AGES, agesLearn, withAge, AC, acdbSweep, central, centralStart, centralRound, CR, SC, fleetOf, FL, naF, naTrack, selfEvidence, F24ref2: () => F24, WORLD, WS, AS, BD, boardRows, airportAnswer, apLegs, fr24Track, F24T, worldDay, worldWants, worldRoom, worldStatus, worldRecheck: () => { freeAt = 0; }, pollTat, TAT, TAT_HOST, carriesOn, liveExtra, logOf, heardPts, archBreath, memAvail, archTrace, archiveJob, indexDay, idxLookup, idxHave, archIdx, idxFile, ARC, setArcRange: f => { arcRange = f; }, surgeNow, datalink, datalinkRound, dlSeen, classifyTrace, traceGet, netSt, archiveDay, archiveState, archiveNext, archMark, archTried, archDays, archRunning, traceOf, AR, apliveTrace, HIST_V, HIST_RESET, resetHistLogs, histResetMark, get histResetN() { return histResetN; }, adminAnswer, ctl, logRing, log, MON_VER, learnCheck, learnFromCrowd, crowdLearnSave, crowdRows, LC, tracks, waiting, waitRound, waitLive, waitNamed, waitClaims, WAIT, saveWaiting, loadWaiting, pbMatch, learnedBuild, learnedDue, learnedLoad, learnedRef: () => learnedOut, liveBusy, backWaits, E, CFG, loadEngine, ingest, buildLegs, fr24Legs, fr24Leg, F24ref: () => F24, owners, ownersLoop, APT, legRunways, names, nearAnswer, telAnswer, tel, wx, pbNames, get PUBLIC() { return PUBLIC; }, get RATE() { return RATE; }, limited, tokenOk, installs, opts, optionsSet, optionsLoad, latestCheck, latestVer, helloAnswer, badge, wakeQuiet, parkedAt, boardLegs, flightsOfCs, lastHeard, legs, ac, backfillOne, backQ, blocked, markBlocked, seed, gapFill, addArea, userAreas,
+module.exports = { fr24Fix, fr24FixKept, fr24Down, F24FIX, F24ENDS, FN, fnWorldRows, report, keepRunways, OS, OSE, OSK, oskyWants, pollOpenSky, ACT, acTypesBuild, oaHeliports, OAAP, OARW, OADIR, oaFieldsDir, recentLog, dayLook, APWX, AF, PROF, afTargets, CSR, csTargets, datalink, work, workSlow, saveSlow, setLadd: list => { lastLadd = { at: Date.now(), ac: list }; }, boardPlan, rwyFit, rwyKnown, rwyAnswer, rwyOfFlight, fr24Ends, rwySave, RL, rwyApAnswer, rwyApWarm, laddRwys, rwyHotRound, rwyLowRound, LOW, PACE, pace, fr24Client: () => fr24, fr24raw, fr24RawRound, fr24scan, fr24apt, scanPut, scanLast, rawOf, cruiseRound, cruiseEvery, CRUISE_SERVICES, SCN, wxmap, AGES, agesLearn, withAge, AC, acdbSweep, central, centralStart, centralRound, CR, SC, fleetOf, FL, naF, naTrack, selfEvidence, F24ref2: () => F24, WORLD, WS, AS, BD, boardRows, airportAnswer, apLegs, fr24Track, F24T, worldDay, worldWants, worldRoom, worldStatus, worldRecheck: () => { freeAt = 0; }, pollTat, TAT, TAT_HOST, carriesOn, liveExtra, logOf, heardPts, archBreath, memAvail, archTrace, archiveJob, indexDay, idxLookup, idxHave, archIdx, idxFile, ARC, setArcRange: f => { arcRange = f; }, surgeNow, datalink, datalinkRound, dlSeen, classifyTrace, traceGet, netSt, archiveDay, archiveState, archiveNext, archMark, archTried, archDays, archRunning, traceOf, AR, apliveTrace, HIST_V, HIST_RESET, resetHistLogs, histResetMark, get histResetN() { return histResetN; }, adminAnswer, ctl, logRing, log, MON_VER, learnCheck, learnFromCrowd, crowdLearnSave, crowdRows, LC, tracks, waiting, waitRound, waitLive, waitNamed, waitClaims, WAIT, saveWaiting, loadWaiting, pbMatch, learnedBuild, learnedDue, learnedLoad, learnedRef: () => learnedOut, liveBusy, backWaits, E, CFG, loadEngine, ingest, buildLegs, fr24Legs, fr24Leg, F24ref: () => F24, owners, ownersLoop, APT, legRunways, names, nearAnswer, telAnswer, tel, wx, pbNames, get PUBLIC() { return PUBLIC; }, get RATE() { return RATE; }, limited, tokenOk, installs, opts, optionsSet, optionsLoad, latestCheck, latestVer, helloAnswer, badge, wakeQuiet, parkedAt, boardLegs, flightsOfCs, lastHeard, legs, ac, backfillOne, backQ, blocked, markBlocked, seed, gapFill, addArea, userAreas,
   serve, fr24, ident, dest, F24, report, identRound, fr24Round, saveIdent, loadIdent, histUnknown, learnSince, learnWrite, diskLegs, KEEP_LADD, save, loadStore, dirtyDays, pollOpenSky, adsbxUse, live, liveList, answer, step, P, piaState, apiGet, gate, stats, lastOk, noteWatch, watch, watchedAll, flew, closeDays, histQ, histPend, histOne, histDay, histOf, histRead, histWrite, histFile, fillHist, fillAsked, queueHist, photos, nextHist, saveState, loadState, lastW, get closed() { return closed; }, set closed(v) { closed = v; }, pause };

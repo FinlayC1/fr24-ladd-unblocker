@@ -158,6 +158,23 @@ const track = (id, a, b, t) => { const tr = []; for (let i = 0; i <= 30; i++) { 
     check('... the footer says which is which', !!foot && /1 as Flightradar24's map showed them/.test(foot.textContent) && /1 from public ADS-B \(adsb\.lol\) by FR3731's callsigns/.test(foot.textContent), foot && foot.textContent);
     w.close();
   }
+  // ======== boards: a flight set right as down at another airport - FR24's own row of it left off the one FR24 named ======
+  {
+    const w = makeWin('https://www.flightradar24.com/data/airports', null);
+    await until(() => w.__tweeksLadd && w.__tweeksLadd.engine.airports.length > 5000 && w.__tweeksLadd.store.mode() === 'idb', 30000);
+    const L = w.__tweeksLadd, BLK = AP('BLK'), MAN = AP('MAN'), t = Math.floor(Date.now() / 1000) - 4000;
+    const fr = (fid, st, tt) => ({ id: 1, flight: { id: fid, callsign: 'MSKTO', number: null }, scheduledTime: tt, estimatedTime: tt, status: { name: st, color: 'green' }, aircraft: { registration: 'M-SKTO', hex: '424C35' } });
+    w.postMessage({ __tweeksLadd: 'boardRows', apId: LPL.id, kind: 'arrivals', rows: [fr('42a35a90', 'landed', t), fr('42a35a91', 'landed', t - 20000), fr('42a35a92', 'diverted', t - 40000)] });
+    await sleep(400); await L.boardDrain();
+    // (its log page: FR24's Blackpool to Liverpool, its own track down at Manchester; a diversion's likewise)
+    L.boardNoteSched('424c35', [{ id: 0x42a35a90, o: BLK.id, d: MAN.id, atd: t - 2400, ata: t, cs: 'MSKTO' }, { id: 0x42a35a92, o: BLK.id, d: MAN.id, atd: t - 42400, ata: t - 40000, cs: 'MSKTO' }], { reg: 'M-SKTO' });
+    await L.boardDrain();
+    const at = async id => L.boardList((await L.boardLoad(id)).arr, null, id, 'arrivals').map(r => r.fid);
+    const lpl = await at(LPL.id), man = await at(MAN.id);
+    check('a flight FR24 named Liverpool for, its own track down elsewhere (its log page): FR24\'s row of it off Liverpool\'s board, the flight on the other\'s', !lpl.includes('42a35a90') && lpl.includes('42a35a91') && man.includes('42a35a90'), { lpl, man });
+    check('... a diversion stays on the board of where it was going, as FR24 shows it', lpl.includes('42a35a92'), lpl);
+    w.close();
+  }
   // ======== the app: the log page laid out for a phone again ===========================================================
   {
     const w = makeWin('https://www.flightradar24.com/data/aircraft/ei-dcy', acPage([fl(), fl({ id: '5889300044', flightId: '42a30001', callsign: 'RYR4MA', flightNumber: 'FR4416', scheduledDeparture: T - 86400, actualDeparture: T - 86400 + 600 })]), null, { app: true }), d = w.document;

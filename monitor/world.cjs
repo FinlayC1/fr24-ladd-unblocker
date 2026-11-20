@@ -181,15 +181,21 @@ function createWorld(dir) {
     csiMem.delete(day); stats.csi = (stats.csi || 0) + 1;
     return by.size;
   }
-  // (the aircraft of each of the callsigns on a day - the last eight days' indexes read kept)
+  // (the aircraft of each of the callsigns on a day: its index's text searched for their lines - a few ms a day, a flight
+  // number's hundred days in a second; the last sixteen days' texts kept)
   function csiLookup(day, list) {
-    let m = csiMem.get(day);
-    if (!m) {
-      m = new Map();
-      try { for (const l of zlib.gunzipSync(fs.readFileSync(csiFile(day))).toString('utf8').split('\n')) { const i = l.indexOf('\t'); if (i > 0) m.set(l.slice(0, i), l.slice(i + 1).split(',').filter(x => /^[0-9a-f]{6}$/.test(x))); } } catch (e) { return null; }
-      csiMem.set(day, m); if (csiMem.size > 8) csiMem.delete(csiMem.keys().next().value);
+    let txt = csiMem.get(day);
+    if (txt === undefined) {
+      try { txt = '\n' + zlib.gunzipSync(fs.readFileSync(csiFile(day))).toString('utf8'); } catch (e) { return null; }
+      csiMem.set(day, txt); if (csiMem.size > 16) csiMem.delete(csiMem.keys().next().value);
     }
-    const out = new Map(); for (const c of list || []) { const l = m.get(c); if (l && l.length) out.set(c, l); }
+    const out = new Map();
+    for (const c of list || []) {
+      if (!CSI_RE.test(c)) continue;
+      const i = txt.indexOf('\n' + c + '\t'); if (i < 0) continue;
+      const e = txt.indexOf('\n', i + 1), l = txt.slice(i + c.length + 2, e < 0 ? undefined : e).split(',').filter(x => /^[0-9a-f]{6}$/.test(x));
+      if (l.length) out.set(c, l);
+    }
     return out;
   }
   // (the newest day with no index yet - the background builds them one at a time)

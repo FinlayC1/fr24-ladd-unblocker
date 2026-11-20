@@ -355,7 +355,12 @@ const rep = (hex, o) => Object.assign({ hex, lat: 53.4, lon: -2.3, alt_baro: 120
     check('... an aircraft FR24 has no flight of: its flight as it is', p3.length === 1 && p3[0] === leg3);
     const leg4 = { hex, from: { id: NCL.id, conf: 'ground' }, to: { id: BLK.id, conf: 'ground' }, tStart: T + 15000, tOff: T + 15000, tOn: T + 17700, tEnd: T + 17700, ended: true };
     const p4 = M.fr24Fix(hex, leg4, true);
-    check('... an end heard on the ground here, FR24\'s only low: the one heard on the ground stands', p4.length === 1 && p4[0].to.id === BLK.id, p4.map(l => l.to && l.to.id)); }
+    check('... an end heard on the ground here, FR24\'s only low: the one heard on the ground stands', p4.length === 1 && p4[0].to.id === BLK.id, p4.map(l => l.to && l.to.id));
+    // (FR24's own rows of those flights at the airports FR24 named: off those boards - the same for every browser)
+    const LPL = AP('LPL'), nowS = Math.floor(Date.now() / 1000), row = (fid, st) => ({ src: 'fr24', k: 'f' + fid, fid, cs: 'MSKTO', reg: 'M-SKTO', t: T + 700, st });
+    M.BD.put(LPL.id, 'arrivals', [row('42a35a90', 'landed'), row('42a35a99', 'landed'), Object.assign(row('42a3d0ef', 'diverted'))], 'crowd', nowS);
+    const bd = M.answer(new URL(`http://x/board?ap=${LPL.id}&rows=1&from=${T - 3600}&to=${nowS}`), nowS), fids = ((bd && bd.rows && bd.rows.arrivals) || []).map(r => r.fid);
+    check('FR24\'s row of a flight set right as down at the pad, at the airport FR24 named (Liverpool): off its board; another flight\'s stays; a diversion stays', M.F24ENDS.get('42a35a90') && M.F24ENDS.get('42a35a90').d === pad.airport.id && !fids.includes('42a35a90') && fids.includes('42a35a99') && fids.includes('42a3d0ef'), { fids, e: M.F24ENDS.get('42a35a90') }); }
   // ---- (1.4.2) callsigns' flight numbers from FR24's schedules and browsers' pages; a flight number's flights before the
   // monitor's own index of them, from the world log by its callsigns
   { const AP = c => E.airports.find(a => a.iata === c), LPL = AP('LPL'), DUB = AP('DUB'), nowS = Math.floor(Date.now() / 1000);
