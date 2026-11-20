@@ -4,6 +4,43 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 
 1.0.0 is the first release. The versions before it are the betas, labelled B: B22.31.12 is version 22.31.12.
 
+## [1.4.2] - 2026-11-20
+
+### In short
+- **Log pages open all at once.** An aircraft's page, a flight number's page and a blocked aircraft's log are shown when everything in them is in: the rows' airports (OurAirports fields included), the serial number, the age and the flights before FR24's week. Nothing changes after the page appears.
+  - A page opened within 20 minutes of another uses the monitor at once, without waiting for its check again.
+  - The landing-site and OurAirports lists were downloaded again on every log page. They are now read from the copies kept in the browser.
+  - FR24's own track ends of a finished flight are kept, so a log opened again asks FR24 for none of them.
+- **The app's own phone layout of log pages is back.** Since FR24's redesign the app showed FR24's new log pages on every aircraft and flight number. The old pages are rebuilt in the app too, and laid out for a phone as before: the flights by year, each opening to its times and Play. Play still opens FR24's own player for a phone.
+- **Blocked aircraft's logs come from the monitor in the app again** (M-PORT showed FR24's "No flights found").
+- **FR24's search box works again.** The script's own background lookups in FR24's search (each aircraft's operator) went a third of a second apart and were repeated after every refusal, until FR24 refused the browser's searches altogether, the user's own included. They are now made only for aircraft being looked at, two seconds apart, and stop for 15 minutes when FR24 refuses one.
+- **Airport boards at OurAirports fields are complete.** The monitor now checks each light aircraft's and helicopter's flights against FR24's own. M-SKTO's Blackpool to Newcastle flight of 19 Nov, with 18 minutes on Axis Business Park's helipad that no receiver heard, is two flights. Its return "to Ince Blundell", heard low 12 km away, ends at the helipad where FR24's track has it down.
+- **Boards agree between browsers.** A flight set right as landing somewhere other than where FR24 guessed is left off the airport FR24 named, on the monitor's boards and in every browser. Before, only a browser that had opened the aircraft's log did so. A diversion stays where it was going, as FR24 shows it.
+- **Flight numbers on rebuilt rows almost everywhere.** The monitor learns each airline callsign's flight number from FR24's airport schedules as well as its map, and from the flight numbers FR24's own rows show any browser's log page. Each browser keeps those it has seen for 60 days.
+- **A flight number's log goes back past FR24's week from the first day.** Its flights before the monitor's own record began come from the monitor's world log (adsb.lol's archive), found by the callsigns FR24 has shown for that number, and play from public ADS-B.
+- **Play on a board card from an OurAirports field opens FR24's own flight** (m-skto#42a36d3a), not one rebuilt from ADS-B (#ff424c35...), once the monitor has matched the flight to FR24's.
+- **Playback on a computer is on Google's map again, with FR24's own track system:** the trail coloured by altitude with its points (hover one for its time, ground speed and altitude), gaps dashed, FR24's aircraft picture for the type, and airport and OurAirports pins.
+
+### Fixed
+- Store reads made before the browser's database was open answered "none kept" (`getHist`, `hexAsync`). They now wait for it.
+- An aircraft's identity was looked up from scratch on every log page (the monitor, JetPhotos, FR24's photo list and FR24's own page again) because its saved record was not read first.
+- The map panel's "Recent flights" warm-up ran on log pages: it downloaded FR24's aircraft page again and asked FR24's playback of twelve flights, ahead of the rows' own asks.
+- What changed in the last moment before leaving a log, flight or data page was lost. It is now written out when the page is left or hidden, as on the map.
+- A log's rows never asked the monitor for their flights' ends when its first check took longer than eight seconds (a phone on a slow connection). They ask again once it answers.
+- The monitor's report from a browser lost what it carried when the request failed.
+
+### Added
+- **Monitor:** each airline callsign's flight number from FR24's schedule rows (`boards.cjs` `onRow`, and the boards kept on disk, read once a minute after start), and from browsers' reports (`/report` `csfn`, never over one seen in the last three days; `fr24fn.cjs` `noteCs`, `csOf`).
+- **Monitor:** a callsign index for each day of the world log (`STORE/world/<day>.csi`, built newest first in the background and again when a day is rewritten). `/fr24fn` adds the world log's flights of a flight number's callsigns (`w: 1`, no FR24 id, airport ids) before the monitor's own index of it.
+- **Monitor:** `fr24Fix`: a light aircraft's or helicopter's flight split at FR24's own flight boundaries where it was down at a place, and its ends moved to where FR24's positions have it down over a weaker end here. Flights kept from the last three days are checked in the background. FR24's rows of a flight set right are left out of another airport's `/board`.
+- **Browser:** the monitor's last good check kept in localStorage (`tl.mon1`: the shared monitor's address and when, nothing else; never for a monitor set in the window or turned off).
+- **Browser:** FR24 playback ends of finished flights kept (`fr24PbEnds1`, the last 500); callsigns' flight numbers seen kept (`csFnSeen1`, 60 days).
+- **Classic playback map:** the Google map FR24's own page loads, FR24's trail (altitude colours, its points with their time, ground speed and altitude, gaps dashed), FR24's aircraft picture for the type, and airport and OurAirports pins.
+- Tests: `test/unit_142.cjs` (new); `unit_monitor2` 1.4.2 block.
+
+### Deploy
+- The monitor needs `deploy.sh --restart` for the boards, the flight numbers and the world log's flight-number history.
+
 ## [1.4.1] - 2026-11-19
 
 ### In short

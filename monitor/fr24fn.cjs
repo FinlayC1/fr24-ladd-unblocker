@@ -13,6 +13,10 @@
 // The callsigns' table and the flights being followed: STORE/fr24fn/state.json.gz, every quarter of an hour and on stop.
 //   query(fn, from, to) -> [{ fid, fn, cs, hex, reg, type, from, to, t0, t1 }] newest first
 //   csFn([cs...]) -> { cs: fn }
+//   noteCs(cs, fn, t, weak) (1.4.2) a callsign's flight number seen elsewhere: on FR24's airport schedules (the boards'
+//     rows, every airport a browser or the monitor reads - boards.cjs), or on FR24's own rows a browser's page showed
+//     (weak: never over one seen in the last three days). Rebuilt log rows of flights before the monitor's scans asked
+//     FR24 for flight numbers were mostly callsigns still - only those the scans had seen since
 const fs = require('fs'), path = require('path'), zlib = require('zlib');
 const fin = v => typeof v === 'number' && isFinite(v);
 const FN_RE = /^[A-Z0-9]{2}\d{1,5}[A-Z]?$|^[A-Z]{3}\d{1,5}[A-Z]?$/;
@@ -100,6 +104,17 @@ function createFnIndex(env) {
     for (const x of open.values()) take(x);
     return [...by.values()].sort((a, b) => b.t0 - a.t0).slice(0, 400);
   }
+  function noteCs(c0, fn0, t, weak) {
+    const fn = normFn(fn0), c = String(c0 || '').toUpperCase().trim(), nowS = Date.now() / 1000;
+    if (!fn || !FN_RE.test(fn) || !CS_RE.test(c) || fn === c) return false;
+    const at = fin(t) && t > 1e9 ? Math.min(t, nowS) : nowS, o = cs.get(c);
+    if (o && (o.at > at || (weak && o.fn !== fn && at - o.at < 3 * 86400))) return false;
+    if (o && o.fn === fn && at - o.at < 3600) return false;
+    cs.set(c, { fn, at }); stats.csNoted = (stats.csNoted || 0) + 1; return true;
+  }
+  // (1.4.2) the callsigns FR24 has shown for a flight number - its flights before this index began are found by them in
+  // the world log (monitor.cjs fnWorldRows)
+  function csOf(fnIn) { const fn = normFn(fnIn), out = []; if (!fn) return out; for (const [c, o] of cs) if (o.fn === fn) out.push(c); return out; }
   function csFn(list) {
     const out = {}; stats.csAsked++;
     for (const c0 of list || []) { const c = String(c0 || '').toUpperCase().trim(), o = cs.get(c); if (o) out[c] = o.fn; }
@@ -142,7 +157,7 @@ function createFnIndex(env) {
       return cs.size + open.size;
     } catch (e) { stats.err = String(e && e.message || e).slice(0, 160); log(stats.err); return 0; }
   }
-  return { observe, flush, query, csFn, prune, save, load, stats, get open() { return open.size; }, get callsigns() { return cs.size; } };
+  return { observe, flush, query, csFn, csOf, noteCs, prune, save, load, stats, get open() { return open.size; }, get callsigns() { return cs.size; } };
 }
 
 module.exports = { createFnIndex, bucketOf, normFn };

@@ -334,6 +334,61 @@ const rep = (hex, o) => Object.assign({ hex, lat: 53.4, lon: -2.3, alt_baro: 120
     const a3 = M.answer(new URL(`http://x/rwyof?fid=3d7a0099&hex=406a1d&off=${LPL.id},${T}&on=bad`), Date.now() / 1000);
     check('... nothing known of it, or an end asked for wrongly: empty, never a throw', a3.v === 1 && a3.off === '' && a3.on === '', a3);
     check('... a runway asked for away from its time (a day later): not that flight\'s', !M.rwyOfFlight('', '406a1c', [{ end: 1, ap: MAN.id, t: T + 86400 }])[1]); }
+  // ---- (1.4.2) an aircraft FR24 shows: its flights as FR24's own have them (fr24Fix) - M-SKTO on 19 Nov: Blackpool to
+  // Newcastle with 18 minutes on Axis Business Park's helipad unheard, and Newcastle back "to Ince Blundell", heard low 12 km
+  // off - FR24's own two flights, and its last positions slow and low over the pad
+  { M.oaHeliports();
+    const AP = c => E.airports.find(a => a.iata === c), BLK = AP('BLK'), NCL = AP('NCL'), AX = { lat: 53.465098, lon: -2.895401 };
+    const pad = E.heliportAt(AX.lat, AX.lon, 0.3), ib = E.fieldAt(53.536226, -3.031497, 1);
+    const T = Math.floor(Date.now() / 1000) - 8 * 3600, hex = '424c35', meta = { hex, reg: 'M-SKTO', cs: 'MSKTO', type: 'H160' };
+    M.fr24scan.put('42a35a90', meta, [{ t: T, lat: BLK.lat, lon: BLK.lon, alt: 0, gs: 0, gnd: true }, { t: T + 300, lat: 53.6, lon: -2.95, alt: 1500, gs: 130 }, { t: T + 700, lat: AX.lat + 0.0005, lon: AX.lon, alt: 0, gs: 0, gnd: true }]);
+    M.fr24scan.put('42a36d3a', meta, [{ t: T + 1800, lat: AX.lat, lon: AX.lon + 0.0004, alt: 0, gs: 0, gnd: true }, { t: T + 3000, lat: 54.4, lon: -2.2, alt: 3000, gs: 140 }, { t: T + 4800, lat: NCL.lat, lon: NCL.lon, alt: 0, gs: 5, gnd: true }]);
+    M.fr24scan.put('42a3d0ef', meta, [{ t: T + 15000, lat: NCL.lat, lon: NCL.lon, alt: 0, gs: 0, gnd: true }, { t: T + 16000, lat: 54.2, lon: -2.4, alt: 4000, gs: 150 }, { t: T + 17600, lat: AX.lat + 0.001, lon: AX.lon, alt: 160, gs: 12 }]);
+    const leg1 = { hex, from: { id: BLK.id, conf: 'ground' }, to: { id: NCL.id, conf: 'ground' }, tStart: T - 60, tOff: T, tOn: T + 4800, tEnd: T + 4860, ended: true, open: false };
+    const p1 = M.fr24Fix(hex, leg1, true);
+    check('a flight that stopped 18 minutes at a pad no receiver heard (M-SKTO, Blackpool - Newcastle): two flights, as FR24\'s own two - Blackpool to the pad, the pad to Newcastle', !!pad && p1.length === 2 && p1[0].from.id === BLK.id && p1[0].to.id === pad.airport.id && p1[1].from.id === pad.airport.id && p1[1].to.id === NCL.id && p1[0].tOn === T + 700 && p1[1].tOff === T + 1800 && p1[0].fid === '42a35a90' && p1[1].fid === '42a36d3a', p1.map(l => [l.from && l.from.id, l.to && l.to.id, l.tOff, l.tOn, l.fid]));
+    const leg2 = { hex, from: { id: NCL.id, conf: 'ground' }, to: { id: ib ? ib.airport.id : 39792756, conf: 'low' }, tStart: T + 14940, tOff: T + 15000, tOn: T + 17700, tEnd: T + 17760, ended: true, open: false };
+    const p2 = M.fr24Fix(hex, leg2, true);
+    check('... back from Newcastle "to Ince Blundell" - heard low 12 km off: where FR24\'s positions have it, slow and low over the pad', p2.length === 1 && p2[0].to.id === pad.airport.id && p2[0].to.conf === 'low' && p2[0].fr24Fix === 1, p2.map(l => [l.from && l.from.id, l.to && l.to.id, l.to && l.to.conf]));
+    const leg3 = { hex: 'a0b0c0', from: { id: BLK.id, conf: 'ground' }, to: { id: NCL.id, conf: 'ground' }, tStart: T, tOff: T, tOn: T + 4800, tEnd: T + 4800, ended: true };
+    const p3 = M.fr24Fix('a0b0c0', leg3, false);
+    check('... an aircraft FR24 has no flight of: its flight as it is', p3.length === 1 && p3[0] === leg3);
+    const leg4 = { hex, from: { id: NCL.id, conf: 'ground' }, to: { id: BLK.id, conf: 'ground' }, tStart: T + 15000, tOff: T + 15000, tOn: T + 17700, tEnd: T + 17700, ended: true };
+    const p4 = M.fr24Fix(hex, leg4, true);
+    check('... an end heard on the ground here, FR24\'s only low: the one heard on the ground stands', p4.length === 1 && p4[0].to.id === BLK.id, p4.map(l => l.to && l.to.id));
+    // (FR24's own rows of those flights at the airports FR24 named: off those boards - the same for every browser)
+    const LPL = AP('LPL'), nowS = Math.floor(Date.now() / 1000), row = (fid, st) => ({ src: 'fr24', k: 'f' + fid, fid, cs: 'MSKTO', reg: 'M-SKTO', t: T + 700, st });
+    M.BD.put(LPL.id, 'arrivals', [row('42a35a90', 'landed'), row('42a35a99', 'landed'), Object.assign(row('42a3d0ef', 'diverted'))], 'crowd', nowS);
+    const bd = M.answer(new URL(`http://x/board?ap=${LPL.id}&rows=1&from=${T - 3600}&to=${nowS}`), nowS), fids = ((bd && bd.rows && bd.rows.arrivals) || []).map(r => r.fid);
+    check('FR24\'s row of a flight set right as down at the pad, at the airport FR24 named (Liverpool): off its board; another flight\'s stays; a diversion stays', M.F24ENDS.get('42a35a90') && M.F24ENDS.get('42a35a90').d === pad.airport.id && !fids.includes('42a35a90') && fids.includes('42a35a99') && fids.includes('42a3d0ef'), { fids, e: M.F24ENDS.get('42a35a90') }); }
+  // ---- (1.4.2) callsigns' flight numbers from FR24's schedules and browsers' pages; a flight number's flights before the
+  // monitor's own index of them, from the world log by its callsigns
+  { const AP = c => E.airports.find(a => a.iata === c), LPL = AP('LPL'), DUB = AP('DUB'), nowS = Math.floor(Date.now() / 1000);
+    check('a callsign\'s flight number from FR24\'s airport schedule (a board\'s row): learnt', M.FN.noteCs('RYR94GU', 'FR342', nowS - 3600) && M.FN.csFn(['RYR94GU']).RYR94GU === 'FR342');
+    check('... a browser\'s different one for it within three days: not over it', !M.FN.noteCs('RYR94GU', 'FR999', nowS, true) && M.FN.csFn(['RYR94GU']).RYR94GU === 'FR342');
+    check('... FR24\'s own, newer: over it', M.FN.noteCs('RYR94GU', 'FR343', nowS) && M.FN.csFn(['RYR94GU']).RYR94GU === 'FR343');
+    check('... a registration, a callsign that is its own number, a malformed number: none', !M.FN.noteCs('GABCD', 'G1', nowS) && !M.FN.noteCs('BAW1', 'BAW1', nowS) && !M.FN.noteCs('EZY12AB', 'not a number', nowS));
+    M.FN.noteCs('RYR94GU', 'FR342', nowS + 1);
+    check('the callsigns of a flight number (its flights before the index, by them)', JSON.stringify(M.FN.csOf('fr342')) === '["RYR94GU"]', M.FN.csOf('FR342'));
+    const nb = M.BD.put(LPL.id, 'departures', [{ src: 'sched', k: 'f3d7b0001', fid: '3d7b0001', cs: 'EZY45KJ', num: 'U21234', t: nowS + 1800 }], 'own', nowS);
+    check('a schedule row put on a board: its callsign\'s flight number learnt with it', nb === 1 && M.FN.csFn(['EZY45KJ']).EZY45KJ === 'U21234');
+    const rp = M.report({ csfn: [['BAW12AB', 'BA1234', nowS - 60], ['bad', 'x', 0], 'nope'] }, Date.now(), { ip: '203.0.113.9' });
+    check('a browser\'s report of FR24\'s pairs its page showed: the good one learnt, the rest not', rp.ok && rp.csfn === 1 && M.FN.csFn(['BAW12AB']).BAW12AB === 'BA1234', rp);
+    // (a day of the world log 20 days ago: FR342 flown by EI-DCY as RYR94GU, Liverpool to Dublin; another aircraft under
+    // another callsign the same day)
+    const day = new Date((nowS - 20 * 86400) * 1000).toISOString().slice(0, 10), t0 = Math.floor(Date.parse(day + 'T07:10:00Z') / 1000);
+    const leg = (cs, a, b, ts) => ({ tStart: ts - 300, tEnd: ts + 3300, startLat: a.lat, startLon: a.lon, startAlt: 0, endLat: b.lat, endLon: b.lon, endAlt: 0, endTrk: 270, endGs: 20, startGs: 0, startedOnGround: true, ended: true, maxAlt: 24000, cs, pathKm: 220, from: { id: a.id, code: a.iata, conf: 'ground' }, to: { id: b.id, code: b.iata, conf: 'ground' }, tOff: ts, tOn: ts + 3000 });
+    const wr = M.WORLD.writer(day); wr.add('4ca7b5', [leg('RYR94GU', LPL, DUB, t0), leg('RYR95GU', DUB, LPL, t0 + 7200)], ['B738', 'EI-DCY', 0, 'A3']); wr.add('400abc', [leg('EZY99XY', LPL, DUB, t0)], ['A320', 'G-EZAA', 0, 'A3']); wr.finish();
+    const nc = await M.WORLD.buildCsi(day);
+    const cm = M.WORLD.csiLookup(day, ['RYR94GU', 'EZY99XY', 'NONE1']);
+    check('a day of the world log: its callsigns\' index - each callsign\'s aircraft of the day', nc === 3 && M.WORLD.hasCsi(day) && JSON.stringify(cm.get('RYR94GU')) === '["4ca7b5"]' && JSON.stringify(cm.get('EZY99XY')) === '["400abc"]' && !cm.has('NONE1'), { nc, cm: [...cm] });
+    const a = await M.answer(new URL(`http://x/fr24fn?fn=FR342&to=${nowS - 7 * 86400}`), nowS);
+    const w = (a && a.list || []).filter(x => x.w);
+    check('a flight number\'s page past FR24\'s week: its flights of the world log by its callsigns - the aircraft, its route, its times; no FR24 id (played from public ADS-B)', w.length === 1 && w[0].hex === '4ca7b5' && w[0].cs === 'RYR94GU' && w[0].fid === '' && w[0].from === 'LPL' && w[0].to === 'DUB' && w[0].fromId === LPL.id && w[0].toId === DUB.id && w[0].t0 === t0 && w[0].t1 === t0 + 3000, w);
+    const w2 = await M.fnWorldRows('FR342', 0, nowS - 7 * 86400, [{ hex: '4ca7b5', t0: t0 + 600 }]);
+    check('... one the monitor\'s own index has (the same aircraft within the hour): not twice', w2.length === 0, w2);
+    const wr2 = M.WORLD.writer(day); wr2.add('4ca7b5', [leg('RYR94GU', LPL, DUB, t0)], ['B738', 'EI-DCY', 0, 'A3']); wr2.finish();
+    check('... the day written again: its index made again from it', !M.WORLD.hasCsi(day) && M.WORLD.csiDue() === day); }
   // ---- what is kept on disk ---------------------------------------------------------------------------------------
   { M.flew.set('2026-10-13', new Set(['c00001'])); M.histQ.push({ hex: 'c00001', day: '2026-10-12', tries: 1, at: 5 });
     M.saveState();

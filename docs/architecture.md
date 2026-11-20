@@ -181,9 +181,14 @@ On 19 November 2026 FR24 replaced its aircraft pages (`/data/aircraft/<reg>`), f
 - **Look.** The old pages' stylesheets are loaded from FR24's server in their old order, before FR24's own (Bootstrap 3.3.7, `screen_new.css`, `nav-top.css`, `fr-components.css`, the page's own `pages/data/*.css`, `main.*.css`). FR24's new app stays in the document with only its header shown: the same header the old pages carried. Nothing of FR24's is copied into the script. The few icons the old pages took from a picture set FR24 no longer serves are plain shapes drawn here; the panel's logo is the header's own picture.
 - **Playback.** A row's Play does what the old page script did: the map 600 px high with the page over its foot, the panel filled from the row, then FR24's own track (`flight-playback.json`, with its median flight time and delay). A rebuilt row's flight plays its public ADS-B track (`pbFlight`). The map is drawn tile by tile from Esri's services (satellite with roads and places by default, like the old "Hybrid"), with FR24's own airport pins.
 - **Navigation.** FR24's playback page goes to the aircraft's page with the flight's id after `#`, where it plays, as the old site linked it. A move inside FR24's new app (its header's search) loads the page, so it is drawn the old way too.
-- **Not in the app**, which keeps its phone layout of FR24's new pages. A page FR24 still serves in the old design (a callsign it has no flight of) is left as it is.
+- **In the app (1.4.2)** the aircraft and flight-number pages are rebuilt too: the app's phone layout of a log page (`06-phone.js`) is made from the old page's markup, and was gone with it. FR24's playback page stays FR24's own, made for a phone, where every Play in the app goes. A page FR24 still serves in the old design (a callsign it has no flight of) is left as it is.
+- **Shown at once (1.4.2).** The old page stays hidden (`#content.tl-cl-wait`) until what fills it is in: the rows' track ends (the monitor's `/fr24ends`, and FR24's playback for a flight the monitor has only short of the ground), the aircraft's identity, and the first of its flights before FR24's week. Six seconds at most. Its first line already asks for these (`clEarly`), before FR24's page is drawn. The phone layout is made after the page is shown.
+  - The monitor's last good check is kept in localStorage (`tl.mon1`: the shared monitor's address and when; never one set in the window, never a secret). A page opened within 20 minutes asks the monitor at once and checks it again meanwhile.
+  - The store's reads wait for IndexedDB to open (`getHist`, `hexAsync`); `publicIdentity` reads the aircraft's record first.
+  - FR24's playback ends of a finished flight are kept (`fr24PbEnds1`, the last 500).
+  - Log, flight and data pages write what changed when they are left or hidden.
 
-`test/unit_classic.cjs` checks the pages, the rows, the panel and the switch.
+`test/unit_classic.cjs` checks the pages, the rows, the panel and the switch; `test/unit_142.cjs` the reveal's parts, the app's layout, the kept ends and flight numbers, and the boards.
 
 ## 4. The monitor
 
@@ -260,6 +265,8 @@ A day whose file never appears (retried every 2 hours for 36 hours), or whose re
 
 ### 4.3a The world log (1.0.1)
 
+(1.4.2) Each day also gets a callsign index (`world/YYYY-MM-DD.csi`: each airline callsign and the aircraft that flew it), built newest first in the background and again when a day is rewritten. `/fr24fn` uses it for a flight number's flights before the monitor's own index of them began: the callsigns FR24 has shown for the number (`fr24fn.cjs` `csOf`), their aircraft of each day, and those aircraft's flights of that day by that callsign. They have no FR24 id and play from public ADS-B. Callsigns' flight numbers come from the scans, from FR24's airport schedules as the boards keep them (`boards.cjs` `onRow`), and from FR24's rows browsers' log pages show (`/report` `csfn`, never over a pair seen in the last three days).
+
 adsb.lol publishes every finished day as an archive on GitHub: every aircraft it heard, each one's whole day. The monitor already reads each day once to index it, so it also builds every aircraft's flights from it in the same read, with the same engine as the logs (`legsFromPoints`, `summarizeLeg`). On 21 Oct 2026 that was 68,294 aircraft and 193,149 flights in a 21.8 MB file. The days of the last year are filled in newest first, one at a time (a day read before is read again for it), and each new day is added once adsb.lol publishes it. Nothing is ever deleted; while the disk has under 4 GB free, no more days are built.
 
 Each day is one file (`world/YYYY-MM-DD.wl`, `monitor/world.cjs`): aircraft in blocks of 32 by address, each block gzipped, with an index of the blocks at the start. One aircraft's day is a binary search of the index and one block read (0.17 ms here). `/hist` serves any aircraft from it: a day the day's index says the aircraft is not in has no flights; a day it is in has its flights from the world log. Browsers ask for an aircraft's missing days in one request instead of one per day.
@@ -286,6 +293,8 @@ Every browser used to work each route out itself, from what it alone had seen, s
 ### 4.3b3 Airport boards on the monitor (1.1.0)
 
 FR24's own rows of each airport's arrivals and departures (seven days back, seven ahead) are kept per airport on the monitor (`boards.cjs`). Browsers send the rows they read from FR24 (`POST /boardrows`). The monitor reads FR24's airport schedule itself for every airport opened in the last day, paced, and pauses three hours if FR24 refuses. A board opens with all of them and the monitor's own flights in one answer (`/board?rows=1`), then only what changed. A browser reads FR24's schedule itself only when the monitor's copy is more than a quarter of an hour old. The airport panel's movements per day take the larger of the ADS-B count and FR24's rows plus the flights FR24 hides, and today is always listed.
+
+(1.4.2) A light aircraft's or helicopter's flight is checked against FR24's own flights of it (`fr24Fix`): split where FR24 has two flights with the aircraft down at a place between them for two minutes or more, and its ends moved to where FR24's positions have it down, over an end here that was not heard on the ground. The flights kept from the last three days are checked in the background. FR24's rows of a flight set right are left out of another airport's `/board` (`F24ENDS`), and each browser leaves them off too (`06-boards.js` `spanElsewhere`), so every browser's board is the same. A diversion stays on the board of where it was going.
 
 ### 4.3c Airport counts (1.0.2)
 

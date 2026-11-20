@@ -1,7 +1,7 @@
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '1.4.1';
+  const VERSION = '1.4.2';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
@@ -379,13 +379,17 @@
     }
     // Stage 1 (a few ms): the small key-value records - the airport list, learned usage, airspace boundaries, the
     // IndexedDB copy of the snapshot. Stage 2, in the background: every aircraft and flight record.
-    const kvReady = open().then(async d => {
+    let kvDone = false, opened = false;
+    // (1.4.2: a read asked for before the database is open waits for it - the log pages ask for the landing-site and
+    // OurAirports lists at their very first line, and were answered "none kept": both downloaded again on every page)
+    const openP = open().then(d => { opened = true; return d; });
+    const kvReady = openP.then(async d => {
       if (d) { db = d; mode = 'idb'; await loadAll('kv'); const kb = mem.kv.get('boot'); if (kb && kb.v === 1) adoptBoot(kb); }
-    }).catch(e => log('store', e));
+    }).catch(e => log('store', e)).then(() => { kvDone = true; });
     const ready = kvReady.then(async () => { if (db) { await loadAll('hex'); await loadAll('id'); } fullyLoaded = !!db; prune(); migrate(); }).catch(e => log('store', e));
     const histMem = new Map();
     return {
-      ready, kvReady,
+      ready, kvReady, kvLoaded: () => kvDone,
       boot: () => boot,
       mode: () => mode,
       stats: () => ({ mode, flights: mem.id.size, aircraft: mem.hex.size, loaded: fullyLoaded }),
@@ -409,7 +413,7 @@
       getBoard: apId => dirty.hist.has('b:' + apId) ? Promise.resolve(dirty.hist.get('b:' + apId)) : getMany('hist', ['b:' + apId]).then(m => m.get('b:' + apId) || null),
       setBoard: (apId, v) => { dirty.hist.set('b:' + apId, v); if (!timer) timer = setTimeout(idleFlush, 700); },
       // a single aircraft record, from disk if the background load has not reached it yet
-      hexAsync: hex => mem.hex.has(hex) || fullyLoaded || !db ? Promise.resolve(mem.hex.get(hex) || null) : getMany('hex', [hex]).then(m => { const v = m.get(hex); if (v) keep('hex', hex, v); return mem.hex.get(hex) || null; }),
+      hexAsync: hex => !db && !opened ? openP.then(() => store.hexAsync(hex)) : mem.hex.has(hex) || fullyLoaded || !db ? Promise.resolve(mem.hex.get(hex) || null) : getMany('hex', [hex]).then(m => { const v = m.get(hex); if (v) keep('hex', hex, v); return mem.hex.get(hex) || null; }),
       getId: id => mem.id.get(Number(id)) || null,
       allIds: () => [...mem.id.values()].filter(r => r && r.hex && r.id != null),
       setId: (id, rec) => { const { photos, injected, ...slim } = rec; mem.id.set(Number(id), Object.assign(slim, { savedAt: now() })); touch('id', Number(id)); },
@@ -426,6 +430,7 @@
       getHist: hex => {
         if (histMem.has(hex)) return Promise.resolve(histMem.get(hex));
         if (dirty.hist.has(hex)) { const v = dirty.hist.get(hex); histMem.set(hex, v); return Promise.resolve(v); }
+        if (!db && !opened) return openP.then(() => store.getHist(hex));
         if (!db) return Promise.resolve(null);
         return new Promise(res => { try { const r = db.transaction('hist', 'readonly').objectStore('hist').get(hex); r.onsuccess = () => { const v = r.result || null; if (v) histMem.set(hex, v); res(v); }; r.onerror = () => res(null); } catch (_) { res(null); } });
       },
@@ -517,21 +522,42 @@
   let monStat = null;   // (the monitor's last /status: its version, the daily archives it has read - the log page says them)
   const monUp = () => monOk;
   let monChecking = null;
+  // (1.4.2) what waits for the monitor to answer its check - asked once it does, where the wait for it ran out first (a
+  // phone's first page, its check over 8 s on a slow connection: the log's rows never asked it for their flights' ends)
+  const monUpHooks = new Set();
+  function monUpNow() { for (const f of [...monUpHooks]) { monUpHooks.delete(f); try { f(); } catch (e) { log('monitor up', e); } } }
+  function monWhenUp(f) { if (monOk) { f(); return; } monUpHooks.add(f); if (monUpHooks.size > 50) monUpHooks.delete(monUpHooks.values().next().value); }
+  // (1.4.2) The shared monitor's last good check, kept in localStorage - its address and when it answered, no secret (only
+  // ever the shared monitor with none: one set in the window, or turned off, is never noted here). Read at the very first
+  // line: the check no longer waits for the records on disk (1.5-2.7 s on a log page while FR24's own page loads), and a
+  // page opened within 20 minutes of a good answer asks the monitor at once - checked again meanwhile, as before. Every
+  // log page was held that long for its monitor answers (M-SKTO: the rows' landing places, serial number and age).
+  const MON_LS = 'tl.mon1';
+  const monLsRead = () => { try { const o = JSON.parse(localStorage.getItem(MON_LS) || 'null'); return o && o.d === 1 && MON_DEFAULTS.includes(o.u) && fin(o.at) ? o : null; } catch (_) { return null; } };
+  const monLsSet = o => { try { if (o) localStorage.setItem(MON_LS, JSON.stringify(o)); else localStorage.removeItem(MON_LS); } catch (_) { /* ignore */ } };
+  // (FR24's Android app: a monitor set in the module's own settings is not the shared one)
+  const monMobileSet = () => { try { const mm = typeof TL_MOBILE === 'object' && TL_MOBILE && TL_MOBILE.mon && typeof TL_MOBILE.mon === 'object' ? TL_MOBILE.mon : null; return !!(mm && (mm.url || mm.off)); } catch (_) { return false; } };
+  const monLs0 = monMobileSet() ? null : monLsRead();
+  if (monLs0 && now() - monLs0.at >= 0 && now() - monLs0.at < 20 * 60000) { monBase = monLs0.u; monOk = true; monGoodAt = now(); }
   function monCheck(force) {
     if (!force && now() - monCheckAt < 5 * 60000) return monChecking; monCheckAt = now();
-    monChecking = store.kvReady.then(() => {
-      const r = monRemote(); monErr = '';
+    // (the shared one known in use: asked before the records on disk are read - they only say which monitor)
+    const pre = monLs0 && !force ? Promise.resolve() : store.kvReady;
+    monChecking = pre.then(() => {
+      const r = store.kvLoaded() || !monLs0 ? monRemote() : { url: monLs0.u, token: '', dflt: true }; monErr = '';
       if (!r) { monBase = ''; throw new Error('turned off'); }
       // (the shared one: each of them in turn, the one in use first; one set here: that one)
       const urls = r.dflt ? [monBase].filter(u => MON_DEFAULTS.includes(u)).concat(MON_DEFAULTS.filter(u => u !== monBase)) : [r.url];
       const ask = i => { const u = urls[i]; HOSTS[new URL(u).host] = [6, 30]; return gmRequest(u + '/status', { timeout: 10000, headers: monAuth(r) }).then(j => { if (!(j && j.v)) throw new Error('not a monitor'); monBase = u; return j; }).catch(e => { if (i + 1 < urls.length) return ask(i + 1); throw e; }); };
-      return ask(0).catch(e => { monErr = String((e && e.message) || e).slice(0, 120); throw e; });
-    }).then(j => { monOk = !!(j && j.v); monStat = j && j.v ? j : null; if (monOk) monGood(); return j; }, e => {
+      return ask(0).then(j => ({ j, dflt: r.dflt }), e => { monErr = String((e && e.message) || e).slice(0, 120); throw e; });
+    }).then(({ j, dflt }) => { const was = monOk; monOk = !!(j && j.v); monStat = j && j.v ? j : null; if (monOk) monGood(); monLsSet(monOk && dflt && !monMobileSet() ? { u: monBase, at: now(), d: 1 } : null); if (monOk && !was) monUpNow(); return j; }, e => {
       // (no answer from the one in use: busy, as above - kept while it answered lately; refused, or turned off: not used)
-      if (monOk && !/HTTP [45]|not a monitor|turned off/.test(String(e && e.message || e))) monNoAnswer(); else monOk = false;
+      if (monOk && !/HTTP [45]|not a monitor|turned off/.test(String(e && e.message || e))) monNoAnswer(); else { monOk = false; monLsSet(null); }
       monCheckAt = now() - 5 * 60000 + 30000; throw e;
     });
     monChecking.catch(() => {});
+    // (the records on disk read meanwhile: another monitor set there, or the monitor turned off - checked again with that)
+    if (monLs0 && !force) store.kvReady.then(() => { const r = monRemote(); if (!r || !r.dflt) { monLsSet(null); monOk = false; monBase = ''; monCheck(true); } }).catch(() => {});
     return monChecking;
   }
   // (1.4.1) the monitor's check waited for - a few seconds at most - before a one-off ask goes without it: a page opened
@@ -549,14 +575,15 @@
   function monGet(path, opts) {
     // (no answer at all - not a refusal: looked at again in 30 s, the next shared monitor if this one is gone)
     const go = () => monOk && monBase ? gmRequest(monUrl() + path, Object.assign({ timeout: 8000 }, opts || {}, { headers: monHdr() })).then(v => { monGood(); return v; }, e => { if (!/HTTP [45]|paused|skipped/.test(String(e))) monNoAnswer(); throw e; }) : Promise.reject(new Error('monitor not running'));
+    // (1.4.2: the monitor known good - its check of a few minutes ago kept, or the one now on its way - not waited for)
     const c = monCheck();
-    return c ? c.then(go, go) : go();
+    return c && !monOk ? c.then(go, go) : go();
   }
   // (a report to the monitor: JSON in the body)
   function monPost(path, obj) {
     const go = () => monOk && monBase ? gmRequest(monUrl() + path, { method: 'POST', body: JSON.stringify(obj), timeout: 15000, headers: Object.assign({ 'Content-Type': 'application/json' }, monHdr() || {}) }) : Promise.reject(new Error('monitor not running'));
     const c = monCheck();
-    return c ? c.then(go, go) : go();
+    return c && !monOk ? c.then(go, go) : go();
   }
   // raw: answered with { status, text } whatever the status - the caller reads it (the flight logs' trace files: a 404, a
   // verification page and a refusal are told apart there) - and never held back by a host paused for others. skip(): asked

@@ -9,10 +9,13 @@
   // filled, the ends FR24 guessed replaced by where the flight came down, a blocked aircraft's log rebuilt, the flights
   // before FR24's week under its own, the padlocked figures. FR24's new page stays in the document, all but its header
   // hidden. FR24's playback page of a flight (/data/playback/<id>) goes to its aircraft's page, where it plays, as it did.
-  // Not in the app: its phone layout of FR24's new pages stays. The switch "Old-style log pages" turns it all off.
+  // In the app (1.4.2): its aircraft and flight number pages as well - the phone layout of them (06-phone) is made from the
+  // old page's markup, and was gone with it: FR24's new pages shown there since its update. Its playback page stays FR24's
+  // own, made for a phone - every Play in the app goes there. The switch "Old-style log pages" turns it all off.
   const CL_PATH = /^\/data\/(aircraft|flights)\/([^/?#]+)\/?$/i;
   const CL_PB_PATH = /^\/data\/playback\/([0-9a-f]{1,16})\/?$/i;
-  const classicOn = () => opt.on && opt.classic !== false && !(typeof TL_APP === 'object' && TL_APP);
+  const clInApp = () => typeof TL_APP === 'object' && !!TL_APP;
+  const classicOn = () => opt.on && opt.classic !== false;
   const CL_FR = 'https://www.flightradar24.com';
   // (FR24's old data pages' stylesheets, in the order those pages had them - '' is where their own inline rule stood)
   const CL_CSS = kind => [`${CL_FR}/static/css/jquery.ui.slider.css`, `${CL_FR}/static/css/nouislider.css`,
@@ -125,6 +128,25 @@
   const clCrumbs = list => `<div class="mx-4"><nav class="breadcrumbs pt-2 border-b border-gray-700 border-solid" data-component="breadcrumbs"><ol class="flex flex-wrap justify-start m-auto text-sm list-none breadcrumbs__list" data-testid="breadcrumbs" itemscope itemtype="https://schema.org/BreadcrumbList">${list.map(([name, href], i) => (i ? '<span class="px-2 text-gray-1300">&gt;</span>' : '') + `<li class="pb-2 font-base font-regular" itemprop="itemListElement" itemscope itemtype="https://schema.org/ListItem">${href ? `<a class="breadcrumbs__list-item breadcrumbs__list-item--url text-blue-500 hover:text-blue-500" itemprop="item" itemtype="https://schema.org/WebPage" href="${esc(href)}"><div class="flex breadcrumbs__list-item-name" itemprop="name">${esc(name)}</div></a>` : `<div class="text-gray-1300 font-semibold"><div class="breadcrumbs__list-item-name" itemprop="name">${esc(name)}</div></div>`}<meta itemprop="position" content="${i + 1}"></li>`).join('')}</ol></nav></div>`;
 
   let clPage = null;
+  // (1.4.2) The page shown once, whole - its rows' airports, the aircraft's serial number, age and owner, its older flights and
+  // their flight numbers all in it - not filled in before the eyes: held back until the aircraft's and the flight's own work
+  // (06-acpage) has them, six seconds at most. Their slow asks begin as FR24's page data is read (clEarly)
+  const CL_HOLD_MAX = 6000, clHolds = [];
+  let clBootRes = null; const clBootP = new Promise(r => { clBootRes = r; });
+  function clHold(p) { clHolds.push(Promise.resolve(p).then(() => null, () => null)); }
+  function clHoldsIn() { if (clBootRes) { const r = clBootRes; clBootRes = null; r(); } }
+  // (a deferred, for a part that is ready later)
+  const clDefer = () => { let res = null; const p = new Promise(r => { res = r; }); return { p, done: () => { if (res) { const r = res; res = null; r(); } } }; };
+  // (FR24's page data read: the airports' lists and the rows' track ends asked for at once - before the page is drawn)
+  function clEarly(page, kind) {
+    try {
+      loadAirports().catch(() => null); loadOa().catch(() => null); loadSites().catch(() => null);
+      const fl = Array.isArray(page.props && page.props.flights) ? page.props.flights : [];
+      const items = fl.filter(f => /^[0-9a-f]{1,12}$/i.test(f.flightId || '')).map(f => ({ fid: String(f.flightId).toLowerCase(), t: f.scheduledDeparture || f.actualDeparture || 0 }));
+      if (items.length) fr24EndsEarly(items);
+      if (kind === 'aircraft') { const a = page.props.aircraft || {}, hex = clean(a.modeS || '').toLowerCase(), reg = clean(a.registration || '').toUpperCase(); if (/^[0-9a-f]{6}$/.test(hex)) identityEarly(hex, reg); }
+    } catch (e) { log('classic early', e); }
+  }
   // (FR24's page element, as soon as the browser has read it - before FR24's own script draws anything in it)
   function clAppEl() {
     const now0 = document.getElementById('app'); if (now0 && now0.getAttribute('data-page')) return Promise.resolve(now0);
@@ -140,7 +162,7 @@
   // Before anything of FR24's is drawn: its page hidden (a blank moment, not the new page and then the old)
   // -> true when the old page is drawn (the aircraft page's and the flight page's own work then runs on it)
   async function classicBoot() {
-    const pb = CL_PB_PATH.exec(location.pathname), m = CL_PATH.exec(location.pathname);
+    const pb = clInApp() ? null : CL_PB_PATH.exec(location.pathname), m = CL_PATH.exec(location.pathname);
     if ((!m && !pb) || !classicOn()) return false;
     const hide = document.createElement('style'); hide.id = 'tl-classic-hide'; hide.textContent = '#app{visibility:hidden!important}';
     (document.head || document.documentElement).appendChild(hide);
@@ -156,6 +178,7 @@
       hide.remove(); return false;
     }
     if (!page || !page.props || !/^Data\/(AircraftRegistration|FlightHistory)$/.test(comp || '')) { hide.remove(); return false; }
+    clEarly(page, m[1].toLowerCase() === 'flights' ? 'flights' : 'aircraft');
     if (document.readyState === 'loading') await new Promise(r => document.addEventListener('DOMContentLoaded', r, { once: true }));
     try { clDraw(page, m[1].toLowerCase() === 'flights' ? 'flights' : 'aircraft'); } catch (e) { log('classic page', e); const c = document.querySelector('#content[data-tl-classic]'); if (c) c.remove(); hide.remove(); return false; }
     return true;
@@ -209,8 +232,8 @@
     }
     const rows = flights.map(f => clRowHtml(f, kind, clPage.reg || '')).join('');
     // (FR24's own rows name each callsign's flight number - RYR77DU is FR431: the rows rebuilt here of the same callsign
-    // show it at once, blue and linked, as FR24's own do - legRowHtml)
-    for (const f of flights) { const c = clean(f.callsign || '').toUpperCase(), n = clean(f.flightNumber || '').toUpperCase(); if (/^[A-Z]{3}\d[A-Z0-9]{0,4}$/.test(c) && /^[A-Z0-9]{2,3}\d{1,5}[A-Z]?$/.test(n) && n !== c) csFnMemo.set(c, { fn: n, at: now() }); }
+    // show it at once, blue and linked, as FR24's own do - legRowHtml; 1.4.2: kept, and sent to the monitor - noteCsFn)
+    for (const f of flights) noteCsFn(f.callsign, f.flightNumber, f.actualDeparture || f.scheduledDeparture);
     const table = `<table class="" data-text-loading="Please wait. Loading data..." id="tbl-datatable">${clHead(kind)}<tbody>${rows || '<tr><td colspan="20" class="text-center" style="padding:10px 0;font-weight:700">There is currently no data available for your request</td></tr>'}</tbody></table>`;
     // (a flight number FR24 has no flight of: its old page's words, the footer in them - the flight page's own table of
     // it, from public ADS-B and the monitor, takes their place - bootFlightPage)
@@ -219,15 +242,15 @@
       : `<div class="row">${table}${CL_FOOT()}</div>`;
     const spacer = document.createElement('div'); spacer.id = 'tl-cl-spacer'; spacer.style.cssText = 'width:100%;height:3.25rem';
     const wrap = document.createElement('div'); wrap.id = 'content'; wrap.className = `bootstrap data-${kind} tl-cl-wait`; wrap.dataset.tlClassic = '1';
-    wrap.innerHTML = CL_TOOLBAR() + `<div class="tl-cl-scope">${clCrumbs(crumbs)}<section id="cnt-data-subpage"><section id="cnt-data-map" style="display:none"><div class="tl-cl-tiles"></div><svg class="tl-cl-over"></svg><div class="tl-cl-attr">Powered by Esri · Esri, Maxar, Earthstar Geographics, HERE, Garmin, USGS</div></section><section id="cnt-data-content">${head}${CL_PANEL}${tail}</section></section></div>`;
+    wrap.innerHTML = CL_TOOLBAR() + `<div class="tl-cl-scope">${clCrumbs(crumbs)}<section id="cnt-data-subpage"><section id="cnt-data-map" style="display:none"><div id="tl-cl-gmap" style="position:absolute;left:0;top:0;width:100%;height:100%;display:none"></div><div class="tl-cl-tiles"></div><svg class="tl-cl-over"></svg><div class="tl-cl-attr">Powered by Esri · Esri, Maxar, Earthstar Geographics, HERE, Garmin, USGS</div></section><section id="cnt-data-content">${head}${CL_PANEL}${tail}</section></section></div>`;
     const app = document.getElementById('app');
     if (app && app.parentNode === body) { app.after(spacer); spacer.after(wrap); } else { body.insertBefore(wrap, body.firstChild); body.insertBefore(spacer, wrap); }
     body.insertAdjacentHTML('beforeend', CL_SPRITE);
     // (FR24's notice that a row's flight is not on the page: the toast box its old pages had)
     if (!document.getElementById('toast-container')) { const t = document.createElement('div'); t.id = 'toast-container'; t.className = 'toast-top-right'; body.appendChild(t); }
     const hide = document.getElementById('tl-classic-hide'); if (hide) hide.remove();
-    ready.then(() => { wrap.classList.remove('tl-cl-wait'); clLayout(); });
-    setTimeout(() => wrap.classList.remove('tl-cl-wait'), 3000);
+    let shown = false; const reveal = () => { if (shown) return; shown = true; wrap.classList.remove('tl-cl-wait'); clLayout(); };
+    Promise.race([ready.then(() => Promise.race([clBootP, sleep(3000)])).then(() => Promise.all(clHolds)), sleep(CL_HOLD_MAX)]).then(reveal, reveal);
     // (the logo once FR24's header is drawn)
     let lt = 0; const logoTry = () => { clLogo(); if (!document.getElementById('fr-logo-payoff') && ++lt < 40) setTimeout(logoTry, 250); }; logoTry();
     clPlayerBind(wrap);
@@ -338,20 +361,40 @@
       ev.preventDefault(); const v = a.dataset.value; mt.classList.remove('open');
       const b = mt.querySelector('button'); b.value = v; b.innerHTML = `${esc(a.textContent)} <span class="caret"></span>`;
       try { localStorage.setItem(CL_MAP_KEY, v); } catch (e) { /* this visit only */ }
-      if (pl.map) pl.map.setType(v);
+      if (pl.gm) clGm('type', { type: v }); else if (pl.map) pl.map.setType(v);
     }));
     document.addEventListener('click', ev => { if (!set.contains(ev.target)) { set.classList.remove('open'); mt.classList.remove('open'); } });
     tb.querySelector('#fr24_Fullscreen').addEventListener('click', ev => {
       ev.preventDefault();
       try { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen(); } catch (e) { /* not allowed here */ }
     });
-    tb.querySelector('#fr24_ZoomIn').addEventListener('click', ev => { ev.preventDefault(); if (pl.map && pl.on) pl.map.zoom(1); });
-    tb.querySelector('#fr24_ZoomOut').addEventListener('click', ev => { ev.preventDefault(); if (pl.map && pl.on) pl.map.zoom(-1); });
+    const zoom = dz => { if (!pl.on) return; if (pl.gm) clGm('zoom', { dz }); else if (pl.map) pl.map.zoom(dz); };
+    tb.querySelector('#fr24_ZoomIn').addEventListener('click', ev => { ev.preventDefault(); zoom(1); });
+    tb.querySelector('#fr24_ZoomOut').addEventListener('click', ev => { ev.preventDefault(); zoom(-1); });
   }
 
   // ---- the player: a row's Play, as FR24's old panel played it - the map over the page, the flight drawn, the aircraft
   // moved along it, its figures each moment (and those FR24 padlocked, from public ADS-B - fillPlaybackData)
   const pl = { map: null, pts: [], t: 0, t0: 0, t1: 0, playing: false, raf: 0, last: 0, seq: 0, follow: false, route: false, chart: false, fid: '', o: null, d: null, on: false };
+  // ---- (1.4.2) the map as the old pages had it: Google's, FR24's own - drawn in the page by its part there (page.js
+  // clmOp), the flight on it as FR24's map draws one. Asked once; the map drawn here (Esri's) only where Google's cannot be
+  let clGmWait = null;
+  function onClMapSt(d) {
+    if (d && d.ok === true && d.follow === false && pl.follow) { pl.follow = false; const b = document.getElementById('btn-toggle-follow'); if (b) b.classList.remove('active'); }
+    if (clGmWait && d && typeof d.ok === 'boolean' && d.follow === undefined) { const r = clGmWait; clGmWait = null; r(d.ok); }
+  }
+  function clMapReady() {
+    if (pl.gm !== undefined) return Promise.resolve(pl.gm);
+    if (pl.gmP) return pl.gmP;
+    pl.gmP = new Promise(res => {
+      const done = ok => { pl.gm = !!ok; res(pl.gm); };
+      clGmWait = done; postToPage('clMap', { op: 'init', type: clMapType() });
+      // (Google's map not up in 18 s: the one drawn here)
+      setTimeout(() => { if (clGmWait === done) { clGmWait = null; done(false); } }, 18000);
+    });
+    return pl.gmP;
+  }
+  const clGm = (op, o) => postToPage('clMap', Object.assign({ op }, o || {}));
   // (the old page script's layout of the playback: the map 600 px high, the page's content over its foot)
   function clLayout() {
     const map = document.getElementById('cnt-data-map'), c = document.getElementById('cnt-data-content'), sh = c && c.querySelector('.section-header'), cp = document.getElementById('cnt-playback');
@@ -389,19 +432,21 @@
     sl.addEventListener('pointermove', ev => { if (sd) seek(ev); });
     sl.addEventListener('pointerup', () => { sd = false; }); sl.addEventListener('pointercancel', () => { sd = false; });
     wrap.querySelector('#btn-toggle-follow').addEventListener('click', () => clFollow(!pl.follow));
-    wrap.querySelector('#btn-toggle-route').addEventListener('click', ev => { pl.route = !pl.route; ev.currentTarget.classList.toggle('active', pl.route); if (pl.map) pl.map.render(); });
+    wrap.querySelector('#btn-toggle-route').addEventListener('click', ev => { pl.route = !pl.route; ev.currentTarget.classList.toggle('active', pl.route); if (pl.gm) clGm('route', { on: pl.route }); else if (pl.map) pl.map.render(); });
     wrap.querySelector('#btn-toggle-chart').addEventListener('click', ev => { pl.chart = !pl.chart; ev.currentTarget.classList.toggle('active', pl.chart); const c = wrap.querySelector('#cnt-chart'); c.classList.toggle('hidden', !pl.chart); if (pl.chart) clChart(); });
   }
   function clFollow(on) {
     pl.follow = !!on; const b = document.getElementById('btn-toggle-follow'); if (b) b.classList.toggle('active', pl.follow);
-    if (pl.follow && pl.map) { const c = clAt(pl.t); if (c) clCentre(c); }
+    const c = pl.pts.length ? clAt(pl.t) : null; if (!c) return;
+    if (pl.gm) clGm('pos', { lat: c.lat, lon: c.lon, trk: fin(c.trk) ? c.trk : 0, follow: pl.follow, cover: clCover() });
+    else if (pl.follow && pl.map) clCentre(c);
   }
   // (the aircraft in the middle of the part of the map the panel leaves)
   function clCentre(c) { const m = pl.map; m.lon = c.lon; m.lat = clLat(clWY(c.lat, m.z) + clCover() / 2, m.z); m.render(); }
   // (a flight's track: FR24's own of its flight, as its old panel asked for it; the monitor's FR24 positions of it where
   // FR24 has none to give; a flight of a log rebuilt here: its public ADS-B track - pbFlight)
   async function clTrack(id, ts) {
-    if (PB_SYN.test(id) || !/^[0-9a-f]{1,12}$/.test(id)) { const f = await pbFlight({ id, dep: ts }); return f && f.ok ? { pts: f.pts, cs: f.cs || '', fn: f.flightNumber || '', o: f.origin, d: f.destination, fr24: false, hex: clean(f.hex || '').toLowerCase() } : null; }
+    if (PB_SYN.test(id) || !/^[0-9a-f]{1,12}$/.test(id)) { const f = await pbFlight({ id, dep: ts }); return f && f.ok ? { pts: f.pts, cs: f.cs || '', fn: f.flightNumber || '', o: f.origin, d: f.destination, fr24: false, hex: clean(f.hex || '').toLowerCase(), type: clean(f.type || '') } : null; }
     try {
       const j = await gmRequest(`https://api.flightradar24.com/common/v1/flight-playback.json?flightId=${encodeURIComponent(id)}&timestamp=${ts || nowS()}`, { timeout: 20000 });
       const fl = j && j.result && j.result.response && j.result.response.data && j.result.response.data.flight, tr = fl && fl.track;
@@ -409,7 +454,8 @@
         const pts = tr.filter(p => p && fin(p.latitude) && fin(p.longitude) && fin(p.timestamp)).map(p => ({ t: p.timestamp, lat: p.latitude, lon: p.longitude, alt: p.altitude && fin(p.altitude.feet) ? p.altitude.feet : null, gs: p.speed && fin(p.speed.kts) ? p.speed.kts : null, trk: fin(p.heading) ? p.heading : null, vr: p.verticalSpeed && fin(p.verticalSpeed.fpm) ? p.verticalSpeed.fpm : null })).sort((a, b) => a.t - b.t);
         const idn = fl.identification || {}, ap = fl.airport || {}, apOf = x => x && x.code ? { code: x.code.iata || x.code.icao || '', name: x.name || '', city: (x.position && x.position.region && x.position.region.city) || x.name || '', lat: x.position && x.position.latitude, lon: x.position && x.position.longitude } : null;
         const im = fl.aircraftImages || {}, ph = (im.large || im.medium || im.thumbnails || [])[0] || null, idf = (fl.aircraft && fl.aircraft.identification) || {};
-        return { pts, cs: clean(idn.callsign || ''), fn: clean((idn.number && idn.number.default) || ''), o: apOf(ap.origin), d: apOf(ap.destination), fr24: true, median: fl.median || null, photo: ph, msn: clean(idf.serialNo || ''), model: clean((fl.aircraft && fl.aircraft.model && fl.aircraft.model.text) || ''), hex: clean(idf.modes || '').toLowerCase() };
+        noteCsFn(idn.callsign, idn.number && idn.number.default, pts.length ? pts[0].t : 0);
+        return { pts, cs: clean(idn.callsign || ''), fn: clean((idn.number && idn.number.default) || ''), o: apOf(ap.origin), d: apOf(ap.destination), fr24: true, median: fl.median || null, photo: ph, msn: clean(idf.serialNo || ''), model: clean((fl.aircraft && fl.aircraft.model && fl.aircraft.model.text) || ''), type: clean((fl.aircraft && fl.aircraft.model && fl.aircraft.model.code) || ''), hex: clean(idf.modes || '').toLowerCase() };
       }
     } catch (e) { /* FR24's not had: the monitor's */ }
     const r = await pbRaw(id, ts).catch(() => ({ pts: [], m: {} }));
@@ -419,7 +465,9 @@
   function clRowAp(td) {
     const a = td && td.querySelector('a[href*="/data/airports/"], a[href*="ourairports.com"]'), href = a ? a.getAttribute('href') || '' : '';
     const code = (href.match(/airports\/([a-z0-9-]+)/i) || [])[1] || '';
-    const ap = code ? airports.byIata.get(code.toUpperCase()) || ENGINE.byIcao(code) || null : null;
+    // (1.4.2: an OurAirports field - Axis Business Park's helipad, GB-1368 - by its code in that list)
+    const oid = code && oa.byCode ? oa.byCode.get(code.toUpperCase()) : 0;
+    const ap = code ? airports.byIata.get(code.toUpperCase()) || ENGINE.byIcao(code) || (oid ? oaAp(oid) : null) || null : null;
     const html = td ? td.innerHTML.replace(/<a\b[^>]*>\s*(\([^()<]*\))\s*<\/a>/, '<small>$1</small>').trim() : '';
     return { html: html && !/^(?:—|-|–)$/.test(clean(td.textContent)) ? html : '-', title: (ap && ap.name) || (td && td.title ? td.title.replace(/,[^,]*$/, '') : ''), ap };
   }
@@ -431,8 +479,16 @@
     tr.classList.add('active'); btn.classList.add('active');
     try { history.replaceState(history.state, '', location.pathname + location.search + '#' + id); } catch (e) { /* the address as it was */ }
     pl.on = true; clLayout();
-    if (!pl.map) pl.map = clMap(wrap.querySelector('#cnt-data-map'));
     window.scrollTo(0, 0);
+    // (Google's map made at its full size - its box shown before it is asked for: a map made hidden fits nothing)
+    const mapEl = wrap.querySelector('#cnt-data-map');
+    if (pl.gm !== false) { mapEl.querySelector('#tl-cl-gmap').style.display = ''; for (const el of mapEl.querySelectorAll('.tl-cl-tiles, .tl-cl-over, .tl-cl-attr')) el.style.display = 'none'; }
+    const gmP = clMapReady().then(gm => {
+      mapEl.querySelector('#tl-cl-gmap').style.display = gm ? '' : 'none';
+      for (const el of mapEl.querySelectorAll('.tl-cl-tiles, .tl-cl-over, .tl-cl-attr')) el.style.display = gm ? 'none' : '';
+      if (!gm && !pl.map) pl.map = clMap(mapEl);
+      return gm;
+    });
     // (the panel at once, from the row: its airports, its flight, the aircraft)
     const c = tr.children, fromC = clRowAp(c[3]), toC = clRowAp(c[4]), flightCell = c[5], flight = clean(flightCell && flightCell.textContent).replace(/[()]/g, '');
     const set = (sel, html, title) => { const el = wrap.querySelector(sel); if (el) { el.innerHTML = html; if (title !== undefined) el.title = title; } };
@@ -449,8 +505,9 @@
     set('#txt-aircraft-reg', esc(rowReg || '-'));
     set('#txt-aircraft-serial', esc((clPage.kind === 'aircraft' && a.msn && !(p.withheld || {}).msn) ? a.msn : clHeadMsn() || '-'));
     clPhoto(clPage.kind === 'aircraft' ? (p.photos || [])[0] || clHeadPhoto() : null);
-    pl.o = o; pl.d = d; pl.fid = id; pl.hex = ''; pl.pts = []; pl.map.draw = null; pl.map.render(); clSlider(); clFigures(null);
-    const tk = await clTrack(id, ts);
+    pl.o = o; pl.d = d; pl.fid = id; pl.hex = ''; pl.pts = []; clSlider(); clFigures(null);
+    if (pl.gm) clGm('clear'); else if (pl.map) { pl.map.draw = null; pl.map.render(); }
+    const [tk, gm] = await Promise.all([clTrack(id, ts), gmP]);
     if (seq !== pl.seq) return;
     if (!tk || tk.pts.length < 2) { set('#txt-playback-header', `Playback of flight ${esc(fnRow || '')} <small>/ no track of this flight could be had</small>`); return; }
     const fnTk = clPage.kind === 'flights' ? clPage.fn || tk.fn : tk.fn || (flight && !/^[A-Z]{3}\d/.test(flight) ? flight : '');
@@ -467,7 +524,15 @@
     // (one across the date line: its longitudes made continuous)
     const pts = tk.pts.map(q => Object.assign({}, q)); for (let i = 1; i < pts.length; i++) { while (pts[i].lon - pts[i - 1].lon > 180) pts[i].lon -= 360; while (pts[i].lon - pts[i - 1].lon < -180) pts[i].lon += 360; }
     pl.pts = pts; pl.t0 = pts[0].t; pl.t1 = pts[pts.length - 1].t; pl.t = pl.t0;
-    pl.map.draw = clDrawTrack; pl.map.fit(pts.concat([pl.o, pl.d].filter(x => x && fin(x.lat) && fin(x.lon))));
+    if (gm) {
+      // (the flight to Google's map: each position [time, lat, lon, ft, kts, track], its airports, the aircraft - its
+      // address, type and kind, for FR24's picture of it)
+      const ac = { hex: pl.hex || (clPage.kind === 'aircraft' ? clPage.hex : '') || '', type: tk.type || (clPage.kind === 'aircraft' ? clean((clPage.props.aircraft || {}).typeCode || '') : '') || '' };
+      ac.cls = ENGINE.classify({ hex: ac.hex, type: ac.type });
+      const r5 = v => Math.round(v * 1e5) / 1e5, ends = a => a && fin(a.lat) && fin(a.lon) ? [r5(a.lat), r5(a.lon)] : null;
+      clGm('track', { pts: pts.map(q => [q.t, r5(q.lat), r5(q.lon), fin(q.alt) ? Math.round(q.alt) : null, fin(q.gs) ? Math.round(q.gs) : null, fin(q.trk) ? Math.round(q.trk) : null]), o: ends(pl.o), d: ends(pl.d), cover: clCover(), ac });
+      clGm('route', { on: pl.route });
+    } else { pl.map.draw = clDrawTrack; pl.map.fit(pts.concat([pl.o, pl.d].filter(x => x && fin(x.lat) && fin(x.lon)))); }
     clSeek(pl.t0);
     // (the padlocked figures and the airports' "-" - the aircraft's page's own work: its address)
     try { fillPlayback(); } catch (e) { /* none */ }
@@ -556,7 +621,8 @@
   function clSeek(t) {
     pl.t = Math.max(pl.t0, Math.min(pl.t1, t)); const c = clAt(pl.t); if (!c) return;
     clSlider(); clFigures(c);
-    if (pl.map) { if (pl.follow) clCentre(c); else clDrawTrack(); }
+    if (pl.gm) clGm('pos', { lat: c.lat, lon: c.lon, trk: fin(c.trk) ? c.trk : 0, follow: pl.follow, cover: clCover() });
+    else if (pl.map) { if (pl.follow) clCentre(c); else clDrawTrack(); }
     if (pl.chart) clChartMark();
     // (the moment's padlocked figures - GPS altitude, airspeeds, vertical speed, squawk - from public ADS-B, as on FR24's
     // own panel: the aircraft's address; FR24's own vertical speed where it gives one and public data has none)
@@ -575,7 +641,7 @@
   }
   function clPause() { pl.playing = false; cancelAnimationFrame(pl.raf); const b = pl.wrap && pl.wrap.querySelector('#btn-control-playback'); if (b) { b.classList.remove('active'); b.title = 'Start playback'; } }
   function clClose() {
-    clPause(); pl.seq++; pl.on = false; pl.pts = []; clLayout();
+    clPause(); pl.seq++; pl.on = false; pl.pts = []; clLayout(); if (pl.gm) clGm('clear');
     document.querySelectorAll('#tbl-datatable tr.active, #tbl-datatable a.btn-playback.active').forEach(e => e.classList.remove('active'));
     try { history.replaceState(history.state, '', location.pathname + location.search); } catch (e) { /* none */ }
   }

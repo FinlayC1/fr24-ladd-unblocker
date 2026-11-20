@@ -27,10 +27,12 @@
     if (!boardOk(apId) || !row || !fin(row.t) || Math.abs(row.t - nowS()) > Math.max(BOARD_BACK, BOARD_AHEAD)) return;
     // (1.3: switched off - FR24's own rows only sent on to the monitor; nothing kept or drawn here)
     if (!opt.on) { if (!row.fromMon && (row.src === 'fr24' || row.src === 'sched')) boardUp(apId, kind, row); return; }
+    // (1.4.2: its callsign's flight number known here - the monitor learns it from the board's rows themselves)
+    if ((row.src === 'fr24' || row.src === 'sched') && row.cs && row.num) noteCsFn(row.cs, row.num, row.t, true);
     // (1.1.0) FR24's own rows read here - its map board's, its schedule's, its flight numbers' lists - go to the monitor for
     // every other browser; those that came from it do not go back
     if (row.fromMon) { row = Object.assign({}, row); delete row.fromMon; delete row.u; }
-    else if (row.src === 'fr24' || row.src === 'sched') boardUp(apId, kind, row);
+    else if ((row.src === 'fr24' || row.src === 'sched') && !row.drop) boardUp(apId, kind, row);
     (boardPend.get(apId) || boardPend.set(apId, []).get(apId)).push([kind, row]);
     // (kept in a while, in one go - within a second or two for a board that is open)
     const wait = boardAsked.has(apId) ? 1500 : 20000;
@@ -209,11 +211,11 @@
     if (!x.ap || !ap || x.ap !== ap) return false;
     return x.ts.some(a => [r.est, r.sch, r.t].some(b => b > 0 && Math.abs(a - b) < 7200));
   };
-  function boardList(m, pre) {
+  function boardList(m, pre, apId, kind) {
     const rows = Object.values(m).sort((a, b) => (BOARD_RANK[b.src] || 0) - (BOARD_RANK[a.src] || 0) || (b.src === 'fr24') - (a.src === 'fr24')), out = [], byFid = new Map(), byWho = new Map(), byRoute = new Map(), byCs = new Map();
     const airlineOf = cs => { const c = /^([A-Z]{3})\d/.exec(String(cs || '').toUpperCase()); return (c && fr24.byIcao.get(c[1])) || 0; };
     for (let r of rows) {
-      if (r.drop) continue;
+      if (r.drop || spanElsewhere(r, apId, kind)) continue;
       const who = [r.cs, r.reg && r.reg.replace(/-/g, ''), r.hex, r.num && 'N:' + r.num].filter(Boolean).map(s => String(s).toUpperCase());
       // (the same flight from a lesser source: what the row shown lacks - the other airport, FR24's flight id, the
       // aircraft - taken from it. G-PTRK's own FR24 row "N/A", its rebuilt track landed somewhere)
@@ -290,7 +292,7 @@
   }
   const boardTags = new Map();     // callsign / registration of a remembered row -> its aircraft's flags (the board tags)
   function boardSend(apId, b) {
-    const pre = boardPrefixes(Object.values(b.arr).concat(Object.values(b.dep))), arr = boardList(b.arr, pre), dep = boardList(b.dep, pre);
+    const pre = boardPrefixes(Object.values(b.arr).concat(Object.values(b.dep))), arr = boardList(b.arr, pre, apId, 'arrivals'), dep = boardList(b.dep, pre, apId, 'departures');
     // (and a blocked aircraft's rows say so to the page: their Playback is the ADS-B track's - FR24 has none)
     for (const r of arr.concat(dep)) { const hx = r.hex && store.getHex(r.hex); if (!hx || !(hx.ladd || hx.fr24Blocked || hx.pia || hx.mil)) continue; const t = { hex: r.hex, ladd: !!(hx.ladd || hx.fr24Blocked), pia: !!hx.pia, mil: !!hx.mil }; if (t.ladd) r.blk = 1; for (const k of [r.cs, r.reg]) if (k) boardTags.set(String(k).toUpperCase(), t); }
     if (boardTags.size > 5000) for (const k of [...boardTags.keys()].slice(0, 1000)) boardTags.delete(k);
@@ -431,7 +433,8 @@
     return a && fin(la) && fin(alt) && alt < 3000 && ENGINE.dist(la, lo, a.lat, a.lon) <= 15 ? 'low' : 'gap';
   }
   // An aircraft's rebuilt log: its flights of the last three days, at both ends
-  function boardNoteLegs(hex, legs, rec) {
+  function boardNoteLegs(hex, legs, rec, how) {
+    const mon = !!(how && how.mon);
     if (!hex || !legs || !legs.length) return;
     const lo = nowS() - BOARD_BACK, who = boardWho(hex, rec || null), cls = ENGINE.classify({ hex, type: who.ty, reg: who.reg }), heli = cls === 'heli';
     // (the other end when it is no airport of FR24's - a strip it does not list, a field, a pad - and the aircraft was
@@ -467,10 +470,10 @@
       const nearOk = (e, la, lo2) => !e || e.conf !== 'near' || (a => !!a && fin(la) && ENGINE.dist(la, lo2, a.lat, a.lon) <= 30)(apById(e.id));
       const fromOk = local || l.startedOnGround || (!!l.from && l.from.conf !== 'history' && nearOk(l.from, l.startLat, l.startLon));
       const toOk = (landed || !!toSite) && nearOk(l.to, l.endLat, l.endLon);
-      if (boardOk(from) && fromOk) boardPut(from, 'departures', Object.assign({ k, src: 'log', drop: false, cs: l.cs || '', t: off, sch: off, est: off, st: 'departed', col: 'green', ap: toOk ? (boardOk(to) ? to : toSite) : 0, gc: toOk && landed && l.to.conf === 'ground' ? 1 : 0, t2: on > off ? on : l.tEnd > off ? l.tEnd : 0, oc: endSeen(local ? { id: to, conf: 'low' } : l.from, l.startedOnGround, l.startLat, l.startLon, l.startAlt), dc: endSeen(l.to, false, l.endLat, l.endLon, l.endAlt) }, who));
+      if (boardOk(from) && fromOk) boardPut(from, 'departures', Object.assign({ k, src: 'log', drop: false, mon: mon ? 1 : 0, fid: l.fid || '', cs: l.cs || '', t: off, sch: off, est: off, st: 'departed', col: 'green', ap: toOk ? (boardOk(to) ? to : toSite) : 0, gc: toOk && landed && l.to.conf === 'ground' ? 1 : 0, t2: on > off ? on : l.tEnd > off ? l.tEnd : 0, oc: endSeen(local ? { id: to, conf: 'low' } : l.from, l.startedOnGround, l.startLat, l.startLon, l.startAlt), dc: endSeen(l.to, false, l.endLat, l.endLon, l.endAlt) }, who));
       // (a row an older build kept from such a guess goes: HZ-AR27's on Liverpool's board)
       else if (boardOk(from) && l.from && l.from.conf === 'near') boardPut(from, 'departures', { k, src: 'log', t: off, drop: true });
-      if (boardOk(to) && toOk && on) boardPut(to, 'arrivals', Object.assign({ k, src: 'log', drop: false, cs: l.cs || '', t: on, sch: on, est: on, st: 'landed', col: 'green', ap: fromOk ? (boardOk(from) ? from : fromSite) : 0, gc: l.to.conf === 'ground' ? 1 : 0, t2: off < on ? off : 0, oc: endSeen(local ? { id: to, conf: 'low' } : l.from, l.startedOnGround, l.startLat, l.startLon, l.startAlt), dc: endSeen(l.to, false, l.endLat, l.endLon, l.endAlt) }, who));
+      if (boardOk(to) && toOk && on) boardPut(to, 'arrivals', Object.assign({ k, src: 'log', drop: false, mon: mon ? 1 : 0, fid: l.fid || '', cs: l.cs || '', t: on, sch: on, est: on, st: 'landed', col: 'green', ap: fromOk ? (boardOk(from) ? from : fromSite) : 0, gc: l.to.conf === 'ground' ? 1 : 0, t2: off < on ? off : 0, oc: endSeen(local ? { id: to, conf: 'low' } : l.from, l.startedOnGround, l.startLat, l.startLon, l.startAlt), dc: endSeen(l.to, false, l.endLat, l.endLon, l.endAlt) }, who));
       else if (boardOk(to) && landed && on && l.to.conf === 'near') boardPut(to, 'arrivals', { k, src: 'log', t: on, drop: true });
     }
   }
@@ -627,7 +630,30 @@
   async function boardMonFill(apId) {
     const b0 = await boardFresh(apId), t = Math.round(nowS()), since = b0.monSync || 0;
     const j = await monGet(`/board?ap=${apId}&from=${t - BOARD_BACK}&to=${t + BOARD_AHEAD}&rows=1${since ? '&since=' + (since - 120) : ''}`, { timeout: 30000 }).catch(() => null);
-    for (const a of (j && j.aircraft) || []) { if (a.reg && !store.getHex(a.hex)) store.mergeHex(a.hex, { reg: a.reg, type: a.type, ladd: !!a.ladd }); boardNoteLegs(a.hex, a.legs, { reg: a.reg, type: a.type }); }
+    const listed = new Set();
+    for (const a of (j && j.aircraft) || []) {
+      if (!a || !/^[0-9a-f]{6}$/.test(a.hex || '')) continue; listed.add(a.hex);
+      if (a.reg && !store.getHex(a.hex)) store.mergeHex(a.hex, { reg: a.reg, type: a.type, ladd: !!a.ladd });
+      // (1.4.2: the monitor's flights set against FR24's own - their airports and FR24 ids, for every board)
+      for (const l of a.legs || []) if (l && l.fid && l.fr24Fix) noteFr24Span(a.hex, { fid: l.fid, t0: l.tOff || l.tStart, t1: l.tOn || l.tEnd, o: l.from && boardOk(l.from.id) ? l.from.id : 0, d: l.to && boardOk(l.to.id) ? l.to.id : 0 });
+      boardNoteLegs(a.hex, a.legs, { reg: a.reg, type: a.type }, { mon: true });
+    }
+    // (1.4.2) a row the monitor's flights put on this board before, of an aircraft it no longer has here (its flight set
+    // right since): withdrawn. One kept by an earlier version, not marked as the monitor's: the monitor's flights of that
+    // aircraft asked for - where they have that flight elsewhere, it goes
+    if (j && Array.isArray(j.aircraft)) {
+      const lo = t - BOARD_BACK, b = b0, old = new Set();
+      for (const m of [b.arr, b.dep]) for (const k of Object.keys(m)) {
+        const r = m[k]; if (!r || r.src !== 'log' || r.drop || !(r.t >= lo && r.t <= t) || listed.has(r.hex) || !/^[0-9a-f]{6}$/.test(r.hex || '')) continue;
+        if (r.mon) { m[k] = Object.assign({}, r, { drop: true }); b.dirty = true; } else if (r.mon === undefined) old.add(r.hex);
+      }
+      if (old.size) {
+        const lj = await monGet('/legs?hex=' + [...old].slice(0, 50).join(','), { timeout: 15000 }).catch(() => null), lists = lj ? (Array.isArray(lj.list) ? lj.list : [lj]) : [];
+        for (const x of lists) for (const l of (x && x.legs) || []) if (l && l.fid && l.fr24Fix) noteFr24Span(x.hex, { fid: l.fid, t0: l.tOff || l.tStart, t1: l.tOn || l.tEnd, o: l.from && boardOk(l.from.id) ? l.from.id : 0, d: l.to && boardOk(l.to.id) ? l.to.id : 0 });
+        for (const [m, kind] of [[b.arr, 'arrivals'], [b.dep, 'departures']]) for (const k of Object.keys(m)) { const r = m[k]; if (r && !r.drop && old.has(r.hex) && spanElsewhere(r, apId, kind)) { m[k] = Object.assign({}, r, { drop: true }); b.dirty = true; } }
+      }
+      if (b.dirty) boardSoon(apId, b);
+    }
     const rows = j && j.rows;
     if (rows && typeof rows === 'object') {
       for (const kind of ['arrivals', 'departures']) for (const r of Array.isArray(rows[kind]) ? rows[kind] : []) if (r && (r.src === 'fr24' || r.src === 'sched')) boardPut(apId, kind, Object.assign({}, r, { fromMon: true }));
@@ -637,12 +663,57 @@
     return j && fin(j.fr24At) ? j.fr24At : 0;
   }
   // FR24's own schedule of an aircraft (its list.json, or the rows of its log page): flown and still to fly
+  // (where each of FR24's own flights was put on a board last: a flight moved to the field it came down at leaves the
+  // airport FR24 guessed)
+  const schedAt = new Map(); let schedDirty = false;
+  store.kvReady.then(() => { const o = store.kvGet('schedAt1') || {}; for (const k of Object.keys(o)) if (!schedAt.has(k)) schedAt.set(k, o[k]); }).catch(() => {});
+  setInterval(() => { if (!schedDirty) return; schedDirty = false; while (schedAt.size > 20000) schedAt.delete(schedAt.keys().next().value); store.kvSet('schedAt1', Object.fromEntries(schedAt)); }, 15000);
+  // (1.4.2) FR24's own flights of an aircraft - their FR24 ids and their airports as worked out from FR24's own positions
+  // (the log page's rows, the monitor's flights set against FR24's) - by aircraft, kept eight days. A row of any board of
+  // the same flight at another airport is withdrawn: M-SKTO's "Newcastle -> Ince Blundell" of 19 Nov, heard low 12 km
+  // from the helipad FR24 has it down on, was on Ince Blundell's board, and its Axis Business Park flights missing
+  const fr24Spans = new Map();   // hex -> [{ fid, t0, t1, o, d }]
+  const spanByFid = new Map();   // (1.4.2) FR24 id -> its entry there (FR24's own rows of it, by its id)
+  const spanFid = x => { if (x && x.fid) { spanByFid.delete(x.fid); spanByFid.set(x.fid, x); while (spanByFid.size > 20000) spanByFid.delete(spanByFid.keys().next().value); } };
+  let spansDirty = false, spansT = 0;
+  store.kvReady.then(() => { const o = store.kvGet('fr24Spans1') || {}; const lo = nowS() - BOARD_BACK - 86400; for (const h of Object.keys(o)) if (/^[0-9a-f]{6}$/.test(h) && Array.isArray(o[h])) { const l = o[h].filter(x => x && x.t1 > lo); if (l.length && !fr24Spans.has(h)) { fr24Spans.set(h, l); l.forEach(spanFid); } } }).catch(() => {});
+  function noteFr24Span(hex, x) {
+    if (!/^[0-9a-f]{6}$/.test(hex || '') || !x || !(x.t0 > 0)) return;
+    const l = fr24Spans.get(hex) || []; const i = l.findIndex(y => (x.fid && y.fid === x.fid) || Math.abs(y.t0 - x.t0) < 600);
+    const v = { fid: x.fid || '', t0: Math.round(x.t0), t1: Math.round(x.t1 || x.t0), o: x.o || 0, d: x.d || 0 };
+    if (i >= 0) { const y = l[i]; if (y.o === v.o && y.d === v.d && y.t1 === v.t1 && y.fid === v.fid) return; l[i] = Object.assign({}, y, Object.fromEntries(Object.entries(v).filter(([, w]) => w))); spanFid(l[i]); } else { l.push(v); spanFid(v); }
+    l.sort((p, q) => p.t0 - q.t0); fr24Spans.set(hex, l.slice(-80)); spansDirty = true;
+    if (!spansT) spansT = setTimeout(() => { spansT = 0; if (!spansDirty) return; spansDirty = false; const lo = nowS() - BOARD_BACK - 86400, o = {}; for (const [h, ls] of fr24Spans) { const k = ls.filter(y => y.t1 > lo); if (k.length) o[h] = k; } store.kvSet('fr24Spans1', o); }, 3000);
+  }
+  // (a row of ours - rebuilt from a track, followed live - of a flight FR24's own has at another airport: not this board's)
+  function spanElsewhere(r, apId, kind) {
+    if (!apId || !kind || !r) return false;
+    const arr = kind === 'arrivals';
+    // (1.4.2: FR24's own row of the flight - its board's, its schedule's - where the flight was set right as down at another
+    // airport: left out there, as the monitor leaves it out of its boards)
+    // (a diversion stays on the board of where it was going, as FR24 shows it: "Diverted")
+    if (r.fid && (r.src === 'fr24' || r.src === 'sched')) { if (/divert/i.test(String(r.st || ''))) return false; const x = spanByFid.get(String(r.fid)); const ap = x ? (arr ? x.d : x.o) : 0; return !!ap && ap !== apId; }
+    if (!r.hex || (r.src !== 'log' && r.src !== 'live')) return false;
+    const l = fr24Spans.get(r.hex); if (!l) return false;
+    for (const x of l) {
+      const t = arr ? x.t1 : x.t0, ap = arr ? x.d : x.o;
+      if (ap && Math.abs(r.t - t) < 1800 && ap !== apId) return true;
+    }
+    return false;
+  }
   function boardNoteSched(hex, rows, rec) {
     if (!rows || !rows.length) return;
     const who = boardWho(hex, rec);
     for (const r of rows) {
       if (!r || !r.id) continue;
       const fid = Number(r.id).toString(16), cs = r.cs || '', num = r.num || '';
+      // (its airports where the flight went - an airport FR24's own row gave before, no longer: its row there withdrawn)
+      if (r.atd) noteFr24Span(hex, { fid, t0: r.atd, t1: r.ata || r.eta || 0, o: boardOk(r.o) ? r.o : 0, d: r.ata && boardOk(r.d) ? r.d : 0 });
+      for (const [kind, ap, t] of [['departures', r.o, r.atd || r.std], ['arrivals', r.d, r.ata || r.eta || r.sta]]) {
+        const key = 'f' + fid + '|' + kind[0], was = schedAt.get(key);
+        if (was && was !== ap && boardOk(was) && t) boardPut(was, kind, { k: 'f' + fid, src: 'sched', t, drop: true });
+        if (boardOk(ap)) { schedAt.set(key, ap); schedDirty = true; }
+      }
       if (boardOk(r.o) && (r.atd || r.std)) boardPut(r.o, 'departures', Object.assign({ k: 'f' + fid, src: 'sched', fid, cs, num, t: r.atd || r.std, sch: r.std || r.atd, est: r.atd || r.std, st: r.atd ? 'departed' : 'scheduled', col: r.atd ? 'green' : 'gray', ap: boardOk(r.d) ? r.d : 0 }, who));
       const arr = r.ata || r.eta || r.sta;
       if (boardOk(r.d) && arr) boardPut(r.d, 'arrivals', Object.assign({ k: 'f' + fid, src: 'sched', fid, cs, num, t: arr, sch: r.sta || arr, est: r.ata || r.eta || r.sta, st: r.ata ? 'landed' : r.eta ? 'estimated' : 'scheduled', col: r.ata || r.eta ? 'green' : 'gray', ap: boardOk(r.o) ? r.o : 0 }, who));
@@ -824,11 +895,11 @@
     // (1.4.0: and its "On ground" from the monitor - each aircraft once: a blocked one followed here as it is followed)
     const ogP = ogRows(apId).catch(() => []);
     const send = (liveRows, og) => {
-      const kept = m => boardList(m, pre).filter(r => r.src !== 'fr24' && r.src !== 'sched');
-      const merge = (list, kind) => { const out = new Map(list.map(r => [r.fid || r.k, r])); for (const r of liveRows) if (r.kind === kind) out.set(r.fid || r.k, r); return [...out.values()]; };
+      const kept = (m, kind) => boardList(m, pre, apId, kind).filter(r => r.src !== 'fr24' && r.src !== 'sched');
+      const merge = (list, kind) => { const out = new Map(list.map(r => [r.fid || r.k, r])); for (const r of liveRows) if (r.kind === kind && !spanElsewhere(r, apId, kind)) out.set(r.fid || r.k, r); return [...out.values()]; };
       const gl = liveRows.filter(r => r.kind === 'onGround'), who = new Set(gl.map(r => r.hex || r.reg).filter(Boolean));
       for (const r of og || []) if (!who.has(r.hex) && !who.has(r.reg)) { gl.push(r); who.add(r.hex || r.reg); }
-      postToPage('airportData', { apId, board: { arrivals: merge(kept(b.arr), 'arrivals').map(r => dataItem(r, 'arrivals')), departures: merge(kept(b.dep), 'departures').map(r => dataItem(r, 'departures')), onGround: gl.map(r => dataItem(r, 'onGround')) } });
+      postToPage('airportData', { apId, board: { arrivals: merge(kept(b.arr, 'arrivals'), 'arrivals').map(r => dataItem(r, 'arrivals')), departures: merge(kept(b.dep, 'departures'), 'departures').map(r => dataItem(r, 'departures')), onGround: gl.map(r => dataItem(r, 'onGround')) } });
     };
     send(liveBoardRows(apId), []);
     const lr2 = liveBoardRows(apId).concat(await askLiveBoard(apId, 400));

@@ -1398,7 +1398,10 @@
   // as its log is known (and again as it grows), so the dropdown fills the instant it is opened - FR24 asks only then.
   const histWarmAt = new Map();
   const histWarmT = new Map();
+  // (1.4.2: on the map only - a log page has no panel to warm, and warming it there read FR24's page of the aircraft again
+  // and asked FR24's playback of twelve of its flights, ahead of the one the log's own rows were waiting for)
   function warmHist(rec) {
+    if (isAircraftPage || isFlightPage || isDataPage) return;
     const reg = String(rec && rec.reg || '').toUpperCase(); if (!reg || !rec.hex || !airportsReady()) return;
     // (at most every 4 s - and the latest state always goes, a moment later)
     if (now() - (histWarmAt.get(reg) || 0) < 4000) { if (!histWarmT.has(reg)) histWarmT.set(reg, setTimeout(() => { histWarmT.delete(reg); warmHist(rec); }, 4100 - (now() - histWarmAt.get(reg)))); return; }

@@ -7028,10 +7028,231 @@
     }
     document.addEventListener('click', onPbClick, true);
     document.addEventListener('auxclick', onPbClick, true);
+    // ---- (1.4.2) The old log pages' playback map (06-classic): Google's map, loaded as FR24's own page loads it - by the
+    // address the page gives its own scripts (<meta name="google-maps-src">) - and the flight drawn as FR24's map draws a
+    // flight it follows: the trail 3 px wide, coloured by height position by position, a dot at each position heard, a
+    // hole in the coverage a thin dashed line; the moment under the pointer told (time, ground speed, height); the
+    // aircraft FR24's own picture of its kind (FR24's sprite, the table of its pictures read from FR24's own script on
+    // the page), yellow, turned to its track; the flight's airports FR24's old blue pins. The userscript part sends the
+    // flight and each moment ('clMap'); 'clMapSt' answers whether the map is up (else it draws its own).
+    var clm = { map: null, host: null, ov: null, cv: null, pv: null, tip: null, pts: [], sp: [], o: null, d: null, route: false, follow: false, pos: null, cover: 0, hover: -1, icon: null, iconFor: '', due: false, gm: null, tbl: null, pin: null };
+    function clmGoogle() {
+      if (clm.gm) return clm.gm;
+      clm.gm = new Promise(function (res) {
+        var g = function () { return window.google && window.google.maps; }, ok = function () { return !!(g() && g().Map && g().OverlayView && g().LatLng); };
+        if (ok()) { res(true); return; }
+        var meta = document.querySelector('meta[name="google-maps-src"]'), src = meta && meta.getAttribute('content');
+        if (!src) { var s0 = document.querySelector('script[src*="maps/api/js"]'); src = s0 && s0.src; }
+        if (!src && !g()) { res(false); return; }
+        if (src && !g() && !document.querySelector('script[data-tl-gmaps]')) { var sc = document.createElement('script'); sc.src = src; sc.async = true; sc.setAttribute('data-tl-gmaps', '1'); sc.onerror = function () { res(false); }; (document.head || document.documentElement).appendChild(sc); }
+        var t0 = Date.now(), asked = false;
+        (function wait() {
+          if (ok()) { res(true); return; }
+          // (loaded the new way, "loading=async": its classes once asked for)
+          if (!asked && g() && typeof g().importLibrary === 'function') { asked = true; Promise.all(['core', 'maps'].map(function (n) { return g().importLibrary(n); })).catch(function () { /* waited for below */ }); }
+          if (Date.now() - t0 > 15000) { res(false); return; }
+          oSetTimeout(wait, 100);
+        })();
+      });
+      return clm.gm;
+    }
+    // (FR24's pictures of aircraft: the table in its own script on the page - picture by name, name by FR24's icon number -
+    // found by its shape, whatever its build calls it)
+    function clmIconTable() {
+      if (clm.tbl) return clm.tbl;
+      var urls = [];
+      document.querySelectorAll('script[src*="__modulepreload__"], link[href*="__modulepreload__"]').forEach(function (e) { var u = e.src || e.href || ''; if (/\.js(\?|$)/.test(u) && urls.indexOf(u) < 0) urls.push(u); });
+      clm.tbl = Promise.all(urls.map(function (u) { return import(u).catch(function () { return null; }); })).then(function (mods) {
+        var rects = null, names = null;
+        mods.forEach(function (m) {
+          if (!m) return;
+          Object.keys(m).forEach(function (k) {
+            var v = m[k]; if (!v || typeof v !== 'object' || Array.isArray(v)) return;
+            var ks = Object.keys(v); if (ks.length < 20) return;
+            if (!rects && ks.filter(function (x) { return /^[A-Za-z0-9]+_\d+$/.test(x) && v[x] && typeof v[x].x === 'number' && typeof v[x].width === 'number'; }).length > 20) rects = v;
+            if (!names && ks.filter(function (x) { return /^\d+$/.test(x) && typeof v[x] === 'string'; }).length > ks.length * 0.8) names = v;
+          });
+        });
+        if (!rects) return null;
+        return new Promise(function (res) { var img = new Image(); img.onload = function () { res({ rects: rects, names: names || {}, img: img }); }; img.onerror = function () { res(null); }; img.src = '/assets/images/map/aircrafts-sprite.png'; });
+      }).catch(function () { return null; });
+      return clm.tbl;
+    }
+    // (the picture of this aircraft: FR24's own icon number for it as its feed gave it, else its type's picture, else one of
+    // its kind's)
+    var CLM_KIND = { heli: 'EC', glider: 'ASW20', piston: 'C206', turboprop: 'Q300', bizjet: 'LJ60', heavybiz: 'LJ60', fighter: 'FGTR', milheavy: 'A330' };
+    function clmIcon(a) {
+      var key = [a.hex, a.type, a.cls].join('|'); if (clm.iconFor === key && clm.icon) return Promise.resolve(clm.icon);
+      return clmIconTable().then(function (t) {
+        if (!t) return null;
+        var n = iconFor(a.hex, a.type), name = n > 0 && t.names[n] ? t.names[n] : '', ty = String(a.type || '').toUpperCase();
+        if (!t.rects[name + '_0']) name = t.rects[ty + '_0'] ? ty : (CLM_KIND[a.cls] || 'B738');
+        var r = t.rects[name + '_0'] || t.rects.B738_0; if (!r) return null;
+        var ref = t.rects.B736_0 || r, c = document.createElement('canvas'); c.width = r.width; c.height = r.height;
+        var g = c.getContext('2d');
+        // (FR24's own colouring of it: its white picture times FR24's yellow, its shape kept)
+        g.drawImage(t.img, r.x, r.y, r.width, r.height, 0, 0, r.width, r.height);
+        g.globalCompositeOperation = 'multiply'; g.fillStyle = '#f8c023'; g.fillRect(0, 0, r.width, r.height);
+        g.globalCompositeOperation = 'destination-in'; g.drawImage(t.img, r.x, r.y, r.width, r.height, 0, 0, r.width, r.height);
+        clm.icon = { c: c, size: Math.max(16, Math.min(48, 30 * Math.max(r.width, r.height) / Math.max(1, ref.width))), ax: (r.anchorX != null ? r.anchorX : r.width / 2) / r.width, ay: (r.anchorY != null ? r.anchorY : r.height / 2) / r.height };
+        clm.iconFor = key; return clm.icon;
+      });
+    }
+    var CLM_GREY = [{ stylers: [{ saturation: -100 }] }];
+    var CLM_DARK = [{ elementType: 'geometry', stylers: [{ color: '#212a37' }] }, { elementType: 'labels.text.fill', stylers: [{ color: '#9aa7b8' }] }, { elementType: 'labels.text.stroke', stylers: [{ color: '#1b222c' }] }, { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0f1620' }] }, { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#38414e' }] }, { featureType: 'poi', stylers: [{ visibility: 'off' }] }];
+    function clmType(t) {
+      var m = clm.map; if (!m) return; var g = window.google.maps.MapTypeId;
+      m.setOptions(t === 'simple_style' ? { mapTypeId: g.ROADMAP, styles: CLM_GREY } : t === 'radar_style2' ? { mapTypeId: g.ROADMAP, styles: CLM_DARK } : { mapTypeId: t === 'satellite' ? g.SATELLITE : t === 'roadmap' ? g.ROADMAP : t === 'terrain' ? g.TERRAIN : g.HYBRID, styles: null });
+    }
+    // (FR24's colours of a trail by height: white on the ground; yellow low, through green, cyan and blue, to violet and red
+    // at the top - drawn here as a smooth scale of the same colours)
+    var CLM_HUES = [[100, 52], [300, 62], [600, 78], [1000, 105], [1500, 125], [2500, 150], [3500, 175], [4500, 190], [5500, 200], [6500, 210], [7500, 225], [8500, 240], [9500, 255], [10500, 268], [11500, 280], [12500, 300], [13000, 330]];
+    function clmCol(ft) {
+      var m = (ft || 0) * 0.3048; if (!(m > 100)) return '#ffffff';
+      var H = CLM_HUES, h = H[H.length - 1][1];
+      for (var i = 1; i < H.length; i++) if (m <= H[i][0]) { var f = (m - H[i - 1][0]) / (H[i][0] - H[i - 1][0]); h = H[i - 1][1] + (H[i][1] - H[i - 1][1]) * f; break; }
+      return 'hsl(' + Math.round(h) + ',100%,50%)';
+    }
+    function clmSoon() { if (clm.due) return; clm.due = true; requestAnimationFrame(function () { clm.due = false; clmDraw(); }); }
+    function clmOverlay() {
+      var gm = window.google.maps, Ov = function () { gm.OverlayView.call(this); };
+      Ov.prototype = Object.create(gm.OverlayView.prototype); Ov.prototype.constructor = Ov;
+      Ov.prototype.onAdd = function () {
+        var pane = this.getPanes().overlayLayer, mk = function () { var c = document.createElement('canvas'); c.style.cssText = 'position:absolute;left:0;top:0;pointer-events:none'; pane.appendChild(c); return c; };
+        clm.cv = mk(); clm.pv = mk();
+      };
+      Ov.prototype.draw = function () { clmDraw(); };
+      Ov.prototype.onRemove = function () { [clm.cv, clm.pv].forEach(function (c) { if (c && c.parentNode) c.parentNode.removeChild(c); }); clm.cv = clm.pv = null; };
+      clm.ov = new Ov(); clm.ov.setMap(clm.map);
+      clm.map.addListener('bounds_changed', clmSoon);
+      clm.map.addListener('mousemove', function (e) { var de = e && e.domEvent; if (de && clm.host) { var r = clm.host.getBoundingClientRect(); clmHover(de.clientX - r.left, de.clientY - r.top); } });
+      clm.map.addListener('mouseout', function () { clmHover(-1e9, -1e9); });
+      clm.map.addListener('dragstart', function () { if (clm.follow) { clm.follow = false; post('clMapSt', { ok: true, follow: false }); } });
+    }
+    // (the canvases over the map's view: where the view's top left corner is, in the map's own pixels)
+    function clmView() {
+      var ov = clm.ov, map = clm.map, proj = ov && ov.getProjection && ov.getProjection(); if (!proj || !clm.cv) return null;
+      var w = clm.host.clientWidth, h = clm.host.clientHeight, c = proj.fromLatLngToDivPixel(map.getCenter()), L = c.x - w / 2, T = c.y - h / 2, r = window.devicePixelRatio || 1;
+      [clm.cv, clm.pv].forEach(function (x) { x.style.left = L + 'px'; x.style.top = T + 'px'; x.style.width = w + 'px'; x.style.height = h + 'px'; var W = Math.round(w * r), H = Math.round(h * r); if (x.width !== W) x.width = W; if (x.height !== H) x.height = H; });
+      var ww = proj.getWorldWidth(), gm = window.google.maps;
+      // (a flight across the date line: its longitudes run on - the whole track put by the world nearest the view)
+      var px = function (lat, lon) { var p = proj.fromLatLngToDivPixel(new gm.LatLng(lat, lon, true)); return { x: p.x - L, y: p.y - T }; };
+      var shift = 0;
+      if (clm.pts.length) { var mid = clm.pts[Math.floor(clm.pts.length / 2)], q = px(mid[1], mid[2]); shift = Math.round((w / 2 - q.x) / ww) * ww; }
+      return { w: w, h: h, r: r, px: function (lat, lon) { var q = px(lat, lon); q.x += shift; return q; } };
+    }
+    function clmGc(a, b, f) {
+      var r = Math.PI / 180, la1 = a[0] * r, lo1 = a[1] * r, la2 = b[0] * r, lo2 = b[1] * r;
+      var dd = 2 * Math.asin(Math.sqrt(Math.pow(Math.sin((la2 - la1) / 2), 2) + Math.cos(la1) * Math.cos(la2) * Math.pow(Math.sin((lo2 - lo1) / 2), 2))); if (!(dd > 0)) return a;
+      var A = Math.sin((1 - f) * dd) / Math.sin(dd), B = Math.sin(f * dd) / Math.sin(dd);
+      var x = A * Math.cos(la1) * Math.cos(lo1) + B * Math.cos(la2) * Math.cos(lo2), y = A * Math.cos(la1) * Math.sin(lo1) + B * Math.cos(la2) * Math.sin(lo2), z = A * Math.sin(la1) + B * Math.sin(la2);
+      var lon = Math.atan2(y, x) / r; while (lon - a[1] > 180) lon -= 360; while (lon - a[1] < -180) lon += 360;
+      return [Math.atan2(z, Math.sqrt(x * x + y * y)) / r, lon];
+    }
+    function clmDraw() {
+      var v = clmView(); if (!v) return;
+      var g = clm.cv.getContext('2d'); g.setTransform(v.r, 0, 0, v.r, 0, 0); g.clearRect(0, 0, v.w, v.h);
+      var P = clm.pts, sp = clm.sp = P.map(function (p) { return v.px(p[1], p[2]); });
+      // (the great circle between its airports, as FR24's map draws a flight's route: a thin dark dashed line)
+      if (clm.route && clm.o && clm.d) {
+        g.beginPath(); for (var k = 0; k <= 96; k++) { var gc = clmGc(clm.o, clm.d, k / 96), gp = v.px(gc[0], gc[1]); if (k) g.lineTo(gp.x, gp.y); else g.moveTo(gp.x, gp.y); }
+        g.setLineDash([3, 5]); g.lineWidth = 2; g.strokeStyle = 'rgba(0,0,0,.4)'; g.stroke(); g.setLineDash([]);
+      }
+      var inView = function (a, b) { return !((a.x < -20 && b.x < -20) || (a.y < -20 && b.y < -20) || (a.x > v.w + 20 && b.x > v.w + 20) || (a.y > v.h + 20 && b.y > v.h + 20)); };
+      g.lineCap = 'round'; g.lineJoin = 'round';
+      for (var i = 1; i < P.length; i++) {
+        var a = sp[i - 1], b = sp[i]; if (!inView(a, b)) continue;
+        g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(b.x, b.y);
+        // (a hole in the coverage - five minutes and more unheard: FR24's thin dashed line across it)
+        if (P[i][0] - P[i - 1][0] > 300) { g.setLineDash([1, 3]); g.lineWidth = 1; g.strokeStyle = 'rgba(0,0,0,.4)'; g.stroke(); g.setLineDash([]); continue; }
+        var c0 = clmCol(P[i - 1][3]), c1 = clmCol(P[i][3]);
+        if (c0 === c1) g.strokeStyle = c0; else { var gr = g.createLinearGradient(a.x, a.y, b.x, b.y); gr.addColorStop(0, c0); gr.addColorStop(1, c1); g.strokeStyle = gr; }
+        g.lineWidth = 3; g.stroke();
+      }
+      // (a dot at each position heard - where the trail is drawn close, the next one 3 px on)
+      g.fillStyle = '#000'; var last = null;
+      for (var j = 0; j < sp.length; j++) { var s = sp[j]; if (s.x < -5 || s.y < -5 || s.x > v.w + 5 || s.y > v.h + 5) continue; if (last && Math.abs(s.x - last.x) + Math.abs(s.y - last.y) < 3 && j !== clm.hover) continue; g.beginPath(); g.arc(s.x, s.y, 1.5, 0, 2 * Math.PI); g.fill(); last = s; }
+      if (clm.hover >= 0 && sp[clm.hover]) { var hv = sp[clm.hover]; g.beginPath(); g.arc(hv.x, hv.y, 3, 0, 2 * Math.PI); g.fillStyle = '#fff'; g.fill(); g.lineWidth = 1; g.strokeStyle = 'rgba(0,0,0,.6)'; g.stroke(); }
+      // (the airports: FR24's old blue pin, its point on the airport)
+      if (clm.pin && clm.pin.complete && clm.pin.naturalWidth) [clm.o, clm.d].forEach(function (ap) { if (!ap) return; var q = v.px(ap[0], ap[1]); g.drawImage(clm.pin, q.x - 10, q.y - 20, 20, 20); });
+      clmPlane(v);
+    }
+    function clmPlane(v) {
+      v = v || clmView(); if (!v || !clm.pv) return;
+      var g = clm.pv.getContext('2d'); g.setTransform(v.r, 0, 0, v.r, 0, 0); g.clearRect(0, 0, v.w, v.h);
+      var p = clm.pos; if (!p || !clm.icon) return;
+      var q = v.px(p.lat, p.lon), ic = clm.icon, s = ic.size;
+      g.translate(q.x, q.y); g.rotate((p.trk || 0) * Math.PI / 180);
+      // (FR24's shadow under it)
+      g.globalAlpha = 0.35; g.filter = 'brightness(0)'; g.drawImage(ic.c, -s * ic.ax + 3, -s * ic.ay + 3, s, s); g.filter = 'none'; g.globalAlpha = 1;
+      g.drawImage(ic.c, -s * ic.ax, -s * ic.ay, s, s);
+    }
+    // (the moment under the pointer: FR24's box - "Time: UTC 21:37:43", "Ground speed: 279 kts", "Altitude: 8,150 ft")
+    function clmHover(x, y) {
+      var best = -1, bd = 8 * 8;
+      for (var i = 0; i < clm.sp.length; i++) { var s = clm.sp[i], dx = s.x - x, dy = s.y - y, dd = dx * dx + dy * dy; if (dd < bd) { bd = dd; best = i; } }
+      if (best === clm.hover) return;
+      clm.hover = best; clmSoon();
+      var tip = clm.tip; if (!tip) return;
+      if (best < 0) { tip.style.display = 'none'; return; }
+      var p = clm.pts[best], s2 = clm.sp[best], t = new Date(p[0] * 1000), z = function (n) { return String(n).padStart(2, '0'); }, n = function (x) { return Math.round(x).toLocaleString('en-GB'); };
+      tip.innerHTML = '<div><b>Time:</b> UTC ' + z(t.getUTCHours()) + ':' + z(t.getUTCMinutes()) + ':' + z(t.getUTCSeconds()) + '</div><div><b>Ground speed:</b> ' + (isFinite(p[4]) && p[4] !== null ? n(p[4]) + ' kts' : 'N/A') + '</div><div><b>Altitude:</b> ' + (isFinite(p[3]) && p[3] !== null ? n(p[3]) + ' ft' : 'N/A') + '</div>';
+      tip.style.display = 'block'; tip.style.left = s2.x + 'px'; tip.style.top = (s2.y - 5) + 'px';
+    }
+    function clmFit(cover) {
+      var map = clm.map, gm = window.google.maps; if (!map || !clm.pts.length) return;
+      var b = new gm.LatLngBounds();
+      clm.pts.forEach(function (p) { b.extend(new gm.LatLng(p[1], p[2], true)); });
+      [clm.o, clm.d].forEach(function (a) { if (a) b.extend(new gm.LatLng(a[0], a[1], true)); });
+      map.fitBounds(b, { top: 40, left: 50, right: 70, bottom: (cover || 0) + 30 });
+    }
+    // (the aircraft in the middle of the part of the map the panel leaves)
+    function clmCentre(p) {
+      var map = clm.map, gm = window.google.maps, proj = map && map.getProjection(); if (!proj) return;
+      var w = proj.fromLatLngToPoint(new gm.LatLng(p.lat, p.lon)), sc = Math.pow(2, map.getZoom());
+      map.setCenter(proj.fromPointToLatLng(new gm.Point(w.x, w.y + (clm.cover / 2) / sc)));
+    }
+    function clmOp(d) {
+      var op = d.op;
+      if (op === 'init') {
+        clmGoogle().then(function (ok) {
+          var host = document.getElementById('tl-cl-gmap');
+          if (!ok || !host) { post('clMapSt', { ok: false }); return; }
+          var gm = window.google.maps;
+          if (!clm.map || clm.host !== host) {
+            clm.host = host;
+            clm.map = new gm.Map(host, { center: { lat: 50, lng: 0 }, zoom: 4, mapTypeId: gm.MapTypeId.HYBRID, disableDefaultUI: true, gestureHandling: 'greedy', clickableIcons: false, keyboardShortcuts: false, backgroundColor: '#eaeaea' });
+            clmOverlay();
+            var tip = document.createElement('div'); tip.className = 'tl-cl-tip'; tip.style.cssText = 'position:absolute;display:none;z-index:5;transform:translate(-50%,-100%);pointer-events:none;background:rgba(0,0,0,.85);color:#fff;font:12px/1.45 "Open Sans",Arial,sans-serif;padding:6px 9px;border-radius:4px;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,.35)';
+            host.parentNode.appendChild(tip); clm.tip = tip;
+            clm.pin = new Image(); clm.pin.onload = clmSoon; clm.pin.src = '/static/images/airport_pin_40_blue.png';
+          }
+          clmType(d.type || 'hybrid');
+          post('clMapSt', { ok: true });
+        });
+        return;
+      }
+      if (!clm.map) return;
+      if (op === 'track') {
+        clm.pts = Array.isArray(d.pts) ? d.pts : []; clm.o = d.o || null; clm.d = d.d || null; clm.cover = Number(d.cover) || 0; clm.hover = -1; clm.pos = null;
+        if (clm.tip) clm.tip.style.display = 'none';
+        clmFit(clm.cover); clmSoon();
+        if (d.ac) clmIcon(d.ac).then(function () { clmPlane(); }, function () { /* drawn without */ });
+      } else if (op === 'pos') {
+        clm.pos = { lat: d.lat, lon: d.lon, trk: d.trk }; clm.cover = Number(d.cover) || clm.cover;
+        if (d.follow) { clm.follow = true; clmCentre(clm.pos); } else clm.follow = false;
+        clmPlane();
+      } else if (op === 'route') { clm.route = !!d.on; clmSoon(); }
+      else if (op === 'type') clmType(d.type);
+      else if (op === 'zoom') clm.map.setZoom(clm.map.getZoom() + (Number(d.dz) || 0));
+      else if (op === 'clear') { clm.pts = []; clm.sp = []; clm.pos = null; clm.o = clm.d = null; if (clm.tip) clm.tip.style.display = 'none'; clmSoon(); }
+    }
+
     window.addEventListener('message', function (ev) {
       if (ev.source !== window || !ev.data || typeof ev.data !== 'object') return;
       var d = ev.data;
       if (d.__tweeksLadd === 'resolve') acceptEntries(d.entries);
+      else if (d.__tweeksLadd === 'clMap') { try { clmOp(d); } catch (e) { stats.errors++; stats.lastError = String(e); } }
       else if (d.__tweeksLadd === 'revoke') { for (var i = 0; i < (d.ids || []).length; i++) { resolved.delete(Number(d.ids[i])); routes.delete(Number(d.ids[i])); telem.delete(Number(d.ids[i])); } }
       else if (d.__tweeksLadd === 'route') { if (d.id != null) { if (d.route) routes.set(Number(d.id), d.route); else routes.delete(Number(d.id)); if (followSt && Number(d.id) === followSt.id) pushFollowSoon(); if (boardAffected([d.id])) refreshBoardSoon(); } }
       else if (d.__tweeksLadd === 'routesGot') onRoutesGot(d);

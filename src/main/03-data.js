@@ -1,5 +1,18 @@
 
   // ---- FR24's own APIs: airline list, countries, aircraft lookup, airport boards (filed flight plans) ------------
+  // (1.4.2) FR24's search asked in the background - an aircraft's operator, a callsign's registration: one every two
+  // seconds at most, and none for a quarter of an hour after FR24 refused one (its verification page, HTTP 403, or 429).
+  // They went a third of a second apart for every aircraft looked up, and again after each refusal: FR24 then put its
+  // whole search behind its verification page for the browser - the user's own search box found nothing (in the app
+  // above all, M-SKTO: no result, no LADD tag)
+  let bgSearchUntil = 0, bgSearchGate = Promise.resolve();
+  function fr24BgSearch(q) {
+    if (now() < bgSearchUntil) return Promise.reject(new Error('FR24 search paused'));
+    const prev = bgSearchGate; let rel = null; bgSearchGate = new Promise(r => { rel = r; });
+    return prev.then(() => { if (now() < bgSearchUntil) throw new Error('FR24 search paused'); return fr24Json(`/v1/search/web/find?query=${encodeURIComponent(q)}&limit=10`); })
+      .catch(e => { if (/HTTP (403|429)/.test(String(e && e.message || e))) { bgSearchUntil = now() + 15 * 60000; log('FR24 search refused - background lookups paused 15 min'); } throw e; })
+      .finally(() => setTimeout(rel, 2000));
+  }
   const fr24 = {
     airlines: null, airlinesLoading: null, byIcao: new Map(), byName: new Map(),
     // airline and country lists: from disk when cached (refreshed weekly), so operator names and country ids are instant
@@ -30,8 +43,9 @@
       }).catch(e => { this.countriesLoading = null; throw e; });
       return this.countriesLoading;
     },
-    aircraftInfo(reg) {
-      return fr24Json(`/v1/search/web/find?query=${encodeURIComponent(reg)}&limit=10`).then(j => {
+    // (bg: asked in the background - fr24BgSearch's pace)
+    aircraftInfo(reg, bg) {
+      return (bg ? fr24BgSearch(reg) : fr24Json(`/v1/search/web/find?query=${encodeURIComponent(reg)}&limit=10`)).then(j => {
         const r = (Array.isArray(j && j.results) ? j.results : []).find(x => x && x.type === 'aircraft' && String(x.id).toUpperCase() === reg.toUpperCase()) || null;
         if (!r) return null;
         const d = r.detail || {};
@@ -820,8 +834,14 @@
     return m || Object.assign({}, hx, o);
   }
   // `bg`: prefetch for aircraft on screen - registry databases only (the photo site is left alone), low priority
+  // (1.4.2: its record on disk read first - one asked for before the records are in (a log page's first line, FR24's
+  // player) was taken for an aircraft never looked up: the monitor, JetPhotos, FR24's list and FR24's own page of it asked
+  // again on every page, the log page held 4 s for it)
   function publicIdentity(hex, reg, opts) {
     hex = String(hex || '').toLowerCase(); if (!/^[0-9a-f]{6}$/.test(hex)) return Promise.resolve(null);
+    return store.getHex(hex) ? pubIdentityNow(hex, reg, opts) : store.hexAsync(hex).catch(() => null).then(() => pubIdentityNow(hex, reg, opts));
+  }
+  function pubIdentityNow(hex, reg, opts) {
     const bg = !!(opts && opts.bg);
     let hx = store.getHex(hex) || {};
     // (an owner known only as "Private" where a register names it - the UK's, the Isle of Man's, the FAA's - is asked
@@ -949,7 +969,7 @@
     const rec = fr24InfoQueue.shift();
     (async () => {
       try {
-        const info = await fr24.aircraftInfo(rec.reg);
+        const info = await fr24.aircraftInfo(rec.reg, true);
         rec.fr24At = now();
         if (info) {
           rec.operatorId = info.operatorId || rec.operatorId || 0; rec.operatorIcao = info.operatorIcao || rec.operatorIcao || ''; rec.fr24Equip = info.equip || '';
@@ -957,7 +977,12 @@
           persist(rec);
           if (rec.operatorId) ownerToMonitor(rec, null);
         }
-      } catch (e) { log('fr24 aircraft info', rec.reg, String(e.message || e)); }
+      } catch (e) {
+        // (1.4.2: not asked again this time - every refusal asked again at once was what got FR24's search refused; one
+        // held back by the pause: asked the next time it is looked at)
+        rec.fr24At = /paused/.test(String(e && e.message || e)) ? 0 : now();
+        log('fr24 aircraft info', rec.reg, String(e.message || e));
+      }
       finally { fr24InfoBusy = false; setTimeout(pumpFr24Info, 350); }
     })();
   }
@@ -1312,17 +1337,19 @@
     }
     // No registration from any database, but private flights usually fly under their tail number: FR24's own aircraft
     // search maps the callsign to a registration, accepted only when it carries this very transponder address.
-    if (!rec.reg && rec.cs && /^[A-Z0-9]{3,8}$/.test(rec.cs) && !rec.regTried) {
+    // (1.4.2: for an aircraft looked at only - selected, on screen, on a board - at fr24BgSearch's pace)
+    const lookedAt = () => currentId() === rec.id || now() - (boardSeenAt.get(rec.id) || 0) < 15 * 60000 || hexOnScreen(rec.hex);
+    if (!rec.reg && rec.cs && /^[A-Z0-9]{3,8}$/.test(rec.cs) && !rec.regTried && lookedAt()) {
       rec.regTried = true;
       try {
-        const j = await fr24Json(`/v1/search/web/find?query=${encodeURIComponent(rec.cs)}&limit=10`);
+        const j = await fr24BgSearch(rec.cs);
         const hit = (Array.isArray(j && j.results) ? j.results : []).find(x => x && x.type === 'aircraft' && x.detail && clean(x.detail.hex).toLowerCase() === rec.hex);
         if (hit) { rec.reg = clean(hit.id).toUpperCase(); if (!rec.type && hit.detail.equip) rec.type = clean(hit.detail.equip).toUpperCase(); if (!rec.operatorId && hit.detail.operator_id) rec.operatorId = Number(hit.detail.operator_id) || 0; changed = true; log('registration from callsign', rec.cs, '->', rec.reg); }
       } catch (e) { log('registration lookup', String(e.message || e)); }
     }
     if (changed) persist(rec);
     const isSelected = currentId() === rec.id;
-    if (rec.reg && !rec.operatorId && !rec.fr24At) queueFr24Info(rec, isSelected);
+    if (rec.reg && !rec.operatorId && !rec.fr24At && lookedAt()) queueFr24Info(rec, isSelected);
     // photos for what can be looked at (in view, on a board, selected); far-away world-scan finds wait until they are
     const snap = pending.get(rec.id), onBoard = now() - (boardSeenAt.get(rec.id) || 0) < 15 * 60000;
     if (!isSelected && !onBoard && snap && snap.bg) return;

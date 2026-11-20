@@ -85,8 +85,8 @@ html.tl-no-strip .tl-strip{display:none!important}
     ['boards', 'Airport boards', "Blocked flights, and FR24's own N/A flights with a good predicted destination, on arrivals, departures and on the ground. From the next board you open."],
     ['search', 'Search', "Identified blocked aircraft listed under Live flights in FR24's search box."],
     ['acPages', 'Aircraft & flight pages', 'Flight logs FR24 hides rebuilt from ADS-B on the /data pages, with the locked MSN and age. The next time one opens.'],
-    // (1.4.1: a computer's browser only - 06-classic)
-    ['classic', 'Old-style log pages', "Aircraft, flight-number and playback pages drawn as they were before FR24's November 2026 redesign: the grey title bar, the table of flights and the playback panel over the map. Switch it off for FR24's new pages. Reload to apply.", 'reload', 'desktop'],
+    // (1.4.1 - 06-classic; 1.4.2: in the app too, whose phone layout of the log pages is made from them)
+    ['classic', 'Old-style log pages', typeof TL_APP === 'object' && TL_APP ? "Aircraft and flight-number pages as this app laid them out before FR24's November 2026 redesign: the flights by year, each one opening to its times and Play. Switch it off for FR24's new pages. Reload to apply." : "Aircraft, flight-number and playback pages drawn as they were before FR24's November 2026 redesign: the grey title bar, the table of flights and the playback panel over the map. Switch it off for FR24's new pages. Reload to apply.", 'reload'],
     ['alerts', 'Take-off & landing alerts', 'Notifications for the aircraft on your watchlist.'],
     ['mapx', 'Locked map options', "FR24's weather layers, aeronautical charts, ATC boundaries, oceanic tracks, the Last clicked flights widget and aircraft category filters, worked natively from free sources.", 'reload'],
     ['noAds', 'Hide ads & upgrade prompts', "FR24's adverts, the ad sidebar, the free-trial pop-up and upgrade banners. The sidebar and pop-up come back after a reload.", 'reload'],
