@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Flightradar24 LADD / N-A Unblocker (feed-level)
 // @namespace    tweeks.io
-// @version      1.4.2
+// @version      1.4.3
 // @description  Identifies every LADD / N/A / blocked military aircraft on Flightradar24 from public ADS-B, and injects callsign, registration, operator, age, country, MSN, squawk, vertical speed, GPS altitude, airspeeds, wind, photos, a reasoned origin/destination with a wind-corrected ETA (also for ordinary flights FR24 shows as N/A - military, private, GA, helicopters, with private landing sites; learned from 63 days of every aircraft worldwide, with live weather and closures), airport-board entries and a rebuilt 7-month flight log straight into FR24's own data - so it all renders like normal FR24 traffic.
 // @author       Finlay Clarke
 // @updateURL    https://raw.githubusercontent.com/FinlayC1/fr24-ladd-unblocker/main/dist/fr24-ladd-unblocker.user.js
@@ -100,7 +100,7 @@
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "1.4.2";
+    var BRIDGE_V = "1.4.3";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed but the
@@ -10339,7 +10339,7 @@
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '1.4.2';
+  const VERSION = '1.4.3';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
@@ -21567,7 +21567,7 @@ html.tl-pv-play #tl-pv .tl-pv-backpill{display:flex}
   // (the version whose "what's new" was put away, and the one whose dot on the button the window was opened for)
   const UB_SEEN_KEY = 'tweeks.fr24.ladd.seenver', UB_DOT_KEY = 'tweeks.fr24.ladd.dotver';
   // (the newest CHANGELOG section's headlines, written in by build.mjs: { v, items })
-  const UB_WHATS_NEW = {"v":"1.4.2","items":["**Log pages open all at once.** An aircraft's page, a flight number's page and a blocked aircraft's log are shown when everything in them is in: the rows' airports (OurAirports fields included), the serial number, the age and the flights before FR24's week. Nothing changes after the page appears.","**The app's own phone layout of log pages is back.** Since FR24's redesign the app showed FR24's new log pages on every aircraft and flight number. The old pages are rebuilt in the app too, and laid out for a phone as before: the flights by year, each opening to its times and Play. Play still opens FR24's own player for a phone.","**Blocked aircraft's logs come from the monitor in the app again** (M-PORT showed FR24's \"No flights found\").","**FR24's search box works again.** The script's own background lookups in FR24's search (each aircraft's operator) went a third of a second apart and were repeated after every refusal, until FR24 refused the browser's searches altogether, the user's own included. They are now made only for aircraft being looked at, two seconds apart, and stop for 15 minutes when FR24 refuses one.","**Airport boards at OurAirports fields are complete.** The monitor now checks each light aircraft's and helicopter's flights against FR24's own. M-SKTO's Blackpool to Newcastle flight of 19 Nov, with 18 minutes on Axis Business Park's helipad that no receiver heard, is two flights. Its return \"to Ince Blundell\", heard low 12 km away, ends at the helipad where FR24's track has it down.","**Boards agree between browsers.** A flight set right as landing somewhere other than where FR24 guessed is left off the airport FR24 named, on the monitor's boards and in every browser. Before, only a browser that had opened the aircraft's log did so. A diversion stays where it was going, as FR24 shows it."]};
+  const UB_WHATS_NEW = {"v":"1.4.3","items":["**The iPhone and iPad app updates itself.** It downloads each new release's script, checks it and offers to reload FR24 with it, or uses it the next time it opens. Nothing to reinstall. Install 1.4.3 by hand once; it updates itself from then on."]};
   // (an aircraft with an open padlock: FR24's outline style - 24 grid, 1.5 stroke in the text colour)
   const UB_ICON = '<svg data-tl-ub-icon="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
   const UB_X = '<svg viewBox="0 0 14 14" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5l11 11M12.5 1.5l-11 11"/></svg>';
@@ -21712,7 +21712,7 @@ html.tl-no-strip .tl-strip{display:none!important}
     // (1.3.12: the app updates itself - it downloads its new version, checks it and has Android install it over this one;
     // an app before that, by the browser's download)
     if (act === 'update' && k === 'app') {
-      if (TL_APP.platform === 'ios' && typeof TL_APP.update === 'function' && TL_APP.update()) ubNote = 'The app looks for its new version and opens its release page: install the new .ipa with the app you installed this one with - your settings stay.';
+      if (TL_APP.platform === 'ios' && typeof TL_APP.update === 'function' && TL_APP.update()) ubNote = 'The app looks for its new version and updates itself to it, then offers to reload FR24. A version that changes the app itself opens its release page instead: install its .ipa with the app you installed this one with - your settings stay.';
       else if (typeof TL_APP.update === 'function' && TL_APP.update()) ubNote = 'The app downloads its new version and asks Android to install it over this one - your settings stay. Android asks you to confirm.';
       else { window.open(UB_APP_URL, '_blank', 'noopener'); ubNote = 'Your browser downloads the new app. Open it when it has, and install it over this one: your settings stay.'; }
     }
@@ -21751,7 +21751,7 @@ html.tl-no-strip .tl-strip{display:none!important}
     else if (newer) btns.push(`<button class="tl-ub-b" data-ub-act="update">Update to v${esc(O.v)}</button>`);
     else btns.push(`<button class="tl-ub-b tl-ub-b2" data-ub-act="check"${ubAsking ? ' disabled' : ''}>Check for updates</button>`);
     if (ik.kind === 'ext') btns.push('<button class="tl-ub-b tl-ub-b2" data-ub-act="reloadExt" title="Load the extension again from its folder - after replacing its files with a new version">Reload extension</button>');
-    const how = ik.kind === 'app' ? (TL_APP.platform === 'ios' ? 'Update opens the new version\'s release page, to install with the app you installed this one with. The app also looks for one itself when it opens.' : 'Update downloads the new version of the app and installs it over this one (Android asks you to confirm). The app also looks for one itself when it opens.') : ik.kind === 'us' ? 'Update opens the new version in your userscript manager, which offers to update.' : ik.kind === 'ext' ? 'Update puts the new version into the extension\'s folder for you. The first time, Chrome asks you to choose that folder and allow it to be edited.' : 'Installed from a store: your browser updates it by itself.';
+    const how = ik.kind === 'app' ? (TL_APP.platform === 'ios' ? 'Update fetches the new version and the app updates itself to it - no reinstall. A version that changes the app itself opens its release page, to install with the app you installed this one with. The app also looks for one itself when it opens.' : 'Update downloads the new version of the app and installs it over this one (Android asks you to confirm). The app also looks for one itself when it opens.') : ik.kind === 'us' ? 'Update opens the new version in your userscript manager, which offers to update.' : ik.kind === 'ext' ? 'Update puts the new version into the extension\'s folder for you. The first time, Chrome asks you to choose that folder and allow it to be edited.' : 'Installed from a store: your browser updates it by itself.';
     const warn = ubInstalled ? `<div class="tl-ub-alert">v${esc(ubInstalled)} is installed. Refresh the page to start using it.</div>` : newer ? `<div class="tl-ub-alert">This version is out of date: <b>v${esc(O.v)}</b> is out, you have v${esc(VERSION)}.${O.req ? ' <b>This update is required</b>: this version is no longer supported.' : ''}</div>` : '';
     return `${warn}<div class="tl-ub-kv"><span>Installed</span><span>v${esc(VERSION)}</span></div><div class="tl-ub-kv"><span>Latest</span><span>${latest}</span></div>
       <div class="tl-ub-kv"><span>Type</span><span>${esc(ik.name)}</span></div><div class="tl-ub-btns">${btns.join('')}</div>

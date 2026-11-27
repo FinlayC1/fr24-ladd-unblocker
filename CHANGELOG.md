@@ -4,6 +4,26 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 
 1.0.0 is the first release. The versions before it are the betas, labelled B: B22.31.12 is version 22.31.12.
 
+## [1.4.3] - 2026-11-27
+
+### In short
+- **The iPhone and iPad app updates itself.** It downloads each new release's script, checks it and offers to reload FR24 with it, or uses it the next time it opens. Nothing to reinstall. Install 1.4.3 by hand once; it updates itself from then on.
+  - It only takes a script signed with the project's own key (the one the Android app is signed with) and made for that very app.
+  - iOS does not let an app install its own `.ipa`. A release that changes the app itself, which is rare, still opens its release page, and the new `.ipa` is installed the same way as before.
+
+### Added
+- **The iPhone app's script update** (`ios/App/ScriptStore.swift`, `Updater.swift`, `Policy.swift` `updateFiles`): a release's `fr24-ladd-unblocker-ios-update.json` (`ios/update-manifest.cjs`: the script, its hosts, the version and the id of the app's native part, `ios/shell-id.cjs`) and its `.sig` are downloaded, checked and kept in the app's own files.
+  - Taken only with a signature by the project's key (RSA PKCS#1 v1.5 over SHA-256), checked with the certificate built into the app (`ios/update-cert.pem`, the Android app's signer), only for the app's own native part, and only when newer than the app.
+  - Checked again at every start. One no newer than the app (a newer `.ipa` installed since) is deleted.
+  - "Reload now" puts the new script and its hosts into the page at once.
+- **The release signs it** (`ios/sign-update.sh`) with the keystore the Android app is signed with, checks the signature with the app's certificate before publishing, and attaches both files. Without the key, or with a signature that does not match, it is left out with a warning.
+
+### Changed
+- The app's own update texts (LADD Unblock window) say the iPhone app updates itself.
+
+### Tests
+- `test/unit_iosupdate.cjs` (new): the native part's id; the update's contents; signing with JKS and PKCS12 keystores as the release's, checked as the app checks it; one byte changed refused; a key that is not the app's never published; the certificate pinned; the app, its build and the release using the same names and checks.
+
 ## [1.4.2] - 2026-11-20
 
 ### In short

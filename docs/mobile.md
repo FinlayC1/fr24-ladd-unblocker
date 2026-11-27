@@ -109,9 +109,15 @@ has to be signed again every 7 days (AltStore does it for you); a paid developer
 3. On the phone: *Settings → General → VPN & Device Management*, trust your Apple ID's profile (the first time).
 4. Open **LADD Unblocker**.
 
-Updates: the app looks for a new version when it opens (every twelve hours at most) and when you press *Update* in the
-LADD Unblock window. iOS does not let an app install its own update: the app tells you, and opens the release page.
-Install the new `.ipa` the same way; your settings stay.
+Updates (1.4.3): the app looks for a new version when it opens (every twelve hours at most) and when you press *Update*
+in the LADD Unblock window, and **updates itself**: it downloads the release's script, checks it, keeps it and offers to
+reload FR24 with it (or uses it the next time it opens). Nothing to install. iOS does not let an app install its own
+`.ipa`, so a release that changes the app itself - its native part, rarely - opens the release page instead: install
+that `.ipa` the same way; your settings stay. Install 1.4.3 by hand once; it updates itself from then on.
+
+The script it takes is only one signed with the project's own key - the key the Android app is signed with - checked
+with the certificate built into the app (`ios/update-cert.pem`), and made for this very app (the id of its native part).
+Anything else is ignored. A newer `.ipa` installed later replaces the update it kept.
 
 ### What it does
 
@@ -129,6 +135,13 @@ share sheet (Files, AirDrop ...), sign-in windows. FR24's pages open in the app;
 - `AppNet.swift`: the script's requests - https only, to the hosts its header lists and a monitor host you allow, every
   redirect checked and followed by the app itself, with the web view's user agent.
 - `Geo.swift` (the location), `Updater.swift` (the update), `Policy.swift` (the rules, as the Android app's).
+- `ScriptStore.swift` (1.4.3): the script the app runs - its own, or a later release's
+  `fr24-ladd-unblocker-ios-update.json` (`ios/update-manifest.cjs`: the script, its hosts, the version and the id of the
+  native part it was built for, `ios/shell-id.cjs`), taken only with its `fr24-ladd-unblocker-ios-update.sig` - RSA
+  PKCS#1 v1.5 over SHA-256 with the project's key (`ios/sign-update.sh`, run by the release with the keystore secrets
+  below; it checks the signature with `ios/update-cert.pem` before publishing) - and only for the app's own native part.
+  Kept in the app's own files and checked again at every start. Any change to the app's Swift, `Info.plist` or
+  `project.yml` changes the id: such a release needs its `.ipa`, and the app opens its release page.
 - Built on a Mac by CI's `ios` job (`ios/build.sh`: XcodeGen makes the Xcode project from `ios/project.yml`; Xcode builds
   it unsigned and the `.ipa` is put together). It runs on a push to `main` - the release attaches that run's `.ipa` - or
   by hand: *Actions → Tests → Run workflow* on any branch. GitHub's Macs are few and can take minutes to start; "Waiting

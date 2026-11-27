@@ -109,6 +109,19 @@ enum Policy {
         return tag.hasPrefix("v") || tag.hasPrefix("V") ? String(tag.dropFirst()) : tag
     }
 
+    /// (1.4.3) the latest release's script update and its signature (ScriptStore) - this project's own downloads of that
+    /// release only; nil when it has none (a release before 1.4.3, or one made without the project's key)
+    static func updateFiles(_ j: [String: Any]) -> (json: URL, sig: URL)? {
+        if (j["draft"] as? Bool) == true || (j["prerelease"] as? Bool) == true { return nil }
+        guard let tag = j["tag_name"] as? String, version(tag) != nil, let assets = j["assets"] as? [[String: Any]] else { return nil }
+        func file(_ name: String) -> URL? {
+            let want = "https://github.com/\(repo)/releases/download/\(tag)/\(name)"
+            return assets.contains(where: { ($0["name"] as? String) == name && ($0["browser_download_url"] as? String) == want }) ? URL(string: want) : nil
+        }
+        guard let a = file(ScriptStore.updateName), let b = file(ScriptStore.sigName) else { return nil }
+        return (a, b)
+    }
+
     // ---- the phone's location for FR24's "my location": what the page asked, in the app's limits (milliseconds) ------
     static func geoTimeout(_ asked: Double) -> Double { asked <= 0 ? 20000 : max(2000, min(60000, asked)) }
     static func geoMaxAge(_ asked: Double) -> Double { max(30000, min(30 * 60000, max(0, asked))) }

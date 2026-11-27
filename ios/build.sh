@@ -9,6 +9,9 @@ ROOT="$(cd .. && pwd)"
 test -f "$ROOT/dist/app/app.js" || { echo "dist/app/app.js is missing: run \"node build.mjs\" first"; exit 1; }
 mkdir -p Web
 cp "$ROOT/dist/app/app.js" "$ROOT/dist/app/hosts.txt" Web/
+# (1.4.3: what the app checks a release's script update with - the project's certificate and its own native part's id)
+cp update-cert.pem Web/
+node shell-id.cjs > Web/shell-id.txt
 V="$(node -p "require('$ROOT/package.json').version")"
 C="$(node -p "const p = '$V'.split('.').map(Number); p[0] * 10000 + p[1] * 100 + p[2]")"
 xcodegen generate --spec project.yml
@@ -19,6 +22,7 @@ xcodebuild -project LADDUnblocker.xcodeproj -target LADDUnblocker -configuration
 APP="build/Release-iphoneos/LADDUnblocker.app"
 test -f "$APP/LADDUnblocker" || { echo "the app was not built"; exit 1; }
 test -f "$APP/Web/app.js" || { echo "the script is not in the app"; exit 1; }
+test -f "$APP/Web/update-cert.pem" && grep -qE '^[0-9a-f]{16}$' "$APP/Web/shell-id.txt" || { echo "the update's certificate or the app's id is not in the app"; exit 1; }
 /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP/Info.plist" | grep -qx "$V" || { echo "the app's version is not $V"; exit 1; }
 rm -rf Payload && mkdir Payload && cp -R "$APP" Payload/
 mkdir -p "$ROOT/dist"
