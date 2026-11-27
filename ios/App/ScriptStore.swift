@@ -2,8 +2,8 @@ import Foundation
 import Security
 
 /// (1.4.3) The script the app puts into FR24's pages, and the hosts its requests may go to: those built into the app
-/// (Web/app.js, Web/hosts.txt), or a newer release's - its fr24-ladd-unblocker-ios-update.json (ios/update-manifest.cjs),
-/// downloaded by the Updater. A release's update is taken only when
+/// (Web/app.js, Web/hosts.txt), or a newer release's - its fr24-ladd-unblocker-ios-update-<id>.json (ios/update-manifest.cjs;
+/// <id> the native part it was made for), downloaded by the Updater when the user says Update. It is taken only when
 ///   - it is signed with the project's own key, the one its Android app is signed with (RSA PKCS#1 v1.5 over SHA-256,
 ///     ios/sign-update.sh), checked with the certificate built into the app (Web/update-cert.pem);
 ///   - it was built for this very app: its native part's id (ios/shell-id.cjs) is this app's (Web/shell-id.txt). A release
@@ -13,7 +13,11 @@ import Security
 /// installed since) or no longer this app's is deleted.
 enum ScriptStore {
     struct Script { let source: String; let hosts: [String]; let version: String; let updated: Bool }
-    static let updateName = "fr24-ladd-unblocker-ios-update.json", sigName = "fr24-ladd-unblocker-ios-update.sig"
+    /// a release's update for an app with this native part, and its signature (the release's own files: release.yml)
+    static func releaseFile(_ shell: String) -> String { "fr24-ladd-unblocker-ios-update-\(shell).json" }
+    static func releaseSig(_ shell: String) -> String { "fr24-ladd-unblocker-ios-update-\(shell).sig" }
+    /// (as kept in the app's own files)
+    private static let updateName = "update.json", sigName = "update.sig"
 
     private static func bundled(_ name: String, _ ext: String) -> Data? {
         guard let u = Bundle.main.url(forResource: name, withExtension: ext, subdirectory: "Web") else { return nil }

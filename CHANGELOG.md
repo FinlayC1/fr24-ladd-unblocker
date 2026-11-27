@@ -7,19 +7,21 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 ## [1.4.3] - 2026-11-27
 
 ### In short
-- **The iPhone and iPad app updates itself.** It downloads each new release's script, checks it and offers to reload FR24 with it, or uses it the next time it opens. Nothing to reinstall. Install 1.4.3 by hand once; it updates itself from then on.
+- **The iPhone and iPad app updates itself.** A new version is offered as the Android app offers it: "Update available. Version x of LADD Unblocker is out (this phone has y). Update now?" when the app opens, and from the page's Update button. Update downloads it, checks it and loads FR24 again with it. Nothing to reinstall. Install 1.4.3 by hand once; it updates itself from then on.
   - It only takes a script signed with the project's own key (the one the Android app is signed with) and made for that very app.
   - iOS does not let an app install its own `.ipa`. A release that changes the app itself, which is rare, still opens its release page, and the new `.ipa` is installed the same way as before.
 
 ### Added
-- **The iPhone app's script update** (`ios/App/ScriptStore.swift`, `Updater.swift`, `Policy.swift` `updateFiles`): a release's `fr24-ladd-unblocker-ios-update.json` (`ios/update-manifest.cjs`: the script, its hosts, the version and the id of the app's native part, `ios/shell-id.cjs`) and its `.sig` are downloaded, checked and kept in the app's own files.
+- **The iPhone app's script update** (`ios/App/ScriptStore.swift`, `Updater.swift`, `Policy.swift` `updateFiles`): a release's `fr24-ladd-unblocker-ios-update-<id>.json` (`ios/update-manifest.cjs`: the script, its hosts, the version and the id of the app's native part, `ios/shell-id.cjs`, which names the file) and its `.sig` are downloaded when Update is pressed, checked and kept in the app's own files.
+  - Offered in the Android app's words, with Update and Not now (a version put off is not offered again on opening, only from the page's Update button), and the Android app's notes over the page ("Looking for an update…", "This is the latest version", "Downloading version x…").
+  - An app whose native part the release changed finds no update named for it, and is offered the release page.
   - Taken only with a signature by the project's key (RSA PKCS#1 v1.5 over SHA-256), checked with the certificate built into the app (`ios/update-cert.pem`, the Android app's signer), only for the app's own native part, and only when newer than the app.
   - Checked again at every start. One no newer than the app (a newer `.ipa` installed since) is deleted.
-  - "Reload now" puts the new script and its hosts into the page at once.
+  - Once kept, the new script and its hosts are put into the page and FR24 is loaded again with them. A download or check that fails offers the release page.
 - **The release signs it** (`ios/sign-update.sh`) with the keystore the Android app is signed with, checks the signature with the app's certificate before publishing, and attaches both files. Without the key, or with a signature that does not match, it is left out with a warning.
 
 ### Changed
-- The app's own update texts (LADD Unblock window) say the iPhone app updates itself.
+- The app's own update texts (LADD Unblock window) say how the iPhone app updates itself.
 
 ### Tests
 - `test/unit_iosupdate.cjs` (new): the native part's id; the update's contents; signing with JKS and PKCS12 keystores as the release's, checked as the app checks it; one byte changed refused; a key that is not the app's never published; the certificate pinned; the app, its build and the release using the same names and checks.

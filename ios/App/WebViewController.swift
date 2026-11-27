@@ -74,11 +74,11 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKUIDeleg
         w.load(URLRequest(url: WebViewController.home))
 
         NotificationCenter.default.addObserver(self, selector: #selector(noteTapped(_:)), name: .tlNoteTapped, object: nil)
-        updater = Updater(host: self, running: script.version) { [weak self] now in if now { self?.useUpdate() } }
+        updater = Updater(host: self, running: script.version) { [weak self] in self?.useUpdate() }
         updater?.check(asked: false)
     }
 
-    // (1.4.3) the update just kept, in use now: the page's scripts and the hosts its requests may go to replaced, and FR24
+    // (1.4.3) the update just kept (Update pressed), in use now: the page's scripts and the hosts its requests may go to replaced, and FR24
     // loaded again with them
     private func useUpdate() {
         guard let w = web, let script = ScriptStore.current() else { return }

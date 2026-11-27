@@ -88,10 +88,12 @@ jobs:
           if [ -z "$KS_B64" ]; then echo "::warning::no signing key set: the iPhone app's script update is not published"; exit 0; fi
           trap 'rm -f "$RUNNER_TEMP/update.jks"' EXIT
           printf '%s' "$KS_B64" | base64 -d > "$RUNNER_TEMP/update.jks"; export MODULE_KEYSTORE="$RUNNER_TEMP/update.jks"
-          if node ios/update-manifest.cjs > dist/fr24-ladd-unblocker-ios-update.json && bash ios/sign-update.sh dist/fr24-ladd-unblocker-ios-update.json dist/fr24-ladd-unblocker-ios-update.sig; then
-            echo "the iPhone app's script update: $(node ios/shell-id.cjs) (its native part)"
+          # (named by the native part it is for: an app with another one finds none, and is offered its .ipa)
+          ID="$(node ios/shell-id.cjs)"; U="dist/fr24-ladd-unblocker-ios-update-$ID"
+          if [[ "$ID" =~ ^[0-9a-f]{16}$ ]] && node ios/update-manifest.cjs > "$U.json" && bash ios/sign-update.sh "$U.json" "$U.sig"; then
+            echo "the iPhone app's script update: for the native part $ID"
           else
-            echo "::warning::the iPhone app's script update could not be made or signed: not published"; rm -f dist/fr24-ladd-unblocker-ios-update.json dist/fr24-ladd-unblocker-ios-update.sig
+            echo "::warning::the iPhone app's script update could not be made or signed: not published"; rm -f "$U.json" "$U.sig"
           fi
       # (iPhone and iPad: the .ipa the Tests run that started this release built on a Mac - ios/build.sh - attached as
       # it is; a release made by hand from a tag has none)
@@ -129,7 +131,7 @@ jobs:
           V="${TAG#v}"; MAJ="${V%%.*}"
           if [ "$MAJ" -ge 20 ]; then TITLE="FR24 LADD Unblocker B$V (beta)"; KIND="--prerelease"; else TITLE="FR24 LADD Unblocker v$V"; KIND="--latest"; fi
           IPA=""; if [ -f dist/fr24-ladd-unblocker-ios.ipa ]; then IPA="dist/fr24-ladd-unblocker-ios.ipa"; else echo "no .ipa from the Tests run: the iPhone app is not attached"; fi
-          if [ -f dist/fr24-ladd-unblocker-ios-update.json ] && [ -f dist/fr24-ladd-unblocker-ios-update.sig ]; then IPA="$IPA dist/fr24-ladd-unblocker-ios-update.json dist/fr24-ladd-unblocker-ios-update.sig"; fi
+          for U in dist/fr24-ladd-unblocker-ios-update-*.json; do if [ -f "$U" ] && [ -f "${U%.json}.sig" ]; then IPA="$IPA $U ${U%.json}.sig"; fi; done
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" dist/fr24-ladd-unblocker-extension.zip dist/fr24-ladd-unblocker-firefox.zip dist/fr24-ladd-unblocker.user.js dist/fr24-ladd-unblocker-app.apk dist/fr24-ladd-unblocker-module.apk $IPA --clobber
             gh release edit "$TAG" --title "$TITLE" --notes-file notes.md

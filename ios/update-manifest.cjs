@@ -2,9 +2,9 @@
 // (1.4.3) The iPhone app's script update for a release: { v: 1, version, shell, hosts, script } - the script the app puts
 // into FR24's pages (dist/app/app.js), the hosts its requests may go to (dist/app/hosts.txt), the release's version and the
 // native part it was built for (shell-id.cjs). The release signs these very bytes with the project's own key
-// (fr24-ladd-unblocker-ios-update.sig); the app takes the update only with that signature, checked with the certificate
+// (fr24-ladd-unblocker-ios-update-<id>.sig, <id> that native part's); the app takes the update only with that signature, checked with the certificate
 // built into it (ios/update-cert.pem), and only for its own native part.
-// usage: node ios/update-manifest.cjs > dist/fr24-ladd-unblocker-ios-update.json
+// usage: node ios/update-manifest.cjs > dist/fr24-ladd-unblocker-ios-update-$(node ios/shell-id.cjs).json
 const fs = require('fs'), path = require('path');
 const { shellId } = require('./shell-id.cjs');
 function manifest(root) {

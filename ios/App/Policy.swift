@@ -100,25 +100,32 @@ enum Policy {
         return false
     }
 
-    /// the latest release's version, where it has this app in it (this project's own download of that release)
-    static func releaseVersion(_ j: [String: Any]) -> String? {
+    /// the latest release's version as its tag gives it ("v1.4.3" -> "1.4.3"); nil for a draft, a pre-release or no version
+    static func tagVersion(_ j: [String: Any]) -> String? {
         if (j["draft"] as? Bool) == true || (j["prerelease"] as? Bool) == true { return nil }
-        guard let tag = j["tag_name"] as? String, version(tag) != nil, let assets = j["assets"] as? [[String: Any]] else { return nil }
-        let want = "https://github.com/\(repo)/releases/download/\(tag)/\(ipa)"
-        guard assets.contains(where: { ($0["name"] as? String) == ipa && ($0["browser_download_url"] as? String) == want }) else { return nil }
+        guard let tag = j["tag_name"] as? String, version(tag) != nil else { return nil }
         return tag.hasPrefix("v") || tag.hasPrefix("V") ? String(tag.dropFirst()) : tag
     }
 
-    /// (1.4.3) the latest release's script update and its signature (ScriptStore) - this project's own downloads of that
-    /// release only; nil when it has none (a release before 1.4.3, or one made without the project's key)
-    static func updateFiles(_ j: [String: Any]) -> (json: URL, sig: URL)? {
-        if (j["draft"] as? Bool) == true || (j["prerelease"] as? Bool) == true { return nil }
-        guard let tag = j["tag_name"] as? String, version(tag) != nil, let assets = j["assets"] as? [[String: Any]] else { return nil }
+    /// the latest release's version, where it has this app in it (this project's own download of that release)
+    static func releaseVersion(_ j: [String: Any]) -> String? {
+        guard let v = tagVersion(j), let tag = j["tag_name"] as? String, let assets = j["assets"] as? [[String: Any]] else { return nil }
+        let want = "https://github.com/\(repo)/releases/download/\(tag)/\(ipa)"
+        guard assets.contains(where: { ($0["name"] as? String) == ipa && ($0["browser_download_url"] as? String) == want }) else { return nil }
+        return v
+    }
+
+    /// (1.4.3) the latest release's script update for this app's native part and its signature (ScriptStore) - this
+    /// project's own downloads of that release only; nil when it has none for it (a release that changed the app itself, one
+    /// before 1.4.3, or one made without the project's key): its .ipa then
+    static func updateFiles(_ j: [String: Any], shell: String) -> (json: URL, sig: URL)? {
+        guard shell.range(of: "^[0-9a-f]{16}$", options: .regularExpression) != nil, tagVersion(j) != nil,
+              let tag = j["tag_name"] as? String, let assets = j["assets"] as? [[String: Any]] else { return nil }
         func file(_ name: String) -> URL? {
             let want = "https://github.com/\(repo)/releases/download/\(tag)/\(name)"
             return assets.contains(where: { ($0["name"] as? String) == name && ($0["browser_download_url"] as? String) == want }) ? URL(string: want) : nil
         }
-        guard let a = file(ScriptStore.updateName), let b = file(ScriptStore.sigName) else { return nil }
+        guard let a = file(ScriptStore.releaseFile(shell)), let b = file(ScriptStore.releaseSig(shell)) else { return nil }
         return (a, b)
     }
 

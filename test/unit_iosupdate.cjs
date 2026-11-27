@@ -1,6 +1,7 @@
 // 1.4.3 - the iPhone app updates its own script (ios/App/ScriptStore.swift, Updater.swift): a release's
-// fr24-ladd-unblocker-ios-update.json (ios/update-manifest.cjs) signed with the project's key (ios/sign-update.sh), taken
-// only with that signature and for the app's own native part (ios/shell-id.cjs):
+// fr24-ladd-unblocker-ios-update-<id>.json (ios/update-manifest.cjs) signed with the project's key (ios/sign-update.sh),
+// taken only with that signature and for the app's own native part (ios/shell-id.cjs, <id>), offered as the Android app
+// offers its update (the same words):
 //   - the native part's id: the same each time; changed by any change to the app's Swift, Info.plist or project.yml, not
 //     by the script or its pictures
 //   - the update: the release's version, the script and hosts as built (dist/app), that id
@@ -8,7 +9,8 @@
 //     (RSA PKCS#1 v1.5 over SHA-256) takes, and refuses for one byte changed; checked against the certificate before it is
 //     published - another certificate's: none published
 //   - the certificate built into the app is the project's (the Android app's signer, pinned here)
-//   - the app's code, its build and the release use the same names and checks
+//   - the app's code, its build and the release use the same names and checks; the release attaches what it made
+//   - the offer: the Android app's words, Update / Not now, the update downloaded only on Update
 // usage: node test/unit_iosupdate.cjs
 const fs = require('fs'), os = require('os'), path = require('path'), crypto = require('crypto'), { execFileSync, spawnSync } = require('child_process');
 const ROOT = path.join(__dirname, '..'), IOS = path.join(ROOT, 'ios');
@@ -81,11 +83,22 @@ else {
   const build = read('ios/build.sh'), rel = read('.github/workflows/release.yml');
   check('the app takes an update only signed with the project\'s key (RSA PKCS#1 v1.5, SHA-256, the certificate built in), for its own native part, newer than itself', /\.rsaSignatureMessagePKCS1v15SHA256/.test(store) && /SecKeyVerifySignature/.test(store) && /bundledText\("update-cert", "pem"\)/.test(store) && /shell == mine/.test(store) && /Policy\.newer\(u\.version, appVersion\)/.test(store) && /Policy\.newer\(u\.version, running\)/.test(store));
   check('... checked again each time it starts; one no newer than the app (a new .ipa since) deleted', /static func current\(\)/.test(store) && /clear\(\)/.test(store) && /ScriptStore\.current\(\)/.test(web));
-  check('... from this project\'s own release downloads only', /static func updateFiles/.test(pol) && /https:\/\/github\.com\/\\\(repo\)\/releases\/download\/\\\(tag\)\/\\\(name\)/.test(pol) && /ScriptStore\.updateName/.test(pol) && /ScriptStore\.sigName/.test(pol));
-  check('... the update kept, then the page offered a reload with it; anything else - the release page, as before', /ScriptStore\.keep\(/.test(upd) && /offerReload/.test(upd) && /offerIpa/.test(upd) && /Policy\.updateFiles\(j\)/.test(upd) && /useUpdate/.test(web) && /removeAllUserScripts/.test(web));
+  check('... from this project\'s own release downloads only, the files named for its own native part', /static func updateFiles\(_ j: \[String: Any\], shell: String\)/.test(pol) && /https:\/\/github\.com\/\\\(repo\)\/releases\/download\/\\\(tag\)\/\\\(name\)/.test(pol) && /ScriptStore\.releaseFile\(shell\)/.test(pol) && /ScriptStore\.releaseSig\(shell\)/.test(pol) && /Policy\.updateFiles\(j, shell: shell\)/.test(upd) && /let shell = ScriptStore\.shellId/.test(upd));
+  check('... downloaded only on Update, then kept and FR24 loaded again with it; a failure, or a release for another native part - the release page', /func start\(/.test(upd) && /if let f = files \{ self\?\.start\(v, f\) \} else \{ UIApplication\.shared\.open\(Policy\.releasesPage\) \}/.test(upd) && /ScriptStore\.keep\(data, sig, over: from\)/.test(upd) && /self\.updated\(\)/.test(upd) && /func failed\([\s\S]*Policy\.releasesPage/.test(upd) && !/offerReload|offerIpa/.test(upd) && /Updater\(host: self, running: script\.version\) \{ \[weak self\] in self\?\.useUpdate\(\) \}/.test(web) && /removeAllUserScripts/.test(web));
+  // (the Android app's words: android/app strings.xml)
+  const sx = read('android/app/src/main/res/values/strings.xml'), str = n => ((sx.match(new RegExp('<string name="' + n + '">([^<]*)</string>')) || [])[1] || '\u0000').replace(/\\"/g, '"');
+  const sw = t => '"' + t.replace(/%1\$s/, '\\(v)').replace(/%2\$s/, '\\(mine)') + '"';
+  const words = [['update_title', 'Update available'], ['update_now'], ['update_later'], ['update_checking'], ['update_busy'], ['update_none_found']].map(([n]) => '"' + str(n) + '"');
+  check('the offer in the Android app\'s words: Update available, Version x ... Update now?, Update, Not now and its notes', words.every(w => upd.includes(w)) && upd.includes(sw(str('update_text'))) && upd.includes('"' + str('update_latest').replace('%1$s', '\\(mine)') + '"') && upd.includes('"' + str('update_downloading').replace('%1$s', '\\(v)') + '"') && upd.includes(str('update_failed').replace(': %1$s', '')), words);
+  check('... a version put off not offered again by itself, only when Update is pressed in the page', /if !asked && prefs\.string\(forKey: "updateLater"\) == v \{ return \}/.test(upd) && /prefs\.set\(v, forKey: "updateLater"\)/.test(upd) && /case "update": updater\?\.check\(asked: true\)/.test(web));
   check('the app built with the certificate and its own id (ios/build.sh)', /cp update-cert\.pem Web\//.test(build) && /node shell-id\.cjs > Web\/shell-id\.txt/.test(build));
-  check('the release: the update made, signed, checked and attached - none without the key', /node ios\/update-manifest\.cjs > dist\/fr24-ladd-unblocker-ios-update\.json/.test(rel) && /bash ios\/sign-update\.sh dist\/fr24-ladd-unblocker-ios-update\.json dist\/fr24-ladd-unblocker-ios-update\.sig/.test(rel) && /IPA="\$IPA dist\/fr24-ladd-unblocker-ios-update\.json dist\/fr24-ladd-unblocker-ios-update\.sig"/.test(rel) && /no signing key set: the iPhone app's script update is not published/.test(rel));
-  check('... the names the app looks for are the ones the release publishes', /updateName = "fr24-ladd-unblocker-ios-update\.json", sigName = "fr24-ladd-unblocker-ios-update\.sig"/.test(store));
+  check('the release: the update made, signed, checked and attached - none without the key', /ID="\$\(node ios\/shell-id\.cjs\)"; U="dist\/fr24-ladd-unblocker-ios-update-\$ID"/.test(rel) && /node ios\/update-manifest\.cjs > "\$U\.json" && bash ios\/sign-update\.sh "\$U\.json" "\$U\.sig"/.test(rel) && /no signing key set: the iPhone app's script update is not published/.test(rel));
+  check('... the names the app looks for are the ones the release publishes', /static func releaseFile\(_ shell: String\) -> String \{ "fr24-ladd-unblocker-ios-update-\\\(shell\)\.json" \}/.test(store) && /static func releaseSig\(_ shell: String\) -> String \{ "fr24-ladd-unblocker-ios-update-\\\(shell\)\.sig" \}/.test(store));
+  // (the release's own lines, run: the update and its signature attached, both or neither)
+  const line = (rel.match(/^ *(for U in dist\/fr24-ladd-unblocker-ios-update-\*\.json; do .*)$/m) || [])[1];
+  const attach = files => { const d = fs.mkdtempSync(path.join(tmp, 'rel-')); fs.mkdirSync(path.join(d, 'dist')); for (const f of files) fs.writeFileSync(path.join(d, 'dist', f), 'x'); return spawnSync('bash', ['-c', 'set -e; IPA="dist/a.ipa"; ' + line + '; printf %s "$IPA"'], { cwd: d, encoding: 'utf8' }).stdout; };
+  const nm = 'fr24-ladd-unblocker-ios-update-' + id0;
+  check('... attached with the release (both files, or none)', !!line && attach([nm + '.json', nm + '.sig']) === `dist/a.ipa dist/${nm}.json dist/${nm}.sig` && attach([nm + '.json']) === 'dist/a.ipa' && attach([]) === 'dist/a.ipa', line);
 }
 
 fs.rmSync(tmp, { recursive: true, force: true });
