@@ -41,6 +41,7 @@
 //  /fr24fn?fn=[&from=&to=]       (1.4.1) a flight number's flights as FR24's map showed them - FR24's id, callsign,
 //                                aircraft, route, first and last seen - a year back (fr24fn.cjs)
 //  /csfn?cs=a,b                  (1.4.1) each callsign's flight number as FR24's map last showed it
+//  /fnsched?fn=a,b&from=&to=     (1.4.3) FR24's scheduled times of flight numbers' flights, kept a year (fr24fn.cjs)
 //  /oaap                         (1.3) every OurAirports airport FR24 does not list (oaap.cjs), gzipped
 //  /apwx?ap=                     (1.3) an airport's weather now, for one FR24 has none for: the live weather at the
 //                                 airport and a METAR made from it (apwx.cjs)
@@ -1161,7 +1162,9 @@ const AS = createApStats({ store: STORE });
 // (1.1.0) every airport's board - FR24's own rows, seven days either side - kept here for every browser (boards.cjs)
 // (1.4.2: each of FR24's schedule rows with a callsign and a flight number teaches the callsign's flight number - fr24fn.cjs
 // noteCs; the boards kept before, read once, a minute after the start)
-const BD = createBoards({ store: STORE, E, log: (...a) => log('boards', ...a), fetch: (u, o) => global.fetch(u, o), ua: () => fr24.st.ua, cfg: CFG.boards, onRow: r => { if (r.cs && r.num) FN.noteCs(r.cs, r.num, r.t); } });
+const BD = createBoards({ store: STORE, E, log: (...a) => log('boards', ...a), fetch: (u, o) => global.fetch(u, o), ua: () => fr24.st.ua, cfg: CFG.boards, onRow: (r, ap, kind) => { if (r.cs && r.num) FN.noteCs(r.cs, r.num, r.t); FN.noteSched(r, ap, kind); } });
+// (1.4.3: FR24's scheduled times of the week of boards kept - noted once, a minute and a half after the start)
+setTimeout(() => { BD.eachRow((r, ap, kind) => FN.noteSched(r, ap, kind)).then(n => log('fr24fn', `boards' rows looked at for FR24's scheduled times: ${n}, ${FN.scheduled} held`), e => log('fr24fn', String(e && e.message || e))); }, 90000).unref();
 const worldTried = new Map(), WS = { running: '', days: 0, aircraft: 0, legs: 0, bad: 0, ms: 0, full: false, freeGb: null, err: '', last: null };
 let freeAt = 0;
 function worldRoom() {
@@ -2980,7 +2983,7 @@ function monStatus() {
     shared: { routes: ident.stats.routes || 0, routesRefused: ident.stats.routeRefused || 0, confirmationsWithdrawn: ident.stats.routeWithdrawn || 0, routesShown: [...ident.ids.values()].filter(R => R.crowd).length, destsDropped: (ident.stats.routeAged || 0) + (ident.stats.routeContra || 0), learnRows: LC },
     onground: { aircraft: OG.size, airports: OG.airports, ground: OG.stats.ground, landed: OG.stats.landed, left: OG.stats.left, saved: OG.stats.saved, loaded: OG.stats.loaded, err: OG.stats.err || '' },
     fr24fix: Object.assign({ at: fixAt ? Math.round(fixAt) : 0 }, F24FIX),
-    fr24fn: { following: FN.open, callsigns: FN.callsigns, seen: FN.stats.seen, flights: FN.stats.flights, written: FN.stats.written, queries: FN.stats.queries, err: FN.stats.err },
+    fr24fn: { following: FN.open, callsigns: FN.callsigns, seen: FN.stats.seen, flights: FN.stats.flights, written: FN.stats.written, queries: FN.stats.queries, sched: { held: FN.scheduled, noted: FN.stats.sched, written: FN.stats.schedWritten, asked: FN.stats.schedAsked }, err: FN.stats.err },
     runways: { logged: RL.stats.logged, live: RL.stats.live, trail: RL.stats.trail, fit: RL.stats.fit, flights: RL.stats.flights, hot: RL.stats.hot || 0, hotErr: RL.stats.hotErr || '', err: RL.stats.err, low: LOW, pace: PACE.factor, paceUntil: PACE.factor > 1 ? Math.round((PACE.until - now) / 1000) : 0 },
     fr24: { scanning: !!CFG.fr24Scan, headersFrom: fr24.st.hdr ? 'browser' : 'default', ok: fr24.st.ok, fails: fr24.st.fails, lastErr: fr24.st.lastErr, lastOkAgo: fr24.st.lastOkAt ? Math.round((now - fr24.st.lastOkAt) / 1000) : null, paused: fr24.st.pauseUntil > now ? Math.round((fr24.st.pauseUntil - now) / 1000) : 0, scans: F24.scans, last: F24.last, fields: FR.MASKS[Math.min(F24.mask, FR.MASKS.length - 1)].join(','), routeOk: F24.routeOk, hexOk: F24.hexOk, noRoute: naF.size,
       flights: ident.flights.size, named: ident.ids.size, unnamed: [...ident.flights.values()].filter(F => !ident.ids.has(F.id) && now - F.seen < 600000).length, matched: ident.stats.matched, revoked: ident.stats.revoked, lookups: ident.stats.lookups, trails: ident.stats.trails, trailQueue: ident.trailQ.length, dest: dest.stats, logged: F24.logged, fr24Track: F24T, fr24Raw: Object.assign({ pending: fr24raw.pending, held: fr24raw.held, runwaysKnown: rwyKnown.size }, fr24raw.stats), fr24Scan: Object.assign({ keepDays: +CFG.fr24ScanDays === 0 ? 0 : +CFG.fr24ScanDays || 365, minFreeGb: +CFG.fr24ScanFreeGb || 30, pending: fr24scan.pending, held: fr24scan.held, following: scanLast.size }, fr24scan.stats, { rounds: SCN.rounds, kept: SCN.points, estimated: SCN.estimated, freedDays: SCN.freed, freedDay: SCN.freedDay, cruise: Object.assign({ every: cruiseEvery() }, SCN.cruise) }), fr24Keep: KEEP.stats(),
@@ -3222,10 +3225,19 @@ function answer(u, nowS, ctx) {
     const fn = String(q('fn') || ''), to0 = +q('to') || 0, from0 = +q('from') || 0;
     return FN.query(fn, from0, to0).then(async list => {
       let w = []; try { w = await fnWorldRows(fn, from0, to0, list); } catch (e) { log('fr24fn', 'world', String(e && e.message || e)); }
-      return { v: 1, fn: fn.toUpperCase().replace(/[^A-Z0-9]/g, ''), keep: +CFG.fnDays || 365, list: list.concat(w).sort((a, b) => b.t0 - a.t0).slice(0, 1000) };
+      const all = list.concat(w).sort((a, b) => b.t0 - a.t0).slice(0, 1000);
+      // (1.4.3: each one's STD and STA as FR24's schedules gave them - by FR24's id, else its number and time)
+      if (all.length) { try { await FN.schedFor(all, Math.min(...all.map(x => x.t0)) - 86400, Math.max(...all.map(x => x.t1)) + 86400); } catch (e) { log('fr24fn', 'sched', String(e && e.message || e)); } }
+      return { v: 1, fn: fn.toUpperCase().replace(/[^A-Z0-9]/g, ''), keep: +CFG.fnDays || 365, list: all };
     });
   }
   if (p === '/csfn') return { v: 1, list: FN.csFn(String(q('cs') || '').split(',').slice(0, 100)) };
+  // (1.4.3) FR24's scheduled times of flight numbers' flights (40 numbers at most) - the log rows older than FR24's week
+  // of an aircraft FR24 lists itself: [fn, FR24 id, std, sta, from, to] (airport ids)
+  if (p === '/fnsched') {
+    const fns = String(q('fn') || '').split(',').slice(0, 40), from = +q('from') || 0, to = +q('to') || 0;
+    return FN.sched(fns, from, to).then(list => ({ v: 1, list: list.map(x => [x.fn, x.fid, x.std || 0, x.sta || 0, x.from || 0, x.to || 0]) }));
+  }
   if (p === '/onground') { const ap = +q('ap') || 0; return ap > 0 ? { v: 1, ap, at: Math.round(nowS), list: OG.list(ap, nowS).slice(0, 400) } : null; }
   if (p === '/rwyap') { const ap = +q('ap') || 0, to = Math.min(nowS + 3600, +q('to') || nowS), from = Math.max(to - 9 * 86400, +q('from') || nowS - 86400); return ap > 0 ? rwyApAnswer(ap, from, to, q('use') === '1', q('old') === '1', nowS) : null; }
   // (1.2.7) an airport's runways and the take-offs and landings of its last 24 hours with theirs - which runways are in use

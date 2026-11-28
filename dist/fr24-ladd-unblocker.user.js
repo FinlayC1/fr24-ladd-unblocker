@@ -17599,8 +17599,10 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     const acMob = ac && ac.reg ? `<a class="fbold" href="/data/aircraft/${esc(ac.reg.toLowerCase())}" title="${esc(ac.desc || ac.type || '')}">${esc(ac.reg)}</a>` : '';
     // (1.4.1: an airline's flight by its flight number, as FR24's own rows - FR24's number of that callsign)
     const fn = !ac && cs ? fnKnown(cs) : '', fnDesk = fn ? ` <a class="fbold" href="/data/flights/${esc(fn.toLowerCase())}" title="${esc(cs)} - its flight number as Flightradar24 shows it (LADD unblocker)">${esc(fn)}</a> ` : '';
+    // (1.4.3: FR24's scheduled times of it, kept by the monitor - the leg's own (a flight number's rows), else its number's)
+    const sc = l.std || l.sta ? { std: l.std || 0, sta: l.sta || 0 } : schedOfLeg(l, l.fn || fn);
     return logRowHtml({ t0: l.tStart, tz, tzTo, flight: ac ? acDesk || '—' : fnDesk || (cs ? `(${esc(cs)})` : '—'), flightMob: ac ? acMob || '—' : '', dur: (flown ? (onEst || offEst ? '~' : '') + durStr(flown) : '—') + (l.laps > 1 ? ` · ${l.laps} laps` : ''),
-      stdTs: 0, atdTs: tOff, staTs: 0, color: landed ? 'green' : 'gray', atdEst: offEst, onEst, estTitle: 'reckoned from the nearest position heard (no receiver heard this part)',
+      stdTs: (sc && sc.std) || 0, atdTs: tOff, staTs: (sc && sc.sta) || 0, color: landed ? 'green' : 'gray', atdEst: offEst, onEst, estTitle: 'reckoned from the nearest position heard (no receiver heard this part)',
       statusPrefix: landed && tOn ? (onEst ? 'Landed ~' : 'Landed ') : '', statusTs: tOn || 0, statusText: landed ? (tOn ? `Landed ${onEst ? '~' : ''}${fmtLocal(tOn, tzTo)}` : 'Landed · time unknown') : (l.ended ? 'Landed (airport unknown)' : 'Unknown'),
       from: siteFrom ? SITE_CELLS : apCells(from, l.from && l.from.conf), to: siteTo ? SITE_CELLS : apCells(to, l.to && l.to.conf),
       btn: playCellHtml(l, hex, ac && ac.reg ? ac.reg : reg, flown) });
@@ -18488,6 +18490,8 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
             const legs = knownLegs(hex0).filter(l => (l.from || l.to || l.tEnd - l.tStart > 600) && (l.tOff || l.tStart) < cut - 1800 && (l.tOff || l.tStart) > nowS() - days * 86400).sort((a, b) => b.tStart - a.tStart);
             const html = legs.map(l => legRowHtml(l, hex0, reg)).join('');
             olderFn = wantFns(legs, () => renderOlder(null, 1, 1));
+            // (1.4.3: their scheduled times, FR24's, kept by the monitor - once their flight numbers are in)
+            olderFn.then(() => wantScheds(legs, () => renderOlder(null, 1, 1)));
             if (html !== tail.dataset.html) {
               tbody.querySelectorAll('tr.tl-adsb-row').forEach(r => r.remove());
               if (!tail.parentNode) tbody.appendChild(tail);
@@ -18583,6 +18587,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
         const legs = legsOf();
         const shown = liveState ? legs.filter(l => l.ended || l.tEnd < (liveState.departedAt || 0) - 60) : legs;
         run.fnP = wantFns(shown, render);
+        run.fnP.then(() => wantScheds(shown, () => { if (current === run) render(); }));
         const html = (liveState ? liveRowHtml(liveState, hex, reg) : '') + shown.map(l => legRowHtml(l, hex, reg)).join('');
         if (!foot.parentNode) tbody.appendChild(foot);
         (loading.parentNode ? loading : foot).insertAdjacentHTML('beforebegin', html);
@@ -18735,7 +18740,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     const ap = (c, id) => { const b = fin(id) && id > 0 ? apById(id) : null; if (b) return { id: b.id }; c = clean(c).toUpperCase(); const a = /^[A-Z0-9]{3}$/.test(c) ? airports.byIata.get(c) : null; return a ? { id: a.id } : null; };
     const rows = list.sort((a, b) => b.t0 - a.t0).map(x => {
       const hex = /^[0-9a-f]{6}$/.test(x.hex || '') ? x.hex : '', hx = hex ? store.getHex(hex) || {} : {}, reg = clean(x.reg || hx.reg || '').toUpperCase();
-      const leg = { fid: x.w ? '' : String(x.fid), tStart: x.t0, tEnd: x.t1, tOff: x.t0, tOn: x.t1, tOffEst: true, tOnEst: true, from: ap(x.from, x.fromId), to: ap(x.to, x.toId), ended: true, cs: clean(x.cs || '') };
+      const leg = { fid: x.w ? '' : String(x.fid), tStart: x.t0, tEnd: x.t1, tOff: x.t0, tOn: x.t1, tOffEst: true, tOnEst: true, from: ap(x.from, x.fromId), to: ap(x.to, x.toId), ended: true, cs: clean(x.cs || ''), std: fin(x.std) && x.std > 1e9 ? x.std : 0, sta: fin(x.sta) && x.sta > 1e9 ? x.sta : 0 };
       return legRowHtml(leg, hex, reg, { reg, type: clean(x.type || hx.type || ''), desc: modelName(hx) || clean(x.type || '') }).replace('<tr class=" data-row tl-adsb-row', '<tr class=" data-row tl-adsb-row tl-fn-old');
     });
     const nw = list.filter(x => x.w).length, nf = list.length - nw;
@@ -19189,7 +19194,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     for (const e of d.rows || []) {
       if (!e || !e.flight || !e.flight.id) continue;
       const t = Number(e.estimatedTime) || Number(e.scheduledTime) || 0;
-      boardPut(apId, kind, { nat: Object.fromEntries(Object.entries(e).filter(([key]) => !/^__tl/.test(key))), k: 'f' + e.flight.id, src: 'fr24', id: Number(e.id) || 0, fid: String(e.flight.id), cs: clean(e.flight.callsign), num: clean(e.flight.number), t, sch: Number(e.scheduledTime) || 0, est: Number(e.estimatedTime) || 0, st: clean(e.status && e.status.name), col: clean(e.status && e.status.color), ap: Number(e.airportId) || 0, al: clean(e.airline), alId: Number(e.airlineId) || 0, ty: clean(e.aircraftType) });
+      boardPut(apId, kind, { nat: Object.fromEntries(Object.entries(e).filter(([key]) => !/^__tl/.test(key))), k: 'f' + e.flight.id, src: 'fr24', id: Number(e.id) || 0, fid: String(e.flight.id), cs: clean(e.flight.callsign), num: clean(e.flight.number), t, sch: Number(e.scheduledTime) || 0, sx: Number(e.scheduledTime) > 0 ? 1 : 0, est: Number(e.estimatedTime) || 0, st: clean(e.status && e.status.name), col: clean(e.status && e.status.color), ap: Number(e.airportId) || 0, al: clean(e.airline), alId: Number(e.airlineId) || 0, ty: clean(e.aircraftType) });
     }
   }
   const boardWho = (hex, rec) => { const hx = Object.assign({}, hex ? store.getHex(hex) : null, rec || {}); return { reg: hx.reg || '', hex: hex || hx.hex || '', ty: hx.type || '', dsc: modelName(hx), al: shownOwner(hx, hx.cs) || (hx.mil ? 'Military' : 'Private owner'), alId: operatorIdOf(hx, hx.cs) }; };
@@ -19312,8 +19317,8 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       const icao = clean(x.airline && x.airline.code && x.airline.code.icao).toUpperCase(), alId = (icao && fr24.byIcao.get(icao)) || (info && info.alId) || (ref && ref.icao && fr24.byIcao.get(ref.icao)) || 0;
       const base = { src: 'sched', fid, id: Number(idn.row) || 0, cs, num, al: clean(x.airline && x.airline.name) || (info && info.al) || '', alId, alIcao: icao || (ref && ref.icao) || '', ty: clean(x.aircraft && x.aircraft.model && x.aircraft.model.code) || (info && info.ty) || '', reg: clean(x.aircraft && x.aircraft.registration), hex: clean(x.aircraft && x.aircraft.hex).toLowerCase() };
       const dep = re.departure || es.departure || sc.departure, arr = re.arrival || es.arrival || sc.arrival;
-      if (o && dep) boardPut(o, 'departures', Object.assign({ nat: natRowOf(x, 'departures', ref), k, t: dep, sch: sc.departure || dep, est: dep, st: cx ? 'canceled' : re.departure ? 'departed' : 'scheduled', col: cx ? 'red' : re.departure ? 'green' : 'gray', ap: d }, base));
-      if (d && arr) boardPut(d, 'arrivals', Object.assign({ nat: natRowOf(x, 'arrivals', ref), k, t: arr, sch: sc.arrival || arr, est: arr, st: cx ? 'canceled' : dv ? 'diverted' : re.arrival ? 'landed' : es.arrival ? 'estimated' : 'scheduled', col: cx || dv ? 'red' : re.arrival || es.arrival ? 'green' : 'gray', ap: o }, base));
+      if (o && dep) boardPut(o, 'departures', Object.assign({ nat: natRowOf(x, 'departures', ref), k, t: dep, sch: sc.departure || dep, sx: sc.departure ? 1 : 0, est: dep, st: cx ? 'canceled' : re.departure ? 'departed' : 'scheduled', col: cx ? 'red' : re.departure ? 'green' : 'gray', ap: d }, base));
+      if (d && arr) boardPut(d, 'arrivals', Object.assign({ nat: natRowOf(x, 'arrivals', ref), k, t: arr, sch: sc.arrival || arr, sx: sc.arrival ? 1 : 0, est: arr, st: cx ? 'canceled' : dv ? 'diverted' : re.arrival ? 'landed' : es.arrival ? 'estimated' : 'scheduled', col: cx || dv ? 'red' : re.arrival || es.arrival ? 'green' : 'gray', ap: o }, base));
     }
   }
   // (two at a time: an airport like Manchester has some 600 numbers - its three days in about five minutes)
@@ -19500,9 +19505,9 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
         if (was && was !== ap && boardOk(was) && t) boardPut(was, kind, { k: 'f' + fid, src: 'sched', t, drop: true });
         if (boardOk(ap)) { schedAt.set(key, ap); schedDirty = true; }
       }
-      if (boardOk(r.o) && (r.atd || r.std)) boardPut(r.o, 'departures', Object.assign({ k: 'f' + fid, src: 'sched', fid, cs, num, t: r.atd || r.std, sch: r.std || r.atd, est: r.atd || r.std, st: r.atd ? 'departed' : 'scheduled', col: r.atd ? 'green' : 'gray', ap: boardOk(r.d) ? r.d : 0 }, who));
+      if (boardOk(r.o) && (r.atd || r.std)) boardPut(r.o, 'departures', Object.assign({ k: 'f' + fid, src: 'sched', fid, cs, num, t: r.atd || r.std, sch: r.std || r.atd, sx: r.std ? 1 : 0, est: r.atd || r.std, st: r.atd ? 'departed' : 'scheduled', col: r.atd ? 'green' : 'gray', ap: boardOk(r.d) ? r.d : 0 }, who));
       const arr = r.ata || r.eta || r.sta;
-      if (boardOk(r.d) && arr) boardPut(r.d, 'arrivals', Object.assign({ k: 'f' + fid, src: 'sched', fid, cs, num, t: arr, sch: r.sta || arr, est: r.ata || r.eta || r.sta, st: r.ata ? 'landed' : r.eta ? 'estimated' : 'scheduled', col: r.ata || r.eta ? 'green' : 'gray', ap: boardOk(r.o) ? r.o : 0 }, who));
+      if (boardOk(r.d) && arr) boardPut(r.d, 'arrivals', Object.assign({ k: 'f' + fid, src: 'sched', fid, cs, num, t: arr, sch: r.sta || arr, sx: r.sta ? 1 : 0, est: r.ata || r.eta || r.sta, st: r.ata ? 'landed' : r.eta ? 'estimated' : 'scheduled', col: r.ata || r.eta ? 'green' : 'gray', ap: boardOk(r.o) ? r.o : 0 }, who));
     }
   }
   // ---- FR24's airport data pages (/data/airports/<code>: general, arrivals, departures, routes, statistics) -------------
@@ -20883,6 +20888,53 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   const fnKnown = cs => { const c = clean(cs).toUpperCase(), m = csFnMemo.get(c); return (m && m.fn) || csfnOf(c); };
   // (the rows' callsigns: their flight numbers asked for, the rows drawn again when any came)
   const wantFns = (legs, redraw) => csFlightNumbers((legs || []).map(l => l && l.cs)).then(n => { if (n && redraw) redraw(); }).catch(e => log('flight numbers', String(e && e.message || e)));
+  // ---- (1.4.3) FR24's scheduled times of a log's rows FR24 no longer shows (older than its week): kept by the monitor
+  // from FR24's own boards, schedules and log rows (/fnsched, fr24fn.cjs noteSched), by flight number - [{ fid, std, sta,
+  // from, to }] and the window asked for. A row's: by FR24's id, else its number's flight nearest its times (three hours at
+  // most) whose airports are not other than the row's
+  const fnSchedMemo = new Map(), fnSchedBusy = new Set();
+  async function fnSchedules(fns, from, to) {
+    const want = [...new Set((fns || []).map(f => clean(f).toUpperCase()))].filter(f => /^[A-Z0-9]{2,3}\d{1,5}[A-Z]?$/.test(f) && !fnSchedBusy.has(f) && !((m => m && now() - m.at < 3600e3 && m.from <= from + 7200 && m.to >= to - 7200)(fnSchedMemo.get(f))));
+    if (!want.length || !(await monReady())) return 0;
+    want.forEach(f => fnSchedBusy.add(f));
+    let got = 0;
+    try {
+      for (let i = 0; i < want.length; i += 40) {
+        const part = want.slice(i, i + 40); let j = null;
+        // (none had - an older monitor, or none answering: not asked again within the hour either)
+        try { j = await monGet(`/fnsched?fn=${part.map(encodeURIComponent).join(',')}&from=${Math.round(from)}&to=${Math.round(to)}`, { timeout: 12000 }); } catch (e) { j = null; }
+        const by = new Map(part.map(f => [f, []]));
+        for (const r of (j && Array.isArray(j.list) ? j.list : [])) if (Array.isArray(r) && by.has(r[0]) && /^[0-9a-f]{1,12}$/.test(String(r[1])) && (fin(r[2]) || fin(r[3]))) by.get(r[0]).push({ fid: String(r[1]), std: +r[2] || 0, sta: +r[3] || 0, from: +r[4] || 0, to: +r[5] || 0 });
+        for (const [f, list] of by) { fnSchedMemo.set(f, { at: now(), from, to, list }); got += list.length; }
+      }
+      while (fnSchedMemo.size > 500) fnSchedMemo.delete(fnSchedMemo.keys().next().value);
+    } finally { want.forEach(f => fnSchedBusy.delete(f)); }
+    return got;
+  }
+  // (a row's leg - its FR24 id, its times, its airports - under flight number fn: { std, sta } or null)
+  function schedOfLeg(l, fn) {
+    const m = fn && fnSchedMemo.get(clean(fn).toUpperCase()); if (!m || !m.list.length || !l) return null;
+    const fid = String(l.fid || '').toLowerCase();
+    let s = fid ? m.list.find(x => x.fid === fid) : null;
+    if (!s) {
+      const off = l.tOff || l.tStart, on = l.tOn || (l.ended ? l.tEnd : 0), from = l.from && l.from.id, to = l.to && l.to.id;
+      let bd = 3 * 3600 + 1;
+      for (const x of m.list) {
+        if ((x.from && from && x.from !== from) || (x.to && to && x.to !== to)) continue;
+        const d = x.std && off ? Math.abs(x.std - off) : x.sta && on ? Math.abs(x.sta - on) : Infinity;
+        if (d < bd) { bd = d; s = x; }
+      }
+    }
+    return s ? { std: s.std || 0, sta: s.sta || 0 } : null;
+  }
+  // (the rows' flight numbers - once known - their scheduled times asked for, the rows drawn again when any came)
+  const wantScheds = (legs, redraw) => {
+    const ls = (legs || []).filter(l => l && !(l.std || l.sta) && (l.tOff || l.tStart) > 0), fns = ls.map(l => l.fn || fnKnown(l.cs)).filter(Boolean);
+    if (!fns.length) return Promise.resolve(0);
+    // (the whole year of the log at once: asked once an hour, however many times the rows are drawn as the log comes in)
+    const ts = ls.map(l => l.tOff || l.tStart);
+    return fnSchedules(fns, Math.min(Math.min(...ts) - 86400, nowS() - (HISTORY_DAYS + 1) * 86400), Math.max(Math.max(...ts) + 86400, nowS())).then(n => { if (n && redraw) redraw(); return n; }).catch(e => { log('scheduled times', String(e && e.message || e)); return 0; });
+  };
   // (an airline's callsign - three letters and a number: FR24's airline of that ICAO code, its id for the logo)
   const csAirlineId = cs => { const c = /^([A-Z]{3})\d/.exec(clean(cs).toUpperCase()); return (c && fr24.byIcao.get(c[1])) || 0; };
   // (the aircraft's operator or owner as the registers have it - asked of them, a few seconds at most: the page may have
@@ -23857,7 +23909,7 @@ html.tl-no-strip .tl-strip{display:none!important}
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true }); else start();
   }
   }
-  try { (pageWindow()).__tweeksLadd = { version: VERSION, t143: { pbFr24First, fr24PbParse, fr24TrackSend, fr24TrackSent, pbFr24Whole, onPbRelated, endsCellsNow: typeof endsCellsNow === 'function' ? endsCellsNow : null }, oaTest: { buildAirports, oaSet, closestOf, oaPageRef, oaIdNear, learnSite, oaAp, oaCity, apById, fr24Ap }, msgCount, datalinkPlan, planSpent, schedPlan, datalinkRoutes, surgeNow, morphHtml, photoJob, photosOut, monPhotos, routeSearch, onNeedNaRoutes, onTopNeed, naFromTrail, naWanted, fr24Trail, schedOf, trailFor, get shownId() { return shownId; }, posStats, get bridgeV() { return bridgeV; }, hexOfId, currentPos, idHex, engine: ENGINE, live, pending, telemetry, store, routeState, planState, globalList, fr24, todayCache, sweep, resolveTargeted, routeFor, composeRoute, composeRoute0, centralOf, calcWhy, calcGot, calcSent, calcAsk, calcFlush, calcEvidence, calcNow, calcExtra, localView, hexCalcId, altsOf, holdTerminal, termHold, worldScan, refreshLists, quickRouteAll, historyPump, histPumped, learnedStore, regCountry, fr24Sched, pubRouted, pubRecs, privatePlace, loadSites, siteNear, sites, onSched, pubMem: () => pubMem, publishRoute, syncPanel, normalizeReadsb, telemOf, noteCands, csOfRec, warmHist, hostStat, wantWx, wxMap, wantNotams, closedMap, estimateEta, nNumberHex, watchList, pollWatch, accStore, accNote, statsHtml, fleetList, checkHealth, health, exportCsv, predictForHex, verifyAgainstList, strikes, revokedIds, fr24Named, noteFr24Named, loadHistory, loadToday, readTrace, classifyTrace, fetchTrace, netState, NETS, sourcesHtml, logGaps, fetchJetphotos, loadRunways, knownLegs, areaCache, pollView, saveSnapshot, boardNoteLegs, boardNoteFlight, boardNoteSched, boardScrub, boardLoad, boardList, naRouteOf, naEvidenceOf, pbWhere, pbFlight, pbSynId, onPbPage, legRowHtml, pbHashPlay, noteNa, naFeed, matchParked, parkedTick, isProv, adopt, recordFromMatch, matchAgainstList, verifyAll, fillAircraftHeader, ownersOut, identityToMonitor, matchByTraces, boardDrain, boardMem, onNeedBoard, operatorOf, shownOwner, enrich, userConfirm, userDestOf, monGet, monPost, monCheck, noteFr24Blocked, monLive, monUp, MON_DEFAULTS, get monBase() { return monBase; }, liveSources, tatSource: TAT_SOURCE, telOut, noteTelOut, reportTel, pbOut, srvIds, pullSrvIds, srvAdopt, reportToMonitor, srvRoute, srvRec, crowdOf, routesOut, routesSent, noteRouteOut, noteRouteWithdrawn, learnFromLeg, learnOutTake, learnOutBack, get learnOutN() { return learnOut.length; }, get feedHdr() { return feedHdr; }, boardMonFill, natRowOf, fnRows, buildSnapshot, bootHold, firAt, loadFir, onAirAsk, pb, onPbFeed, onPbFollow, onPbHex, pbRouteFor, pbMatch, pbFromMonitor, onNeedRoutes, onNeedAirportData, onNeedAirportPanel, liveBoardRows, runwaysOf, parseRunwayEnds, flightsOfCallsign, bootFlightPage, unlockExports, exportFile, rowWindow, hexOfFid, onNeedSearch, osmPick, wantOsmPlace, osmPlaceAt, learnSite, siteIdAt, siteBk, siteRow, apById, operatorIdOf, airlineIdByName, fr24Cat, onHistElsewhere, get viewBox() { return viewBox; }, get selectedId() { return currentId(); }, opt, setOpt, notify, openUnblockWindow, closeUnblockWindow, ensureBarButton, findBar, checkLatest, installKind, sayHello, helloSt, ubBanners, ubOffer, installId, pb141: { pbFlight, pbInfo, csFlightNumber, pbOperator, pbLegNear, pbLegOfPts, pbRunways, fnOlderRows } }; } catch (_) { /* ignore */ }
+  try { (pageWindow()).__tweeksLadd = { version: VERSION, t143: { pbFr24First, fr24PbParse, fr24TrackSend, fr24TrackSent, pbFr24Whole, onPbRelated, endsCellsNow: typeof endsCellsNow === 'function' ? endsCellsNow : null, fnSchedules, schedOfLeg, wantScheds, legRowHtml, csFnMemo }, oaTest: { buildAirports, oaSet, closestOf, oaPageRef, oaIdNear, learnSite, oaAp, oaCity, apById, fr24Ap }, msgCount, datalinkPlan, planSpent, schedPlan, datalinkRoutes, surgeNow, morphHtml, photoJob, photosOut, monPhotos, routeSearch, onNeedNaRoutes, onTopNeed, naFromTrail, naWanted, fr24Trail, schedOf, trailFor, get shownId() { return shownId; }, posStats, get bridgeV() { return bridgeV; }, hexOfId, currentPos, idHex, engine: ENGINE, live, pending, telemetry, store, routeState, planState, globalList, fr24, todayCache, sweep, resolveTargeted, routeFor, composeRoute, composeRoute0, centralOf, calcWhy, calcGot, calcSent, calcAsk, calcFlush, calcEvidence, calcNow, calcExtra, localView, hexCalcId, altsOf, holdTerminal, termHold, worldScan, refreshLists, quickRouteAll, historyPump, histPumped, learnedStore, regCountry, fr24Sched, pubRouted, pubRecs, privatePlace, loadSites, siteNear, sites, onSched, pubMem: () => pubMem, publishRoute, syncPanel, normalizeReadsb, telemOf, noteCands, csOfRec, warmHist, hostStat, wantWx, wxMap, wantNotams, closedMap, estimateEta, nNumberHex, watchList, pollWatch, accStore, accNote, statsHtml, fleetList, checkHealth, health, exportCsv, predictForHex, verifyAgainstList, strikes, revokedIds, fr24Named, noteFr24Named, loadHistory, loadToday, readTrace, classifyTrace, fetchTrace, netState, NETS, sourcesHtml, logGaps, fetchJetphotos, loadRunways, knownLegs, areaCache, pollView, saveSnapshot, boardNoteLegs, boardNoteFlight, boardNoteSched, boardScrub, boardLoad, boardList, naRouteOf, naEvidenceOf, pbWhere, pbFlight, pbSynId, onPbPage, legRowHtml, pbHashPlay, noteNa, naFeed, matchParked, parkedTick, isProv, adopt, recordFromMatch, matchAgainstList, verifyAll, fillAircraftHeader, ownersOut, identityToMonitor, matchByTraces, boardDrain, boardMem, onNeedBoard, operatorOf, shownOwner, enrich, userConfirm, userDestOf, monGet, monPost, monCheck, noteFr24Blocked, monLive, monUp, MON_DEFAULTS, get monBase() { return monBase; }, liveSources, tatSource: TAT_SOURCE, telOut, noteTelOut, reportTel, pbOut, srvIds, pullSrvIds, srvAdopt, reportToMonitor, srvRoute, srvRec, crowdOf, routesOut, routesSent, noteRouteOut, noteRouteWithdrawn, learnFromLeg, learnOutTake, learnOutBack, get learnOutN() { return learnOut.length; }, get feedHdr() { return feedHdr; }, boardMonFill, natRowOf, fnRows, buildSnapshot, bootHold, firAt, loadFir, onAirAsk, pb, onPbFeed, onPbFollow, onPbHex, pbRouteFor, pbMatch, pbFromMonitor, onNeedRoutes, onNeedAirportData, onNeedAirportPanel, liveBoardRows, runwaysOf, parseRunwayEnds, flightsOfCallsign, bootFlightPage, unlockExports, exportFile, rowWindow, hexOfFid, onNeedSearch, osmPick, wantOsmPlace, osmPlaceAt, learnSite, siteIdAt, siteBk, siteRow, apById, operatorIdOf, airlineIdByName, fr24Cat, onHistElsewhere, get viewBox() { return viewBox; }, get selectedId() { return currentId(); }, opt, setOpt, notify, openUnblockWindow, closeUnblockWindow, ensureBarButton, findBar, checkLatest, installKind, sayHello, helloSt, ubBanners, ubOffer, installId, pb141: { pbFlight, pbInfo, csFlightNumber, pbOperator, pbLegNear, pbLegOfPts, pbRunways, fnOlderRows } }; } catch (_) { /* ignore */ }
   log('loaded v' + VERSION);
 
 })();

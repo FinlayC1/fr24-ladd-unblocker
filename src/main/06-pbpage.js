@@ -221,6 +221,53 @@
   const fnKnown = cs => { const c = clean(cs).toUpperCase(), m = csFnMemo.get(c); return (m && m.fn) || csfnOf(c); };
   // (the rows' callsigns: their flight numbers asked for, the rows drawn again when any came)
   const wantFns = (legs, redraw) => csFlightNumbers((legs || []).map(l => l && l.cs)).then(n => { if (n && redraw) redraw(); }).catch(e => log('flight numbers', String(e && e.message || e)));
+  // ---- (1.4.3) FR24's scheduled times of a log's rows FR24 no longer shows (older than its week): kept by the monitor
+  // from FR24's own boards, schedules and log rows (/fnsched, fr24fn.cjs noteSched), by flight number - [{ fid, std, sta,
+  // from, to }] and the window asked for. A row's: by FR24's id, else its number's flight nearest its times (three hours at
+  // most) whose airports are not other than the row's
+  const fnSchedMemo = new Map(), fnSchedBusy = new Set();
+  async function fnSchedules(fns, from, to) {
+    const want = [...new Set((fns || []).map(f => clean(f).toUpperCase()))].filter(f => /^[A-Z0-9]{2,3}\d{1,5}[A-Z]?$/.test(f) && !fnSchedBusy.has(f) && !((m => m && now() - m.at < 3600e3 && m.from <= from + 7200 && m.to >= to - 7200)(fnSchedMemo.get(f))));
+    if (!want.length || !(await monReady())) return 0;
+    want.forEach(f => fnSchedBusy.add(f));
+    let got = 0;
+    try {
+      for (let i = 0; i < want.length; i += 40) {
+        const part = want.slice(i, i + 40); let j = null;
+        // (none had - an older monitor, or none answering: not asked again within the hour either)
+        try { j = await monGet(`/fnsched?fn=${part.map(encodeURIComponent).join(',')}&from=${Math.round(from)}&to=${Math.round(to)}`, { timeout: 12000 }); } catch (e) { j = null; }
+        const by = new Map(part.map(f => [f, []]));
+        for (const r of (j && Array.isArray(j.list) ? j.list : [])) if (Array.isArray(r) && by.has(r[0]) && /^[0-9a-f]{1,12}$/.test(String(r[1])) && (fin(r[2]) || fin(r[3]))) by.get(r[0]).push({ fid: String(r[1]), std: +r[2] || 0, sta: +r[3] || 0, from: +r[4] || 0, to: +r[5] || 0 });
+        for (const [f, list] of by) { fnSchedMemo.set(f, { at: now(), from, to, list }); got += list.length; }
+      }
+      while (fnSchedMemo.size > 500) fnSchedMemo.delete(fnSchedMemo.keys().next().value);
+    } finally { want.forEach(f => fnSchedBusy.delete(f)); }
+    return got;
+  }
+  // (a row's leg - its FR24 id, its times, its airports - under flight number fn: { std, sta } or null)
+  function schedOfLeg(l, fn) {
+    const m = fn && fnSchedMemo.get(clean(fn).toUpperCase()); if (!m || !m.list.length || !l) return null;
+    const fid = String(l.fid || '').toLowerCase();
+    let s = fid ? m.list.find(x => x.fid === fid) : null;
+    if (!s) {
+      const off = l.tOff || l.tStart, on = l.tOn || (l.ended ? l.tEnd : 0), from = l.from && l.from.id, to = l.to && l.to.id;
+      let bd = 3 * 3600 + 1;
+      for (const x of m.list) {
+        if ((x.from && from && x.from !== from) || (x.to && to && x.to !== to)) continue;
+        const d = x.std && off ? Math.abs(x.std - off) : x.sta && on ? Math.abs(x.sta - on) : Infinity;
+        if (d < bd) { bd = d; s = x; }
+      }
+    }
+    return s ? { std: s.std || 0, sta: s.sta || 0 } : null;
+  }
+  // (the rows' flight numbers - once known - their scheduled times asked for, the rows drawn again when any came)
+  const wantScheds = (legs, redraw) => {
+    const ls = (legs || []).filter(l => l && !(l.std || l.sta) && (l.tOff || l.tStart) > 0), fns = ls.map(l => l.fn || fnKnown(l.cs)).filter(Boolean);
+    if (!fns.length) return Promise.resolve(0);
+    // (the whole year of the log at once: asked once an hour, however many times the rows are drawn as the log comes in)
+    const ts = ls.map(l => l.tOff || l.tStart);
+    return fnSchedules(fns, Math.min(Math.min(...ts) - 86400, nowS() - (HISTORY_DAYS + 1) * 86400), Math.max(Math.max(...ts) + 86400, nowS())).then(n => { if (n && redraw) redraw(); return n; }).catch(e => { log('scheduled times', String(e && e.message || e)); return 0; });
+  };
   // (an airline's callsign - three letters and a number: FR24's airline of that ICAO code, its id for the logo)
   const csAirlineId = cs => { const c = /^([A-Z]{3})\d/.exec(clean(cs).toUpperCase()); return (c && fr24.byIcao.get(c[1])) || 0; };
   // (the aircraft's operator or owner as the registers have it - asked of them, a few seconds at most: the page may have

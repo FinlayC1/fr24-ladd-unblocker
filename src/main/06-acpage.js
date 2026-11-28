@@ -63,8 +63,10 @@
     const acMob = ac && ac.reg ? `<a class="fbold" href="/data/aircraft/${esc(ac.reg.toLowerCase())}" title="${esc(ac.desc || ac.type || '')}">${esc(ac.reg)}</a>` : '';
     // (1.4.1: an airline's flight by its flight number, as FR24's own rows - FR24's number of that callsign)
     const fn = !ac && cs ? fnKnown(cs) : '', fnDesk = fn ? ` <a class="fbold" href="/data/flights/${esc(fn.toLowerCase())}" title="${esc(cs)} - its flight number as Flightradar24 shows it (LADD unblocker)">${esc(fn)}</a> ` : '';
+    // (1.4.3: FR24's scheduled times of it, kept by the monitor - the leg's own (a flight number's rows), else its number's)
+    const sc = l.std || l.sta ? { std: l.std || 0, sta: l.sta || 0 } : schedOfLeg(l, l.fn || fn);
     return logRowHtml({ t0: l.tStart, tz, tzTo, flight: ac ? acDesk || '—' : fnDesk || (cs ? `(${esc(cs)})` : '—'), flightMob: ac ? acMob || '—' : '', dur: (flown ? (onEst || offEst ? '~' : '') + durStr(flown) : '—') + (l.laps > 1 ? ` · ${l.laps} laps` : ''),
-      stdTs: 0, atdTs: tOff, staTs: 0, color: landed ? 'green' : 'gray', atdEst: offEst, onEst, estTitle: 'reckoned from the nearest position heard (no receiver heard this part)',
+      stdTs: (sc && sc.std) || 0, atdTs: tOff, staTs: (sc && sc.sta) || 0, color: landed ? 'green' : 'gray', atdEst: offEst, onEst, estTitle: 'reckoned from the nearest position heard (no receiver heard this part)',
       statusPrefix: landed && tOn ? (onEst ? 'Landed ~' : 'Landed ') : '', statusTs: tOn || 0, statusText: landed ? (tOn ? `Landed ${onEst ? '~' : ''}${fmtLocal(tOn, tzTo)}` : 'Landed · time unknown') : (l.ended ? 'Landed (airport unknown)' : 'Unknown'),
       from: siteFrom ? SITE_CELLS : apCells(from, l.from && l.from.conf), to: siteTo ? SITE_CELLS : apCells(to, l.to && l.to.conf),
       btn: playCellHtml(l, hex, ac && ac.reg ? ac.reg : reg, flown) });
@@ -952,6 +954,8 @@
             const legs = knownLegs(hex0).filter(l => (l.from || l.to || l.tEnd - l.tStart > 600) && (l.tOff || l.tStart) < cut - 1800 && (l.tOff || l.tStart) > nowS() - days * 86400).sort((a, b) => b.tStart - a.tStart);
             const html = legs.map(l => legRowHtml(l, hex0, reg)).join('');
             olderFn = wantFns(legs, () => renderOlder(null, 1, 1));
+            // (1.4.3: their scheduled times, FR24's, kept by the monitor - once their flight numbers are in)
+            olderFn.then(() => wantScheds(legs, () => renderOlder(null, 1, 1)));
             if (html !== tail.dataset.html) {
               tbody.querySelectorAll('tr.tl-adsb-row').forEach(r => r.remove());
               if (!tail.parentNode) tbody.appendChild(tail);
@@ -1047,6 +1051,7 @@
         const legs = legsOf();
         const shown = liveState ? legs.filter(l => l.ended || l.tEnd < (liveState.departedAt || 0) - 60) : legs;
         run.fnP = wantFns(shown, render);
+        run.fnP.then(() => wantScheds(shown, () => { if (current === run) render(); }));
         const html = (liveState ? liveRowHtml(liveState, hex, reg) : '') + shown.map(l => legRowHtml(l, hex, reg)).join('');
         if (!foot.parentNode) tbody.appendChild(foot);
         (loading.parentNode ? loading : foot).insertAdjacentHTML('beforebegin', html);
@@ -1199,7 +1204,7 @@
     const ap = (c, id) => { const b = fin(id) && id > 0 ? apById(id) : null; if (b) return { id: b.id }; c = clean(c).toUpperCase(); const a = /^[A-Z0-9]{3}$/.test(c) ? airports.byIata.get(c) : null; return a ? { id: a.id } : null; };
     const rows = list.sort((a, b) => b.t0 - a.t0).map(x => {
       const hex = /^[0-9a-f]{6}$/.test(x.hex || '') ? x.hex : '', hx = hex ? store.getHex(hex) || {} : {}, reg = clean(x.reg || hx.reg || '').toUpperCase();
-      const leg = { fid: x.w ? '' : String(x.fid), tStart: x.t0, tEnd: x.t1, tOff: x.t0, tOn: x.t1, tOffEst: true, tOnEst: true, from: ap(x.from, x.fromId), to: ap(x.to, x.toId), ended: true, cs: clean(x.cs || '') };
+      const leg = { fid: x.w ? '' : String(x.fid), tStart: x.t0, tEnd: x.t1, tOff: x.t0, tOn: x.t1, tOffEst: true, tOnEst: true, from: ap(x.from, x.fromId), to: ap(x.to, x.toId), ended: true, cs: clean(x.cs || ''), std: fin(x.std) && x.std > 1e9 ? x.std : 0, sta: fin(x.sta) && x.sta > 1e9 ? x.sta : 0 };
       return legRowHtml(leg, hex, reg, { reg, type: clean(x.type || hx.type || ''), desc: modelName(hx) || clean(x.type || '') }).replace('<tr class=" data-row tl-adsb-row', '<tr class=" data-row tl-adsb-row tl-fn-old');
     });
     const nw = list.filter(x => x.w).length, nf = list.length - nw;

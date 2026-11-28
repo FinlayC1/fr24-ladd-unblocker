@@ -287,6 +287,67 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     } catch (e) { check('... a flight number\'s flights of a year (fr24fn.cjs)', false, String(e && e.stack || e).slice(0, 300)); }
     finally { fs.rmSync(store, { recursive: true, force: true }); }
   }
+  // ======== FR24's scheduled times kept a year (STD and STA of rows older than FR24's week) ================================
+  {
+    const os = require('os'), { createFnIndex } = require('../monitor/fr24fn.cjs'), { cleanRow, schedOk, createBoards } = require('../monitor/boards.cjs');
+    const store = fs.mkdtempSync(path.join(os.tmpdir(), 'sched-'));
+    try {
+      const T = Math.floor(Date.now() / 1000), dep = T - 3 * 86400, arr = dep + 3 * 3600 - 300;
+      // (boards' rows: FR24's own scheduled time marked (sx) - read as such, or FR24's own row saying so; a row whose time is
+      // the one it flew (no schedule) not marked)
+      const marked = cleanRow({ src: 'sched', k: 'f42aa0001', fid: '42aa0001', num: 'FR4031', cs: 'RYR4031', t: dep + 600, sch: dep, sx: 1, ap: 2 }, T);
+      const byNat = cleanRow({ src: 'fr24', k: 'f42aa0002', fid: '42aa0002', num: 'FR4031', t: dep + 600, sch: dep, nat: { scheduledTime: dep, estimatedTime: dep + 600 } }, T);
+      const flown = cleanRow({ src: 'sched', k: 'f42aa0003', fid: '42aa0003', num: 'FR4031', t: dep + 600, sch: dep + 600 }, T);
+      check('boards: a row\'s time marked FR24\'s schedule where it was read as such or FR24\'s own row says so - not one that is the time it flew', marked.sx === 1 && byNat.sx === 1 && !flown.sx && schedOk({ sx: 1 }) && !schedOk({ sch: dep, nat: { scheduledTime: dep + 60 } }));
+      const IX = createFnIndex({ store });
+      // (Liverpool's departures and Faro's arrivals of FR4031; a light aircraft's row (no flight number) and an unmarked one)
+      check('the index: FR24\'s departure time from the departures row, its arrival from the arrivals row', IX.noteSched(marked, 1, 'departures') === true && IX.noteSched(Object.assign({}, marked, { sch: arr, ap: 1 }), 2, 'arrivals') === true);
+      check('... a flight without a flight number, or a time not FR24\'s schedule: not kept', IX.noteSched({ fid: '42aa0009', sx: 1, sch: dep, num: '' }, 1, 'departures') === false && IX.noteSched(flown, 1, 'departures') === false);
+      check('... the same again: nothing new', IX.noteSched(marked, 1, 'departures') === false);
+      // (the flight over: written to its month's file; asked for by its number)
+      check('... written once the flight is over (twelve hours after)', IX.schFlush(T) === 1 && IX.scheduled === 0 && fs.readdirSync(path.join(store, 'fr24fn', new Date(dep * 1000).toISOString().slice(0, 7))).some(f => /^S[0-9a-f]{2}\.txt$/.test(f)));
+      const got = await IX.sched(['FR4031'], T - 400 * 86400, T);
+      check('... asked for by its number: FR24\'s id, STD, STA, Liverpool to Faro', got.length === 1 && got[0].fid === '42aa0001' && got[0].std === dep && got[0].sta === arr && got[0].from === 1 && got[0].to === 2, got);
+      check('... seen again unchanged after it was written: not written twice', IX.noteSched(marked, 1, 'departures') === false && IX.scheduled === 0);
+      // (matched to flights: by FR24's id; one without it (the world log's) by its number and time and airports)
+      const fl = [{ fid: '42aa0001', fn: 'FR4031', t0: dep + 700, t1: arr }, { fid: '', fn: 'FR4031', t0: dep + 900, t1: arr + 600, fromId: 1, toId: 2 }, { fid: '', fn: 'FR4031', t0: dep + 5 * 3600, t1: dep + 8 * 3600 }];
+      IX.schedMatch([fl[0]], got); IX.schedMatch([fl[1]], got); IX.schedMatch([fl[2]], got);
+      check('... a flight given them by FR24\'s id; one of the world log by its number, time and airports; one five hours off none', fl[0].std === dep && fl[0].sta === arr && fl[1].std === dep && fl[2].std === undefined, fl);
+      // (kept over a restart: one not over yet)
+      IX.noteSched(Object.assign({}, marked, { fid: '42aa0005', k: 'f42aa0005', sch: T + 3600 }), 1, 'departures'); IX.save(T);
+      const IX2 = createFnIndex({ store }); IX2.load(T);
+      check('... a flight not over yet kept over a restart', IX2.scheduled === 1 && (await IX2.sched(['FR4031'], T - 86400, T + 86400)).some(x => x.fid === '42aa0005'));
+      // (the boards kept on disk, gone through once: their scheduled times noted)
+      const BD = createBoards({ store, E: null, cfg: { fetch: false } }), seen = [];
+      BD.put(1, 'departures', [{ src: 'fr24', k: 'f42aa0007', fid: '42aa0007', num: 'FR4032', t: dep, sch: dep, nat: { scheduledTime: dep } }], 'crowd', T); BD.save(T);
+      await BD.eachRow((r, ap, kind) => seen.push([r.fid, ap, kind, r.sx]));
+      check('boards: every row kept gone through, FR24\'s scheduled times marked (the rows of the week before this version)', seen.some(x => x[0] === '42aa0007' && x[1] === 1 && x[2] === 'departures' && x[3] === 1), seen);
+    } catch (e) { check('FR24\'s scheduled times (fr24fn.cjs, boards.cjs)', false, String(e && e.stack || e).slice(0, 400)); }
+    finally { fs.rmSync(store, { recursive: true, force: true }); }
+    const mon = fs.readFileSync(path.join(__dirname, '../monitor/monitor.cjs'), 'utf8'), bds = fs.readFileSync(path.join(__dirname, '../src/main/06-boards.js'), 'utf8');
+    check('the monitor: boards\' rows noted (with their airport and kind), those kept gone through once, /fnsched, /fr24fn\'s flights given theirs', /onRow: \(r, ap, kind\) => \{[^}]*FN\.noteSched\(r, ap, kind\)/.test(mon) && /BD\.eachRow\(\(r, ap, kind\) => FN\.noteSched\(r, ap, kind\)\)/.test(mon) && /p === '\/fnsched'/.test(mon) && /FN\.schedFor\(all,/.test(mon));
+    check('browsers: their boards\' rows marked where the time is FR24\'s schedule (its map boards, its schedules, its log rows)', (bds.match(/sx: /g) || []).length === 5);
+  }
+  // ---- a log's rows older than FR24's week: FR24's STD and STA as the monitor kept them
+  {
+    const dep = Math.floor(Date.now() / 1000) - 20 * 86400, sta = dep + 3 * 3600 - 300, LPLa = AP('LPL'), FAO = AP('FAO');
+    const w = makeWin('https://www.flightradar24.com/', { component: 'MapPage', props: {} }, { answer: u => u.startsWith(MON + '/fnsched?fn=FR4031') ? [5, 200, JSON.stringify({ v: 1, list: [['FR4031', '42aa0001', dep, sta, LPLa.id, FAO.id], ['FR4031', '42aa0011', dep + 86400 * 2, sta + 86400 * 2, LPLa.id, FAO.id]] })] : null });
+    await sleep(1500);
+    const X = w.__tweeksLadd.t143;
+    X.csFnMemo.set('RYR4031', { fn: 'FR4031', at: Date.now() });
+    // (a row rebuilt from public ADS-B - no FR24 id - its take-off 9 minutes after the scheduled time)
+    const leg = { tStart: dep + 540, tEnd: sta - 900, tOff: dep + 540, tOn: sta - 900, ended: true, cs: 'RYR4031', from: { id: LPLa.id }, to: { id: FAO.id } };
+    const before = X.legRowHtml(leg, '4ca24d', 'EI-DCY');
+    let redrawn = 0; const n = await X.wantScheds([leg], () => redrawn++);
+    const html = X.legRowHtml(leg, '4ca24d', 'EI-DCY'), d = w.document.createElement('table'); d.innerHTML = '<tbody>' + html + '</tbody>';
+    const cells = [...d.querySelectorAll('tr.data-row > td')].map(td => td.textContent.replace(/\s+/g, ' ').trim()), stdCell = [...d.querySelectorAll('td')].find(td => Number(td.dataset.timestamp) === dep), staCell = [...d.querySelectorAll('td')].find(td => Number(td.dataset.timestamp) === sta);
+    check('a row of 20 days ago (FR24 no longer shows it): FR24\'s STD and STA from the monitor, the rows drawn again', n === 2 && redrawn === 1 && !before.includes(`data-timestamp="${dep}"`) && !!stdCell && !!staCell, { n, redrawn, cells: cells.slice(0, 12) });
+    check('... asked once: the year at once, not again as the rows are drawn again', (await X.wantScheds([leg], () => redrawn++)) === 0 && w.__asked.filter(a => /\/fnsched/.test(a.u)).length === 1);
+    // (its flight number's other flight, two days on, not taken for it; one with no flight number none)
+    const other = Object.assign({}, leg, { tStart: dep + 86400, tOff: dep + 86400, tOn: sta + 86400 - 900, tEnd: sta + 86400 - 900 });
+    check('... a flight of the number a day on (no scheduled flight within three hours): none; a light aircraft\'s row: none', X.schedOfLeg(other, 'FR4031') === null && X.schedOfLeg(Object.assign({}, leg, { cs: 'GABCD' }), '') === null);
+    w.close();
+  }
   console.log(fails ? `\n${fails} failed` : '\nall passed');
   process.exit(fails ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(1); });

@@ -39,7 +39,16 @@ function cleanRow(r, nowS) {
     ty: str(r.ty, /^[A-Z0-9-]{1,8}$/i, 8).toUpperCase(), reg: str(r.reg, /^[A-Z0-9-]{1,10}$/i, 10).toUpperCase(), hex: str(r.hex, /^[0-9a-f]{6}$/i, 6).toLowerCase() };
   for (const f of Object.keys(o)) if (o[f] === '' || o[f] === 0) delete o[f];
   if (r.nat && typeof r.nat === 'object') { const n = plain(r.nat, 0); if (n && JSON.stringify(n).length <= 4096) o.nat = n; }
+  if (schedOk(Object.assign({}, r, { sch: o.sch, nat: o.nat }))) o.sx = 1;
   return o;
+}
+// (1.4.3) a row's time is FR24's own scheduled one - marked so where it was read (sx), or FR24's own row of it says so
+// (its scheduledTime): not the time it flew, taken for one where FR24 had none
+function schedOk(r) {
+  if (!r) return false;
+  if (r.sx === 1) return true;
+  const n = r.nat, st = n && typeof n === 'object' ? Number(n.scheduledTime) : 0;
+  return st > 1e9 && Math.round(st) === num(r.sch);
 }
 // (two copies of one row: the one further on - departed over scheduled - stands, what it lacks taken from the other; of
 // two alike, the newer. FR24's own row merged the same way)
@@ -85,8 +94,8 @@ function schedRows(E, data, apId, kind) {
     const icao = clean(x.airline && x.airline.code && x.airline.code.icao).toUpperCase();
     const base = { src: 'sched', fid, id: Number(idn.row) || 0, cs, num: nm, al: clean(x.airline && x.airline.name), alIcao: icao, ty: clean(x.aircraft && x.aircraft.model && x.aircraft.model.code), reg: clean(x.aircraft && x.aircraft.registration), hex: clean(x.aircraft && x.aircraft.hex).toLowerCase() };
     const dep = re.departure || es.departure || sc.departure, arr = re.arrival || es.arrival || sc.arrival;
-    if (kind === 'departures' && o === apId && dep) out.push(Object.assign({ nat: natOf(x, 'departures'), k, t: dep, sch: sc.departure || dep, est: dep, st: cx ? 'canceled' : re.departure ? 'departed' : 'scheduled', col: cx ? 'red' : re.departure ? 'green' : 'gray', ap: d }, base));
-    if (kind === 'arrivals' && d === apId && arr) out.push(Object.assign({ nat: natOf(x, 'arrivals'), k, t: arr, sch: sc.arrival || arr, est: arr, st: cx ? 'canceled' : dv ? 'diverted' : re.arrival ? 'landed' : es.arrival ? 'estimated' : 'scheduled', col: cx || dv ? 'red' : re.arrival || es.arrival ? 'green' : 'gray', ap: o }, base));
+    if (kind === 'departures' && o === apId && dep) out.push(Object.assign({ nat: natOf(x, 'departures'), k, t: dep, sch: sc.departure || dep, sx: sc.departure ? 1 : 0, est: dep, st: cx ? 'canceled' : re.departure ? 'departed' : 'scheduled', col: cx ? 'red' : re.departure ? 'green' : 'gray', ap: d }, base));
+    if (kind === 'arrivals' && d === apId && arr) out.push(Object.assign({ nat: natOf(x, 'arrivals'), k, t: arr, sch: sc.arrival || arr, sx: sc.arrival ? 1 : 0, est: arr, st: cx ? 'canceled' : dv ? 'diverted' : re.arrival ? 'landed' : es.arrival ? 'estimated' : 'scheduled', col: cx || dv ? 'red' : re.arrival || es.arrival ? 'green' : 'gray', ap: o }, base));
   }
   return out;
 }
@@ -124,7 +133,7 @@ function createBoards(env) {
     const b = load(apId), m = kind === 'arrivals' ? b.arr : b.dep; let n = 0;
     for (const r0 of rows.slice(0, 2000)) {
       const r = cleanRow(r0, nowS); if (!r) { S.refused++; continue; }
-      if (env.onRow) try { env.onRow(r); } catch (e) { /* the hook's own */ }
+      if (env.onRow) try { env.onRow(r, apId, kind); } catch (e) { /* the hook's own */ }
       const key = r.src + '|' + r.k, cur = m.get(key), nx = cur ? mergeRow(cur, r) : r;
       if (cur) { const a = Object.assign({}, cur), z = Object.assign({}, nx); delete a.u; delete z.u; if (same(a, z)) continue; }
       nx.u = Math.round(nowS); m.set(key, nx); n++;
@@ -238,7 +247,21 @@ function createBoards(env) {
     }
     return n;
   }
-  return { put, rows, want, counts, save, pump, load, sweep, stats: S, wanted, C };
+  // (1.4.3) every row kept on disk and in memory, each airport in turn (a yield between them): cb(row, apId, kind) - FR24's
+  // scheduled times of the week kept before they were noted on their own (fr24fn.cjs noteSched)
+  async function eachRow(cb) {
+    let ids = []; try { ids = fs.readdirSync(dir).map(f => (/^(\d+)\.json\.gz$/.exec(f) || [])[1]).filter(Boolean).map(Number); } catch (e) { ids = []; }
+    for (const id of mem.keys()) if (!ids.includes(id)) ids.push(id);
+    let n = 0;
+    for (const apId of ids) {
+      let b = mem.get(apId);
+      if (!b) { b = blank(); try { const o = JSON.parse(zlib.gunzipSync(fs.readFileSync(file(apId))).toString('utf8')); if (o && o.v === 1) { for (const r of o.arr || []) b.arr.set(r.src + '|' + r.k, r); for (const r of o.dep || []) b.dep.set(r.src + '|' + r.k, r); } } catch (e) { continue; } }
+      for (const [kind, m] of [['arrivals', b.arr], ['departures', b.dep]]) for (const r of m.values()) { try { cb(schedOk(r) ? Object.assign({}, r, { sx: 1 }) : r, apId, kind); n++; } catch (e) { /* the hook's own */ } }
+      await new Promise(r => setImmediate(r));
+    }
+    return n;
+  }
+  return { put, rows, want, counts, save, pump, load, sweep, eachRow, stats: S, wanted, C };
 }
 
-module.exports = { createBoards, cleanRow, mergeRow, schedRows, WIN };
+module.exports = { createBoards, cleanRow, mergeRow, schedRows, schedOk, WIN };
