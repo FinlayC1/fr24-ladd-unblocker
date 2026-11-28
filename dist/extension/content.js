@@ -48,7 +48,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
 // ==UserScript==
 // @name         Flightradar24 LADD / N-A Unblocker (feed-level)
 // @namespace    tweeks.io
-// @version      1.4.2
+// @version      1.4.3
 // @description  Identifies every LADD / N/A / blocked military aircraft on Flightradar24 from public ADS-B, and injects callsign, registration, operator, age, country, MSN, squawk, vertical speed, GPS altitude, airspeeds, wind, photos, a reasoned origin/destination with a wind-corrected ETA (also for ordinary flights FR24 shows as N/A - military, private, GA, helicopters, with private landing sites; learned from 63 days of every aircraft worldwide, with live weather and closures), airport-board entries and a rebuilt 7-month flight log straight into FR24's own data - so it all renders like normal FR24 traffic.
 // @author       Finlay Clarke
 // @updateURL    https://raw.githubusercontent.com/FinlayC1/fr24-ladd-unblocker/main/dist/fr24-ladd-unblocker.user.js
@@ -147,7 +147,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   function pageInterceptor() {
     'use strict';
     var NS = '__tweeksLaddBridge';
-    var BRIDGE_V = "1.4.2";
+    var BRIDGE_V = "1.4.3";
     if (window[NS]) { try { window[NS].hello(); } catch (e) { /* ignore */ } return; }
     // the switches of the LADD Unblock window (the userscript's; kept in localStorage, so known here at document start,
     // and updated by an 'opts' message when one is changed): everything off - nothing of this part is installed but the
@@ -2235,7 +2235,9 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     // Nothing of FR24's own is deleted now.)
     var BAE_LOGO = { source: 'https://upload.wikimedia.org/wikipedia/commons/thumb/7/73/BAE_Systems_logo.svg/250px-BAE_Systems_logo.svg.png', dimensions: { width: 250, height: 39 } };
     var LOGO_ADD = { 583: BAE_LOGO, 3046: BAE_LOGO, 582: BAE_LOGO };
-    var LISTS_V = '1';
+    // (1.4.3: '2' - FR24's airport list with no OurAirports airports in it: FR24 had the whole list again once, to drop the
+    // copy it kept with them)
+    var LISTS_V = '2';
     function logoOf(id) { return !id ? '' : LOGO_ADD[id] ? LOGO_ADD[id].source : 'https://cdn.flightradar24.com/assets/airlines/logotypes/' + id + '.png'; }
     function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
     function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* full or blocked */ } }
@@ -2260,7 +2262,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       return i < 0 ? s : s.slice(0, i).trim() || s.replace(/^[,\s]+|[,\s]+$/g, '').replace(/,\s*/g, ', ');
     }
     var siteRows = (function () { try { var l = JSON.parse(lsGet('tl.sites') || '[]'); return Array.isArray(l) ? l.map(function (r) { return r && typeof r === 'object' ? Object.assign({}, r, { name: placeShort(r.name), city: placeShort(r.city) }) : r; }) : []; } catch (e) { return []; } })();
-    function listSig(kind) { return kind === 'airlines' ? LISTS_V : LISTS_V + ':' + hashStr(JSON.stringify(siteRows)) + ':' + (lsGet('tl.oa.sig') || ''); }
+    function listSig(kind) { return kind === 'airlines' ? LISTS_V : LISTS_V + ':' + hashStr(JSON.stringify(siteRows)); }
     // ---- (1.3) Every OurAirports airport FR24 does not list (closed ones aside): airfields, strips, heliports, seaplane
     // and balloon bases - the monitor's list (oaap.cjs), by the userscript, each with the route engine's own id for it.
     // In FR24's airport list (its panel, boards, routes and search look airports up there), with its code (IATA, else
@@ -3225,10 +3227,15 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     // time FR24 makes the tables anew.
     var oaFillT = 0, oaFillAt = null;
     function rawOf(m) { return m && m.__v_raw ? m.__v_raw : m; }
+    // (once FR24's tables are there - its list read - and again whenever it makes them anew)
+    function oaFillSoon() { setTimeout(function () { try { oaFillTables(); } catch (e) { stats.errors++; stats.lastError = String(e); } }, 0); }
+    var oaFilled = null;
     function oaFillTables() {
       if (oaFillT) return;
       var st = pinStore('airports'), byId = st && rawOf(st.airportsById), byIata = st && rawOf(st.airportsByIata);
       if (!byId || typeof byId.set !== 'function' || !(byId.size > 100)) return;
+      // (these very tables given these very rows already: nothing to do)
+      if (oaFilled && oaFilled.byId === byId && oaFilled.rows === oaRows && oaFilled.sites === siteRows) return;
       var todo = (oaRows || []).slice(), sites = siteRows.slice(), i = 0;
       oaFillAt = byId;
       var step = function () {
@@ -3242,7 +3249,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
         }
         if (i < todo.length) { oaFillT = setTimeout(step, 0); return; }
         sites.forEach(function (a) { if (a && a.id > 9000000 && a.id < 1e7 && isFinite(a.lat)) { var o = storeForm(a); byId.set(o.id, o); if (byIata && o.iata && o.iata !== 'PVT' && !byIata.has(o.iata)) byIata.set(o.iata, o); } });
-        stats.oaTables = byId.size;
+        stats.oaTables = byId.size; oaFilled = { byId: byId, rows: oaRows, sites: siteRows };
       };
       oaFillT = setTimeout(step, 0);
     }
@@ -3261,7 +3268,8 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
         // FR24's own, never added beside it)
         noteFr24Codes(j.rows.filter(function (r) { return r && r.id < 9000000; }));
         siteRows.forEach(function (r) { if (r && r.id && !have[r.id]) j.rows.push(r); });
-        if (oaRows) oaRows.forEach(function (r) { if (Array.isArray(r) && r[0] >= 1e7 && !have[r[0]] && !oaDupe(r)) j.rows.push(oaFr24Row(r, refOf(r[5]))); });
+        // (1.4.3: no OurAirports airport in it - FR24's tables are given them in slices, oaFillTables)
+        oaFillSoon();
       }
       lsSet('tl.list.' + kind, listSig(kind));
       return true;
@@ -3279,7 +3287,8 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
         var st = pinStore('airports');
         if (!st || typeof st.$onAction !== 'function') return false;
         // (1.3: the OurAirports airports too - but for those in view, put in by oaMap)
-        var strip = function () { var a = st.airports; if (Array.isArray(a) && a.some(function (x) { return isSiteRow(x) || isOaRow(x); })) { oaBase = a.filter(function (x) { return !isSiteRow(x) && !isOaRow(x); }); oaShown = ''; st.airports = oaBase; oaMapSoon(); } else if (Array.isArray(a)) oaBase = a.filter(function (x) { return !isOaRow(x); }); noteFr24Codes(oaBase); oaFillTables(); };
+        // (1.4.3: and FR24's tables made anew: the OurAirports airports put back into them, a slice at a time)
+        var strip = function () { oaFillSoon(); var a = st.airports; if (Array.isArray(a) && a.some(function (x) { return isSiteRow(x) || isOaRow(x); })) { oaBase = a.filter(function (x) { return !isSiteRow(x) && !isOaRow(x); }); oaShown = ''; st.airports = oaBase; oaMapSoon(); } else if (Array.isArray(a)) oaBase = a.filter(function (x) { return !isOaRow(x); }); noteFr24Codes(oaBase); oaFillTables(); };
         st.$onAction(function (c) { if (c.name === 'setAirports') c.after(strip); }); strip();
         return true;
       } catch (e) { return false; }
@@ -3354,9 +3363,11 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       var kind = /airlines/.test(url) ? 'airlines' : 'airports', a = [].slice.call(args);
       // (a list FR24 takes to be up to date, while what is added to it is not: the whole list asked for)
       if (lsGet('tl.list.' + kind) !== listSig(kind) && /[?&]version=[1-9]/.test(url)) a[0] = url.replace(/([?&]version=)\d+/, '$10');
-      // (1.3: the OurAirports airports on their way from the userscript - waited for, 4 s at most, so FR24 keeps them in)
-      var ready = kind === 'airports' && !oaRows && lsGet('tl.oa.sig') ? new Promise(function (res) { oaWait.push(res); setTimeout(res, 4000); }) : null;
-      return Promise.resolve(ready).then(function () { return oFetch.apply(self, a); }).then(function (res) {
+      // (1.4.3: FR24's own list as it comes, at once - the OurAirports airports go into FR24's tables beside it, a slice at a
+      // time (oaFillTables). 1.3 to 1.4.2 held the list up to 4 s for them and put all some 63,000 into it: FR24 read and
+      // kept 70,000 airports before its map had a pin or a flight's airports a name - some 20 s on a phone, since 1.4.2
+      // had the OurAirports list in by then every time)
+      return oFetch.apply(self, a).then(function (res) {
         if (!res.ok) return res;
         return res.clone().json().then(function (j) { return patchList(kind, j) ? jsonResponse(res, j) : res; }, function () { return res; });
       });
@@ -5531,10 +5542,25 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       rwyUseTake(apId, d, true);
     }
     // (1.2.8) A card drawn before its runways were in: each one written into it as it comes - FR24's own cell, "N/A" till then
+    // (1.4.3) A card's end the airport's own answer has no runway for - its other end's airport above all, whose list was
+    // never asked: both of the flight's runways asked of the monitor by the flight (/rwyof - its id, else its aircraft and
+    // times: the userscript's pbRunways), once per card
+    var cardRwyAsked = new Map(), cardRwyRid = new Map(), cardRwySeq = 0;
+    function cardRwyMore(row, cd) {
+      if (cardRwyAsked.has(row) || !(cd.hex || mxFidHex(cd.fid))) return;
+      cardRwyAsked.set(row, null); if (cardRwyAsked.size > 400) cardRwyAsked.delete(cardRwyAsked.keys().next().value);
+      var rid = 'cr' + (++cardRwySeq); cardRwyRid.set(rid, row);
+      post('cardRwy', { rid: rid, hex: cd.hex || '', fid: mxFidHex(cd.fid) || '', o: cd.o || (cd.kind === 'departures' ? cd.apId : 0) || 0, d: cd.dst || (cd.kind !== 'departures' ? cd.apId : 0) || 0, atd: cd.atd || 0, ata: cd.ata || 0 });
+    }
+    function onCardRwyGot(d) {
+      var row = d && cardRwyRid.get(d.rid); if (!row) return; cardRwyRid.delete(d.rid);
+      cardRwyAsked.set(row, { off: typeof d.off === 'string' ? d.off.slice(0, 8) : '', on: typeof d.on === 'string' ? d.on.slice(0, 8) : '' });
+      cardRwyFill();
+    }
     function cardRwyFill() {
       var cards = document.querySelectorAll('[id^="airport_schedule_"], [data-testid^="airport-panel__schedules__flight__"]'), n = 0;
       for (var i = 0; i < cards.length; i++) {
-        var cd = cardInfo.get(rowIdOf(cards[i])), fid = cd && mxFidHex(cd.fid); if (!cd || (!fid && !cd.hex)) continue;
+        var row = rowIdOf(cards[i]), cd = cardInfo.get(row), fid = cd && mxFidHex(cd.fid); if (!cd || (!fid && !cd.hex)) continue;
         var dls = cards[i].querySelectorAll('dl');
         for (var j = 0; j < dls.length; j++) {
           var dt = dls[j].querySelector('dt'), dd = dls[j].querySelector('dd'), lab = textOf(dt).toLowerCase(); if (!dd) continue;
@@ -5542,7 +5568,9 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
           // (1.4.0: a blocked flight's - a row of this script's - by its address: its ADS-B track's runway as the monitor
           // logged it, at the board's airport for its own end)
           var endAp = end ? (cd.dst || (cd.kind !== 'departures' ? cd.apId : 0)) : (cd.o || (cd.kind === 'departures' ? cd.apId : 0));
-          var v = (fid && mxRwy.get(fid + ':' + end)) || (cd.hex && mxRwyByHex(endAp, cd.hex, end, end ? cd.ata : cd.atd)), cur = textOf(dd); if (!v || (cur && cur !== 'N/A' && cur !== '–')) continue;
+          var ask = cardRwyAsked.get(row), v = (fid && mxRwy.get(fid + ':' + end)) || (cd.hex && mxRwyByHex(endAp, cd.hex, end, end ? cd.ata : cd.atd)) || (ask && (end ? ask.on : ask.off)) || '', cur = textOf(dd);
+          if (cur && cur !== 'N/A' && cur !== '–') continue;
+          if (!v) { cardRwyMore(row, cd); continue; }
           dd.textContent = ''; var el = document.createElement('div'); el.className = 'text-md font-semibold text-gray-1300'; el.setAttribute('data-testid', 'airport-flight-details__' + (end ? 'arrival' : 'departure') + '-runway'); el.textContent = v; dd.appendChild(el); n++;
         }
       }
@@ -5954,7 +5982,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
         // track, as on FR24's map's playback - patchFlightMsg; its vertical speed from FR24's own altitudes. Padlocked there
         // before: EIN6KR's GPS altitude, airspeeds and vertical speed)
         mxPbFlags(c === 'Data/NewFlightPlayback' || (c === mxPbFrom && Date.now() - mxPbAt < 15000));
-        if (c === 'Data/NewFlightPlayback') { try { mxPbTag(p); } catch (e) { mxFail(e); } try { mxPbEnrich(pg); } catch (e) { mxFail(e); } try { mxPbRunways(pg); } catch (e) { mxFail(e); } if (mxPhoneApp()) { try { mxPbBackLabel(); } catch (e) { mxFail(e); } } }
+        if (c === 'Data/NewFlightPlayback') { try { mxPbTag(p); } catch (e) { mxFail(e); } try { mxPbEnrich(pg); } catch (e) { mxFail(e); } try { mxPbRelated(pg); } catch (e) { mxFail(e); } try { mxPbRunways(pg); } catch (e) { mxFail(e); } if (mxPhoneApp()) { try { mxPbBackLabel(); } catch (e) { mxFail(e); } } }
       } catch (e) { mxFail(e); }
     }
     if (mx.on) setInterval(mxDataTick, 700);
@@ -6087,14 +6115,53 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       // (1.4.1: and FR24's own airports, checked once against where its own track began and ended - one it never came
       // near, the track down at another field, replaced: M-SKTO's "Liverpool", its track down in Gillmoss)
       var tr = Array.isArray(p.trailRoute) ? p.trailRoute : [];
-      return { owner: priv, from: from, to: to, fn: mxNA(p.flightNumber) && !mxNA(p.callsign), chk: tr.length > 1 && (!from || !to) };
+      // (1.4.3: and its serial number, which FR24 padlocks)
+      var msnF = Array.isArray(p.facts) ? p.facts.filter(function (f) { return f && f.key === 'serial_number'; })[0] : null;
+      return { owner: priv, from: from, to: to, fn: mxNA(p.flightNumber) && !mxNA(p.callsign), chk: tr.length > 1 && (!from || !to), msn: !!msnF && (msnF.locked === true || mxNA(msnF.value)) };
+    }
+    // (1.4.3) FR24's player's "Related flights" - Previous and Next of the same flight number, call sign and aircraft: for a
+    // flight played here, where FR24 gives none, the userscript's from the monitor (pbRelated); on FR24's own, its
+    // padlocked Previous (a free account) opened - the same flight of ours, else, the aircraft's, the aircraft's flight
+    // at that take-off played here
+    var mxRel = new Map(), mxRelAsked = {}, mxRelSeq = 0, mxRelRid = new Map();
+    function mxPbRelOpen(x) { return !!x && (x.locked === true || x.href == null); }
+    function mxPbRelated(pg) {
+      var p = pg && pg.props; if (!p) return;
+      var pm = location.pathname.match(/^\/data\/playback\/([0-9a-f]{1,16})\/?$/i), id = pm ? pm[1].toLowerCase() : mxPbParam(); if (!id) return;
+      var cur = Array.isArray(p.relatedFlights) ? p.relatedFlights : [];
+      if (cur.length && !cur.some(function (g) { return g && (mxPbRelOpen(g.previous) || mxPbRelOpen(g.next)); })) return;
+      var got = mxRel.get(id); if (got) { mxPbRelPut(p, got); return; }
+      if (mxRelAsked[id]) return; mxRelAsked[id] = Date.now();
+      var ft = p.flightTimes || {}, ac = p.aircraft || {}, syn = MX_PB_SYN.test(id) ? id : '', rid = 'rl' + (++mxRelSeq); mxRelRid.set(rid, id);
+      post('pbRelated', { rid: rid, fid: syn ? '' : id, hex: syn ? id.slice(2, 8) : '', reg: !mxNA(ac.registration) ? String(ac.registration) : mxFact(p, 'registration'),
+        cs: !mxNA(p.callsign) ? String(p.callsign) : '', fn: !mxNA(p.flightNumber) ? String(p.flightNumber) : '', dep: mxSec(ft.actualDeparture) || mxSec(ft.scheduledDeparture) || (syn ? parseInt(id.slice(8), 16) : 0) });
+    }
+    function onPbRelatedGot(d) {
+      var id = d && mxRelRid.get(d.rid); if (!id) return; mxRelRid.delete(d.rid);
+      mxRel.set(id, { groups: Array.isArray(d.groups) ? d.groups : [], hex: isHex(d.hex) ? String(d.hex).toLowerCase() : '' }); if (mxRel.size > 50) mxRel.delete(mxRel.keys().next().value);
+      mxDataTick();
+    }
+    function mxPbRelPut(p, got) {
+      var cur = Array.isArray(p.relatedFlights) ? p.relatedFlights : [], mine = got.groups || [];
+      var out = cur.map(function (g) {
+        var m = mine.filter(function (x) { return x && x.relation === g.relation; })[0];
+        var fix = function (side) {
+          var a = g[side], b = m && m[side]; if (!mxPbRelOpen(a)) return a || (b && !b.locked ? b : a);
+          if (b && !b.locked && (!a || Math.abs((Number(a.departure) || 0) - (Number(b.departure) || 0)) <= 1800)) return Object.assign({}, a || {}, b, { locked: false });
+          if (g.relation === 'aircraft' && got.hex && a && Number(a.departure) > 1e9) return Object.assign({}, a, { href: '/data/flights?tl-pb=' + mxPbSynId(got.hex, Number(a.departure)), locked: false });
+          return a;
+        };
+        return Object.assign({}, g, { previous: fix('previous'), next: fix('next') });
+      });
+      mine.forEach(function (m) { if (m && !cur.some(function (g) { return g && g.relation === m.relation; })) out.push(m); });
+      if (JSON.stringify(out) !== JSON.stringify(cur)) p.relatedFlights = out;
     }
     function mxPbEnrich(pg) {
       var p = pg && pg.props; if (!p || p.trailSource === 'tl') return;
       var pm = location.pathname.match(/^\/data\/playback\/([0-9a-f]{1,12})\/?$/i), fid = pm ? pm[1].toLowerCase() : ''; if (!fid) return;
       // (one FR24 locks or shows empty - made ours whole, mxPbTake: not this)
       if (mxPbTried[fid]) return;
-      var w = mxPbWants(p); if (!w.owner && !w.from && !w.to && !w.fn && !w.chk) return;
+      var w = mxPbWants(p); if (!w.owner && !w.from && !w.to && !w.fn && !w.chk && !w.msn) return;
       var got = mxPbInfo.get(fid); if (got) { mxPbInfoPut(p, got, w); return; }
       if (mxPbInfoAsked[fid]) return; mxPbInfoAsked[fid] = Date.now();
       var ft = p.flightTimes || {}, sec = mxSec;
@@ -6102,7 +6169,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       var end = function (r, i) { if (!r || !fin(r.lat) || !fin(r.long)) return null; var g = tl[i] && tl[i].timestamp === r.timestamp ? tl[i] : null; return { t: r.timestamp, lat: r.lat, lon: r.long, alt: fin(r.altitude) ? r.altitude : g && fin(g.barometricAltitude) ? g.barometricAltitude : null, gs: g && fin(g.groundSpeed) ? g.groundSpeed : null }; };
       var ac = p.aircraft || {}, reg = !mxNA(ac.registration) ? String(ac.registration) : mxFact(p, 'registration');
       post('pbInfo', { rid: 'pi' + (++mxPbInfoSeq), fid: fid, reg: reg || '', cs: !mxNA(p.callsign) ? String(p.callsign) : '', dep: sec(ft.actualDeparture) || sec(ft.scheduledDeparture), arr: sec(ft.actualArrival),
-        type: mxFact(p, 'type_code') || '', ends: tr.length ? [end(tr[0], 0), end(tr[tr.length - 1], tr.length - 1)] : [], wantOwner: w.owner, wantFrom: w.from, wantTo: w.to, wantFn: w.fn,
+        type: mxFact(p, 'type_code') || '', ends: tr.length ? [end(tr[0], 0), end(tr[tr.length - 1], tr.length - 1)] : [], wantOwner: w.owner, wantFrom: w.from, wantTo: w.to, wantFn: w.fn, wantMsn: w.msn,
         wantCheck: w.chk, fr24From: !w.from && p.origin ? String(p.origin.code || '') : '', fr24To: !w.to && p.destination ? String(p.destination.code || '') : '' });
     }
     function onPbInfoGot(d) {
@@ -6114,6 +6181,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     // (into FR24's page data - its reactive props: FR24's page draws them anew at once)
     function mxPbInfoPut(p, d, w) {
       var n = 0;
+      if (w.msn && d.msn && Array.isArray(p.facts)) { p.facts = p.facts.map(function (f) { return f && f.key === 'serial_number' ? Object.assign({}, f, { value: String(d.msn), locked: false }) : f; }); n++; }
       if (w.owner && d.operator) { p.airline = Object.assign({}, p.airline || {}, { name: d.operator, logoUrl: (p.airline && p.airline.logoUrl) || mxPbAirline(d.operator, d.alId).logoUrl, logoDimensions: (p.airline && p.airline.logoDimensions) || null }); n++; }
       var ft = p.flightTimes;
       var endName = function (k, a, over) { var e = ft && typeof ft === 'object' ? ft[k] : null; if (e && typeof e === 'object' && (over || mxNA(e.name) || e.name === 'Not available')) ft[k] = Object.assign({}, e, { name: a.name || a.city || a.code, timezone: over ? a.tz || e.timezone || 'UTC' : e.timezone || a.tz || 'UTC' }); };
@@ -6195,7 +6263,8 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     // window.open - was never seen as a phone's and played in the old player)
     function mxPhoneApp() { try { return typeof TL_APP === 'object' && !!TL_APP; } catch (e) { return false; } }
     // (its address there: FR24's own id's page; one known only here, FR24's flights page given it - mxPbAway)
-    var mxPbPhoneUrl = function (id) { return MX_PB_SYN.test(String(id)) ? '/data/flights?tl-pb=' + id : '/data/playback/' + id; };
+    // (1.4.3: an FR24 flight older than its week too - FR24's own player page of it sends a free account to its search page)
+    var mxPbPhoneUrl = function (id, dep) { return MX_PB_SYN.test(String(id)) || (Number(dep) > 1e9 && Date.now() / 1000 - Number(dep) > 7 * 86400) ? '/data/flights?tl-pb=' + id : '/data/playback/' + id; };
     // (1.4.0) ... and wherever it is asked for: FR24's own Playback - its search's, the aircraft's panel's, its boards',
     // live flights' too - opens the aircraft's or flight number's log page with the flight in its address, where FR24's
     // page plays it in its old player for a computer. In the phone app that page goes on to FR24's own player page of the
@@ -6238,7 +6307,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       var id = isHex(w.hex) && w.dep > 0 ? mxPbSynId(w.hex, w.dep) : w.id > 0 ? Number(w.id).toString(16) : isHex(w.hex) ? mxPbSynId(w.hex, 0) : '';
       var go = function (u) { mxTab(u); };
       // (1.3.12: in the phone app, FR24's own player page, in this page)
-      if (id && mxPhoneApp()) { mxNav(mxPbPhoneUrl(id)); return; }
+      if (id && mxPhoneApp()) { mxNav(mxPbPhoneUrl(id, w.dep)); return; }
       if (w.reg && id && !mxPhoneApp()) { go(mxPbLogUrl(w.reg, id)); return; }
       var root = document.documentElement; root.style.cursor = 'progress';
       mxPbAsk({ id: id, hex: w.hex || '', reg: w.reg || '', cs: w.cs || '', dep: w.dep || 0, at: w.at || 0, apId: w.apId || 0, kind: w.kind || '' }).then(function (d) {
@@ -6360,15 +6429,27 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       v.innerHTML = '<div style="width:40px;height:40px;border-radius:50%;border:4px solid ' + (dark ? '#3a3a3a' : '#ddd') + ';border-top-color:#f8c023;animation:tlPbSpin .8s linear infinite"></div><div>Loading playback\u2026</div><style>@keyframes tlPbSpin{to{transform:rotate(360deg)}}</style>';
       mxPbVeil = v; (document.body || document.documentElement).appendChild(v);
       if (!document.body) document.addEventListener('DOMContentLoaded', function () { if (mxPbVeil && mxPbVeil.parentNode !== document.body && document.body) document.body.appendChild(mxPbVeil); }, { once: true });
-      oSetTimeout(mxPbVeilOff, 35000);
+      oSetTimeout(function () { if (mxPbVeil === v) mxPbVeilFail(); }, 35000);
     }
     function mxPbVeilOff() { if (mxPbVeil) { try { mxPbVeil.remove(); } catch (e) { /* gone */ } mxPbVeil = null; } }
+    // (1.4.3: nothing of the flight could be found - the veil says so, with the way back, rather than leaving FR24's search
+    // form in its place, which looked as if the playback had sent the user there)
+    function mxPbVeilFail() {
+      var v = mxPbVeil; if (!v) return;
+      v.innerHTML = '';
+      var t = document.createElement('div'); t.textContent = 'No track of this flight could be found.'; t.style.cssText = 'max-width:80vw;text-align:center';
+      var b = document.createElement('button'); b.type = 'button'; b.textContent = 'Back'; b.style.cssText = 'border:0;border-radius:20px;padding:10px 26px;background:#f8c023;color:#1b1b1b;font:600 15px/1 system-ui,sans-serif;cursor:pointer';
+      b.onclick = function () { mxPbVeilOff(); if (history.length > 1) history.back(); else location.href = '/'; };
+      var s = document.createElement('button'); s.type = 'button'; s.textContent = 'Search for flights'; s.style.cssText = 'border:0;background:none;color:inherit;text-decoration:underline;font:500 14px/1 system-ui,sans-serif;cursor:pointer';
+      s.onclick = mxPbVeilOff;
+      v.append(t, b, s);
+    }
     var mxPbAway = function (id) {
       if (mx.pbAway === id) return; mx.pbAway = id;
       if (mxPbParam() === id && /^\/data\/flights\/?$/i.test(location.pathname)) mxPbVeilOn();
       mxPbAsk({ id: id }, 30000).then(function (d) {
-        // (nothing of it: FR24's page as it is - shown again)
-        if (!d) mxPbVeilOff();
+        // (nothing of it: said so - FR24's page as it is behind it, a tap away)
+        if (!d) mxPbVeilFail();
         if (d && d.reg && !mxPhoneApp()) { mxNav(mxPbLogUrl(d.reg, d.hex && d.dep && MX_PB_SYN.test(id) ? mxPbSynId(d.hex, d.dep) : id), true); return; }
         if (!d) return;
         // (1.2.6: an aircraft of no registration anywhere - no log page to play it on: FR24's own player page, given the
@@ -7171,6 +7252,90 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     }
     document.addEventListener('click', onPbClick, true);
     document.addEventListener('auxclick', onPbClick, true);
+    // ---- (1.4.3) A board card of a flight of this script's own (a blocked flight, one of the monitor's): FR24 gives it no
+    // "Download CSV/KML" and no "Share" (it has no flight number, or no record of it at all) - both put in, made from the
+    // card's own Playback item so they look as FR24's: Download offers the flight's track as CSV or KML (FR24's own
+    // positions of it as kept, else its public ADS-B track - the userscript's trackFile, as FR24's own download asks it),
+    // Share the address of its playback (the phone's share sheet, else copied)
+    var CARD_DL_ICON = '<svg viewBox="-8 -8 40 40" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v11m0 0l-4-4m4 4l4-4M5 15v4.5h14V15"/><path d="M9 21h6" opacity="0"/></svg>';
+    var CARD_SHARE_ICON = '<svg viewBox="-8 -8 40 40" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V3.5m0 0L8 7.5m4-4l4 4M6 11v9h12v-9"/></svg>';
+    function cardPbItem(card) {
+      var els = card.querySelectorAll('a, button, li, div'), hit = null;
+      for (var i = 0; i < els.length; i++) { var e = els[i]; if (pbText(e) === 'Playback' && (!e.parentElement || pbText(e.parentElement) !== 'Playback')) { hit = e; break; } }
+      return hit;
+    }
+    function cardHas(card, re) { var els = card.querySelectorAll('a, button, li'); for (var i = 0; i < els.length; i++) if (re.test(pbText(els[i]))) return true; return false; }
+    function cardItem(pb, label, icon, cls) {
+      var el = pb.cloneNode(true);
+      el.classList.add(cls); el.removeAttribute('href'); el.removeAttribute('id'); el.removeAttribute('data-testid'); el.setAttribute('role', 'button'); el.setAttribute('tabindex', '0');
+      el.querySelectorAll('[id], [data-testid]').forEach(function (x) { x.removeAttribute('id'); x.removeAttribute('data-testid'); });
+      var svg = el.querySelector('svg'); if (svg) { var tmp = document.createElement('span'); tmp.innerHTML = icon; svg.replaceWith(tmp.firstChild); }
+      var w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT), done = false;
+      for (var t = w.nextNode(); t; t = w.nextNode()) { if (!done && /playback/i.test(t.nodeValue)) { t.nodeValue = t.nodeValue.replace(/playback/i, label); done = true; } }
+      if (!done) el.textContent = label;
+      return el;
+    }
+    function cardFlightRef(w) { return w ? (w.id > 0 ? Number(w.id).toString(16) : isHex(w.hex) && w.dep > 0 ? mxPbSynId(w.hex, w.dep) : '') : ''; }
+    function cardShareUrl(w) {
+      var id = isHex(w.hex) && w.dep > 0 ? mxPbSynId(w.hex, w.dep) : w.id > 0 ? Number(w.id).toString(16) : ''; if (!id) return '';
+      return location.origin + (w.reg ? mxPbLogUrl(w.reg, id) : mxPbPhoneUrl(id));
+    }
+    function cardSave(w, kind) {
+      var fid = cardFlightRef(w); if (!fid) return;
+      var rid = 'tf' + (++mxTfSeq), t = oSetTimeout(function () { mxTfWait.delete(rid); }, 45000);
+      mxTfWait.set(rid, function (d) {
+        oClearTimeout(t); mxTfWait.delete(rid);
+        if (!d || !d.ok || !d.text) { cardNote('No track of this flight could be found.'); return; }
+        var url = URL.createObjectURL(new Blob([d.text], { type: d.type || 'text/plain' })), a = document.createElement('a');
+        a.href = url; a.download = String((w.reg || w.cs || 'flight')).replace(/[^A-Za-z0-9-]/g, '') + '_' + fid + '.' + kind; document.body.appendChild(a); a.click(); a.remove();
+        oSetTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+      });
+      post('trackFile', { rid: rid, fid: fid, file: kind, ts: Number(w.dep) || 0 });
+    }
+    function cardNote(text) {
+      var n = document.createElement('div'); n.textContent = text;
+      n.style.cssText = 'position:fixed;left:50%;bottom:88px;transform:translateX(-50%);z-index:2147483000;background:rgba(32,32,32,.94);color:#fff;font:500 14px/1.35 system-ui,sans-serif;padding:10px 16px;border-radius:18px;max-width:86vw;text-align:center;pointer-events:none';
+      document.body.appendChild(n); oSetTimeout(function () { try { n.remove(); } catch (e) { /* gone */ } }, 3000);
+    }
+    function cardShare(w) {
+      var url = cardShareUrl(w); if (!url) return;
+      var title = (w.reg || w.cs || 'Flight') + ' - playback';
+      if (navigator.share) { navigator.share({ title: title, url: url }).catch(function () { /* closed */ }); return; }
+      try { navigator.clipboard.writeText(url).then(function () { cardNote('Link copied'); }, function () { cardNote(url); }); } catch (e) { cardNote(url); }
+    }
+    function cardExtras() {
+      var cards = document.querySelectorAll('[id^="airport_schedule_"], [data-testid^="airport-panel__schedules__flight__"]');
+      for (var i = 0; i < cards.length; i++) {
+        var card = cards[i], pb = cardPbItem(card); if (!pb) continue;
+        var w = null; try { w = boardWant(card); } catch (e) { w = null; } if (!w) continue;
+        if (!card.querySelector('.tl-card-dl') && !cardHas(card, /^download csv\/kml$/i)) {
+          var dl = cardItem(pb, 'Download CSV/KML', CARD_DL_ICON, 'tl-card-dl'); pb.parentNode.insertBefore(dl, pb);
+          var pick = document.createElement('div'); pick.className = 'tl-card-dlpick'; pick.style.cssText = 'display:none;gap:10px;padding:4px 0 8px 56px';
+          ['CSV', 'KML'].forEach(function (k) { var b = document.createElement('button'); b.type = 'button'; b.textContent = k; b.dataset.tlKind = k.toLowerCase(); b.style.cssText = 'border:1px solid currentColor;border-radius:16px;padding:4px 14px;background:none;color:inherit;font:inherit;cursor:pointer'; pick.appendChild(b); });
+          dl.style.color = getComputedStyle(pb).color; pick.style.color = getComputedStyle(pb).color;
+          pb.parentNode.insertBefore(pick, pb);
+        }
+        if (!card.querySelector('.tl-card-share') && !cardHas(card, /^share$/i)) { var sh = cardItem(pb, 'Share', CARD_SHARE_ICON, 'tl-card-share'); pb.parentNode.insertBefore(sh, pb.nextSibling); }
+      }
+    }
+    document.addEventListener('click', function (ev) {
+      var t = ev.target && ev.target.nodeType === 1 ? ev.target : ev.target && ev.target.parentElement; if (!t || !t.closest) return;
+      var it = t.closest('.tl-card-dl, .tl-card-share, .tl-card-dlpick button'); if (!it) return;
+      var card = it.closest('[id^="airport_schedule_"], [data-testid^="airport-panel__schedules__flight__"]'), w = null; try { w = card ? boardWant(card) : null; } catch (e) { w = null; } if (!w) return;
+      ev.preventDefault(); ev.stopImmediatePropagation();
+      if (it.classList.contains('tl-card-share')) { cardShare(w); return; }
+      if (it.classList.contains('tl-card-dl')) { var pk = it.nextElementSibling; if (pk && pk.classList.contains('tl-card-dlpick')) pk.style.display = pk.style.display === 'none' ? 'flex' : 'none'; return; }
+      cardSave(w, it.dataset.tlKind === 'kml' ? 'kml' : 'csv');
+    }, true);
+    // (a card opened: its runways and its two items at once - not at the board's next answer)
+    var cardObsDue = false;
+    try {
+      new MutationObserver(function () {
+        if (cardObsDue || !document.querySelector('[id^="airport_schedule_"], [data-testid^="airport-panel__schedules__flight__"]')) return;
+        cardObsDue = true;
+        oSetTimeout(function () { cardObsDue = false; try { cardRwyFill(); cardExtras(); } catch (e) { stats.errors++; stats.lastError = String(e); } }, 120);
+      }).observe(document.documentElement, { childList: true, subtree: true });
+    } catch (e) { /* ignore */ }
     // ---- (1.4.2) The old log pages' playback map (06-classic): Google's map, loaded as FR24's own page loads it - by the
     // address the page gives its own scripts (<meta name="google-maps-src">) - and the flight drawn as FR24's map draws a
     // flight it follows: the trail 3 px wide, coloured by height position by position, a dot at each position heard, a
@@ -7178,7 +7343,12 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     // aircraft FR24's own picture of its kind (FR24's sprite, the table of its pictures read from FR24's own script on
     // the page), yellow, turned to its track; the flight's airports FR24's old blue pins. The userscript part sends the
     // flight and each moment ('clMap'); 'clMapSt' answers whether the map is up (else it draws its own).
-    var clm = { map: null, host: null, ov: null, cv: null, pv: null, tip: null, pts: [], sp: [], o: null, d: null, route: false, follow: false, pos: null, cover: 0, hover: -1, icon: null, iconFor: '', due: false, gm: null, tbl: null, pin: null };
+    // (1.4.3) As FR24's main map draws a trail (its live page): the line see-through (FR24's colour at 100 of 255), its
+    // dots its own colour (they were black), the dot under the pointer white, and FR24's tooltip - white, rounded, its
+    // tip - only where the main map has "Show trail tooltip" on, in the main map's units. And the map as the main map
+    // has it ('set', 06-classic clMainSet): its style (FR24's own styles of Google's map read from FR24's build, on
+    // FR24's server), its brightness, its day and night line at the moment played
+    var clm = { map: null, host: null, ov: null, cv: null, pv: null, lv: null, dim: null, tip: null, tipBody: null, tipOff: 0, pts: [], cols: [], sp: [], o: null, d: null, route: false, follow: false, pos: null, cover: 0, hover: -1, icon: null, iconFor: '', due: false, gm: null, tbl: null, pin: null, t: 0, type: 'hybrid', set: { style: 'hybrid', brightness: 100, night: false, tip: true, alt: 'ft', spd: 'kt' }, fs: null, fsP: null, col: null, colP: null, srcs: null, gap: 300 };
     function clmGoogle() {
       if (clm.gm) return clm.gm;
       clm.gm = new Promise(function (res) {
@@ -7241,20 +7411,140 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
         clm.iconFor = key; return clm.icon;
       });
     }
+    // (where FR24's own styles cannot be read: near enough)
     var CLM_GREY = [{ stylers: [{ saturation: -100 }] }];
     var CLM_DARK = [{ elementType: 'geometry', stylers: [{ color: '#212a37' }] }, { elementType: 'labels.text.fill', stylers: [{ color: '#9aa7b8' }] }, { elementType: 'labels.text.stroke', stylers: [{ color: '#1b222c' }] }, { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0f1620' }] }, { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#38414e' }] }, { featureType: 'poi', stylers: [{ visibility: 'off' }] }];
+    var CLM_BASE = { terrain: 'TERRAIN', roadmap: 'ROADMAP', satellite: 'SATELLITE', hybrid: 'HYBRID' };
+    // (FR24's names of its styles in its build, and theirs in its settings)
+    var CLM_FR24_NAMES = { GRAYSCALE: 'simple_style', RADAR_BLUE: 'radar_style', RADAR_DARK: 'radar_style2', AUBERGINE: 'aubergine_style', BLACK_WHITE: 'black_white', ROADMAP: 'roadmap', SATELLITE: 'satellite', HYBRID: 'hybrid', TERRAIN: 'terrain' };
     function clmType(t) {
-      var m = clm.map; if (!m) return; var g = window.google.maps.MapTypeId;
-      m.setOptions(t === 'simple_style' ? { mapTypeId: g.ROADMAP, styles: CLM_GREY } : t === 'radar_style2' ? { mapTypeId: g.ROADMAP, styles: CLM_DARK } : { mapTypeId: t === 'satellite' ? g.SATELLITE : t === 'roadmap' ? g.ROADMAP : t === 'terrain' ? g.TERRAIN : g.HYBRID, styles: null });
+      var m = clm.map; if (!m) return; var gm = window.google.maps, g = gm.MapTypeId;
+      if (!CLM_BASE[t] && !/^(?:simple_style|radar_style2?|aubergine_style|black_white)$/.test(t)) t = 'hybrid';
+      clm.type = t;
+      var fs = clm.fs && clm.fs.styles[t];
+      if (CLM_BASE[t]) m.setOptions({ mapTypeId: g[CLM_BASE[t]], styles: null });
+      // (FR24's own style of it, as FR24's map makes it: a styled map type of that name)
+      else if (fs) { try { if (!m.mapTypes.get(t)) m.mapTypes.set(t, new gm.StyledMapType(fs, { name: clm.fs.names[t] || t })); m.setOptions({ mapTypeId: t, styles: null }); } catch (e) { m.setOptions({ mapTypeId: g.ROADMAP, styles: t === 'simple_style' ? CLM_GREY : CLM_DARK }); } }
+      else m.setOptions({ mapTypeId: g.ROADMAP, styles: t === 'simple_style' ? CLM_GREY : CLM_DARK });
+      clmBright();
     }
-    // (FR24's colours of a trail by height: white on the ground; yellow low, through green, cyan and blue, to violet and red
-    // at the top - drawn here as a smooth scale of the same colours)
+    // (the main map's brightness, as FR24 sets it: its tiles darkened - here a black sheet over them, under the trail, as
+    // FR24's map has it on its newer maps - and the map's colour where no tile is yet the style's own)
+    function clmBright() {
+      var m = clm.map; if (!m) return;
+      var bg = clm.fs && clm.fs.bg[clm.type];
+      if (bg) { try { m.setOptions({ backgroundColor: bg }); } catch (e) { /* kept */ } var f = clm.host && clm.host.firstElementChild; if (f) f.style.backgroundColor = bg; }
+      var b = Number(clm.set.brightness); if (!isFinite(b)) b = 100;
+      if (clm.dim) clm.dim.style.opacity = String(Math.max(0, Math.min(1, 1 - b / 100)));
+    }
+    // (FR24's own build files of its map, by name - found in the list its loader on this page carries, asked of FR24's
+    // server as its own map asks for them)
+    function clmChunk(name) {
+      if (!clm.srcs) {
+        var urls = [];
+        document.querySelectorAll('script[src], link[rel="modulepreload"][href]').forEach(function (e) { var u = e.src || e.href || ''; if (/\/(?:__modulepreload__|app)-[\w-]+\.js(?:[?#]|$)/.test(u) && urls.indexOf(u) < 0) urls.push(u); });
+        clm.srcs = Promise.all(urls.map(function (u) { return oFetch.call(window, u).then(function (r) { return r.ok ? r.text() : ''; }).catch(function () { return ''; }).then(function (t) { return { u: u, t: t }; }); }));
+      }
+      var re = new RegExp('(' + name + '-[\\w-]+\\.js)');
+      return clm.srcs.then(function (list) { for (var i = 0; i < list.length; i++) { var m = re.exec(list[i].t); if (m) try { return new URL(m[1], list[i].u).href; } catch (e) { /* the next */ } } return null; });
+    }
+    // (a literal of FR24's build - an object of plain names, strings, numbers, !0 and !1, its [x.NAME] keys - from its
+    // first brace, as JSON)
+    function clmLitAt(src, i) {
+      var d = 0;
+      for (var j = i; j < src.length; j++) {
+        var c = src[j];
+        if (c === '"' || c === "'" || c === '`') { for (j++; j < src.length && src[j] !== c; j++) if (src[j] === '\\') j++; continue; }
+        if (c === '{' || c === '[') d++;
+        else if (c === '}' || c === ']') { d--; if (!d) return src.slice(i, j + 1); }
+      }
+      return null;
+    }
+    function clmLitJson(lit) {
+      return JSON.parse(lit.split(/("(?:[^"\\]|\\.)*")/).map(function (s, i) {
+        if (i % 2) return s;
+        return s.replace(/\[[A-Za-z_$][\w$]*\.([A-Z_]+)\]\s*:/g, '"$1":').replace(/([{,])\s*([A-Za-z_$][\w$]*)\s*:/g, '$1"$2":').replace(/!0(?![\w.])/g, 'true').replace(/!1(?![\w.])/g, 'false').replace(/(^|[^\w.])(-?)\.(\d)/g, function (x, a, b, c) { return a + b + '0.' + c; });
+      }).join(''));
+    }
+    // (FR24's styles of Google's map - its greyscale, radars, aubergine, black and white - and each style's colour, from
+    // its map's build file)
+    function clmStyles() {
+      if (clm.fsP) return clm.fsP;
+      var none = { styles: {}, bg: {}, names: {} };
+      clm.fsP = clmChunk('googleMapsProvider').then(function (u) { return u ? oFetch.call(window, u).then(function (r) { return r.ok ? r.text() : ''; }) : ''; }).then(function (src) {
+        if (!src) return none;
+        var get = function (re) { var m = re.exec(src); if (!m) return null; var lit = clmLitAt(src, m.index + 1); if (!lit) return null; try { return clmLitJson(lit); } catch (e) { return null; } };
+        var st = get(/=\{\[[A-Za-z_$][\w$]*\.GRAYSCALE\]:\[/), bg = get(/=\{\[[A-Za-z_$][\w$]*\.GRAYSCALE\]:\{name:/), out = { styles: {}, bg: {}, names: {} };
+        Object.keys(CLM_FR24_NAMES).forEach(function (k) {
+          var v = CLM_FR24_NAMES[k];
+          if (st && Array.isArray(st[k])) out.styles[v] = st[k];
+          if (bg && bg[k] && /^#[0-9a-f]{3,8}$/i.test(String(bg[k].backgroundColor || ''))) { out.bg[v] = bg[k].backgroundColor; out.names[v] = String(bg[k].name || ''); }
+        });
+        return out;
+      }).catch(function () { return none; });
+      return clm.fsP;
+    }
+    // (FR24's own colour of a trail at a height - its map's function, from its build file: told by what it gives)
+    function clmColFn() {
+      if (clm.colP) return clm.colP;
+      clm.colP = clmChunk('aircraftLayerHelpers').then(function (u) { return u ? import(u) : null; }).then(function (mod) {
+        var f = null; if (!mod) return null;
+        Object.keys(mod).forEach(function (k) {
+          var v = mod[k]; if (f || typeof v !== 'function' || v.length !== 1) return;
+          var s = ''; try { s = Function.prototype.toString.call(v); } catch (e) { return; }
+          if (s.indexOf('#ffffff') < 0 || s.indexOf('#ff0000') < 0) return;
+          try { if (v(50) === '#ffffff' && v(20000) === '#ff0000' && /^#[0-9a-f]{6}$/i.test(v(3000))) f = v; } catch (e) { /* not it */ }
+        });
+        return f;
+      }).catch(function () { return null; });
+      clm.colP.then(function (f) { if (f) { clm.col = f; clm.cols = clm.pts.map(function (p) { return clmCol(p[3]); }); clmSoon(); } });
+      return clm.colP;
+    }
+    // (FR24's colours of a trail by height, in metres: white on the ground; yellow low, through green, cyan and blue, to
+    // violet and red at the top. FR24's own where its build gives it; else drawn here as a smooth scale of the same)
     var CLM_HUES = [[100, 52], [300, 62], [600, 78], [1000, 105], [1500, 125], [2500, 150], [3500, 175], [4500, 190], [5500, 200], [6500, 210], [7500, 225], [8500, 240], [9500, 255], [10500, 268], [11500, 280], [12500, 300], [13000, 330]];
     function clmCol(ft) {
-      var m = (ft || 0) * 0.3048; if (!(m > 100)) return '#ffffff';
+      var m = (ft || 0) * 0.3048;
+      if (clm.col) { try { var c = clm.col(m); if (typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c)) return c; } catch (e) { /* the scale here */ } }
+      if (!(m > 100)) return '#ffffff';
       var H = CLM_HUES, h = H[H.length - 1][1];
       for (var i = 1; i < H.length; i++) if (m <= H[i][0]) { var f = (m - H[i - 1][0]) / (H[i][0] - H[i - 1][0]); h = H[i - 1][1] + (H[i][1] - H[i - 1][1]) * f; break; }
       return 'hsl(' + Math.round(h) + ',100%,50%)';
+    }
+    // (the sun overhead at a moment - the usual approximation, within a fraction of a degree - and the night about the
+    // point opposite: FR24's line is four rings about it, 72 to 89.4 degrees out, each a shade darker within)
+    function clmSun(ms) {
+      var r = Math.PI / 180, d = ms / 864e5 - 10957.5;
+      var g = (357.529 + 0.98560028 * d) * r, L = (280.459 + 0.98564736 * d + 1.915 * Math.sin(g) + 0.02 * Math.sin(2 * g)) * r, e = (23.439 - 3.6e-7 * d) * r;
+      var ra = Math.atan2(Math.cos(e) * Math.sin(L), Math.cos(L)) / r, dec = Math.asin(Math.sin(e) * Math.sin(L)) / r, lon = ra - (280.46061837 + 360.98564736629 * d);
+      return { lat: dec, lon: ((lon + 180) % 360 + 360) % 360 - 180 };
+    }
+    var CLM_NIGHT = [89.433334, 84, 78, 72], CLM_MERC = 85.051129;
+    // (a ring n degrees about c, as [lon, lat] points: one about a pole closed along the map's top or foot)
+    function clmRing(c, n) {
+      var r = Math.PI / 180, la = c.lat * r, lo = c.lon * r, nr = n * r, P = [];
+      for (var i = 0; i < 360; i++) {
+        var p = 2 * Math.PI * i / 360, S = Math.asin(Math.sin(la) * Math.cos(nr) + Math.cos(la) * Math.sin(nr) * Math.cos(p));
+        P.push([(lo + Math.atan2(Math.sin(p) * Math.sin(nr) * Math.cos(la), Math.cos(nr) - Math.sin(la) * Math.sin(S))) / r, S / r]);
+      }
+      var cl = function (x) { return Math.max(-CLM_MERC, Math.min(CLM_MERC, x)); }, w = function (x) { return ((x + 180) % 360 + 360) % 360 - 180; };
+      var north = 90 - c.lat < n, south = 90 + c.lat < n;
+      if (!north && !south) { var o = [[P[0][0], cl(P[0][1])]]; for (var k = 1; k < P.length; k++) { var dl = w(P[k][0] - P[k - 1][0]); o.push([o[k - 1][0] + dl, cl(P[k][1])]); } return o; }
+      var s = P.map(function (q) { return [w(q[0]), cl(q[1])]; }).sort(function (a, b) { return a[0] - b[0]; }), A = s[0], B = s[s.length - 1];
+      var gl = B[1] + (A[1] - B[1]) * (180 - B[0]) / (A[0] + 360 - B[0]), E = north ? CLM_MERC : -CLM_MERC;
+      return [[-180, gl]].concat(s, [[180, gl], [180, E], [-180, E]]);
+    }
+    function clmNight(g, v) {
+      var ms = (clm.t > 0 ? Math.floor(clm.t / 60) * 60 : Math.floor(Date.now() / 60000) * 60) * 1000, sun = clmSun(ms), c = { lat: -sun.lat, lon: sun.lon + (sun.lon > 0 ? -180 : 180) };
+      g.fillStyle = 'rgba(0,0,0,' + (25 / 255) + ')';
+      CLM_NIGHT.forEach(function (n) {
+        var ring = clmRing(c, n).map(function (q) { return v.px(q[1], q[0]); }), x0 = Infinity, x1 = -Infinity;
+        ring.forEach(function (q) { if (q.x < x0) x0 = q.x; if (q.x > x1) x1 = q.x; });
+        for (var k = -3; k <= 3; k++) {
+          var dx = k * v.ww; if (x1 + dx < 0 || x0 + dx > v.w) continue;
+          g.beginPath(); ring.forEach(function (q, i) { if (i) g.lineTo(q.x + dx, q.y); else g.moveTo(q.x + dx, q.y); }); g.closePath(); g.fill();
+        }
+      });
     }
     function clmSoon() { if (clm.due) return; clm.due = true; requestAnimationFrame(function () { clm.due = false; clmDraw(); }); }
     function clmOverlay() {
@@ -7263,9 +7553,15 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       Ov.prototype.onAdd = function () {
         var pane = this.getPanes().overlayLayer, mk = function () { var c = document.createElement('canvas'); c.style.cssText = 'position:absolute;left:0;top:0;pointer-events:none'; pane.appendChild(c); return c; };
         clm.cv = mk(); clm.pv = mk();
+        // (the trail's line drawn whole first, then laid on see-through: no darker spot where its pieces meet)
+        clm.lv = document.createElement('canvas');
+        // (the brightness: a black sheet in the lowest pane - over the map's tiles, under everything drawn on them)
+        clm.dim = document.createElement('div'); clm.dim.style.cssText = 'position:absolute;left:0;top:0;width:0;height:0;background:#000;opacity:0;pointer-events:none;transition:opacity 200ms ease';
+        this.getPanes().mapPane.appendChild(clm.dim);
+        clmBright();
       };
       Ov.prototype.draw = function () { clmDraw(); };
-      Ov.prototype.onRemove = function () { [clm.cv, clm.pv].forEach(function (c) { if (c && c.parentNode) c.parentNode.removeChild(c); }); clm.cv = clm.pv = null; };
+      Ov.prototype.onRemove = function () { [clm.cv, clm.pv, clm.dim].forEach(function (c) { if (c && c.parentNode) c.parentNode.removeChild(c); }); clm.cv = clm.pv = clm.lv = clm.dim = null; };
       clm.ov = new Ov(); clm.ov.setMap(clm.map);
       clm.map.addListener('bounds_changed', clmSoon);
       clm.map.addListener('mousemove', function (e) { var de = e && e.domEvent; if (de && clm.host) { var r = clm.host.getBoundingClientRect(); clmHover(de.clientX - r.left, de.clientY - r.top); } });
@@ -7277,12 +7573,14 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       var ov = clm.ov, map = clm.map, proj = ov && ov.getProjection && ov.getProjection(); if (!proj || !clm.cv) return null;
       var w = clm.host.clientWidth, h = clm.host.clientHeight, c = proj.fromLatLngToDivPixel(map.getCenter()), L = c.x - w / 2, T = c.y - h / 2, r = window.devicePixelRatio || 1;
       [clm.cv, clm.pv].forEach(function (x) { x.style.left = L + 'px'; x.style.top = T + 'px'; x.style.width = w + 'px'; x.style.height = h + 'px'; var W = Math.round(w * r), H = Math.round(h * r); if (x.width !== W) x.width = W; if (x.height !== H) x.height = H; });
+      if (clm.lv) { var LW = Math.round(w * r), LH = Math.round(h * r); if (clm.lv.width !== LW) clm.lv.width = LW; if (clm.lv.height !== LH) clm.lv.height = LH; }
+      if (clm.dim) { var ds = clm.dim.style; ds.left = L + 'px'; ds.top = T + 'px'; ds.width = w + 'px'; ds.height = h + 'px'; }
       var ww = proj.getWorldWidth(), gm = window.google.maps;
       // (a flight across the date line: its longitudes run on - the whole track put by the world nearest the view)
       var px = function (lat, lon) { var p = proj.fromLatLngToDivPixel(new gm.LatLng(lat, lon, true)); return { x: p.x - L, y: p.y - T }; };
       var shift = 0;
       if (clm.pts.length) { var mid = clm.pts[Math.floor(clm.pts.length / 2)], q = px(mid[1], mid[2]); shift = Math.round((w / 2 - q.x) / ww) * ww; }
-      return { w: w, h: h, r: r, px: function (lat, lon) { var q = px(lat, lon); q.x += shift; return q; } };
+      return { w: w, h: h, r: r, ww: ww, px: function (lat, lon) { var q = px(lat, lon); q.x += shift; return q; } };
     }
     function clmGc(a, b, f) {
       var r = Math.PI / 180, la1 = a[0] * r, lo1 = a[1] * r, la2 = b[0] * r, lo2 = b[1] * r;
@@ -7295,27 +7593,50 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     function clmDraw() {
       var v = clmView(); if (!v) return;
       var g = clm.cv.getContext('2d'); g.setTransform(v.r, 0, 0, v.r, 0, 0); g.clearRect(0, 0, v.w, v.h);
-      var P = clm.pts, sp = clm.sp = P.map(function (p) { return v.px(p[1], p[2]); });
+      var P = clm.pts, cols = clm.cols, sp = clm.sp = P.map(function (p) { return v.px(p[1], p[2]); }), A = 100 / 255;
+      // (the main map's day and night line, at the moment played)
+      if (clm.set.night) { try { clmNight(g, v); } catch (e) { /* no line */ } }
       // (the great circle between its airports, as FR24's map draws a flight's route: a thin dark dashed line)
       if (clm.route && clm.o && clm.d) {
         g.beginPath(); for (var k = 0; k <= 96; k++) { var gc = clmGc(clm.o, clm.d, k / 96), gp = v.px(gc[0], gc[1]); if (k) g.lineTo(gp.x, gp.y); else g.moveTo(gp.x, gp.y); }
-        g.setLineDash([3, 5]); g.lineWidth = 2; g.strokeStyle = 'rgba(0,0,0,.4)'; g.stroke(); g.setLineDash([]);
+        g.setLineDash([3, 5]); g.lineWidth = 2; g.strokeStyle = 'rgba(0,0,0,' + A + ')'; g.stroke(); g.setLineDash([]);
       }
       var inView = function (a, b) { return !((a.x < -20 && b.x < -20) || (a.y < -20 && b.y < -20) || (a.x > v.w + 20 && b.x > v.w + 20) || (a.y > v.h + 20 && b.y > v.h + 20)); };
-      g.lineCap = 'round'; g.lineJoin = 'round';
-      for (var i = 1; i < P.length; i++) {
-        var a = sp[i - 1], b = sp[i]; if (!inView(a, b)) continue;
-        g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(b.x, b.y);
-        // (a hole in the coverage - five minutes and more unheard: FR24's thin dashed line across it)
-        if (P[i][0] - P[i - 1][0] > 300) { g.setLineDash([1, 3]); g.lineWidth = 1; g.strokeStyle = 'rgba(0,0,0,.4)'; g.stroke(); g.setLineDash([]); continue; }
-        var c0 = clmCol(P[i - 1][3]), c1 = clmCol(P[i][3]);
-        if (c0 === c1) g.strokeStyle = c0; else { var gr = g.createLinearGradient(a.x, a.y, b.x, b.y); gr.addColorStop(0, c0); gr.addColorStop(1, c1); g.strokeStyle = gr; }
-        g.lineWidth = 3; g.stroke();
+      // (the trail: 3 px, each piece from one position's colour to the next's, laid on at FR24's 100 of 255)
+      var l = clm.lv && clm.lv.getContext('2d');
+      if (l) {
+        l.setTransform(1, 0, 0, 1, 0, 0); l.clearRect(0, 0, clm.lv.width, clm.lv.height); l.setTransform(v.r, 0, 0, v.r, 0, 0);
+        l.lineCap = 'round'; l.lineJoin = 'round'; l.lineWidth = 3;
+        for (var i = 1; i < P.length; i++) {
+          var a = sp[i - 1], b = sp[i]; if (!inView(a, b) || P[i][0] - P[i - 1][0] >= clm.gap) continue;
+          var c0 = cols[i - 1], c1 = cols[i];
+          l.beginPath(); l.moveTo(a.x, a.y); l.lineTo(b.x, b.y);
+          if (c0 === c1) l.strokeStyle = c0; else { var gr = l.createLinearGradient(a.x, a.y, b.x, b.y); gr.addColorStop(0, c0); gr.addColorStop(1, c1); l.strokeStyle = gr; }
+          l.stroke();
+        }
+        g.save(); g.setTransform(1, 0, 0, 1, 0, 0); g.globalAlpha = A; g.drawImage(clm.lv, 0, 0); g.restore();
       }
-      // (a dot at each position heard - where the trail is drawn close, the next one 3 px on)
-      g.fillStyle = '#000'; var last = null;
-      for (var j = 0; j < sp.length; j++) { var s = sp[j]; if (s.x < -5 || s.y < -5 || s.x > v.w + 5 || s.y > v.h + 5) continue; if (last && Math.abs(s.x - last.x) + Math.abs(s.y - last.y) < 3 && j !== clm.hover) continue; g.beginPath(); g.arc(s.x, s.y, 1.5, 0, 2 * Math.PI); g.fill(); last = s; }
-      if (clm.hover >= 0 && sp[clm.hover]) { var hv = sp[clm.hover]; g.beginPath(); g.arc(hv.x, hv.y, 3, 0, 2 * Math.PI); g.fillStyle = '#fff'; g.fill(); g.lineWidth = 1; g.strokeStyle = 'rgba(0,0,0,.6)'; g.stroke(); }
+      // (a hole in the coverage - FR24's two minutes and more unheard, more where the track is the monitor's sparser one:
+      // FR24's thin dark dotted line, along the great circle)
+      g.setLineDash([1, 3]); g.lineWidth = 1; g.strokeStyle = 'rgba(0,0,0,' + A + ')';
+      var z = clm.map.getZoom() <= 10 ? 25 : 50;
+      for (var h = 1; h < P.length; h++) {
+        var dt = P[h][0] - P[h - 1][0]; if (dt < clm.gap || !inView(sp[h - 1], sp[h])) continue;
+        var nn = Math.floor(z * Math.min(1, dt / 1000)), p0 = [P[h - 1][1], P[h - 1][2]], p1 = [P[h][1], P[h][2]];
+        g.beginPath(); g.moveTo(sp[h - 1].x, sp[h - 1].y);
+        for (var s = 1; s <= nn; s++) { var q = clmGc(p0, p1, s / (nn + 1)), qq = v.px(q[0], q[1]); g.lineTo(qq.x, qq.y); }
+        g.lineTo(sp[h].x, sp[h].y); g.stroke();
+      }
+      g.setLineDash([]);
+      // (a dot at each position heard, 1.5 px, its own colour - one within a pixel of the last drawn not drawn again)
+      var last = null;
+      for (var j = 0; j < sp.length; j++) {
+        var d = sp[j]; if (d.x < -5 || d.y < -5 || d.x > v.w + 5 || d.y > v.h + 5) continue;
+        if (last && Math.abs(d.x - last.x) + Math.abs(d.y - last.y) < 1) continue;
+        g.beginPath(); g.arc(d.x, d.y, 1.5, 0, 2 * Math.PI); g.fillStyle = cols[j]; g.fill(); last = d;
+      }
+      // (the one under the pointer: white)
+      if (clm.hover >= 0 && sp[clm.hover]) { var hv = sp[clm.hover]; g.beginPath(); g.arc(hv.x, hv.y, 1.5, 0, 2 * Math.PI); g.fillStyle = '#fff'; g.fill(); clmTipAt(hv); }
       // (the airports: FR24's old blue pin, its point on the airport)
       if (clm.pin && clm.pin.complete && clm.pin.naturalWidth) [clm.o, clm.d].forEach(function (ap) { if (!ap) return; var q = v.px(ap[0], ap[1]); g.drawImage(clm.pin, q.x - 10, q.y - 20, 20, 20); });
       clmPlane(v);
@@ -7330,17 +7651,45 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       g.globalAlpha = 0.35; g.filter = 'brightness(0)'; g.drawImage(ic.c, -s * ic.ax + 3, -s * ic.ay + 3, s, s); g.filter = 'none'; g.globalAlpha = 1;
       g.drawImage(ic.c, -s * ic.ax, -s * ic.ay, s, s);
     }
-    // (the moment under the pointer: FR24's box - "Time: UTC 21:37:43", "Ground speed: 279 kts", "Altitude: 8,150 ft")
+    // (the moment under the pointer: FR24's tooltip - "Time: UTC 21:37:43", "Ground speed: 279 kts", "Altitude: 8,150 ft"
+    // in the main map's units - made as FR24's map makes it: white, rounded, shadowed, its tip under it, 5 px over the dot)
+    var CLM_SPD = { kt: [1, 0, 'kts'], kmh: [1.852, 0, 'km/h'], mph: [1.15077945, 0, 'mph'], mach: [0.0015117811278615, 3, 'Ma'] };
+    function clmNum(v, dp) { var a = v.toFixed(dp).split('.'); return a[0].replace(/\B(?=(?:\d{3})+(?!\d))/g, ',') + (a.length > 1 ? '.' + a[1] : ''); }
+    function clmTipMake(host) {
+      var tip = document.createElement('article'); tip.className = 'tl-cl-tip';
+      tip.style.cssText = 'position:absolute;display:none;z-index:5;left:0;top:0;transform:translate(-50%,-100%);padding:0 0 4px;margin:0;pointer-events:none;box-sizing:border-box';
+      var sec = document.createElement('section');
+      sec.style.cssText = 'display:block;box-sizing:border-box;margin:0 0 4px;padding:8px;border-radius:8px;background:#fff;color:rgb(57,57,57);box-shadow:1px 3px 6px 0 rgba(0,0,0,.2)';
+      var body = document.createElement('div');
+      body.style.cssText = 'white-space:nowrap;font-family:"Open Sans",ui-sans-serif,system-ui,-apple-system,sans-serif;font-size:14px;line-height:20px;font-weight:400;text-align:left;letter-spacing:normal';
+      var arrow = document.createElement('div');
+      arrow.style.cssText = 'position:absolute;bottom:4px;left:50%;width:0;height:0;box-sizing:border-box;transform:translateX(-50%) scale(1.5);border-style:solid;border-width:4px 4px 0 4px;border-color:#fff transparent transparent transparent';
+      sec.appendChild(body); sec.appendChild(arrow); tip.appendChild(sec); host.parentNode.appendChild(tip);
+      clm.tip = tip; clm.tipBody = body;
+    }
+    function clmTipAt(s) { var tip = clm.tip; if (tip && tip.style.display !== 'none' && s) { tip.style.left = s.x + 'px'; tip.style.top = (s.y - 5) + 'px'; } }
+    function clmTipHide(now) {
+      if (clm.tipOff) { oClearTimeout(clm.tipOff); clm.tipOff = 0; }
+      if (now) { if (clm.tip) clm.tip.style.display = 'none'; return; }
+      // (as FR24's: gone a moment after the pointer leaves)
+      clm.tipOff = oSetTimeout(function () { clm.tipOff = 0; if (clm.hover < 0 && clm.tip) clm.tip.style.display = 'none'; }, 200);
+    }
     function clmHover(x, y) {
-      var best = -1, bd = 8 * 8;
+      var best = -1, bd = 9.5 * 9.5;
       for (var i = 0; i < clm.sp.length; i++) { var s = clm.sp[i], dx = s.x - x, dy = s.y - y, dd = dx * dx + dy * dy; if (dd < bd) { bd = dd; best = i; } }
       if (best === clm.hover) return;
       clm.hover = best; clmSoon();
       var tip = clm.tip; if (!tip) return;
-      if (best < 0) { tip.style.display = 'none'; return; }
-      var p = clm.pts[best], s2 = clm.sp[best], t = new Date(p[0] * 1000), z = function (n) { return String(n).padStart(2, '0'); }, n = function (x) { return Math.round(x).toLocaleString('en-GB'); };
-      tip.innerHTML = '<div><b>Time:</b> UTC ' + z(t.getUTCHours()) + ':' + z(t.getUTCMinutes()) + ':' + z(t.getUTCSeconds()) + '</div><div><b>Ground speed:</b> ' + (isFinite(p[4]) && p[4] !== null ? n(p[4]) + ' kts' : 'N/A') + '</div><div><b>Altitude:</b> ' + (isFinite(p[3]) && p[3] !== null ? n(p[3]) + ' ft' : 'N/A') + '</div>';
-      tip.style.display = 'block'; tip.style.left = s2.x + 'px'; tip.style.top = (s2.y - 5) + 'px';
+      if (best < 0) { clmTipHide(false); return; }
+      // (the tooltip only where the main map shows its trail's: "Show trail tooltip" in its settings)
+      if (!clm.set.tip) { clmTipHide(true); return; }
+      if (clm.tipOff) { oClearTimeout(clm.tipOff); clm.tipOff = 0; }
+      var p = clm.pts[best], s2 = clm.sp[best], t = new Date(p[0] * 1000), z = function (n) { return String(n).padStart(2, '0'); };
+      var sp = CLM_SPD[clm.set.spd] || CLM_SPD.kt, has = function (x) { return x !== null && x !== undefined && isFinite(x); };
+      var spd = has(p[4]) ? clmNum(p[4] * sp[0], sp[1]) + ' ' + sp[2] : 'N/A', alt = has(p[3]) ? (clm.set.alt === 'm' ? clmNum(p[3] * 0.3048, 0) + ' m' : clmNum(p[3], 0) + ' ft') : 'N/A';
+      var row = function (k, val) { return '<div><strong style="font-weight:600">' + k + ':</strong> ' + val + '</div>'; };
+      clm.tipBody.innerHTML = row('Time', 'UTC ' + z(t.getUTCHours()) + ':' + z(t.getUTCMinutes()) + ':' + z(t.getUTCSeconds())) + row('Ground speed', spd) + row('Altitude', alt);
+      tip.style.display = 'block'; clmTipAt(s2);
     }
     function clmFit(cover) {
       var map = clm.map, gm = window.google.maps; if (!map || !clm.pts.length) return;
@@ -7355,9 +7704,23 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       var w = proj.fromLatLngToPoint(new gm.LatLng(p.lat, p.lon)), sc = Math.pow(2, map.getZoom());
       map.setCenter(proj.fromPointToLatLng(new gm.Point(w.x, w.y + (clm.cover / 2) / sc)));
     }
+    // (the main map's settings, as the userscript part read them: only what is known taken)
+    function clmSet(s) {
+      if (!s || typeof s !== 'object') return;
+      var c = clm.set, b = Number(s.brightness);
+      if (typeof s.style === 'string') c.style = s.style;
+      if (isFinite(b)) c.brightness = Math.max(0, Math.min(100, b));
+      if (typeof s.night === 'boolean') c.night = s.night;
+      if (typeof s.tip === 'boolean') c.tip = s.tip;
+      if (s.alt === 'ft' || s.alt === 'm') c.alt = s.alt;
+      if (CLM_SPD[s.spd]) c.spd = s.spd;
+      if (!c.tip) clmTipHide(true);
+      clmBright();
+    }
     function clmOp(d) {
       var op = d.op;
       if (op === 'init') {
+        clmSet(d.set);
         clmGoogle().then(function (ok) {
           var host = document.getElementById('tl-cl-gmap');
           if (!ok || !host) { post('clMapSt', { ok: false }); return; }
@@ -7366,29 +7729,43 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
             clm.host = host;
             clm.map = new gm.Map(host, { center: { lat: 50, lng: 0 }, zoom: 4, mapTypeId: gm.MapTypeId.HYBRID, disableDefaultUI: true, gestureHandling: 'greedy', clickableIcons: false, keyboardShortcuts: false, backgroundColor: '#eaeaea' });
             clmOverlay();
-            var tip = document.createElement('div'); tip.className = 'tl-cl-tip'; tip.style.cssText = 'position:absolute;display:none;z-index:5;transform:translate(-50%,-100%);pointer-events:none;background:rgba(0,0,0,.85);color:#fff;font:12px/1.45 "Open Sans",Arial,sans-serif;padding:6px 9px;border-radius:4px;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,.35)';
-            host.parentNode.appendChild(tip); clm.tip = tip;
+            clmTipMake(host);
             clm.pin = new Image(); clm.pin.onload = clmSoon; clm.pin.src = '/static/images/airport_pin_40_blue.png';
+            // (FR24's own styles and trail colours, from its build, as they come)
+            clmStyles().then(function (fs) { clm.fs = fs; if (clm.map) clmType(clm.type); });
+            clmColFn();
           }
-          clmType(d.type || 'hybrid');
+          clmType(d.type || clm.set.style || 'hybrid');
           post('clMapSt', { ok: true });
         });
         return;
       }
       if (!clm.map) return;
       if (op === 'track') {
+        clmSet(d.set);
+        // (the main map's style as it is now - or the toolbar's, chosen on this page)
+        if (typeof d.type === 'string' && d.type && d.type !== clm.type) clmType(d.type);
         clm.pts = Array.isArray(d.pts) ? d.pts : []; clm.o = d.o || null; clm.d = d.d || null; clm.cover = Number(d.cover) || 0; clm.hover = -1; clm.pos = null;
-        if (clm.tip) clm.tip.style.display = 'none';
+        clm.cols = clm.pts.map(function (p) { return clmCol(p[3]); });
+        clm.t = clm.pts.length ? Number(clm.pts[0][0]) || 0 : 0;
+        // (a hole: FR24's two minutes unheard, in a track of a position a minute or closer (FR24's own); five minutes in
+        // one sparser - the monitor's few positions three minutes apart - not drawn as all holes)
+        var gaps = []; for (var i = 1; i < clm.pts.length; i++) gaps.push(clm.pts[i][0] - clm.pts[i - 1][0]);
+        gaps.sort(function (a, b) { return a - b; });
+        clm.gap = (gaps.length ? gaps[gaps.length >> 1] : 0) <= 60 ? 120 : 300;
+        clmTipHide(true);
         clmFit(clm.cover); clmSoon();
         if (d.ac) clmIcon(d.ac).then(function () { clmPlane(); }, function () { /* drawn without */ });
       } else if (op === 'pos') {
         clm.pos = { lat: d.lat, lon: d.lon, trk: d.trk }; clm.cover = Number(d.cover) || clm.cover;
+        // (the day and night line follows the moment played, minute by minute)
+        var t = Number(d.t); if (isFinite(t) && t > 0) { var was = Math.floor(clm.t / 60); clm.t = t; if (clm.set.night && Math.floor(t / 60) !== was) clmSoon(); }
         if (d.follow) { clm.follow = true; clmCentre(clm.pos); } else clm.follow = false;
         clmPlane();
       } else if (op === 'route') { clm.route = !!d.on; clmSoon(); }
       else if (op === 'type') clmType(d.type);
       else if (op === 'zoom') clm.map.setZoom(clm.map.getZoom() + (Number(d.dz) || 0));
-      else if (op === 'clear') { clm.pts = []; clm.sp = []; clm.pos = null; clm.o = clm.d = null; if (clm.tip) clm.tip.style.display = 'none'; clmSoon(); }
+      else if (op === 'clear') { clm.pts = []; clm.cols = []; clm.sp = []; clm.pos = null; clm.o = clm.d = null; clm.hover = -1; clmTipHide(true); clmSoon(); }
     }
 
     window.addEventListener('message', function (ev) {
@@ -7404,6 +7781,8 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       else if (d.__tweeksLadd === 'rwyGot') onRwyGot(d);
       else if (d.__tweeksLadd === 'endsGot') onEndsGot(d);
       else if (d.__tweeksLadd === 'rwyApGot') onRwyApGot(d);
+      else if (d.__tweeksLadd === 'cardRwyGot') onCardRwyGot(d);
+      else if (d.__tweeksLadd === 'pbRelatedGot') onPbRelatedGot(d);
       else if (d.__tweeksLadd === 'ogGot') onOgGot(d);
       else if (d.__tweeksLadd === 'rwyUseGot') onRwyUseGot(d);
       else if (d.__tweeksLadd === 'apWxGot') onApWxGot(d);
@@ -7458,6 +7837,14 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       else if (d.__tweeksLadd === 'photoReq') { if (d.hex) fetchPhotos(d.hex, d.reg, !!d.pri); }
       // (OpenStreetMap's Overpass answers a browser's own request; the userscript asks it through here)
       else if (d.__tweeksLadd === 'osmReq') { if (d.key && /^https:\/\/overpass-api\.de\/api\/interpreter\?data=/.test(String(d.url || ''))) oFetch.call(window, d.url).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) { post('osmRes', { key: d.key, j: j }); }, function () { post('osmRes', { key: d.key, j: null }); }); }
+      // (1.4.3: FR24's playback of a flight, asked as this page asks it - in the app, FR24 answers its own page, not always the
+      // app's own requests: the userscript asks it through here. That one address of FR24's API only)
+      else if (d.__tweeksLadd === 'fr24ApiReq') {
+        if (d.key && /^https:\/\/api\.flightradar24\.com\/common\/v1\/flight-playback\.json\?flightId=[0-9a-f]{1,12}&timestamp=\d{9,11}$/.test(String(d.url || ''))) {
+          var fr24Got = function (r) { return r && r.ok ? r.text() : null; }, fr24Back = function (t) { post('fr24ApiRes', { key: d.key, text: typeof t === 'string' ? t : null }); };
+          oFetch.call(window, d.url, { credentials: 'include' }).then(fr24Got).catch(function () { return oFetch.call(window, d.url, { credentials: 'omit' }).then(fr24Got); }).then(fr24Back, function () { fr24Back(null); });
+        } else post('fr24ApiRes', { key: d.key, text: null });
+      }
       else if (d.__tweeksLadd === 'photosDone') acceptPhotosDone(d);
       // (what the two networks' trace files answered this browser lately - __tweeksLaddBridge.stats.net in the console)
       else if (d.__tweeksLadd === 'netDiag') { if (d.net && typeof d.net === 'object') stats.net = d.net; }
@@ -7508,7 +7895,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       return { req: req, resp: resp, stats: function () { return stats; }, v: 1 };
     })();
     window[NS] = { resolved: resolved, routes: routes, naRecs: naRecs, naRoutes: naRoutes, telem: telem, hist: hist, lastPos: lastPos, photoCache: photoCache, psCache: psCache, stats: stats, fetchPhotos: fetchPhotos, hello: function () { post('ready', { oaWant: oaWant, stats: stats, feedReady: !!feedHeaders, v: BRIDGE_V }); }, v: BRIDGE_V };
-    if (window.__tlTestHook) try { window.__tlTestHook({ iconNote: iconNote, iconFor: iconFor, mxPbFlightMsg: mxPbFlightMsg, mxPbTag: mxPbTag, mxPbRunways: mxPbRunways, mxPbBadges: mxPbBadges, noteCard: noteCard, mxPbVeilOn: mxPbVeilOn, mxPbVeilOff: mxPbVeilOff, mxPbLogId: mxPbLogId, mxPbLinkId: mxPbLinkId, mxPbEnrich: mxPbEnrich, mxPbInfo: mxPbInfo, mxPbBackLabel: mxPbBackLabel, mxPbBackTo: mxPbBackTo, mxSec: mxSec, csOf: csOf, patchTopFlights: patchTopFlights, onTopGot: onTopGot, topNames: topNames, fillFlightList: fillFlightList, routeRows: routeRows, liveDestFix: liveDestFix, hist: hist, preloaded: function () { return preloaded; }, parse: parse, photoFits: photoFits, makerOf: makerOf, patchFollow: patchFollow, patchFlightMsg: patchFlightMsg, pushFollow: pushFollow, followSt: function () { return followSt; }, setFollowSt: function (s) { followSt = s; }, shownPhotos: shownPhotos, photoCache: photoCache, FOLLOW: FOLLOW, DETAILS: DETAILS, fLen: fLen, fStr: fStr, fVar: fVar, patchFlight: patchFlight, patchLiveFeed: patchLiveFeed, fr24Named: fr24Named, psState: function () { return { q: psQ.length, busy: psBusy, last: psLast, blockedFor: Math.max(0, psBlockedUntil - Date.now()), pri: Array.from(psPri), jobs: photoJobs.size, head: psQ.slice(0, 3).map(function (j) { return j.hex; }) }; }, acceptPubTel: acceptPubTel, pubTelFor: pubTelFor, fillNativeCard: fillNativeCard, regsOfCallsign: regsOfCallsign, categoryOf: categoryOf, placeShort: placeShort, nativeFill: nativeFill, natInfo: natInfo, addArch: addArch, acceptBoardArch: acceptBoardArch, telem: telem, b64Encode: b64Encode, b64DecodeInto: b64DecodeInto, frameHeader: frameHeader, concat: concat, varintInt32: varintInt32, PLAYBACK: PLAYBACK, patchPlayback: patchPlayback, patchPlaybackRequest: patchPlaybackRequest, pbRoutes: pbRoutes, pbTelAt: pbTelAt, setPbTrace: function (t) { pbTrace = t; }, patchList: patchList, acceptSites: acceptSites, listSig: listSig, mergeRoutes: mergeRoutes, applyRoutes: applyRoutes, routesAdd: routesAdd, applyAirport: applyAirport, applyBoardPage: applyBoardPage, applyStats: applyStats, mergeFlights: mergeFlights, apData: apData, telAt: telAt, noteTelem: noteTelem, pbTraceOf: function () { return pbTrace; }, logoOf: logoOf, archDetail: archDetail, tsOf: tsOf, noteAirportJson: noteAirportJson, rwyOf: rwyOf, rwyPanel: rwyPanel, panelTick: panelTick, panelData: panelData, promoSlots: promoSlots, acceptAirportPanel: acceptAirportPanel, unlockRunways: unlockRunways, mvRows: mvRows, mvKept: mvKept, dayOf: dayOf, pbPanelTick: pbPanelTick, logoFix: logoFix, liveEntries: liveEntries, pbPos: pbPos, unlockFeed: unlockFeed, derivedVs: derivedVs, altHist: altHist, acceptAir: acceptAir, airCache: airCache, flushAir: flushAir, airWant: function () { return airWant; }, lastPos: lastPos, resolved: resolved, stats: stats, pbFind: pbFind, inBar: inBar, pbBlk: pbBlk, cardInfo: cardInfo, boardRowsSeen: boardRowsSeen, archById: archById, placeBoard: placeBoard, stopBoardHold: stopBoardHold, needBoardArch: needBoardArch, mx: mx, mxPatchCore: mxPatchCore, mxAuth: mxAuth, mxNatList: mxNatList, mxTrackOk: mxTrackOk, stripRestriction: stripRestriction, mxBmMerge: mxBmMerge, mxBmItem: mxBmItem, mxMonTile: mxMonTile, mxMonOr: mxMonOr, mxPinVer: mxPinVer, mxAirportHistory: mxAirportHistory, mxHistItems: mxHistItems, mxTrackFile: mxTrackFile, mxDataTick: mxDataTick, mxPbProps: mxPbProps, mxPbShow: mxPbShow, mxPbStandIn: mxPbStandIn, mxPbReadAt: mxPbReadAt, mxPbStand: mxPbStand, mxBoardRwy: mxBoardRwy, reqIdOf: reqIdOf, mxPbOpen: mxPbOpen, mxPbTake: mxPbTake, setNav: function (f) { mxNav = f; }, mxPbAway: mxPbAway, mxLegacyPbJson: mxLegacyPbJson, mxLegacyPb: mxLegacyPb, mxPbFlags: mxPbFlags, mxPbSynId: mxPbSynId, mxPbParam: mxPbParam, setPbWanted: function (v) { mxPbWanted = v; }, mxPlans: function () { return mxPlans; }, mxLiveRunways: mxLiveRunways, mxRwy: mxRwy, mxSetApply: mxSetApply, mxSetNote: mxSetNote, mxSetKept: mxSetKept, mxLastClicked: mxLastClicked, mxLcList: mxLcList, onLcClick: onLcClick, mxLcFill: mxLcFill, cardRwy: cardRwy, naEndsFill: naEndsFill, onEndsGot: onEndsGot, naEnds: naEnds, boardWant: boardWant, mxLegacyImages: mxLegacyImages, rwyInUse: rwyInUse, windOfText: windOfText, mxRwyAirport: mxRwyAirport, mxRwyByHex: mxRwyByHex, mxRowHex: mxRowHex, mxDataEnds: mxDataEnds, rwyUsePanel: rwyUsePanel, apWxPanel: apWxPanel, apWxData: apWxData, apWxOf: apWxOf, mxApWxAdd: mxApWxAdd, vsNoLock: vsNoLock, statsUsage: statsUsage, statsMoves: statsMoves, apDataOf: apDataOf, acceptOa: acceptOa, oaAirportJson: oaAirportJson, oaMap: oaMap, oaRefs: fr24Refs, setOaBase: function (b) { oaBase = b; oaShown = 'x'; }, oaStoreRow: oaStoreRow, setViewBox: function (b) { viewBox = b; }, oaView: oaView, sunTimes: sunTimes, tzText: tzText, panelCodeFields: panelCodeFields, oaLinkPressed: oaLinkPressed, oaRefHref: oaRefHref, acceptOaOne: acceptOaOne, oaLost: function () { return oaLost; }, acceptOaFrom: acceptOaFrom, oaCodeLine: oaCodeLine, noteFr24Codes: noteFr24Codes, oaDupe: oaDupe, dirTick: dirTick, acceptOaDir: acceptOaDir, searchMerge: searchMerge, apSearchMerge: apSearchMerge, oaMatchRows: oaMatchRows, oaOneGet: oaOneGet, oaFillTables: oaFillTables, refOf: refOf, fieldShortName: fieldShortName, closestMerge: closestMerge, heliText: heliText, oaFast: function () { return oaFast; }, setOaNav: function (f) { oaNav = f; }, oaWantNow: function () { return oaWant; }, oaApi: oaApi, oaPageReq: oaPageReq, oaPageOf: oaPageOf, acMerge: acMerge, acStrip: acStrip, acMergeAdd: acMergeAdd, acSig: acSig, acDirFastPage: acDirFastPage, dirFastPage: dirFastPage, dirApply: dirApply, dirKeyOf: dirKeyOf, veilOn: veilOn, veilOff: veilOff, mxBmOaWx: mxBmOaWx, apWxFr24: apWxFr24, bmCodesTick: bmCodesTick, oaIataMode: oaIataMode, acPageReq: acPageReq, acPageOf: acPageOf, acPaginator: acPaginator, acTick: acTick, acceptAcDir: acceptAcDir, acceptAcPage: acceptAcPage, acAskPage: acAskPage, acLinkPressed: acLinkPressed, acceptAcFrom: acceptAcFrom, setAcNav: function (f) { acNav = f; }, acAddGet: acAddGet, acRefGet: acRefGet, statsUnlock: statsUnlock, onApWxGot: onApWxGot, mxStat: function () { return mx; }, mxTracksPac: mxTracksPac, mxPacParse: mxPacParse, mxPacots: mxPacots, acLegDir: acLegDir, acLegPage: acLegPage, acLegTick: acLegTick, acMaker: acMaker, acMakers: acMakers, patchListFor: patchList, listRowsFor: listRowsFor, listApCompact: listApCompact, listUnknown: listUnknown, setPac: function (o) { mxPac = { at: Date.now(), o: o }; }, rwyUseData: rwyUseData, rwyUseWant: rwyUseWant, cardRwyFill: cardRwyFill, rwyUseKept: rwyUseKept, mxLcTick: mxLcTick, mxBmMax: mxBmMax, mxNatParse: mxNatParse, mxAirsigList: mxAirsigList, mxStations: mxStations, mxLightning: mxLightning, mxLx: mxLx, mxFetch: mxFetch, mxWxText: mxWxText, mxWxKind: mxWxKind, mxCsv: mxCsv, patchLiveFeedRequest: patchLiveFeedRequest, mxCats: mxCats, mxOp: mxOp, mxLevels: mxLevels, mxNearest: mxNearest, MX_ICE: MX_ICE, MX_TURB: MX_TURB, mxWafsUrl: mxWafsUrl, routes: routes, setCurFollow: function (id) { curFollowId = id; } }); } catch (e) { /* ignore */ }
+    if (window.__tlTestHook) try { window.__tlTestHook({ clm: clm, clmOp: clmOp, clmSet: clmSet, clmLitAt: clmLitAt, clmLitJson: clmLitJson, clmSun: clmSun, clmRing: clmRing, clmNum: clmNum, clmCol: clmCol, clmStyles: clmStyles, clmColFn: clmColFn, clmChunk: clmChunk, mxPbRelPut: mxPbRelPut, mxPbVeilFail: mxPbVeilFail, cardItem: cardItem, cardPbItem: cardPbItem, mxPbPhoneUrl: mxPbPhoneUrl, iconNote: iconNote, iconFor: iconFor, mxPbFlightMsg: mxPbFlightMsg, mxPbTag: mxPbTag, mxPbRunways: mxPbRunways, mxPbBadges: mxPbBadges, noteCard: noteCard, mxPbVeilOn: mxPbVeilOn, mxPbVeilOff: mxPbVeilOff, mxPbLogId: mxPbLogId, mxPbLinkId: mxPbLinkId, mxPbEnrich: mxPbEnrich, mxPbInfo: mxPbInfo, mxPbBackLabel: mxPbBackLabel, mxPbBackTo: mxPbBackTo, mxSec: mxSec, csOf: csOf, patchTopFlights: patchTopFlights, onTopGot: onTopGot, topNames: topNames, fillFlightList: fillFlightList, routeRows: routeRows, liveDestFix: liveDestFix, hist: hist, preloaded: function () { return preloaded; }, parse: parse, photoFits: photoFits, makerOf: makerOf, patchFollow: patchFollow, patchFlightMsg: patchFlightMsg, pushFollow: pushFollow, followSt: function () { return followSt; }, setFollowSt: function (s) { followSt = s; }, shownPhotos: shownPhotos, photoCache: photoCache, FOLLOW: FOLLOW, DETAILS: DETAILS, fLen: fLen, fStr: fStr, fVar: fVar, patchFlight: patchFlight, patchLiveFeed: patchLiveFeed, fr24Named: fr24Named, psState: function () { return { q: psQ.length, busy: psBusy, last: psLast, blockedFor: Math.max(0, psBlockedUntil - Date.now()), pri: Array.from(psPri), jobs: photoJobs.size, head: psQ.slice(0, 3).map(function (j) { return j.hex; }) }; }, acceptPubTel: acceptPubTel, pubTelFor: pubTelFor, fillNativeCard: fillNativeCard, regsOfCallsign: regsOfCallsign, categoryOf: categoryOf, placeShort: placeShort, nativeFill: nativeFill, natInfo: natInfo, addArch: addArch, acceptBoardArch: acceptBoardArch, telem: telem, b64Encode: b64Encode, b64DecodeInto: b64DecodeInto, frameHeader: frameHeader, concat: concat, varintInt32: varintInt32, PLAYBACK: PLAYBACK, patchPlayback: patchPlayback, patchPlaybackRequest: patchPlaybackRequest, pbRoutes: pbRoutes, pbTelAt: pbTelAt, setPbTrace: function (t) { pbTrace = t; }, patchList: patchList, acceptSites: acceptSites, listSig: listSig, mergeRoutes: mergeRoutes, applyRoutes: applyRoutes, routesAdd: routesAdd, applyAirport: applyAirport, applyBoardPage: applyBoardPage, applyStats: applyStats, mergeFlights: mergeFlights, apData: apData, telAt: telAt, noteTelem: noteTelem, pbTraceOf: function () { return pbTrace; }, logoOf: logoOf, archDetail: archDetail, tsOf: tsOf, noteAirportJson: noteAirportJson, rwyOf: rwyOf, rwyPanel: rwyPanel, panelTick: panelTick, panelData: panelData, promoSlots: promoSlots, acceptAirportPanel: acceptAirportPanel, unlockRunways: unlockRunways, mvRows: mvRows, mvKept: mvKept, dayOf: dayOf, pbPanelTick: pbPanelTick, logoFix: logoFix, liveEntries: liveEntries, pbPos: pbPos, unlockFeed: unlockFeed, derivedVs: derivedVs, altHist: altHist, acceptAir: acceptAir, airCache: airCache, flushAir: flushAir, airWant: function () { return airWant; }, lastPos: lastPos, resolved: resolved, stats: stats, pbFind: pbFind, inBar: inBar, pbBlk: pbBlk, cardInfo: cardInfo, boardRowsSeen: boardRowsSeen, archById: archById, placeBoard: placeBoard, stopBoardHold: stopBoardHold, needBoardArch: needBoardArch, mx: mx, mxPatchCore: mxPatchCore, mxAuth: mxAuth, mxNatList: mxNatList, mxTrackOk: mxTrackOk, stripRestriction: stripRestriction, mxBmMerge: mxBmMerge, mxBmItem: mxBmItem, mxMonTile: mxMonTile, mxMonOr: mxMonOr, mxPinVer: mxPinVer, mxAirportHistory: mxAirportHistory, mxHistItems: mxHistItems, mxTrackFile: mxTrackFile, mxDataTick: mxDataTick, mxPbProps: mxPbProps, mxPbShow: mxPbShow, mxPbStandIn: mxPbStandIn, mxPbReadAt: mxPbReadAt, mxPbStand: mxPbStand, mxBoardRwy: mxBoardRwy, reqIdOf: reqIdOf, mxPbOpen: mxPbOpen, mxPbTake: mxPbTake, setNav: function (f) { mxNav = f; }, mxPbAway: mxPbAway, mxLegacyPbJson: mxLegacyPbJson, mxLegacyPb: mxLegacyPb, mxPbFlags: mxPbFlags, mxPbSynId: mxPbSynId, mxPbParam: mxPbParam, setPbWanted: function (v) { mxPbWanted = v; }, mxPlans: function () { return mxPlans; }, mxLiveRunways: mxLiveRunways, mxRwy: mxRwy, mxSetApply: mxSetApply, mxSetNote: mxSetNote, mxSetKept: mxSetKept, mxLastClicked: mxLastClicked, mxLcList: mxLcList, onLcClick: onLcClick, mxLcFill: mxLcFill, cardRwy: cardRwy, naEndsFill: naEndsFill, onEndsGot: onEndsGot, naEnds: naEnds, boardWant: boardWant, mxLegacyImages: mxLegacyImages, rwyInUse: rwyInUse, windOfText: windOfText, mxRwyAirport: mxRwyAirport, mxRwyByHex: mxRwyByHex, mxRowHex: mxRowHex, mxDataEnds: mxDataEnds, rwyUsePanel: rwyUsePanel, apWxPanel: apWxPanel, apWxData: apWxData, apWxOf: apWxOf, mxApWxAdd: mxApWxAdd, vsNoLock: vsNoLock, statsUsage: statsUsage, statsMoves: statsMoves, apDataOf: apDataOf, acceptOa: acceptOa, oaAirportJson: oaAirportJson, oaMap: oaMap, oaRefs: fr24Refs, setOaBase: function (b) { oaBase = b; oaShown = 'x'; }, oaStoreRow: oaStoreRow, setViewBox: function (b) { viewBox = b; }, oaView: oaView, sunTimes: sunTimes, tzText: tzText, panelCodeFields: panelCodeFields, oaLinkPressed: oaLinkPressed, oaRefHref: oaRefHref, acceptOaOne: acceptOaOne, oaLost: function () { return oaLost; }, acceptOaFrom: acceptOaFrom, oaCodeLine: oaCodeLine, noteFr24Codes: noteFr24Codes, oaDupe: oaDupe, dirTick: dirTick, acceptOaDir: acceptOaDir, searchMerge: searchMerge, apSearchMerge: apSearchMerge, oaMatchRows: oaMatchRows, oaOneGet: oaOneGet, oaFillTables: oaFillTables, refOf: refOf, fieldShortName: fieldShortName, closestMerge: closestMerge, heliText: heliText, oaFast: function () { return oaFast; }, setOaNav: function (f) { oaNav = f; }, oaWantNow: function () { return oaWant; }, oaApi: oaApi, oaPageReq: oaPageReq, oaPageOf: oaPageOf, acMerge: acMerge, acStrip: acStrip, acMergeAdd: acMergeAdd, acSig: acSig, acDirFastPage: acDirFastPage, dirFastPage: dirFastPage, dirApply: dirApply, dirKeyOf: dirKeyOf, veilOn: veilOn, veilOff: veilOff, mxBmOaWx: mxBmOaWx, apWxFr24: apWxFr24, bmCodesTick: bmCodesTick, oaIataMode: oaIataMode, acPageReq: acPageReq, acPageOf: acPageOf, acPaginator: acPaginator, acTick: acTick, acceptAcDir: acceptAcDir, acceptAcPage: acceptAcPage, acAskPage: acAskPage, acLinkPressed: acLinkPressed, acceptAcFrom: acceptAcFrom, setAcNav: function (f) { acNav = f; }, acAddGet: acAddGet, acRefGet: acRefGet, statsUnlock: statsUnlock, onApWxGot: onApWxGot, mxStat: function () { return mx; }, mxTracksPac: mxTracksPac, mxPacParse: mxPacParse, mxPacots: mxPacots, acLegDir: acLegDir, acLegPage: acLegPage, acLegTick: acLegTick, acMaker: acMaker, acMakers: acMakers, patchListFor: patchList, listRowsFor: listRowsFor, listApCompact: listApCompact, listUnknown: listUnknown, setPac: function (o) { mxPac = { at: Date.now(), o: o }; }, rwyUseData: rwyUseData, rwyUseWant: rwyUseWant, cardRwyFill: cardRwyFill, rwyUseKept: rwyUseKept, mxLcTick: mxLcTick, mxBmMax: mxBmMax, mxNatParse: mxNatParse, mxAirsigList: mxAirsigList, mxStations: mxStations, mxLightning: mxLightning, mxLx: mxLx, mxFetch: mxFetch, mxWxText: mxWxText, mxWxKind: mxWxKind, mxCsv: mxCsv, patchLiveFeedRequest: patchLiveFeedRequest, mxCats: mxCats, mxOp: mxOp, mxLevels: mxLevels, mxNearest: mxNearest, MX_ICE: MX_ICE, MX_TURB: MX_TURB, mxWafsUrl: mxWafsUrl, routes: routes, setCurFollow: function (id) { curFollowId = id; } }); } catch (e) { /* ignore */ }
     post('ready', { oaWant: oaWant, stats: stats, feedReady: false, v: BRIDGE_V });
   }
 
@@ -7844,10 +8231,12 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       for (const f of fulls || []) { const full = String(f == null ? '' : f).trim(); if (!full || out.has(full)) continue; const sh = placeShort(full), set = by.get(sh.toLowerCase()); out.set(full, set && set.size > 1 ? full : sh); }
       return out;
     }
-    function setFields(rows) {
-      fieldRows = rows || null;
-      for (const f of FL) { if (byId.get(f.id) === f) byId.delete(f.id); if (byIcao.get(f.icao) === f) byIcao.delete(f.icao); }
-      FL = []; fgrid = new Map();
+    // (1.4.3: opts.append - these rows added to those set before, a slice at a time: a browser builds its 40,000 fields so,
+    // its page not held up; opts.later - the airports' usage applied by the last slice only)
+    function setFields(rows, opts) {
+      const append = !!(opts && opts.append);
+      fieldRows = append && fieldRows ? fieldRows.concat(rows || []) : rows || null;
+      if (!append) { for (const f of FL) { if (byId.get(f.id) === f) byId.delete(f.id); if (byIcao.get(f.icao) === f) byIcao.delete(f.icao); } FL = []; fgrid = new Map(); }
       for (const r of rows || []) {
         if (!r || !fin(r.lat) || !fin(r.lon) || !r.ident) continue;
         const ident = String(r.ident).toUpperCase();
@@ -7864,7 +8253,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
         FL.push(a); byId.set(id, a); byIcao.set(ident, a);
         const k = cellKey(a.lat, a.lon); (fgrid.get(k) || fgrid.set(k, []).get(k)).push(a);
       }
-      applyUsage();
+      if (!(opts && opts.later)) applyUsage();
       return FL.length;
     }
     // (1.3.6) The OurAirports heliports FR24 does not list - where a helicopter that comes down there has landed: M-SKTO
@@ -7872,8 +8261,10 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     // fixed-wing flight is predicted for, nor taken for one of them elsewhere (heliById, not byId). Each by the id the
     // OurAirports list gives it - fieldId of its ident - so the browser names it and opens its page as that list's.
     let HL = [], hgrid = new Map(), HB = new Map(), heliRows = null;
-    function setHeliports(rows) {
-      heliRows = rows || null; HL = []; hgrid = new Map(); HB = new Map();
+    function setHeliports(rows, opts) {
+      const append = !!(opts && opts.append);
+      heliRows = append && heliRows ? heliRows.concat(rows || []) : rows || null;
+      if (!append) { HL = []; hgrid = new Map(); HB = new Map(); }
       for (const r of rows || []) {
         if (!r || !fin(r.lat) || !fin(r.lon) || !r.ident) continue;
         const ident = String(r.ident).toUpperCase(), own = byIcao.get(ident);
@@ -10213,7 +10604,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       return res;
     }
 
-    return { typeFamily, bizKin, isBizType, typeDoubt, regOfCs, surgeOf, setTables2, get T2() { return T2; }, trackState, offTrack, fieldShortName, fieldId, placeShort, setHeliports, heliportAt, heliById: id => HB.get(id) || null, placeLabels, setApproach, approachCell, approachPath, apprGroup, apprKey, trackAgree, heatNear, heatMatch, reckon, trackErr, remotePath, flowKeysOf, pgrpOf, grp6, sunElev, airData, gsAlong, minutesTo, flowAt, pathOf, pathDev, ownerKey, parseRunwayLengths, setRunwayLengths, csvLine, SQ_NOINFO, tripBin, regionOf, learnLeg, learnRow, learnCollector, addLearnedOp, odAdd: (x, y, w) => { const k = odKey(String(x).toUpperCase(), String(y).toUpperCase()), v = (OD.get(k) || 0) + w; if (v > 1e-9) OD.set(k, v); else OD.delete(k); }, odWeight: (x, y) => OD.get(odKey(String(x).toUpperCase(), String(y).toUpperCase())) || 0, odCount: () => OD.size, setAirports, setUsage, addUsage, setRunways, parseRunwaysCsv, runwayFit, setWeights, setTables, setLogit, calibrated, mergePoints, finalTo, longFinal, typeRangeKm, FEAT, groupOf, W, classify, isStepClimb, rangeKm, parseTrace, legsFromPoints, summarizeLeg, stitchLegs, chainLegs, histStats, inferOrigin, predict, privateSite, rwyImpossible, typeDesc, heliSpots, heliAirportAt, landedSum, localFlew, climbedOut, approachTo, downAndUp, landingInGap, gapEnds, slowGap, idleHole, currentLeg, circuits, mergeCircuits, setFields, fieldAt, placeAt, isField, nearbyFields, fieldCount: () => FL.length, airportAt, departureFromClimb, arrivalFromDescent, nearby, dist, brg, xtat, destPoint, angDiff, get airports() { return AP; }, byId: id => byId.get(id), byIcao: c => byIcao.get(String(c || '').toUpperCase()) };
+    return { typeFamily, bizKin, isBizType, typeDoubt, regOfCs, surgeOf, setTables2, get T2() { return T2; }, trackState, offTrack, fieldShortName, fieldId, placeShort, setHeliports, heliportAt, heliById: id => HB.get(id) || null, placeLabels, setApproach, approachCell, approachPath, apprGroup, apprKey, trackAgree, heatNear, heatMatch, reckon, trackErr, remotePath, flowKeysOf, pgrpOf, grp6, sunElev, airData, gsAlong, minutesTo, flowAt, pathOf, pathDev, ownerKey, parseRunwayLengths, setRunwayLengths, csvLine, SQ_NOINFO, tripBin, regionOf, learnLeg, learnRow, learnCollector, addLearnedOp, odAdd: (x, y, w) => { const k = odKey(String(x).toUpperCase(), String(y).toUpperCase()), v = (OD.get(k) || 0) + w; if (v > 1e-9) OD.set(k, v); else OD.delete(k); }, odWeight: (x, y) => OD.get(odKey(String(x).toUpperCase(), String(y).toUpperCase())) || 0, odCount: () => OD.size, setAirports, setUsage, addUsage, setRunways, parseRunwaysCsv, runwayFit, setWeights, setTables, setLogit, calibrated, mergePoints, finalTo, longFinal, typeRangeKm, FEAT, groupOf, W, classify, isStepClimb, rangeKm, parseTrace, legsFromPoints, summarizeLeg, stitchLegs, chainLegs, histStats, inferOrigin, predict, privateSite, rwyImpossible, typeDesc, heliSpots, heliAirportAt, landedSum, localFlew, climbedOut, approachTo, downAndUp, landingInGap, gapEnds, slowGap, idleHole, currentLeg, circuits, mergeCircuits, setFields, fieldAt, placeAt, isField, nearbyFields, fieldCount: () => FL.length, heliCount: () => HL.length, airportAt, departureFromClimb, arrivalFromDescent, nearby, dist, brg, xtat, destPoint, angDiff, get airports() { return AP; }, byId: id => byId.get(id), byIcao: c => byIcao.get(String(c || '').toUpperCase()) };
   }
   /* ==/ENGINE== */
 
@@ -10386,7 +10777,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '1.4.2';
+  const VERSION = '1.4.3';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
@@ -10401,12 +10792,13 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   const PENDING_TTL_MS = 90000;         // forget feed flights not seen for this long
   const ID_TTL_MS = 48 * 3600e3;        // cache lifetime for flight-id -> aircraft resolutions (longer than any flight)
   const HEX_TTL_MS = 45 * 864e5;        // cache lifetime for hex -> registration/type/photo data
-  const HISTORY_DAYS = 220;             // how far back the aircraft's own flight log is rebuilt (7 months)
+  const HISTORY_DAYS = 365;             // how far back the aircraft's own flight log is rebuilt (a year; 220 days before 1.4.3)
   // adsb.lol keeps each aircraft's daily traces for about six weeks (30 Sep 2026: back to 19 Aug); older days come from
   // airplanes.live's history (a year of it) - only for the aircraft being looked at, never for background logs
   const LOL_DAYS = 40;
   // an aircraft FR24 lists itself shows a free account one week of its log: this much more is rebuilt under FR24's rows
-  const OLDER_DAYS = 90;
+  // (a year, as a blocked aircraft's whole log; 90 days before 1.4.3)
+  const OLDER_DAYS = 365;
   // the part of the log the destination engine reasons over (22.10: all of it - its history evidence counts older flights
   // for less, so a long log sharpens the picture without its old routine outweighing what the aircraft does now)
   const ENGINE_HIST_DAYS = 220;
@@ -11205,7 +11597,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   }
   async function fr24Playback(id) {
     try {
-      const j = await gmRequest(`https://api.flightradar24.com/common/v1/flight-playback.json?flightId=${id.toString(16)}&timestamp=${Math.round(nowS())}`, { timeout: 15000, bg: true });
+      const j = await fr24PbJson(id.toString(16), nowS(), { bg: true });
       const tr = j && j.result && j.result.response && j.result.response.data && j.result.response.data.flight && j.result.response.data.flight.track;
       return Array.isArray(tr) && tr.length > 10 ? tr.map(p => ({ t: p.timestamp, lat: p.latitude, lon: p.longitude, alt: p.altitude ? p.altitude.feet : null })).filter(p => fin(p.lat) && fin(p.t)).sort((a, b) => a.t - b.t) : null;
     } catch (e) { return null; }
@@ -12543,18 +12935,23 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   function buildSites(rows) { const g = new Map(); for (const r of rows) { const k = Math.floor(r[0] * 20) * 10000 + Math.floor(r[1] * 20); let c = g.get(k); if (!c) g.set(k, c = []); c.push(r); } sites.grid = g; sites.n = rows.length;
     // the airfields FR24 does not list, for the route engine: where light aircraft land and take off, fly circuits - and
     // where they may be going (Borkenberge, Slany, a farm strip)
-    try { ENGINE.setFields(rows.filter(r => r[2] === 'S' || r[2] === 'M').map(r => ({ lat: r[0], lon: r[1], alt: r[6], ident: r[4], name: r[3], city: r[5] }))); } catch (e) { log('airfields', e); }
+    // (1.4.3: a browser's in slices - sites.setFields, set outside this block - its page and FR24's own not held up; the
+    // monitor's at once)
+    let p = null;
+    try { const list = rows.filter(r => r[2] === 'S' || r[2] === 'M').map(r => ({ lat: r[0], lon: r[1], alt: r[6], ident: r[4], name: r[3], city: r[5] })); if (typeof sites.setFields === 'function') p = sites.setFields(list); else ENGINE.setFields(list); } catch (e) { log('airfields', e); }
     // (1.4.1: the page's flight on screen worked out again with them - set outside this block; the monitor sets none)
-    if (typeof sites.onBuilt === 'function') sites.onBuilt();
+    const built = () => { if (typeof sites.onBuilt === 'function') sites.onBuilt(); };
+    if (p && typeof p.then === 'function') return p.then(built, built);
+    built(); return null;
   }
   function loadSites() {
     if (sites.grid) return Promise.resolve(true);
     if (sites.loading) return sites.loading;
     sites.loading = (async () => {
       const c = await store.getHist('b:sites1');
-      if (c && Array.isArray(c.rows) && c.rows.length > 10000) { buildSites(c.rows); if (now() - (c.at || 0) < 90 * 864e5) return true; }
+      if (c && Array.isArray(c.rows) && c.rows.length > 10000) { await buildSites(c.rows); if (now() - (c.at || 0) < 90 * 864e5) return true; }
       const rows = await parseSitesCsv(await gmRequest(SITES_URL, { timeout: 90000, json: false, accept: 'text/csv,text/plain', bg: true }));
-      if (rows.length > 10000) { store.setHist('b:sites1', { at: now(), rows }); buildSites(rows); log('landing sites', rows.length); }
+      if (rows.length > 10000) { store.setHist('b:sites1', { at: now(), rows }); await buildSites(rows); log('landing sites', rows.length); }
       return !!sites.grid;
     })().catch(e => { log('landing sites', String(e.message || e)); sites.loading = null; return false; });
     return sites.loading;
@@ -12573,6 +12970,10 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
   const heliportNear = (lat, lon, km) => { const n = siteNear(lat, lon, km, 'H'); return n ? { lat: n.row[0], lon: n.row[1], dist: n.dist, name: n.row[3] } : null; };
   // ==/ROUTE-SITES==
   sites.onBuilt = () => placesArrived();
+  // (1.4.3) The 40,000 fields and 21,000 heliports given to the route engine 2,000 at a time, the page let run between -
+  // in one go they held a phone's page several seconds as it opened, FR24's own map and panel with it
+  const engineSlices = async (rows, put) => { for (let i = 0; i < rows.length; i += 2000) { put(rows.slice(i, i + 2000), i === 0, i + 2000 >= rows.length); await sleep(0); } if (!rows.length) put([], true, true); };
+  sites.setFields = list => engineSlices(list, (part, first, last) => ENGINE.setFields(part, { append: !first, later: !last }));
   // ---- places OurAirports does not have, from OpenStreetMap (Overpass): hospital helipads and offshore platforms ------
   // A helicopter down at Southmead Hospital was "a private site near Bristol" - the pad is in OpenStreetMap, not in
   // OurAirports. One small query per spot (0.001°), asked in the background and kept on disk; answers: a named helipad
@@ -12588,6 +12989,54 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     });
   }
   function onOsmRes(d) { const f = d && osmPending.get(d.key); if (f) f(d.j || null); }
+  // ---- (1.4.3) FR24's own track of a flight: its playback (FR24's week - what its free player plays) -----------------------
+  // In the app, asked through FR24's own page - FR24 answers the web view as it answers its own site; the app's own
+  // requests (another network stack) it may turn away - else, and everywhere else, as before. Its requests kept to FR24's
+  // own pace (the lane gmRequest uses: three at a time, the background's one every two seconds).
+  const fr24PbPend = new Map(); let fr24PbSeq = 0;
+  const FR24_PB_URL = (fid, ts) => `https://api.flightradar24.com/common/v1/flight-playback.json?flightId=${encodeURIComponent(fid)}&timestamp=${Math.round(ts)}`;
+  function fr24PbJson(fid, ts, o) {
+    o = o || {}; fid = String(fid || '').toLowerCase();
+    if (!/^[0-9a-f]{1,12}$/.test(fid)) return Promise.reject(new Error('not an FR24 id'));
+    const url = FR24_PB_URL(fid, ts > 1e9 ? ts : nowS()), opts = { timeout: o.timeout || 15000, bg: !!o.bg, priority: !!o.priority };
+    if (!(typeof TL_APP === 'object' && TL_APP)) return gmRequest(url, opts);
+    const lane = opts.bg && !opts.priority ? 'api.flightradar24.com#bg' : 'api.flightradar24.com';
+    return acquire(lane, opts.priority, opts.bg && !opts.priority).then(release => new Promise((res, rej) => {
+      const key = 'p' + (++fr24PbSeq);
+      const direct = () => { release(); gmRequest(url, Object.assign({}, opts, { priority: true })).then(res, rej); };
+      const timer = setTimeout(() => { fr24PbPend.delete(key); direct(); }, Math.min(opts.timeout, 12000));
+      fr24PbPend.set(key, t => { clearTimeout(timer); fr24PbPend.delete(key); let j = null; try { j = t ? JSON.parse(t) : null; } catch (e) { j = null; } if (j && typeof j === 'object') { release(); res(j); } else direct(); });
+      postToPage('fr24ApiReq', { key, url });
+    }));
+  }
+  function onFr24ApiRes(d) { const key = d && typeof d.key === 'string' && /^p\d{1,9}$/.test(d.key) ? d.key : '', f = key ? fr24PbPend.get(key) : null; if (typeof f === 'function') f(typeof d.text === 'string' ? d.text : null); }
+  // (its points - { t, lat, lon, alt, gs, trk, vr, sq, gnd } in time order - and what FR24 says of the flight)
+  function fr24PbParse(j) {
+    const fl = j && j.result && j.result.response && j.result.response.data && j.result.response.data.flight, tr = fl && fl.track;
+    if (!Array.isArray(tr) || !tr.length) return null;
+    const pts = [];
+    for (const p of tr) {
+      if (!p || !fin(p.latitude) || !fin(p.longitude) || !fin(p.timestamp)) continue;
+      const alt = p.altitude && fin(p.altitude.feet) ? p.altitude.feet : null, gs = p.speed && fin(p.speed.kts) ? p.speed.kts : null;
+      pts.push({ t: p.timestamp, lat: p.latitude, lon: p.longitude, alt, gs, trk: fin(p.heading) ? p.heading : null, vr: p.verticalSpeed && fin(p.verticalSpeed.fpm) ? p.verticalSpeed.fpm : null, sq: typeof p.squawk === 'string' && /^[0-7]{4}$/.test(p.squawk) ? p.squawk : '', gnd: alt === 0 && !(gs > 50) });
+    }
+    pts.sort((a, b) => a.t - b.t);
+    return pts.length ? { pts, fl } : null;
+  }
+  // (1.4.3) ... and sent to the monitor, which keeps FR24's whole track of it for good - past FR24's week, as FR24's own
+  // player would have it - when its own copy is the scans' few points (sparse) or none. Once per flight; a flight ended
+  // twenty minutes ago and more (its whole track). The monitor takes it only where it agrees with its own positions.
+  const fr24TrackSent = new Set();
+  function fr24TrackSend(fid, tr) {
+    fid = String(fid || '').toLowerCase();
+    if (!tr || !tr.pts || tr.pts.length < 2 || fr24TrackSent.has(fid) || !/^[0-9a-f]{1,12}$/.test(fid) || nowS() - tr.pts[tr.pts.length - 1].t < 1200 || !monUp()) return;
+    fr24TrackSent.add(fid); if (fr24TrackSent.size > 3000) fr24TrackSent.delete(fr24TrackSent.values().next().value);
+    const fl = tr.fl || {}, idn = fl.identification || {}, ac = fl.aircraft || {}, ap = fl.airport || {}, code = x => clean((x && x.code && (x.code.iata || x.code.icao)) || '');
+    const m = { cs: clean(idn.callsign || ''), fn: clean((idn.number && idn.number.default) || ''), reg: clean((ac.identification && ac.identification.registration) || ''), hex: clean((ac.identification && ac.identification.modes) || '').toLowerCase(), type: clean((ac.model && ac.model.code) || ''), from: code(ap.origin), to: code(ap.destination) };
+    for (const k of Object.keys(m)) if (!/^[A-Za-z0-9-]{1,16}$/.test(m[k])) delete m[k];
+    const p = tr.pts.slice(0, 20000).map(x => [x.t, Math.round(x.lat * 1e5) / 1e5, Math.round(x.lon * 1e5) / 1e5, fin(x.alt) ? x.alt : null, fin(x.gs) ? x.gs : null, fin(x.trk) ? x.trk : null, x.gnd ? 1 : 0]);
+    monPost('/fr24track', { v: 1, fid, m, p }).catch(() => { fr24TrackSent.delete(fid); });
+  }
   let osmCache = null, osmSaveT = 0; const osmWaiters = new Map();
   const osmKey = (lat, lon) => lat.toFixed(3) + ',' + lon.toFixed(3);
   function osmStore() { if (!osmCache) { const kv = store.kvGet('osm2') || {}; osmCache = new Map(Object.entries(kv)); } return osmCache; }
@@ -12730,8 +13179,10 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     }
     // (1.3.6) its heliports for the route engine: a helicopter down on one has landed there (engine.js setHeliports) -
     // M-SKTO's landings at Axis Business Park's helipad were "-" in its log and playback
-    try { ENGINE.setHeliports(c.rows.filter(r => Array.isArray(r) && r[9] === 'H').map(r => ({ id: r[0], ident: r[2], code: r[1], name: r[3], city: r[4], lat: r[6], lon: r[7], alt: r[8] }))); } catch (e) { log('heliports', String(e && e.message || e)); }
-    placesArrived();
+    // (1.4.3: in slices - oa.heliReady when all are in)
+    const hl = c.rows.filter(r => Array.isArray(r) && r[9] === 'H').map(r => ({ id: r[0], ident: r[2], code: r[1], name: r[3], city: r[4], lat: r[6], lon: r[7], alt: r[8] }));
+    oa.heliReady = engineSlices(hl, (part, first) => ENGINE.setHeliports(part, { append: !first })).catch(e => log('heliports', String(e && e.message || e))).then(() => placesArrived());
+    return oa.heliReady;
   }
   // (1.4.1) heliports or strips just in: the flight on screen worked out again at once - its "N/A" end, an OurAirports
   // field or pad it took off from, filled now, not at the next round a quarter of a minute later
@@ -12786,6 +13237,8 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       const c = await store.getHist('b:oaap1').catch(() => null);
       if (oaGood(c)) {
         oaSet(c); oa.at = c.at || 0; oa.got = c.got || 0;
+        // (1.4.3: its heliports in the engine - in slices - before the list is called in)
+        await oa.heliReady;
         // (the list kept is used at once - the pins are not kept waiting for the monitor; whether it is still the one is
         // asked meanwhile, and a newer one put in its place when it comes)
         if (now() - oa.got < 7 * 864e5) { if (now() - oa.got >= OA_CHECK) oaCheck().then(ch => { if (ch) pushOa(); }); return true; }
@@ -12793,7 +13246,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
         if (oa.got && now() - oa.got < 7 * 864e5) return true;
       }
       const j = await monGet('/oaap', { timeout: 90000, bg: true }).catch(() => null);
-      if (oaGood(j)) { oaKeep(j); log('OurAirports airports', j.rows.length); }
+      if (oaGood(j)) { oaKeep(j); await oa.heliReady; log('OurAirports airports', j.rows.length); }
       return !!oa.rows;
     })().catch(e => { log('OurAirports airports', String(e && e.message || e)); return false; }).finally(() => { oa.loading = null; });
     return oa.loading;
@@ -16698,7 +17151,26 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     for (const w of clean(row.textContent).toUpperCase().split(/[^A-Z0-9-]+/)) { const k = w.replace(/[^A-Z0-9]/g, ''); if (k.length >= 3 && regIdx.has(k)) return regIdx.get(k); }
     return null;
   }
+  // (1.4.3) FR24's note under its search results - "You can visit our blog for a complete guide to using search." - taken
+  // away wherever the search box is (the map, the data pages, the player, the app): the box around it, its text and
+  // nothing else
+  const SEARCH_BLOG = /visit\s+our\s+blog\b[\s\S]{0,80}\bguide\s+to\s+using\s+search/i;
+  function hideSearchBlog(scope) {
+    if (!opt.on || !scope) return 0;
+    let n = 0;
+    for (const a of scope.querySelectorAll('a[href*="blog"]')) {
+      let el = a.parentElement; if (!el || !SEARCH_BLOG.test(el.textContent || '')) continue;
+      // (up to the note's own box: the one whose text is the note's alone - its one link, no results, nothing else)
+      const own = x => !!x && x !== scope && x !== document.body && SEARCH_BLOG.test(x.textContent || '') && (x.textContent || '').trim().length < 160 && x.querySelectorAll('a').length === 1 && !x.querySelector('[data-testid^="search__result"], input, button');
+      for (let i = 0; i < 5 && own(el.parentElement); i++) el = el.parentElement;
+      if (el.dataset.tlSearchBlog) continue;
+      el.dataset.tlSearchBlog = '1'; el.style.setProperty('display', 'none', 'important'); n++;
+    }
+    return n;
+  }
   function tagSearchResults() {
+    // (the note sits beside the results, not in them - and is there with none: the whole page looked at)
+    try { hideSearchBlog(document.body); } catch (e) { log('search note', e); }
     const box = document.querySelector('[data-testid="search__results"]'); if (!box) return;
     for (const row of box.querySelectorAll('[data-testid="search__result-row"]')) {
       if (row.querySelector('.tl-ladd-chip')) continue;
@@ -17174,8 +17646,10 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     const acMob = ac && ac.reg ? `<a class="fbold" href="/data/aircraft/${esc(ac.reg.toLowerCase())}" title="${esc(ac.desc || ac.type || '')}">${esc(ac.reg)}</a>` : '';
     // (1.4.1: an airline's flight by its flight number, as FR24's own rows - FR24's number of that callsign)
     const fn = !ac && cs ? fnKnown(cs) : '', fnDesk = fn ? ` <a class="fbold" href="/data/flights/${esc(fn.toLowerCase())}" title="${esc(cs)} - its flight number as Flightradar24 shows it (LADD unblocker)">${esc(fn)}</a> ` : '';
+    // (1.4.3: FR24's scheduled times of it, kept by the monitor - the leg's own (a flight number's rows), else its number's)
+    const sc = l.std || l.sta ? { std: l.std || 0, sta: l.sta || 0 } : schedOfLeg(l, l.fn || fn);
     return logRowHtml({ t0: l.tStart, tz, tzTo, flight: ac ? acDesk || '—' : fnDesk || (cs ? `(${esc(cs)})` : '—'), flightMob: ac ? acMob || '—' : '', dur: (flown ? (onEst || offEst ? '~' : '') + durStr(flown) : '—') + (l.laps > 1 ? ` · ${l.laps} laps` : ''),
-      stdTs: 0, atdTs: tOff, staTs: 0, color: landed ? 'green' : 'gray', atdEst: offEst, onEst, estTitle: 'reckoned from the nearest position heard (no receiver heard this part)',
+      stdTs: (sc && sc.std) || 0, atdTs: tOff, staTs: (sc && sc.sta) || 0, color: landed ? 'green' : 'gray', atdEst: offEst, onEst, estTitle: 'reckoned from the nearest position heard (no receiver heard this part)',
       statusPrefix: landed && tOn ? (onEst ? 'Landed ~' : 'Landed ') : '', statusTs: tOn || 0, statusText: landed ? (tOn ? `Landed ${onEst ? '~' : ''}${fmtLocal(tOn, tzTo)}` : 'Landed · time unknown') : (l.ended ? 'Landed (airport unknown)' : 'Unknown'),
       from: siteFrom ? SITE_CELLS : apCells(from, l.from && l.from.conf), to: siteTo ? SITE_CELLS : apCells(to, l.to && l.to.conf),
       btn: playCellHtml(l, hex, ac && ac.reg ? ac.reg : reg, flown) });
@@ -17226,9 +17700,11 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     if (pbeAsk.has(fid)) return pbeAsk.get(fid);
     const p = Promise.resolve(store.kvReady).catch(() => null).then(() => {
       const c = pbeMap().get(fid); if (c) return { start: Object.assign({}, c.start), end: Object.assign({}, c.end) };
-      return gmRequest(`https://api.flightradar24.com/common/v1/flight-playback.json?flightId=${encodeURIComponent(fid)}&timestamp=${ts}`, { timeout: 15000 }).then(j => {
+      return fr24PbJson(fid, ts).then(j => {
         const d = j && j.result && j.result.response && j.result.response.data && j.result.response.data.flight, tr = d && d.track;
         if (!Array.isArray(tr) || !tr.length) return null;
+        // (1.4.3: FR24's whole track of it - kept by the monitor for good)
+        try { fr24TrackSend(fid, fr24PbParse(j)); } catch (e) { /* not sent */ }
         const pt = p => ({ lat: p.latitude, lon: p.longitude, alt: p.altitude ? p.altitude.feet : null, gs: p.speed ? p.speed.kts : null, t: p.timestamp });
         const v = { start: pt(tr[0]), end: pt(tr[tr.length - 1]) };
         if (/^[0-9a-f]{1,12}$/.test(fid) && pbeOk(v) && nowS() - v.end.t > 1800) pbeKeep(fid, { start: Object.assign({}, v.start), end: Object.assign({}, v.end) });
@@ -17242,25 +17718,37 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // there as the page opens: FR24's playback is asked only for a flight the monitor has nothing of
   // (1.4.2: asked for as FR24's page data is read - 06-classic clEarly - and taken from there by the rows)
   const fr24EndsPre = new Map();   // fid -> Promise<{ start, end } | null>
+  const fr24EndsTry = new Map();   // (1.4.3) fid -> asks lost so far
   function fr24EndsEarly(items) {
     const want = (items || []).filter(x => x && x.fid && !fr24EndsPre.has(x.fid)); if (!want.length) return;
-    const p = fr24EndsAsk(want).catch(() => new Map());
-    for (const x of want) fr24EndsPre.set(x.fid, p.then(m => m.get(x.fid) || null));
+    const p = fr24EndsAsk(want).catch(() => Object.assign(new Map(), { failed: true }));
+    // (1.4.3: an ask that failed - not one the monitor answered without it - leaves the row to ask again: undefined)
+    for (const x of want) fr24EndsPre.set(x.fid, p.then(m => m.get(x.fid) || (m.failed ? undefined : null)));
   }
   async function fr24EndsMon(items) {
     const out = new Map(), rest = [];
-    for (const x of items) { const p = fr24EndsPre.get(x.fid); if (p) { const v = await p; if (v) out.set(x.fid, v); } else rest.push(x); }
-    if (rest.length) for (const [k, v] of await fr24EndsAsk(rest)) out.set(k, v);
+    for (const x of items) { const p = fr24EndsPre.get(x.fid); if (p) { const v = await p; if (v) out.set(x.fid, v); else if (v === undefined) { fr24EndsPre.delete(x.fid); rest.push(x); } } else rest.push(x); }
+    if (rest.length) { const m = await fr24EndsAsk(rest); for (const [k, v] of m) out.set(k, v); if (m.failed) out.failed = true; }
     return out;
   }
+  // (1.4.3) A row of FR24's week whose flight the monitor has only its scans' few points of (sp): FR24's whole track of it
+  // read in the background - one every two seconds at most, fifteen a page - and sent to the monitor to keep for good, so
+  // it plays as FR24's own after FR24's week too
+  const fr24KeepAsked = new Set();
+  function fr24KeepLater(fid, t) {
+    if (fr24KeepAsked.has(fid) || fr24KeepAsked.size >= 15 || !(t > 1e9) || nowS() - t > 7.5 * 86400 || nowS() - t < 1800) return;
+    fr24KeepAsked.add(fid);
+    fr24PbJson(fid, t, { bg: true, timeout: 20000 }).then(j => { const tr = fr24PbParse(j); if (tr) fr24TrackSend(fid, tr); }).catch(() => {});
+  }
   async function fr24EndsAsk(items) {
-    const out = new Map(); if (!items.length || !(await monReady())) return out;
+    const out = new Map(); if (!items.length) return out;
+    if (!(await monReady())) { out.failed = true; return out; }
     const pt = a => Array.isArray(a) && fin(a[0]) && fin(a[1]) && fin(a[2]) ? { t: a[0], lat: a[1], lon: a[2], alt: fin(a[3]) ? a[3] : null, gs: fin(a[4]) ? a[4] : null, gnd: a[5] === 1 } : null;
     for (let i = 0; i < items.length; i += 40) {
       try {
         const j = await monGet('/fr24ends?f=' + items.slice(i, i + 40).map(x => x.fid + (x.t > 1e9 ? ':' + Math.round(x.t) : '')).join(','), { timeout: 8000 });
-        for (const [fid, v] of Object.entries((j && j.list) || {})) { const a = pt(v && v.s), b = pt(v && v.e); if (a && b && /^[0-9a-f]{1,12}$/.test(fid)) out.set(fid, { start: a, end: b }); }
-      } catch (e) { /* none kept: FR24's playback, for the rows that need it */ }
+        for (const [fid, v] of Object.entries((j && j.list) || {})) { const a = pt(v && v.s), b = pt(v && v.e); if (a && b && /^[0-9a-f]{1,12}$/.test(fid)) { out.set(fid, { start: a, end: b }); if (v.sp === 1) fr24KeepLater(fid, a.t); } }
+      } catch (e) { out.failed = true; /* (1.4.3: asked again - a phone's slow answer was taken for "none kept") */ }
     }
     return out;
   }
@@ -17332,7 +17820,8 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     if (!/^[0-9a-f]{1,12}$/.test(fid) && !PB_SYN.test(fid)) { postToPage('trackFileGot', { rid, ok: false }); return; }
     let pts = [], cs = '', desc = '';
     if (!PB_SYN.test(fid)) try {
-      const j = await gmRequest(`https://api.flightradar24.com/common/v1/flight-playback.json?flightId=${encodeURIComponent(fid)}&timestamp=${ts || Math.round(now() / 1000)}`, { timeout: 20000 });
+      const j = await fr24PbJson(fid, ts || nowS(), { priority: true, timeout: 20000 });
+      try { fr24TrackSend(fid, fr24PbParse(j)); } catch (e) { /* not sent */ }
       const fl = j && j.result && j.result.response && j.result.response.data && j.result.response.data.flight, tr = fl && fl.track;
       for (const p of Array.isArray(tr) ? tr : []) {
         if (!p || !fin(p.latitude) || !fin(p.longitude) || !fin(p.timestamp)) continue;
@@ -17377,9 +17866,17 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   }
   // (a flight's own track's ends as a row's cells: where it began, where it ended, its landing when it ended down)
   // (src 'mon': the monitor's positions - its scans', a minute or so apart; 'fr24': FR24's own whole track)
+  // (1.4.3: with the lists of places they were named from - airports, fields, heliports: when more come in, named again)
+  const placesSig = () => (ENGINE.airports || []).length + ':' + ENGINE.fieldCount() + ':' + (ENGINE.heliCount ? ENGINE.heliCount() : 0);
   function endsCellsOf(e, src) {
     const end = e && e.end, down = !!end && end.t > 0 && nowS() - end.t > 1200 && (end.alt == null || end.alt < 1500) && (end.gs == null || end.gs < 120);
-    return { from: e && placeCells(e.start), to: e && placeCells(e.end), landT: down ? end.t : 0, s: (e && e.start) || null, e: end || null, src: src || 'fr24' };
+    return { from: e && placeCells(e.start), to: e && placeCells(e.end), landT: down ? end.t : 0, s: (e && e.start) || null, e: end || null, src: src || 'fr24', raw: e || null, sig: placesSig() };
+  }
+  // (a row's ends named before the strips and heliports were in - "Private Site", FR24's guess left, or nothing - named
+  // again now they are: M-SKTO's landings at Truro Aerodrome on 27 Nov, the landing sites' list 12 MB on a phone)
+  function endsCellsNow(fid) {
+    const fe = fid ? fr24EndCells.get(fid) : null; if (!fe || !fe.raw || fe.sig === placesSig()) return fe;
+    const nw = endsCellsOf(fe.raw, fe.src); fr24EndCells.set(fid, nw); return nw;
   }
   // (a point on the ground or nearly - slow, low: the place under it is where the flight began or ended)
   const nearGround = p => !!p && (p.gnd === true || (fin(p.alt) && p.alt < 300)) && (!fin(p.gs) || p.gs < 60);
@@ -17418,10 +17915,13 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       // history day that names the strip can come in after FR24's track was read)
       // (1.4.1: and FR24's own airport, "over", where its own track came down at another field - beatsFr24)
       const rankOf = c => c === SITE_CELLS ? 1 : /tl-inf/.test(c.desk) ? 2 : 3;
-      const putCells = (td, label, cells, key, over) => {
-        if (!cells || !(over || dash(td) || (td.classList.contains('tl-filled') && rankOf(cells) > Number(td.dataset.tlRank || 0)))) return false;
+      const putCells = (td, label, cells, key, over, feSig) => {
+        // (1.4.3: one of the row's own track's ends, named before more places were in: named again - feSig)
+        const again = !!feSig && td.classList.contains('tl-filled') && !!td.dataset.tlFe && td.dataset.tlFe !== feSig && td.innerHTML !== cells.desk;
+        if (!cells || !(over || again || dash(td) || (td.classList.contains('tl-filled') && rankOf(cells) > Number(td.dataset.tlRank || 0)))) return false;
         td.innerHTML = cells.desk; td.classList.add('tl-filled'); td.dataset.tlRank = String(rankOf(cells)); delete td.dataset.tlChain; delete td.dataset.tlChainOf;
-        td.title = over ? `${cells.title} - where FR24's own track of the flight ${key === 'to' ? 'came down' : 'began'}; FR24 gives ${over.name || over.city || ''} (${over.iata || over.icao || ''}), which it never came near (LADD unblocker)` : cells.title;
+        if (feSig) td.dataset.tlFe = feSig; else delete td.dataset.tlFe;
+        td.title = decodeEntities(over ? `${cells.title} - where FR24's own track of the flight ${key === 'to' ? 'came down' : 'began'}; FR24 gives ${over.name || over.city || ''} (${over.iata || over.icao || ''}), which it never came near (LADD unblocker)` : cells.title);
         if (over) td.classList.add('tl-over');
         rec[key] = over ? Object.assign({}, cells, { over: true }) : cells;
         for (const p of mob) { const lb = p.querySelector('label'); if (lb && lb.textContent.trim() === label) { const sp = p.querySelector('span.details'); if (sp) sp.innerHTML = cells.mob; } }
@@ -17429,14 +17929,16 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       };
       // (1.4.1) FR24's own airport of an end its own track never came near - down at another field: that field. The rows'
       // tracks' ends are the monitor's, every row's in one ask (below), there as the page opens
-      const fe = fid ? fr24EndCells.get(fid) : null;
+      const fe = endsCellsNow(fid);
       if (fid && !fe && !fr24EndAsked.has(fid)) { fr24EndAsked.add(fid); endsWanted.push({ fid, t: Number(tr.dataset.timestamp) || atd }); }
       if (fe) {
-        const oF = beatsFr24(fromTd, fe.from, fe.s, pageHeli); if (oF && putCells(fromTd, 'FROM', fe.from, 'from', oF)) n++;
-        const oT = landedRow ? beatsFr24(toTd, fe.to, fe.e, pageHeli) : null; if (oT && putCells(toTd, 'TO', fe.to, 'to', oT)) n++;
+        const oF = beatsFr24(fromTd, fe.from, fe.s, pageHeli); if (oF && putCells(fromTd, 'FROM', fe.from, 'from', oF, fe.sig)) n++;
+        const oT = landedRow ? beatsFr24(toTd, fe.to, fe.e, pageHeli) : null; if (oT && putCells(toTd, 'TO', fe.to, 'to', oT, fe.sig)) n++;
         if (fe.src === 'mon' && ((!oF && farLow(fromTd, fe.s)) || (!oT && landedRow && farLow(toTd, fe.e)))) apiAsk(fid, Number(tr.dataset.timestamp) || atd);
       }
-      if (!dash(fromTd) && !dash(toTd) && !weak(fromTd) && !weak(toTd) && !/^\s*(Scheduled|Unknown)\b/i.test(statusTd.textContent || '')) continue;
+      // (1.4.3: or an end named from its own track before more places were in - named again below)
+      const stale = td => !!fe && !!td.dataset.tlFe && td.dataset.tlFe !== fe.sig;
+      if (!dash(fromTd) && !dash(toTd) && !weak(fromTd) && !weak(toTd) && !stale(fromTd) && !stale(toTd) && !/^\s*(Scheduled|Unknown)\b/i.test(statusTd.textContent || '')) continue;
       let l = null, bd = 900; for (const x of legs) { const d = Math.abs((x.tOff || x.tStart) - atd); if (d < bd) { bd = d; l = x; } }
       // (1.1.2: or one heard only after the take-off - within FR24's take-off and landing: that flight, its start out of
       // coverage; the panel's "Recent flights" the same, 04-routes pageLegsOf)
@@ -17479,12 +17981,12 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       // also its landing: "Landed ~" then)
       // (1.4.1: and the flight in the air now - where its own track began: its TO stays the live one's, its track's end
       // being where it is now)
-      if (fid && (landedRow || unfinished || isLive) && (dash(fromTd) || dash(toTd) || weak(fromTd) || weak(toTd) || unfinished)) {
+      if (fid && (landedRow || unfinished || isLive) && (dash(fromTd) || dash(toTd) || weak(fromTd) || weak(toTd) || stale(fromTd) || stale(toTd) || unfinished)) {
         if (fe) {
-          if (putCells(fromTd, 'FROM', fe.from, 'from')) n++;
+          if (putCells(fromTd, 'FROM', fe.from, 'from', null, fe.sig)) n++;
           // (an unfinished one's TO only where its track ended down: one FR24 calls "Scheduled" while it is still in the
           // air ends where it is now - an airfield it is passing is not where it went)
-          if (putCells(toTd, 'TO', landedRow || (!isLive && fe.landT > atd) ? fe.to : null, 'to')) n++;
+          if (putCells(toTd, 'TO', landedRow || (!isLive && fe.landT > atd) ? fe.to : null, 'to', null, fe.sig)) n++;
           if (unfinished && fe.landT > atd && fe.to && fe.to.a) {
             const tzTo = tzOf(fe.to.a), txt = 'Landed ~' + fmtLocal(fe.landT, tzTo);
             statusTd.dataset.prefix = 'Landed ~'; statusTd.dataset.timestamp = String(fe.landT); statusTd.dataset.offset = String(tzTo); statusTd.textContent = ' ' + txt + ' ';
@@ -17514,6 +18016,8 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       fr24EndsMon(endsWanted).then(async got => {
         // (the monitor not there yet: asked again once it answers its check)
         if (!got.size && !monUp()) monWhenUp(() => { for (const x of endsWanted) { fr24EndAsked.delete(x.fid); fr24EndsPre.delete(x.fid); } if (fr24Refill) fr24Refill(); });
+        // (1.4.3: or there, the ask lost - a phone's slow network: asked again, three times at most, the rows not had yet)
+        else if (got.failed) { const again = endsWanted.filter(x => !got.has(x.fid) && (fr24EndsTry.get(x.fid) || 0) < 3); if (again.length) setTimeout(() => { for (const x of again) { fr24EndsTry.set(x.fid, (fr24EndsTry.get(x.fid) || 0) + 1); fr24EndAsked.delete(x.fid); fr24EndsPre.delete(x.fid); } if (fr24Refill) fr24Refill(); }, 3000); }
         if (got.size) await placesIn();
         for (const x of endsWanted) fr24MonWait.delete(x.fid);
         for (const x of endsWanted) {
@@ -17751,7 +18255,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   const fidHex = new Map();
   function hexOfFid(fid, ts, reg) {
     const k = String(fid || '').toLowerCase();
-    if (!fidHex.has(k)) fidHex.set(k, (k ? gmRequest(`https://api.flightradar24.com/common/v1/flight-playback.json?flightId=${encodeURIComponent(k)}&timestamp=${Math.round(ts || nowS())}`, { timeout: 15000 }) : Promise.resolve(null)).then(j => {
+    if (!fidHex.has(k)) fidHex.set(k, (k ? fr24PbJson(k, ts || nowS()) : Promise.resolve(null)).then(j => {
       const f = j && j.result && j.result.response && j.result.response.data && j.result.response.data.flight, idn = f && f.aircraft && f.aircraft.identification;
       const hx = clean(idn && (idn.modes || idn.modeS || idn.hex)).toLowerCase(); if (/^[0-9a-f]{6}$/.test(hx)) return hx;
       const r = clean((idn && idn.registration) || reg).toUpperCase(), h = r && store.byReg(r); return h && h.hex ? h.hex : '';
@@ -18021,7 +18525,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
           loadToday(hex0, 60000, { priority: true }).catch(() => null).then(() => fill());
           const liveTick = async () => { if (routeChan) routeChan.postMessage({ ask: hex0 }); let own = null; try { own = await pageLiveState(hex0, reg); } catch (e) { own = null; } lv = fromMap0() || own; fill(); };
           liveTick(); setInterval(liveTick, 60000);
-          // FR24 gives a free account a week of the log ("more than 7 days ... with an upgrade"): three months more under
+          // FR24 gives a free account a week of the log ("more than 7 days ... with an upgrade"): a year back (1.4.3) under
           // its rows, rebuilt from public ADS-B in its own markup - FR24's rows keep their own playback, these replay their
           // track on adsb.lol (airplanes.live beyond six weeks). Every day is kept once read, as for the blocked aircraft.
           const oldest = Math.min(...fr24Rows().map(tr => Number(tr.dataset.timestamp) || Infinity));
@@ -18033,6 +18537,8 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
             const legs = knownLegs(hex0).filter(l => (l.from || l.to || l.tEnd - l.tStart > 600) && (l.tOff || l.tStart) < cut - 1800 && (l.tOff || l.tStart) > nowS() - days * 86400).sort((a, b) => b.tStart - a.tStart);
             const html = legs.map(l => legRowHtml(l, hex0, reg)).join('');
             olderFn = wantFns(legs, () => renderOlder(null, 1, 1));
+            // (1.4.3: their scheduled times, FR24's, kept by the monitor - once their flight numbers are in)
+            olderFn.then(() => wantScheds(legs, () => renderOlder(null, 1, 1)));
             if (html !== tail.dataset.html) {
               tbody.querySelectorAll('tr.tl-adsb-row').forEach(r => r.remove());
               if (!tail.parentNode) tbody.appendChild(tail);
@@ -18128,6 +18634,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
         const legs = legsOf();
         const shown = liveState ? legs.filter(l => l.ended || l.tEnd < (liveState.departedAt || 0) - 60) : legs;
         run.fnP = wantFns(shown, render);
+        run.fnP.then(() => wantScheds(shown, () => { if (current === run) render(); }));
         const html = (liveState ? liveRowHtml(liveState, hex, reg) : '') + shown.map(l => legRowHtml(l, hex, reg)).join('');
         if (!foot.parentNode) tbody.appendChild(foot);
         (loading.parentNode ? loading : foot).insertAdjacentHTML('beforebegin', html);
@@ -18280,12 +18787,12 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     const ap = (c, id) => { const b = fin(id) && id > 0 ? apById(id) : null; if (b) return { id: b.id }; c = clean(c).toUpperCase(); const a = /^[A-Z0-9]{3}$/.test(c) ? airports.byIata.get(c) : null; return a ? { id: a.id } : null; };
     const rows = list.sort((a, b) => b.t0 - a.t0).map(x => {
       const hex = /^[0-9a-f]{6}$/.test(x.hex || '') ? x.hex : '', hx = hex ? store.getHex(hex) || {} : {}, reg = clean(x.reg || hx.reg || '').toUpperCase();
-      const leg = { fid: x.w ? '' : String(x.fid), tStart: x.t0, tEnd: x.t1, tOff: x.t0, tOn: x.t1, tOffEst: true, tOnEst: true, from: ap(x.from, x.fromId), to: ap(x.to, x.toId), ended: true, cs: clean(x.cs || '') };
+      const leg = { fid: x.w ? '' : String(x.fid), tStart: x.t0, tEnd: x.t1, tOff: x.t0, tOn: x.t1, tOffEst: true, tOnEst: true, from: ap(x.from, x.fromId), to: ap(x.to, x.toId), ended: true, cs: clean(x.cs || ''), std: fin(x.std) && x.std > 1e9 ? x.std : 0, sta: fin(x.sta) && x.sta > 1e9 ? x.sta : 0 };
       return legRowHtml(leg, hex, reg, { reg, type: clean(x.type || hx.type || ''), desc: modelName(hx) || clean(x.type || '') }).replace('<tr class=" data-row tl-adsb-row', '<tr class=" data-row tl-adsb-row tl-fn-old');
     });
     const nw = list.filter(x => x.w).length, nf = list.length - nw;
     const said = [nf ? `${nf} as Flightradar24's map showed them` : '', nw ? `${nw} from public ADS-B (adsb.lol) by ${esc(fn)}'s callsigns` : ''].filter(Boolean).join(', ');
-    tbody.insertAdjacentHTML('beforeend', rows.join('') + `<tr class="tl-foot tl-fn-foot"><td colspan="20">${list.length} earlier flight${list.length === 1 ? '' : 's'} of ${esc(fn)}: ${said} - kept by the LADD unblocker's monitor (${Number(j.keep) || 100} days) · times are when they were seen taking off and coming in</td></tr>`);
+    tbody.insertAdjacentHTML('beforeend', rows.join('') + `<tr class="tl-foot tl-fn-foot"><td colspan="20">${list.length} earlier flight${list.length === 1 ? '' : 's'} of ${esc(fn)}: ${said} - kept by the LADD unblocker's monitor (${Number(j.keep) || 365} days) · times are when they were seen taking off and coming in</td></tr>`);
     return list.length;
   }
   async function bootFlightPage() {
@@ -18704,7 +19211,8 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       if (pts.length < 2) {
         try {
           const ts = fin(x.t) && x.t > 1e9 ? Math.round(x.t) : Math.round(now() / 1000);
-          const j = await gmRequest(`https://api.flightradar24.com/common/v1/flight-playback.json?flightId=${encodeURIComponent(x.fid)}&timestamp=${ts}`, { timeout: 15000 });
+          const j = await fr24PbJson(x.fid, ts);
+          try { fr24TrackSend(x.fid, fr24PbParse(j)); } catch (e) { /* not sent */ }
           const tr = j && j.result && j.result.response && j.result.response.data && j.result.response.data.flight && j.result.response.data.flight.track;
           pts = (Array.isArray(tr) ? tr : []).map(p => ({ t: p && p.timestamp, lat: p && p.latitude, lon: p && p.longitude, alt: p && p.altitude && fin(p.altitude.feet) ? p.altitude.feet : null, gnd: !!(p && p.altitude && p.altitude.feet === 0) })).filter(p => fin(p.t) && fin(p.lat) && fin(p.lon));
         } catch (e) { /* none */ }
@@ -18733,7 +19241,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     for (const e of d.rows || []) {
       if (!e || !e.flight || !e.flight.id) continue;
       const t = Number(e.estimatedTime) || Number(e.scheduledTime) || 0;
-      boardPut(apId, kind, { nat: Object.fromEntries(Object.entries(e).filter(([key]) => !/^__tl/.test(key))), k: 'f' + e.flight.id, src: 'fr24', id: Number(e.id) || 0, fid: String(e.flight.id), cs: clean(e.flight.callsign), num: clean(e.flight.number), t, sch: Number(e.scheduledTime) || 0, est: Number(e.estimatedTime) || 0, st: clean(e.status && e.status.name), col: clean(e.status && e.status.color), ap: Number(e.airportId) || 0, al: clean(e.airline), alId: Number(e.airlineId) || 0, ty: clean(e.aircraftType) });
+      boardPut(apId, kind, { nat: Object.fromEntries(Object.entries(e).filter(([key]) => !/^__tl/.test(key))), k: 'f' + e.flight.id, src: 'fr24', id: Number(e.id) || 0, fid: String(e.flight.id), cs: clean(e.flight.callsign), num: clean(e.flight.number), t, sch: Number(e.scheduledTime) || 0, sx: Number(e.scheduledTime) > 0 ? 1 : 0, est: Number(e.estimatedTime) || 0, st: clean(e.status && e.status.name), col: clean(e.status && e.status.color), ap: Number(e.airportId) || 0, al: clean(e.airline), alId: Number(e.airlineId) || 0, ty: clean(e.aircraftType) });
     }
   }
   const boardWho = (hex, rec) => { const hx = Object.assign({}, hex ? store.getHex(hex) : null, rec || {}); return { reg: hx.reg || '', hex: hex || hx.hex || '', ty: hx.type || '', dsc: modelName(hx), al: shownOwner(hx, hx.cs) || (hx.mil ? 'Military' : 'Private owner'), alId: operatorIdOf(hx, hx.cs) }; };
@@ -18856,8 +19364,8 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       const icao = clean(x.airline && x.airline.code && x.airline.code.icao).toUpperCase(), alId = (icao && fr24.byIcao.get(icao)) || (info && info.alId) || (ref && ref.icao && fr24.byIcao.get(ref.icao)) || 0;
       const base = { src: 'sched', fid, id: Number(idn.row) || 0, cs, num, al: clean(x.airline && x.airline.name) || (info && info.al) || '', alId, alIcao: icao || (ref && ref.icao) || '', ty: clean(x.aircraft && x.aircraft.model && x.aircraft.model.code) || (info && info.ty) || '', reg: clean(x.aircraft && x.aircraft.registration), hex: clean(x.aircraft && x.aircraft.hex).toLowerCase() };
       const dep = re.departure || es.departure || sc.departure, arr = re.arrival || es.arrival || sc.arrival;
-      if (o && dep) boardPut(o, 'departures', Object.assign({ nat: natRowOf(x, 'departures', ref), k, t: dep, sch: sc.departure || dep, est: dep, st: cx ? 'canceled' : re.departure ? 'departed' : 'scheduled', col: cx ? 'red' : re.departure ? 'green' : 'gray', ap: d }, base));
-      if (d && arr) boardPut(d, 'arrivals', Object.assign({ nat: natRowOf(x, 'arrivals', ref), k, t: arr, sch: sc.arrival || arr, est: arr, st: cx ? 'canceled' : dv ? 'diverted' : re.arrival ? 'landed' : es.arrival ? 'estimated' : 'scheduled', col: cx || dv ? 'red' : re.arrival || es.arrival ? 'green' : 'gray', ap: o }, base));
+      if (o && dep) boardPut(o, 'departures', Object.assign({ nat: natRowOf(x, 'departures', ref), k, t: dep, sch: sc.departure || dep, sx: sc.departure ? 1 : 0, est: dep, st: cx ? 'canceled' : re.departure ? 'departed' : 'scheduled', col: cx ? 'red' : re.departure ? 'green' : 'gray', ap: d }, base));
+      if (d && arr) boardPut(d, 'arrivals', Object.assign({ nat: natRowOf(x, 'arrivals', ref), k, t: arr, sch: sc.arrival || arr, sx: sc.arrival ? 1 : 0, est: arr, st: cx ? 'canceled' : dv ? 'diverted' : re.arrival ? 'landed' : es.arrival ? 'estimated' : 'scheduled', col: cx || dv ? 'red' : re.arrival || es.arrival ? 'green' : 'gray', ap: o }, base));
     }
   }
   // (two at a time: an airport like Manchester has some 600 numbers - its three days in about five minutes)
@@ -19044,9 +19552,9 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
         if (was && was !== ap && boardOk(was) && t) boardPut(was, kind, { k: 'f' + fid, src: 'sched', t, drop: true });
         if (boardOk(ap)) { schedAt.set(key, ap); schedDirty = true; }
       }
-      if (boardOk(r.o) && (r.atd || r.std)) boardPut(r.o, 'departures', Object.assign({ k: 'f' + fid, src: 'sched', fid, cs, num, t: r.atd || r.std, sch: r.std || r.atd, est: r.atd || r.std, st: r.atd ? 'departed' : 'scheduled', col: r.atd ? 'green' : 'gray', ap: boardOk(r.d) ? r.d : 0 }, who));
+      if (boardOk(r.o) && (r.atd || r.std)) boardPut(r.o, 'departures', Object.assign({ k: 'f' + fid, src: 'sched', fid, cs, num, t: r.atd || r.std, sch: r.std || r.atd, sx: r.std ? 1 : 0, est: r.atd || r.std, st: r.atd ? 'departed' : 'scheduled', col: r.atd ? 'green' : 'gray', ap: boardOk(r.d) ? r.d : 0 }, who));
       const arr = r.ata || r.eta || r.sta;
-      if (boardOk(r.d) && arr) boardPut(r.d, 'arrivals', Object.assign({ k: 'f' + fid, src: 'sched', fid, cs, num, t: arr, sch: r.sta || arr, est: r.ata || r.eta || r.sta, st: r.ata ? 'landed' : r.eta ? 'estimated' : 'scheduled', col: r.ata || r.eta ? 'green' : 'gray', ap: boardOk(r.o) ? r.o : 0 }, who));
+      if (boardOk(r.d) && arr) boardPut(r.d, 'arrivals', Object.assign({ k: 'f' + fid, src: 'sched', fid, cs, num, t: arr, sch: r.sta || arr, sx: r.sta ? 1 : 0, est: r.ata || r.eta || r.sta, st: r.ata ? 'landed' : r.eta ? 'estimated' : 'scheduled', col: r.ata || r.eta ? 'green' : 'gray', ap: boardOk(r.o) ? r.o : 0 }, who));
     }
   }
   // ---- FR24's airport data pages (/data/airports/<code>: general, arrivals, departures, routes, statistics) -------------
@@ -19354,14 +19862,17 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   const clCodes = al => al ? [al.iata, al.icao].filter(Boolean).join(' / ') : '';
   function clPhotosHtml(photos, reg, model, alName) {
     const alt = `A picture of ${String(reg || '').replace(/-/g, '')} - ${String(model || '').replace(/-/g, '')}${alName ? ' - ' + alName : ''}`;
-    return (photos || []).slice(0, 2).map(p => `<div class="col-xs-6 n-p cnt-picture"><span class="label">© ${esc(p.copyright || '')} | Jetphotos</span><a href="${esc(p.link || p.url || '#')}" target="_blank"><img alt="${esc(alt)}" class="img-responsive" src="${esc(p.url || '')}" title="Open this aircraft picture in new window"></a></div>`).join('');
+    // (1.4.3: in the app, a third - FR24's own pages for a phone show three, one after another: the phone layout's
+    // (06-phone) pictures; the old page's own two side by side, the third not shown there)
+    return (photos || []).slice(0, clInApp() ? 3 : 2).map((p, i) => `<div class="col-xs-6 n-p cnt-picture${i > 1 ? ' tl-pic3" style="display:none' : ''}"><span class="label">© ${esc(p.copyright || '')} | Jetphotos</span><a href="${esc(p.link || p.url || '#')}" target="_blank"><img alt="${esc(alt)}" class="img-responsive" src="${esc(p.url || '')}" title="Open this aircraft picture in new window"></a></div>`).join('');
   }
   // (the old playback panel - its ids, labels and rows as FR24's: this script's figures go where they went; the
   // padlocked ones as the free pages had them, filled at once from public ADS-B - fillPlaybackData)
   const CL_PANEL = `<div class="row hidden" id="cnt-playback"> <div><div class="row"><div class="col-sm-9 playback-header"><div class="row"><div class="col-xs-12"><h1 id="txt-playback-header">Playback of flight</h1></div></div><div class="row playback-player"><div class="col-xs-3"><div class="row p-t-20"><div class="col-xs-12"><label>GREAT CIRCLE DISTANCE</label> <span class="text-open-1" id="txt-great-circle-distance">-</span></div></div><div class="row p-t-10"><div class="col-xs-12"><label>AVERAGE FLIGHT TIME</label> <span class="text-open-1" id="txt-flight-time-average">-</span></div></div><div class="row p-t-10"><div class="col-xs-12"><label>ACTUAL FLIGHT TIME</label> <span class="text-open-1" id="txt-flight-time-actual">-</span></div></div><div class="row p-t-10"><div class="col-xs-12"><label>AVERAGE ARRIVAL DELAY</label> <span class="text-open-1" id="txt-flight-delay-average">-</span></div></div><div class="row p-t-10"><div class="col-xs-12"><svg class="fr-logo-payoff"><use xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="#fr-logo-payoff"></use></svg></div></div></div><div class="col-xs-9 playback-control"><div class="row airport-container p-t-20 pos-rel"><div class="airport-block n-p"><label>FROM</label> <label class="airport-city" id="txt-airport-origin">-</label></div><div class="airport-block airport-arrow text-center"><svg id="icon-arrow"><use xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="#icon-arrow-origin-dest"></use></svg></div><div class="airport-block n-p m-r-35"><label>TO</label> <label class="airport-city" id="txt-airport-dest">-</label></div></div><div class="row pos-rel"><button id="btn-control-playback" title="Start playback"></button><div id="cnt-fight-progress-slider"><div class="track" title="Click to change flight playback progress"></div><div class="progress" style="width: 0px;"></div><div class="thumb" title="Drag to change flight playback progress" data-max="0" data-value="0" style="left: 0px;"></div></div></div><div class="row"><div class="col-xs-3" style="padding-left:0"><div class="row"><label>TIME</label> <span class="text-open-2" id="txt-track-timestamp" data-suffix=" <small>UTC</small>" data-timestamp="">-</span></div><div class="row"><div id="btn-group-features" class="btn-group" role="group" aria-label="..."><button id="btn-toggle-follow" type="button" class="btn" title="Follow aircraft during playback">${clUse('icon-fr24-follow', 'icon icon-fr24-follow')}</button> <button id="btn-toggle-route" type="button" class="btn" title="Show great circle route">${clUse('icon-fr24-route', 'icon icon-fr24-route')}</button> <button id="btn-toggle-chart" type="button" class="btn" title="Show flight data chart"><i class="fa fa-area-chart"></i></button></div></div></div><div class="col-xs-3" style="padding-left:0"><div class="row"><label class="text-uppercase">Barometric altitude</label> <span class="text-open-2" id="txt-altitude" data-unit="unit_alt">-</span></div><div class="row"><label>GPS ALTITUDE</label> ${clLock(161)}</div></div><div class="col-xs-2" style="padding-left:0"><div class="row"><label>GROUND SPEED</label> <span class="text-open-2" id="txt-speed" data-unit="unit_speed">-</span></div><div class="row"><label>TRUE AIRSPEED</label> ${clLock(162)}</div></div><div class="col-xs-3" style="padding-left:0"><div class="row"><label>VERTICAL SPEED</label> ${clLock(163)}</div><div class="row"><label>INDICATED AIRSPEED</label> ${clLock(164)}</div></div><div class="col-xs-1" style="padding-left:0"><div class="row"><label>TRACK</label> <span class="text-open-2" id="txt-track-heading">-</span></div><div class="row"><label>SQUAWK</label> ${clLock(165)}</div></div></div></div></div></div><div class="col-sm-3 playback-image n-p"><div class="row pos-rel"><div class="pos-rel"><span class="label" id="txt-aircraft-image-copyright"></span> <a id="txt-aircraft-image-url" target="_blank"><img alt="" id="img-aircraft-img" class="img-responsive"></a></div><button class="pos-abs" id="btn-playback-control-close" title="Close this panel">${clUse('icon-fr24-close', 'icon-fr24-close')}</button></div><div class="row"><div class="col-xs-12 p-t-10"><label>AIRCRAFT</label> <span class="text-open-1" id="txt-aircraft-model">-</span></div></div><div class="row"><div class="col-xs-12 p-t-10"><label>REGISTRATION</label> <span class="text-open-1" id="txt-aircraft-reg">-</span></div></div><div class="row"><div class="col-xs-12" style="padding-top:8px"><label>SERIAL NUMBER (MSN)</label> <span class="text-open-1" id="txt-aircraft-serial">-</span></div></div></div></div><div id="cnt-chart" class="row hidden"></div></div> </div>`;
   // (the map's toolbar on the page's right edge, as the old pages had it: settings - the map's style -, full screen, zoom)
-  const CL_MAPTYPES = [['terrain', 'Terrain'], ['roadmap', 'Roadmap'], ['simple_style', 'Greyscale'], ['radar_style2', 'Radar (dark)'], ['satellite', 'Satellite'], ['hybrid', 'Hybrid']];
-  const CL_TOOLBAR = () => `<div class="bootstrap map-components-wrapper"><div id="fr24_ViewsToolbar" class="smooth-tab attach-right dark hidden-in-3d"><ul><li id="fr24_SettingsMenu" class="dropdown map-side" data-content="Settings"><a data-toggle="dropdown" class="dropdown-toggle">${clUse('icon-fr24-gear')}</a><ul id="fr24_SettingsDropdown" class="dropdown-menu settings noclose"><li><ul class="smooth-tab-group"><li class="active"><a class="smooth-tab attach-bottom" data-toggle="tab" data-target="#mapsettings"><div class="tab-sweep toleft"></div><div class="tab-content">Map</div><div class="tab-sweep toright"></div></a></li></ul></li><li><div class="tab-content"><div id="mapsettings" class="tab-pane active clearfix"><div class="scroll-wrap"><h5 class="pull-left short-label">Map style</h5><div id="fr24_mapType" class="btn-group pull-right"><button type="button" class="btn btn-default dropdown-toggle pull-right" data-toggle="dropdown" value="${esc(clMapType())}" data-source="map_type">${esc((CL_MAPTYPES.find(x => x[0] === clMapType()) || CL_MAPTYPES[5])[1])} <span class="caret"></span></button><ul class="dropdown-menu" role="menu">${CL_MAPTYPES.map(([v, t]) => `<li><a data-value="${v}">${esc(t)}</a></li>`).join('')}</ul></div><div class="clearfix"></div></div></div></div></li></ul></li><li id="fr24_Fullscreen" class="dropdown map-side" data-content="Fullscreen"><a data-toggle="dropdown" class="dropdown-toggle" href="javascript: void(0);">${clUse('icon-fr24-fullscreen', 'icon-fr24-fullscreen')}</a></li><li id="fr24_ZoomIn" class="dropdown" data-content="ZoomIn"><a class="dropdown-toggle">${clUse('icon-fr24-plus', 'nav-icon plus')}</a></li><li id="fr24_ZoomOut" class="dropdown" data-content="ZoomOut"><a class="dropdown-toggle">${clUse('icon-fr24-minus', 'nav-icon minus')}</a></li></ul></div></div>`;
+  // (1.4.3: and the styles FR24's main map has since - any of them the main map's own)
+  const CL_MAPTYPES = [['terrain', 'Terrain'], ['roadmap', 'Roadmap'], ['simple_style', 'Greyscale'], ['radar_style2', 'Radar (dark)'], ['radar_style', 'Radar (blue)'], ['aubergine_style', 'Aubergine'], ['black_white', 'Black/White'], ['satellite', 'Satellite'], ['hybrid', 'Hybrid']];
+  const CL_TOOLBAR = () => `<div class="bootstrap map-components-wrapper"><div id="fr24_ViewsToolbar" class="smooth-tab attach-right dark hidden-in-3d"><ul><li id="fr24_SettingsMenu" class="dropdown map-side" data-content="Settings"><a data-toggle="dropdown" class="dropdown-toggle">${clUse('icon-fr24-gear')}</a><ul id="fr24_SettingsDropdown" class="dropdown-menu settings noclose"><li><ul class="smooth-tab-group"><li class="active"><a class="smooth-tab attach-bottom" data-toggle="tab" data-target="#mapsettings"><div class="tab-sweep toleft"></div><div class="tab-content">Map</div><div class="tab-sweep toright"></div></a></li></ul></li><li><div class="tab-content"><div id="mapsettings" class="tab-pane active clearfix"><div class="scroll-wrap"><h5 class="pull-left short-label">Map style</h5><div id="fr24_mapType" class="btn-group pull-right"><button type="button" class="btn btn-default dropdown-toggle pull-right" data-toggle="dropdown" value="${esc(clMapType())}" data-source="map_type">${esc((CL_MAPTYPES.find(x => x[0] === clMapType()) || CL_MAPTYPES[CL_MAPTYPES.length - 1])[1])} <span class="caret"></span></button><ul class="dropdown-menu" role="menu">${CL_MAPTYPES.map(([v, t]) => `<li><a data-value="${v}">${esc(t)}</a></li>`).join('')}</ul></div><div class="clearfix"></div></div></div></div></li></ul></li><li id="fr24_Fullscreen" class="dropdown map-side" data-content="Fullscreen"><a data-toggle="dropdown" class="dropdown-toggle" href="javascript: void(0);">${clUse('icon-fr24-fullscreen', 'icon-fr24-fullscreen')}</a></li><li id="fr24_ZoomIn" class="dropdown" data-content="ZoomIn"><a class="dropdown-toggle">${clUse('icon-fr24-plus', 'nav-icon plus')}</a></li><li id="fr24_ZoomOut" class="dropdown" data-content="ZoomOut"><a class="dropdown-toggle">${clUse('icon-fr24-minus', 'nav-icon minus')}</a></li></ul></div></div>`;
   const CL_FOOT = () => `<footer class="pb-4"><p>© ${new Date().getUTCFullYear()} Flightradar24 AB</p><ul><li><a href="${CL_FR}/contact-us">Contact us</a></li><li><a href="${CL_FR}/faq">FAQ</a></li><li><a href="${CL_FR}/careers">Careers</a></li><li><a href="${CL_FR}/privacy-policy">Privacy</a></li><li><a href="${CL_FR}/terms-of-service">Terms</a></li></ul></footer>`;
   const clCrumbs = list => `<div class="mx-4"><nav class="breadcrumbs pt-2 border-b border-gray-700 border-solid" data-component="breadcrumbs"><ol class="flex flex-wrap justify-start m-auto text-sm list-none breadcrumbs__list" data-testid="breadcrumbs" itemscope itemtype="https://schema.org/BreadcrumbList">${list.map(([name, href], i) => (i ? '<span class="px-2 text-gray-1300">&gt;</span>' : '') + `<li class="pb-2 font-base font-regular" itemprop="itemListElement" itemscope itemtype="https://schema.org/ListItem">${href ? `<a class="breadcrumbs__list-item breadcrumbs__list-item--url text-blue-500 hover:text-blue-500" itemprop="item" itemtype="https://schema.org/WebPage" href="${esc(href)}"><div class="flex breadcrumbs__list-item-name" itemprop="name">${esc(name)}</div></a>` : `<div class="text-gray-1300 font-semibold"><div class="breadcrumbs__list-item-name" itemprop="name">${esc(name)}</div></div>`}<meta itemprop="position" content="${i + 1}"></li>`).join('')}</ol></nav></div>`;
 
@@ -19498,6 +20009,22 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     const h = (location.hash || '').replace(/^#/, '').toLowerCase();
     if (/^[0-9a-f]{6,16}$/.test(h)) setTimeout(() => { const b = document.getElementById('btn-playback-' + h); if (b && !b.classList.contains('active')) clPlay(b); }, 300);
   }
+  // (1.4.3) Any other page of FR24's new app - the map, a board, its player - moving to an aircraft's or a flight number's
+  // page without loading it (its search box, a board's "Aircraft info"): that page loaded, so it is drawn as it was
+  // too. FR4032's page, opened from the map's search in the app, was FR24's new one - and its flights before FR24's week
+  // no player of their own. Never twice for one page within half a minute
+  function clRouteWatch() {
+    if (!classicOn() || clRouteWatch.on) return; clRouteWatch.on = true;
+    const norm = s => decodeURIComponent(String(s || '')).toLowerCase().replace(/\/+$/, ''); let path = norm(location.pathname);
+    setInterval(() => {
+      const now1 = norm(location.pathname); if (now1 === path) return; path = now1;
+      if (!classicOn() || !CL_PATH.test(now1)) return;
+      let last = null; try { last = JSON.parse(sessionStorage.getItem('tl.classic.reload') || 'null'); } catch (e) { last = null; }
+      if (last && last.p === now1 && Date.now() - last.t < 30000) return;
+      try { sessionStorage.setItem('tl.classic.reload', JSON.stringify({ p: now1, t: Date.now() })); } catch (e) { /* once anyway */ }
+      location.reload();
+    }, 400);
+  }
   // (FR24's new app moves to another of its pages without loading it - its header's search: that page loaded, so it is
   // drawn as it was too)
   function clStayOld() {
@@ -19530,8 +20057,31 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     simple_style: [CL_ESRI('Canvas/World_Light_Gray_Base'), CL_ESRI('Canvas/World_Light_Gray_Reference')],
     radar_style2: [CL_ESRI('Canvas/World_Dark_Gray_Base'), CL_ESRI('Canvas/World_Dark_Gray_Reference')]
   };
-  const CL_MAP_KEY = 'tl.classic.maptype';
-  function clMapType() { let v = ''; try { v = localStorage.getItem(CL_MAP_KEY) || ''; } catch (e) { v = ''; } return CL_LAYERS[v] ? v : 'hybrid'; }
+  CL_LAYERS.radar_style = CL_LAYERS.aubergine_style = CL_LAYERS.black_white = CL_LAYERS.radar_style2;
+  // ---- (1.4.3) The map as FR24's main map has it: its settings as FR24 reads them on opening - the page's (the account's
+  // own, else FR24's), a browser not signed in its own over them (FR24's "settings" in this site's storage), and over
+  // all those this script keeps of the ones FR24 locks (page.js mxSetKept). The map's style, its brightness, its day and
+  // night line, the trail's tooltip, the units it tells in. Read again at each Play; the toolbar's choice of style holds
+  // for this page only
+  const CL_SPEEDS = ['kt', 'kmh', 'mph', 'mach'];
+  function clMainSet() {
+    const d = (clPage && clPage.props && clPage.props.dispatcher) || {};
+    let s = {}; try { s = JSON.parse(JSON.stringify(d.settings || {})) || {}; } catch (e) { s = {}; }
+    const over = o => {
+      if (!o || typeof o !== 'object') return;
+      for (const sec of Object.keys(o)) { const a = s[sec], b = o[sec]; if (!a || typeof a !== 'object' || !b || typeof b !== 'object') continue; for (const k of Object.keys(b)) if (k in a) a[k] = b[k]; }
+    };
+    const kept = k => { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { return null; } };
+    if (d.accessToken == null) over(kept('settings'));
+    over(kept('tl.mx.settings'));
+    const map = s.map || {}, misc = s.misc || {}, u = s.units || {}, b = Number(map.brightness);
+    return {
+      style: CL_LAYERS[map.style] ? map.style : 'hybrid', brightness: Number.isFinite(b) ? Math.max(0, Math.min(100, b)) : 100,
+      night: map.dayNightLine === true, tip: misc.showTrailTooltip !== false,
+      alt: u.altitude === 'm' ? 'm' : 'ft', spd: CL_SPEEDS.includes(u.aircraftSpeed) ? u.aircraftSpeed : 'kt'
+    };
+  }
+  function clMapType() { return pl.type && CL_LAYERS[pl.type] ? pl.type : clMainSet().style; }
   const clWX = (lon, z) => (lon + 180) / 360 * 256 * Math.pow(2, z);
   const clWY = (lat, z) => { const s = Math.sin(Math.max(-85, Math.min(85, lat)) * Math.PI / 180); return (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * 256 * Math.pow(2, z); };
   const clLon = (x, z) => x / (256 * Math.pow(2, z)) * 360 - 180;
@@ -19558,7 +20108,10 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
       if (m.draw) m.draw();
     };
-    m.setType = t => { if (!CL_LAYERS[t]) return; m.type = t; try { localStorage.setItem(CL_MAP_KEY, t); } catch (e) { /* this visit only */ } m.render(); };
+    m.setType = t => { if (!CL_LAYERS[t]) return; m.type = t; m.render(); };
+    // (the main map's brightness, as FR24 sets it on its map's tiles)
+    m.bright = b => { tiles.style.filter = Number.isFinite(b) && b < 100 ? `brightness(${Math.max(0, b)}%)` : ''; };
+    m.bright(clMainSet().brightness);
     // (the track fitted to the part of the map the panel leaves: the old panel covers its foot)
     m.fit = pts => {
       if (!pts.length) return; let a = Infinity, b = -Infinity, c = Infinity, d = -Infinity;
@@ -19586,8 +20139,16 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   }
   // (how much of the map's foot the panel covers: the map's height less where the page's content begins)
   function clCover() { const map = document.getElementById('cnt-data-map'), c = document.getElementById('cnt-data-content'); if (!map || !c) return 0; const mr = map.getBoundingClientRect(), cr = c.getBoundingClientRect(); return Math.max(0, Math.min(mr.height, mr.bottom - cr.top)); }
-  // (a track's colour by its height, as FR24 colours its trails: ground yellow, through green and blue, to purple)
-  const clAltCol = alt => `hsl(${Math.round(55 + Math.min(1, Math.max(0, (alt || 0) / 40000)) * 230)},95%,${alt > 0 ? 50 : 55}%)`;
+  // (a track's colour by its height, as FR24 colours its trails - by metres: white on the ground, yellow low, through
+  // green, cyan and blue, to violet and red at the top; the same scale as Google's map here draws where FR24's own is
+  // not to be had, page.js clmCol)
+  const CL_HUES = [[100, 52], [300, 62], [600, 78], [1000, 105], [1500, 125], [2500, 150], [3500, 175], [4500, 190], [5500, 200], [6500, 210], [7500, 225], [8500, 240], [9500, 255], [10500, 268], [11500, 280], [12500, 300], [13000, 330]];
+  const clAltCol = alt => {
+    const m = (alt || 0) * 0.3048; if (!(m > 100)) return '#ffffff';
+    let h = CL_HUES[CL_HUES.length - 1][1];
+    for (let i = 1; i < CL_HUES.length; i++) if (m <= CL_HUES[i][0]) { const a = CL_HUES[i - 1], b = CL_HUES[i]; h = a[1] + (b[1] - a[1]) * (m - a[0]) / (b[0] - a[0]); break; }
+    return `hsl(${Math.round(h)},100%,50%)`;
+  };
   // (the toolbar: settings - the map's style -, full screen, zoom in and out)
   // (FR24's stylesheet leaves the buttons' links to the pointer of their items - the old page script listened there)
   function clToolbarBind(wrap) {
@@ -19598,7 +20159,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     mt.querySelectorAll('a[data-value]').forEach(a => a.addEventListener('click', ev => {
       ev.preventDefault(); const v = a.dataset.value; mt.classList.remove('open');
       const b = mt.querySelector('button'); b.value = v; b.innerHTML = `${esc(a.textContent)} <span class="caret"></span>`;
-      try { localStorage.setItem(CL_MAP_KEY, v); } catch (e) { /* this visit only */ }
+      pl.type = v;
       if (pl.gm) clGm('type', { type: v }); else if (pl.map) pl.map.setType(v);
     }));
     document.addEventListener('click', ev => { if (!set.contains(ev.target)) { set.classList.remove('open'); mt.classList.remove('open'); } });
@@ -19613,7 +20174,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
 
   // ---- the player: a row's Play, as FR24's old panel played it - the map over the page, the flight drawn, the aircraft
   // moved along it, its figures each moment (and those FR24 padlocked, from public ADS-B - fillPlaybackData)
-  const pl = { map: null, pts: [], t: 0, t0: 0, t1: 0, playing: false, raf: 0, last: 0, seq: 0, follow: false, route: false, chart: false, fid: '', o: null, d: null, on: false };
+  const pl = { map: null, pts: [], t: 0, t0: 0, t1: 0, playing: false, raf: 0, last: 0, seq: 0, follow: false, route: false, chart: false, fid: '', o: null, d: null, on: false, type: '' };
   // ---- (1.4.2) the map as the old pages had it: Google's, FR24's own - drawn in the page by its part there (page.js
   // clmOp), the flight on it as FR24's map draws one. Asked once; the map drawn here (Esri's) only where Google's cannot be
   let clGmWait = null;
@@ -19626,7 +20187,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     if (pl.gmP) return pl.gmP;
     pl.gmP = new Promise(res => {
       const done = ok => { pl.gm = !!ok; res(pl.gm); };
-      clGmWait = done; postToPage('clMap', { op: 'init', type: clMapType() });
+      clGmWait = done; postToPage('clMap', { op: 'init', type: clMapType(), set: clMainSet() });
       // (Google's map not up in 18 s: the one drawn here)
       setTimeout(() => { if (clGmWait === done) { clGmWait = null; done(false); } }, 18000);
     });
@@ -19676,7 +20237,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   function clFollow(on) {
     pl.follow = !!on; const b = document.getElementById('btn-toggle-follow'); if (b) b.classList.toggle('active', pl.follow);
     const c = pl.pts.length ? clAt(pl.t) : null; if (!c) return;
-    if (pl.gm) clGm('pos', { lat: c.lat, lon: c.lon, trk: fin(c.trk) ? c.trk : 0, follow: pl.follow, cover: clCover() });
+    if (pl.gm) clGm('pos', { lat: c.lat, lon: c.lon, trk: fin(c.trk) ? c.trk : 0, follow: pl.follow, cover: clCover(), t: Math.round(pl.t) });
     else if (pl.follow && pl.map) clCentre(c);
   }
   // (the aircraft in the middle of the part of the map the panel leaves)
@@ -19686,7 +20247,8 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   async function clTrack(id, ts) {
     if (PB_SYN.test(id) || !/^[0-9a-f]{1,12}$/.test(id)) { const f = await pbFlight({ id, dep: ts }); return f && f.ok ? { pts: f.pts, cs: f.cs || '', fn: f.flightNumber || '', o: f.origin, d: f.destination, fr24: false, hex: clean(f.hex || '').toLowerCase(), type: clean(f.type || '') } : null; }
     try {
-      const j = await gmRequest(`https://api.flightradar24.com/common/v1/flight-playback.json?flightId=${encodeURIComponent(id)}&timestamp=${ts || nowS()}`, { timeout: 20000 });
+      const j = await fr24PbJson(id, ts || nowS(), { priority: true, timeout: 20000 });
+      try { fr24TrackSend(id, fr24PbParse(j)); } catch (e) { /* not sent */ }
       const fl = j && j.result && j.result.response && j.result.response.data && j.result.response.data.flight, tr = fl && fl.track;
       if (Array.isArray(tr) && tr.length > 1) {
         const pts = tr.filter(p => p && fin(p.latitude) && fin(p.longitude) && fin(p.timestamp)).map(p => ({ t: p.timestamp, lat: p.latitude, lon: p.longitude, alt: p.altitude && fin(p.altitude.feet) ? p.altitude.feet : null, gs: p.speed && fin(p.speed.kts) ? p.speed.kts : null, trk: fin(p.heading) ? p.heading : null, vr: p.verticalSpeed && fin(p.verticalSpeed.fpm) ? p.verticalSpeed.fpm : null })).sort((a, b) => a.t - b.t);
@@ -19725,6 +20287,8 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       mapEl.querySelector('#tl-cl-gmap').style.display = gm ? '' : 'none';
       for (const el of mapEl.querySelectorAll('.tl-cl-tiles, .tl-cl-over, .tl-cl-attr')) el.style.display = gm ? 'none' : '';
       if (!gm && !pl.map) pl.map = clMap(mapEl);
+      // (the main map's style and brightness, as they are now)
+      if (!gm && pl.map) { const ms = clMainSet(); pl.map.bright(ms.brightness); if (!pl.type && pl.map.type !== ms.style) pl.map.setType(ms.style); }
       return gm;
     });
     // (the panel at once, from the row: its airports, its flight, the aircraft)
@@ -19768,7 +20332,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       const ac = { hex: pl.hex || (clPage.kind === 'aircraft' ? clPage.hex : '') || '', type: tk.type || (clPage.kind === 'aircraft' ? clean((clPage.props.aircraft || {}).typeCode || '') : '') || '' };
       ac.cls = ENGINE.classify({ hex: ac.hex, type: ac.type });
       const r5 = v => Math.round(v * 1e5) / 1e5, ends = a => a && fin(a.lat) && fin(a.lon) ? [r5(a.lat), r5(a.lon)] : null;
-      clGm('track', { pts: pts.map(q => [q.t, r5(q.lat), r5(q.lon), fin(q.alt) ? Math.round(q.alt) : null, fin(q.gs) ? Math.round(q.gs) : null, fin(q.trk) ? Math.round(q.trk) : null]), o: ends(pl.o), d: ends(pl.d), cover: clCover(), ac });
+      clGm('track', { pts: pts.map(q => [q.t, r5(q.lat), r5(q.lon), fin(q.alt) ? Math.round(q.alt) : null, fin(q.gs) ? Math.round(q.gs) : null, fin(q.trk) ? Math.round(q.trk) : null]), o: ends(pl.o), d: ends(pl.d), cover: clCover(), ac, set: clMainSet(), type: clMapType() });
       clGm('route', { on: pl.route });
     } else { pl.map.draw = clDrawTrack; pl.map.fit(pts.concat([pl.o, pl.d].filter(x => x && fin(x.lat) && fin(x.lon)))); }
     clSeek(pl.t0);
@@ -19816,18 +20380,22 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   function clDrawTrack() {
     const m = pl.map, svg = m.el.querySelector('.tl-cl-over'), P = pl.pts; if (!P.length) { svg.innerHTML = ''; return; }
     let html = '';
-    // (the great circle between its airports)
+    // (the great circle between its airports: FR24's thin dark dashed line)
     if (pl.route && pl.o && pl.d && fin(pl.o.lat) && fin(pl.d.lat)) {
       let d = ''; for (let i = 0; i <= 64; i++) { const g = clGc(pl.o, pl.d, i / 64), q = m.px(g.lat, g.lon); d += (i ? 'L' : 'M') + q.x.toFixed(1) + ' ' + q.y.toFixed(1); }
-      html += `<path d="${d}" fill="none" stroke="#fff" stroke-width="2" stroke-opacity=".85"/>`;
+      html += `<path d="${d}" fill="none" stroke="#000" stroke-opacity="${(100 / 255).toFixed(3)}" stroke-width="2" stroke-dasharray="3 5"/>`;
     }
-    // (the track: its pieces by height, each its colour)
-    let prev = m.px(P[0].lat, P[0].lon);
+    // (1.4.3: the track as FR24's map draws a trail - 3 px, by height, laid on see-through as one (FR24's 100 of 255); a
+    // dot at each position, its own colour)
+    const xy = P.map(p => m.px(p.lat, p.lon)), f1 = v => v.toFixed(1);
+    let line = '', dots = '', last = null;
     for (let i = 1; i < P.length; i++) {
-      const q = m.px(P[i].lat, P[i].lon); if (Math.abs(q.x - prev.x) + Math.abs(q.y - prev.y) < 0.6 && i < P.length - 1) continue;
-      html += `<line x1="${prev.x.toFixed(1)}" y1="${prev.y.toFixed(1)}" x2="${q.x.toFixed(1)}" y2="${q.y.toFixed(1)}" stroke="${clAltCol(P[i].alt)}" stroke-width="3" stroke-linecap="round"/>`;
-      prev = q;
+      const a = xy[i - 1], q = xy[i]; if (Math.abs(q.x - a.x) + Math.abs(q.y - a.y) < 0.6 && i < P.length - 1) continue;
+      if (P[i].t - P[i - 1].t >= 300) { html += `<line x1="${f1(a.x)}" y1="${f1(a.y)}" x2="${f1(q.x)}" y2="${f1(q.y)}" stroke="#000" stroke-opacity="${(100 / 255).toFixed(3)}" stroke-width="1" stroke-dasharray="1 3"/>`; continue; }
+      line += `<line x1="${f1(a.x)}" y1="${f1(a.y)}" x2="${f1(q.x)}" y2="${f1(q.y)}" stroke="${clAltCol(P[i].alt)}" stroke-width="3" stroke-linecap="round"/>`;
     }
+    for (let i = 0; i < P.length; i++) { const q = xy[i]; if (last && Math.abs(q.x - last.x) + Math.abs(q.y - last.y) < 1) continue; dots += `<circle cx="${f1(q.x)}" cy="${f1(q.y)}" r="1.5" fill="${clAltCol(P[i].alt)}"/>`; last = q; }
+    html += `<g opacity="${(100 / 255).toFixed(3)}">${line}</g>${dots}`;
     for (const ap of [pl.o, pl.d]) if (ap && fin(ap.lat)) { const q = m.px(ap.lat, ap.lon); html += `<image href="${CL_PIN}" x="${(q.x - 10).toFixed(1)}" y="${(q.y - 20).toFixed(1)}" width="20" height="20"/>`; }
     const c = clAt(pl.t);
     if (c) { const q = m.px(c.lat, c.lon); html += `<g transform="translate(${q.x.toFixed(1)} ${q.y.toFixed(1)}) rotate(${Math.round(c.trk || 0)})"><path d="${CL_PLANE}" fill="#fcc419" stroke="#3b3b3b" stroke-width="1.1" stroke-linejoin="round"/></g>`; }
@@ -19859,7 +20427,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   function clSeek(t) {
     pl.t = Math.max(pl.t0, Math.min(pl.t1, t)); const c = clAt(pl.t); if (!c) return;
     clSlider(); clFigures(c);
-    if (pl.gm) clGm('pos', { lat: c.lat, lon: c.lon, trk: fin(c.trk) ? c.trk : 0, follow: pl.follow, cover: clCover() });
+    if (pl.gm) clGm('pos', { lat: c.lat, lon: c.lon, trk: fin(c.trk) ? c.trk : 0, follow: pl.follow, cover: clCover(), t: Math.round(pl.t) });
     else if (pl.map) { if (pl.follow) clCentre(c); else clDrawTrack(); }
     if (pl.chart) clChartMark();
     // (the moment's padlocked figures - GPS altitude, airspeeds, vertical speed, squawk - from public ADS-B, as on FR24's
@@ -20161,6 +20729,49 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // blocked flights' log and FR24's flights of the aircraft then, each one's logged as it happened or worked out there
   // from its positions kept. Nothing worked out here: every take-off and landing is on the monitor. A monitor before
   // 1.4.1: asked end by end as before)
+  // (1.4.3) A played flight's related flights - the aircraft's flight before and after it, its flight number's, its
+  // callsign's - as FR24's player lists them ("Related flights": Previous and Next of each): for a flight played here, where
+  // FR24 gives none, and for FR24's own where its Previous is padlocked (a free account). From the monitor: the
+  // aircraft's FR24 flights then (/fr24of) and its log, the flight number's flights (/fr24fn), the callsign's (/flights).
+  // Each opens in the player - FR24's own within its week, else the one made here (its id, or the aircraft and take-off)
+  async function onPbRelated(d) {
+    const rid = d && d.rid, dep = Number(d && d.dep) || 0, fid = clean(d && d.fid).toLowerCase(), fn = clean(d && d.fn).toUpperCase(), cs = clean(d && d.cs).toUpperCase(), reg = clean(d && d.reg).toUpperCase();
+    let hex = clean(d && d.hex).toLowerCase();
+    const out = [];
+    if (!(dep > 1e9) || !(await monReady())) { postToPage('pbRelatedGot', { rid, groups: out }); return; }
+    // (the aircraft: the page's own, else by its registration here, else FR24's record of the flight)
+    if (!/^[0-9a-f]{6}$/.test(hex) && reg) hex = clean((store.byReg(reg) || {}).hex).toLowerCase();
+    // (the monitor's record of the flight - never FR24's API: FR24's own player page asks nothing more of FR24)
+    if (!/^[0-9a-f]{6}$/.test(hex) && /^[0-9a-f]{1,12}$/.test(fid)) hex = clean(((await pbRaw(fid, dep).catch(() => ({ m: {} }))).m || {}).hex).toLowerCase();
+    const href = x => { const fid = /^[0-9a-f]{1,12}$/.test(x.fid || '') ? x.fid : ''; if (fid) return nowS() - x.t > 7 * 86400 ? '/data/flights?tl-pb=' + fid : '/data/playback/' + fid; return /^[0-9a-f]{6}$/.test(x.hex || '') && x.t > 1e9 ? '/data/flights?tl-pb=' + pbSynId(x.hex, x.t) : ''; };
+    const item = x => { if (!x) return null; const h = href(x); return { departure: Math.round(x.t), timezone: x.tz || null, flightNumber: x.fn || null, href: h || null, locked: !h }; };
+    // (the one before - over five minutes before - and the one after)
+    const around = list => { let prev = null, next = null; for (const x of list) { if (!(x.t > 1e9)) continue; if (x.t < dep - 300 && (!prev || x.t > prev.t)) prev = x; if (x.t > dep + 300 && (!next || x.t < next.t)) next = x; } return { prev, next }; };
+    const tzOfId = id => { const a = apById(Number(id) || 0); return (a && a.tzName) || null; };
+    const add = (relation, identifier, list) => { const r = around(list); if (r.prev || r.next) out.push({ id: relation + ':' + identifier, identifier, relation, previous: item(r.prev), next: item(r.next) }); };
+    const jobs = [];
+    if (/^[0-9a-f]{6}$/.test(hex)) jobs.push((async () => {
+      const list = [];
+      try { const j = await monGet(`/fr24of?hex=${hex}&t0=${Math.round(dep - 3 * 86400)}&t1=${Math.round(dep + 3 * 86400)}`, { timeout: 8000 }); for (const x of (j && j.list) || []) if (x && /^[0-9a-f]{1,12}$/.test(x.fid || '') && x.t0 > 1e9) list.push({ fid: x.fid, t: x.t0, hex }); } catch (e) { /* none */ }
+      for (const l of knownLegs(hex)) { const t = l.tOff || l.tStart; if (t > 1e9 && !list.some(x => Math.abs(x.t - t) < 900)) list.push({ t, hex, fn: fnKnown(l.cs) || null, tz: l.from ? tzOfId(l.from.id) : null }); }
+      add('aircraft', reg || hex.toUpperCase(), list);
+    })());
+    if (/^[A-Z0-9]{3,8}$/.test(fn)) jobs.push((async () => {
+      try { const j = await monGet(`/fr24fn?fn=${encodeURIComponent(fn)}&from=${Math.round(dep - 14 * 86400)}&to=${Math.round(dep + 14 * 86400)}`, { timeout: 10000 }); add('flight_number', fn, ((j && j.list) || []).filter(x => x && x.t0 > 1e9).map(x => ({ fid: x.fid || '', hex: clean(x.hex).toLowerCase(), t: x.t0, fn, tz: tzOfId(x.fromId) }))); } catch (e) { /* none */ }
+    })());
+    if (/^[A-Z0-9]{3,8}$/.test(cs) && cs !== fn) jobs.push((async () => {
+      try { const j = await monGet(`/flights?cs=${encodeURIComponent(cs)}`, { timeout: 8000 }); add('callsign', cs, ((j && j.list) || []).filter(x => x && (x.tOff || x.tStart) > 1e9).map(x => ({ hex: clean(x.hex).toLowerCase(), t: x.tOff || x.tStart, tz: x.from ? tzOfId(x.from.id) : null }))); } catch (e) { /* none */ }
+    })());
+    await Promise.all(jobs);
+    const order = { flight_number: 0, callsign: 1, aircraft: 2 };
+    postToPage('pbRelatedGot', { rid, hex: /^[0-9a-f]{6}$/.test(hex) ? hex : '', groups: out.sort((a, b) => order[a.relation] - order[b.relation]) });
+  }
+  // (1.4.3) a board card's runways the airport's own answer lacks - its other end's above all (the page part's cardRwyMore)
+  async function onCardRwy(d) {
+    let r = { off: '', on: '' };
+    try { r = await pbRunways(clean(d && d.hex).toLowerCase(), clean(d && d.fid).toLowerCase(), apById(Number(d && d.o) || 0), apById(Number(d && d.d) || 0), Number(d && d.atd) || 0, Number(d && d.ata) || 0); } catch (e) { /* none */ }
+    postToPage('cardRwyGot', { rid: d && d.rid, off: r.off || '', on: r.on || '' });
+  }
   async function pbRunways(hex, fid, from, to, dep, arr) {
     const out = { off: '', on: '' }; if (!(await monReady())) return out;
     hex = /^[0-9a-f]{6}$/.test(hex || '') ? hex : ''; fid = /^[0-9a-f]{1,12}$/.test(fid || '') ? fid : '';
@@ -20202,8 +20813,27 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
         const v = k => { const x = r[at(k)]; return fin(x) ? x : null; }, gnd = r[at('gnd')] === 1 || v('alt') === 0;
         pts.push({ t: r[0], lat: r[1], lon: r[2], alt: gnd ? 0 : v('alt'), gnd, gs: v('gs'), trk: v('trk'), vr: v('vr'), sq: typeof r[at('sq')] === 'string' ? r[at('sq')] : '', ag: v('altGeom'), ias: v('ias'), tas: v('tas') });
       }
-      return { pts, m: (j && j.m) || {} };
+      // (1.4.3: sp - the monitor has only its scans' few points of it, not FR24's whole track)
+      return { pts, m: (j && j.m) || {}, sp: !!(j && j.sp) };
     } catch (e) { return { pts: [], m: {} }; }
+  }
+  // (1.4.3) FR24's own whole track of its flight, where the monitor has only its scans' points of it (or none) and FR24 still
+  // plays it (its week): asked of FR24 as its own player asks it, sent to the monitor to keep, and put with the monitor's -
+  // each second once, FR24's playback's point first
+  const PB_WEEK = 7.5 * 86400;
+  async function pbFr24Whole(fid, t, r) {
+    r = r || { pts: [], m: {} };
+    if (r.pts.length && !r.sp) return r;
+    const t0 = r.pts.length ? r.pts[0].t : t;
+    if (!(t0 > 0) || nowS() - t0 > PB_WEEK) return r;
+    let tr = null; try { tr = fr24PbParse(await fr24PbJson(fid, t0, { priority: true, timeout: 15000 })); } catch (e) { tr = null; }
+    if (!tr || tr.pts.length < 2) return r;
+    try { fr24TrackSend(fid, tr); } catch (e) { /* not sent */ }
+    const by = new Map(); for (const p of r.pts) by.set(p.t, p); for (const p of tr.pts) by.set(p.t, Object.assign({}, by.get(p.t) || {}, p));
+    const fl = tr.fl || {}, idn = fl.identification || {}, ac = fl.aircraft || {}, ap = fl.airport || {}, code = x => clean((x && x.code && (x.code.iata || x.code.icao)) || '');
+    const m = Object.assign({ cs: clean(idn.callsign || ''), fn: clean((idn.number && idn.number.default) || ''), reg: clean((ac.identification && ac.identification.registration) || ''), hex: clean((ac.identification && ac.identification.modes) || '').toLowerCase(), type: clean((ac.model && ac.model.code) || ''), from: code(ap.origin), to: code(ap.destination) }, r.m || {});
+    for (const k of Object.keys(m)) if (!m[k]) delete m[k];
+    return { pts: [...by.values()].sort((a, b) => a.t - b.t), m, sp: false, whole: true };
   }
   // (the public ADS-B record of the days from t0 to t1, as the engine's points: adsb.lol's - and airplanes.live's for a
   // day gone, filling adsb.lol's holes)
@@ -20214,14 +20844,16 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     for (const t of days) { const more = await (pbMore(hex, t) || pbPoints(hex, t)).catch(() => []); pts = pts.concat(more || []); }
     return pts.filter(p => p && fin(p.t) && fin(p.lat) && fin(p.lon)).map(p => { const g = !!(p.gnd0 || p.gnd); return { t: p.t, lat: p.lat, lon: p.lon, alt: g ? 0 : fin(p.alt) ? p.alt : null, gnd: g, gs: fin(p.gs) ? p.gs : null, trk: fin(p.trk) ? p.trk : null, vr: fin(p.vr) ? p.vr : null, sq: p.sq || '', cs: p.cs || '', ag: fin(p.altGeom) ? p.altGeom : null, ias: fin(p.ias) ? p.ias : null, tas: fin(p.tas) ? p.tas : null }; });
   }
-  // (1.3.12) FR24's own positions of a flight first, whenever it has any: the public ADS-B record only where FR24 has
-  // nothing for a minute and more - before FR24 picked it up, after it lost it, and its holes. 1.2.4 took whichever had
-  // more points, and the track played was mostly adsb.lol's
+  // (1.4.3) FR24's own positions of a flight, whenever it has any - as FR24's own player draws them, straight from point to
+  // point: the public ADS-B record only where FR24 has nothing of it - before FR24 picked it up, after it lost it, and a
+  // hole in FR24's own of ten minutes and more (it lost it). Until 1.4.3 ADS-B filled every gap of a minute: the scans'
+  // positions of an airliner are three minutes apart, so its playback was mostly ADS-B.
+  // (1.2.4 took whichever had more points: the track played was mostly adsb.lol's)
   function pbFr24First(fr, adsb) {
     if (!fr || fr.length < 2) return pbMergePts(fr || [], adsb || []);
-    const out = fr.slice().sort((p, q) => p.t - q.t), ts = out.map(p => p.t);
-    const near = t => { let lo = 0, hi = ts.length; while (lo < hi) { const m = (lo + hi) >> 1; if (ts[m] < t) lo = m + 1; else hi = m; } return Math.min(lo < ts.length ? Math.abs(ts[lo] - t) : Infinity, lo > 0 ? Math.abs(ts[lo - 1] - t) : Infinity); };
-    for (const p of adsb || []) if (near(p.t) >= 60) out.push(p);
+    const out = fr.slice().sort((p, q) => p.t - q.t), ts = out.map(p => p.t), first = ts[0], last = ts[ts.length - 1];
+    const holes = []; for (let i = 1; i < ts.length; i++) if (ts[i] - ts[i - 1] >= 600) holes.push([ts[i - 1], ts[i]]);
+    for (const p of adsb || []) if (p && fin(p.t) && (p.t < first - 30 || p.t > last + 30 || holes.some(h => p.t > h[0] + 60 && p.t < h[1] - 60))) out.push(p);
     return out.sort((p, q) => p.t - q.t);
   }
   // (1.3.12) a flight of a log rebuilt here - no FR24 id of its own: FR24's positions of its aircraft in that time, as the
@@ -20235,7 +20867,8 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     try { const j = await monGet(`/fr24of?hex=${hex}&t0=${Math.round(t0)}&t1=${Math.round(t1)}`, { timeout: 12000 }); list = Array.isArray(j && j.list) ? j.list : []; } catch (e) { return []; }
     const by = new Map(); let most = 0;
     for (const x of list.filter(x => x && /^[0-9a-f]{1,12}$/.test(String(x.fid || ''))).slice(0, 4)) {
-      const r = await pbRaw(String(x.fid), fin(x.t0) ? x.t0 : t0);
+      // (1.4.3: each FR24 flight of it then as FR24's whole track, within FR24's week - the scans' points otherwise)
+      const r = await pbFr24Whole(String(x.fid), fin(x.t0) ? x.t0 : t0, await pbRaw(String(x.fid), fin(x.t0) ? x.t0 : t0));
       let n = 0; for (const p of r.pts) if (p.t >= t0 && p.t <= t1 && !by.has(p.t)) { by.set(p.t, p); n++; }
       if (metaOut && n > most && r.m) { most = n; Object.assign(metaOut, r.m, { fid: String(x.fid) }); }
     }
@@ -20302,6 +20935,53 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   const fnKnown = cs => { const c = clean(cs).toUpperCase(), m = csFnMemo.get(c); return (m && m.fn) || csfnOf(c); };
   // (the rows' callsigns: their flight numbers asked for, the rows drawn again when any came)
   const wantFns = (legs, redraw) => csFlightNumbers((legs || []).map(l => l && l.cs)).then(n => { if (n && redraw) redraw(); }).catch(e => log('flight numbers', String(e && e.message || e)));
+  // ---- (1.4.3) FR24's scheduled times of a log's rows FR24 no longer shows (older than its week): kept by the monitor
+  // from FR24's own boards, schedules and log rows (/fnsched, fr24fn.cjs noteSched), by flight number - [{ fid, std, sta,
+  // from, to }] and the window asked for. A row's: by FR24's id, else its number's flight nearest its times (three hours at
+  // most) whose airports are not other than the row's
+  const fnSchedMemo = new Map(), fnSchedBusy = new Set();
+  async function fnSchedules(fns, from, to) {
+    const want = [...new Set((fns || []).map(f => clean(f).toUpperCase()))].filter(f => /^[A-Z0-9]{2,3}\d{1,5}[A-Z]?$/.test(f) && !fnSchedBusy.has(f) && !((m => m && now() - m.at < 3600e3 && m.from <= from + 7200 && m.to >= to - 7200)(fnSchedMemo.get(f))));
+    if (!want.length || !(await monReady())) return 0;
+    want.forEach(f => fnSchedBusy.add(f));
+    let got = 0;
+    try {
+      for (let i = 0; i < want.length; i += 40) {
+        const part = want.slice(i, i + 40); let j = null;
+        // (none had - an older monitor, or none answering: not asked again within the hour either)
+        try { j = await monGet(`/fnsched?fn=${part.map(encodeURIComponent).join(',')}&from=${Math.round(from)}&to=${Math.round(to)}`, { timeout: 12000 }); } catch (e) { j = null; }
+        const by = new Map(part.map(f => [f, []]));
+        for (const r of (j && Array.isArray(j.list) ? j.list : [])) if (Array.isArray(r) && by.has(r[0]) && /^[0-9a-f]{1,12}$/.test(String(r[1])) && (fin(r[2]) || fin(r[3]))) by.get(r[0]).push({ fid: String(r[1]), std: +r[2] || 0, sta: +r[3] || 0, from: +r[4] || 0, to: +r[5] || 0 });
+        for (const [f, list] of by) { fnSchedMemo.set(f, { at: now(), from, to, list }); got += list.length; }
+      }
+      while (fnSchedMemo.size > 500) fnSchedMemo.delete(fnSchedMemo.keys().next().value);
+    } finally { want.forEach(f => fnSchedBusy.delete(f)); }
+    return got;
+  }
+  // (a row's leg - its FR24 id, its times, its airports - under flight number fn: { std, sta } or null)
+  function schedOfLeg(l, fn) {
+    const m = fn && fnSchedMemo.get(clean(fn).toUpperCase()); if (!m || !m.list.length || !l) return null;
+    const fid = String(l.fid || '').toLowerCase();
+    let s = fid ? m.list.find(x => x.fid === fid) : null;
+    if (!s) {
+      const off = l.tOff || l.tStart, on = l.tOn || (l.ended ? l.tEnd : 0), from = l.from && l.from.id, to = l.to && l.to.id;
+      let bd = 3 * 3600 + 1;
+      for (const x of m.list) {
+        if ((x.from && from && x.from !== from) || (x.to && to && x.to !== to)) continue;
+        const d = x.std && off ? Math.abs(x.std - off) : x.sta && on ? Math.abs(x.sta - on) : Infinity;
+        if (d < bd) { bd = d; s = x; }
+      }
+    }
+    return s ? { std: s.std || 0, sta: s.sta || 0 } : null;
+  }
+  // (the rows' flight numbers - once known - their scheduled times asked for, the rows drawn again when any came)
+  const wantScheds = (legs, redraw) => {
+    const ls = (legs || []).filter(l => l && !(l.std || l.sta) && (l.tOff || l.tStart) > 0), fns = ls.map(l => l.fn || fnKnown(l.cs)).filter(Boolean);
+    if (!fns.length) return Promise.resolve(0);
+    // (the whole year of the log at once: asked once an hour, however many times the rows are drawn as the log comes in)
+    const ts = ls.map(l => l.tOff || l.tStart);
+    return fnSchedules(fns, Math.min(Math.min(...ts) - 86400, nowS() - (HISTORY_DAYS + 1) * 86400), Math.max(Math.max(...ts) + 86400, nowS())).then(n => { if (n && redraw) redraw(); return n; }).catch(e => { log('scheduled times', String(e && e.message || e)); return 0; });
+  };
   // (an airline's callsign - three letters and a number: FR24's airline of that ICAO code, its id for the logo)
   const csAirlineId = cs => { const c = /^([A-Z]{3})\d/.exec(clean(cs).toUpperCase()); return (c && fr24.byIcao.get(c[1])) || 0; };
   // (the aircraft's operator or owner as the registers have it - asked of them, a few seconds at most: the page may have
@@ -20386,7 +21066,8 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     // opened just to play the flight had none of them yet: every end "N/A" (G-GARE out of Farnborough), and no runway)
     const placesP = Promise.race([Promise.all([loadAirports().catch(() => null), loadOa().catch(() => null), loadSites().catch(() => null)]), sleep(8000)]);
     // (FR24's own flight: the monitor's positions of it - which say which aircraft it was - and its live record here)
-    const raw = fidNum ? await pbRaw(id, hint) : { pts: [], m: {} };
+    // (1.4.3: FR24's whole track of it, from FR24 itself within its week, where the monitor has only its scans' points)
+    const raw = fidNum ? await pbFr24Whole(id, hint, await pbRaw(id, hint)) : { pts: [], m: {} };
     if (!/^[0-9a-f]{6}$/.test(hex) && fidNum && live.get(fidNum)) hex = clean(live.get(fidNum).hex).toLowerCase();
     if (!/^[0-9a-f]{6}$/.test(hex) && /^[0-9a-f]{6}$/.test(raw.m.hex || '')) hex = raw.m.hex;
     if (!hint && raw.pts.length) hint = raw.pts[0].t;
@@ -20434,10 +21115,22 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     const lv = fidNum ? live.get(fidNum) : null, cs = clean((leg && leg.cs) || (lv && csOfRec(lv)) || d.cs || meta.cs || (pts.find(p => p.cs) || {}).cs || '').toUpperCase();
     // (its airports: its leg's; else where its track begins and ends on the ground - a field within 4 km; else FR24's
     // route of the flight, as kept with its positions)
-    const apAt = p => { if (!p || !p.gnd) return null; const n = ENGINE.airportAt(p.lat, p.lon, 4); return n && n.airport ? apById(n.airport.id) || n.airport : null; };
+    // (1.4.3: where its track begins or ends low and slow, the field there as its log names it - FR24's airports, and
+    // OurAirports' fields and heliports; FR24's own positions of it begin on the ground, so the field it left is known
+    // whatever ADS-B heard. M-PORT's flight of 27 Nov played "N/A - N/A": its leg's ends unknown, and only a field within
+    // 4 km of a point marked on the ground was looked at. A leg's own end unknown no longer hides the track's)
+    let heli = false; try { heli = ENGINE.classify({ type: clean(d.type || meta.type || hx0.type || '') }) === 'heli'; } catch (e) { heli = false; }
+    const apAt = p => {
+      if (!p || !fin(p.lat) || !fin(p.lon) || !(p.gnd || (fin(p.alt) && p.alt < 1200 && (!fin(p.gs) || p.gs < 140)))) return null;
+      const n = heli ? ENGINE.heliAirportAt(p.lat, p.lon) || ENGINE.heliportAt(p.lat, p.lon, 1.2) : ENGINE.placeAt(p.lat, p.lon, p.gnd ? 4 : 6, 2);
+      return n && n.airport ? apById(n.airport.id) || n.airport : null;
+    };
     const apIata = c => { c = clean(c).toUpperCase(); return /^[A-Z0-9]{3}$/.test(c) ? airports.byIata.get(c) || null : null; };
-    const from = (leg && leg.from ? apById(leg.from.id) : (w.depAp && apById(w.depAp)) || apAt(pts[0])) || apIata(meta.from);
-    const to = (leg ? (leg.to ? apById(leg.to.id) : null) : apAt(pts[pts.length - 1])) || apIata(meta.to);
+    const legDone = !leg || !!leg.ended;
+    // (a flight still in the air: where the map's route of it goes, when that is sure - filed, confirmed, or likely)
+    const mr = /^[0-9a-f]{6}$/.test(hex) ? mapRoutes.get(hex) : null, pr = !legDone && mr && mr.route && !mr.route.landed && now() - mr.at < 10 * 60000 && goodPrediction(mr.route) ? apById(mr.route.destId) : null;
+    const from = (leg && leg.from ? apById(leg.from.id) : null) || (w.depAp && apById(w.depAp)) || apAt(pts[0]) || apIata(meta.from);
+    const to = (leg && leg.to ? apById(leg.to.id) : null) || (legDone ? apAt(pts[pts.length - 1]) : null) || apIata(meta.to) || pr;
     // (its landing: its leg's; else, its track ending down at a field, its last moment in the air)
     const lastAir = to && pts[pts.length - 1].gnd ? pts.slice().reverse().find(p => !p.gnd) : null;
     const depT = (leg && (leg.tOff || leg.tStart)) || dep || pts[0].t, arrT = leg && leg.ended ? (leg.tOn || leg.tEnd) : lastAir ? lastAir.t : 0;
@@ -20485,6 +21178,9 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     };
     const out = { ok: true, fid };
     const jobs = [];
+    // (1.4.3: the aircraft's serial number - FR24's player padlocks it for a free account: the registers' and picture sites'
+    // as the log page has it, publicIdentity)
+    if (d.wantMsn) jobs.push((async () => { const raw = await rawOf(), x = ids(raw.m || {}); if (!x.hex) return; const hx = await identityEarly(x.hex, x.reg).catch(() => null); const msn = clean((hx && hx.msn) || (store.getHex(x.hex) || {}).msn || ''); if (msn && /^[A-Za-z0-9 ./-]{1,24}$/.test(msn)) out.msn = msn; })());
     if (d.wantOwner) jobs.push(rawOf().then(raw => { const x = ids(raw.m || {}); return pbOperator(x.hex, x.reg, x.cs); }).then(op => { if (op.name) { out.operator = op.name; out.alId = op.alId || 0; } }));
     if (d.wantFn) jobs.push((async () => { const raw = await rawOf(), x = ids(raw.m || {}); if (!x.cs) return; const fn = clean((raw.m || {}).fn || '').toUpperCase() || await csFlightNumber(x.cs); if (fn && fn !== x.cs) out.flightNumber = fn; })());
     if (d.wantFrom || d.wantTo || d.wantCheck) jobs.push((async () => {
@@ -20682,8 +21378,11 @@ html.tl-pv-play #tl-pv .tl-pv-backpill{display:flex}
           // FR24's old one for a computer. A flight of FR24's own by its id; one known only here by the aircraft and its
           // take-off, on FR24's flights page, which the page part turns into the player - page.js mxPbAway)
           const pid = /btn-playback/.test(a.className) ? String(a.dataset.flightHex || (/^btn-playback-([0-9a-f]+)$/.exec(a.id) || [])[1] || '').toLowerCase() : '';
+          // (1.4.3: one of FR24's own older than its week: FR24's player page of it sends a free account to its search page -
+          // its flights page given it, as a flight known only here, played from FR24's positions the monitor kept)
+          const rowT = Number(tr.dataset.timestamp) || 0, old = rowT > 1e9 && Date.now() / 1000 - rowT > 7 * 86400;
           b.onclick = () => {
-            if (/^[0-9a-f]{1,8}$/.test(pid)) location.href = '/data/playback/' + pid;
+            if (/^[0-9a-f]{1,8}$/.test(pid)) location.href = old ? '/data/flights?tl-pb=' + pid : '/data/playback/' + pid;
             else if (PB_SYN.test(pid)) location.href = '/data/flights?tl-pb=' + pid;
             else a.click();
           };
@@ -21614,7 +22313,7 @@ html.tl-pv-play #tl-pv .tl-pv-backpill{display:flex}
   // (the version whose "what's new" was put away, and the one whose dot on the button the window was opened for)
   const UB_SEEN_KEY = 'tweeks.fr24.ladd.seenver', UB_DOT_KEY = 'tweeks.fr24.ladd.dotver';
   // (the newest CHANGELOG section's headlines, written in by build.mjs: { v, items })
-  const UB_WHATS_NEW = {"v":"1.4.2","items":["**Log pages open all at once.** An aircraft's page, a flight number's page and a blocked aircraft's log are shown when everything in them is in: the rows' airports (OurAirports fields included), the serial number, the age and the flights before FR24's week. Nothing changes after the page appears.","**The app's own phone layout of log pages is back.** Since FR24's redesign the app showed FR24's new log pages on every aircraft and flight number. The old pages are rebuilt in the app too, and laid out for a phone as before: the flights by year, each opening to its times and Play. Play still opens FR24's own player for a phone.","**Blocked aircraft's logs come from the monitor in the app again** (M-PORT showed FR24's \"No flights found\").","**FR24's search box works again.** The script's own background lookups in FR24's search (each aircraft's operator) went a third of a second apart and were repeated after every refusal, until FR24 refused the browser's searches altogether, the user's own included. They are now made only for aircraft being looked at, two seconds apart, and stop for 15 minutes when FR24 refuses one.","**Airport boards at OurAirports fields are complete.** The monitor now checks each light aircraft's and helicopter's flights against FR24's own. M-SKTO's Blackpool to Newcastle flight of 19 Nov, with 18 minutes on Axis Business Park's helipad that no receiver heard, is two flights. Its return \"to Ince Blundell\", heard low 12 km away, ends at the helipad where FR24's track has it down.","**Boards agree between browsers.** A flight set right as landing somewhere other than where FR24 guessed is left off the airport FR24 named, on the monitor's boards and in every browser. Before, only a browser that had opened the aircraft's log did so. A diversion stays where it was going, as FR24 shows it."]};
+  const UB_WHATS_NEW = {"v":"1.4.3","items":["**The iPhone and iPad app updates itself.** A new version is offered as the Android app offers it: \"Update available. Version x of LADD Unblocker is out (this phone has y). Update now?\" when the app opens, and from the page's Update button. Update downloads it, checks it and loads FR24 again with it. Nothing to reinstall. Install 1.4.3 by hand once; it updates itself from then on.","**FR24's map and panels load at their own speed again.** Since 1.4.2 FR24's airport pins (its own and the OurAirports ones) and flights' airports showed nothing, or \"N/A\", for up to 20 seconds on a phone. The script was putting all of OurAirports' 63,000 airfields into FR24's own airport list, which FR24 then had to read before drawing anything; until 1.4.2 that list usually was not ready in time. FR24's list is now left as it comes, and the airfields are added to FR24's tables a slice at a time, as before for those it already had. The landing-site and heliport lists are also built in slices, so the page keeps responding while they load.","**FR24's padlocked serial number (MSN) in its player is filled**, from the same registers and picture sites as the log pages.","**Playback uses FR24's own track.** The player draws FR24's own positions of a flight, as FR24's player does. Public ADS-B is used only where FR24 has nothing of the flight: before FR24 picked it up, after it lost it, and in a gap of ten minutes or more. Before, ADS-B filled every gap of a minute, and the monitor keeps an airliner's position only every three minutes, so most of a playback was ADS-B.","**Flights older than FR24's week play in the app.** FR24's own player sends a free account to its \"Search for flights\" page for those. They now open in this script's player. A flight that cannot be found says so, with a Back button, instead of leaving the search page.","**Old-style log pages after FR24's own links.** An aircraft or flight-number page opened from FR24's search box, a board or the map, without a page load, was FR24's new page. It is now loaded and drawn as the old one."]};
   // (an aircraft with an open padlock: FR24's outline style - 24 grid, 1.5 stroke in the text colour)
   const UB_ICON = '<svg data-tl-ub-icon="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
   const UB_X = '<svg viewBox="0 0 14 14" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5l11 11M12.5 1.5l-11 11"/></svg>';
@@ -21759,7 +22458,7 @@ html.tl-no-strip .tl-strip{display:none!important}
     // (1.3.12: the app updates itself - it downloads its new version, checks it and has Android install it over this one;
     // an app before that, by the browser's download)
     if (act === 'update' && k === 'app') {
-      if (TL_APP.platform === 'ios' && typeof TL_APP.update === 'function' && TL_APP.update()) ubNote = 'The app looks for its new version and opens its release page: install the new .ipa with the app you installed this one with - your settings stay.';
+      if (TL_APP.platform === 'ios' && typeof TL_APP.update === 'function' && TL_APP.update()) ubNote = 'The app looks for its new version and offers it: Update downloads it, checks it and loads FR24 again with it - nothing to reinstall. A version that changes the app itself opens its release page instead: install its .ipa with the app you installed this one with - your settings stay.';
       else if (typeof TL_APP.update === 'function' && TL_APP.update()) ubNote = 'The app downloads its new version and asks Android to install it over this one - your settings stay. Android asks you to confirm.';
       else { window.open(UB_APP_URL, '_blank', 'noopener'); ubNote = 'Your browser downloads the new app. Open it when it has, and install it over this one: your settings stay.'; }
     }
@@ -21798,7 +22497,7 @@ html.tl-no-strip .tl-strip{display:none!important}
     else if (newer) btns.push(`<button class="tl-ub-b" data-ub-act="update">Update to v${esc(O.v)}</button>`);
     else btns.push(`<button class="tl-ub-b tl-ub-b2" data-ub-act="check"${ubAsking ? ' disabled' : ''}>Check for updates</button>`);
     if (ik.kind === 'ext') btns.push('<button class="tl-ub-b tl-ub-b2" data-ub-act="reloadExt" title="Load the extension again from its folder - after replacing its files with a new version">Reload extension</button>');
-    const how = ik.kind === 'app' ? (TL_APP.platform === 'ios' ? 'Update opens the new version\'s release page, to install with the app you installed this one with. The app also looks for one itself when it opens.' : 'Update downloads the new version of the app and installs it over this one (Android asks you to confirm). The app also looks for one itself when it opens.') : ik.kind === 'us' ? 'Update opens the new version in your userscript manager, which offers to update.' : ik.kind === 'ext' ? 'Update puts the new version into the extension\'s folder for you. The first time, Chrome asks you to choose that folder and allow it to be edited.' : 'Installed from a store: your browser updates it by itself.';
+    const how = ik.kind === 'app' ? (TL_APP.platform === 'ios' ? 'Update offers the new version as the app does when it opens: it downloads it, checks it and loads FR24 again with it - nothing to reinstall. A version that changes the app itself opens its release page, to install with the app you installed this one with.' : 'Update downloads the new version of the app and installs it over this one (Android asks you to confirm). The app also looks for one itself when it opens.') : ik.kind === 'us' ? 'Update opens the new version in your userscript manager, which offers to update.' : ik.kind === 'ext' ? 'Update puts the new version into the extension\'s folder for you. The first time, Chrome asks you to choose that folder and allow it to be edited.' : 'Installed from a store: your browser updates it by itself.';
     const warn = ubInstalled ? `<div class="tl-ub-alert">v${esc(ubInstalled)} is installed. Refresh the page to start using it.</div>` : newer ? `<div class="tl-ub-alert">This version is out of date: <b>v${esc(O.v)}</b> is out, you have v${esc(VERSION)}.${O.req ? ' <b>This update is required</b>: this version is no longer supported.' : ''}</div>` : '';
     return `${warn}<div class="tl-ub-kv"><span>Installed</span><span>v${esc(VERSION)}</span></div><div class="tl-ub-kv"><span>Latest</span><span>${latest}</span></div>
       <div class="tl-ub-kv"><span>Type</span><span>${esc(ik.name)}</span></div><div class="tl-ub-btns">${btns.join('')}</div>
@@ -22994,6 +23693,9 @@ html.tl-no-strip .tl-strip{display:none!important}
       case 'needSearch': onNeedSearch(d).catch(e => { log('search', e); postToPage('searchAdd', { rid: d.rid, rows: [] }); }); break;
       case 'needPub': publicIdentity(d.hex, d.reg).then(() => pushPubIds([String(d.hex || '').toLowerCase()])).catch(() => {}); break;
       case 'osmRes': onOsmRes(d); break;
+      case 'fr24ApiRes': onFr24ApiRes(d); break;
+      case 'pbRelated': onPbRelated(d).catch(() => postToPage('pbRelatedGot', { rid: d && d.rid, groups: [] })); break;
+      case 'cardRwy': onCardRwy(d).catch(() => postToPage('cardRwyGot', { rid: d.rid })); break;
       case 'aircraftInfo': onAircraftInfo(d); break;
       case 'fr24Model': onFr24Model(d); break;
       case 'routesAsk': onRoutesAsk(d).catch(e => log('search routes', e)); break;
@@ -23186,6 +23888,8 @@ html.tl-no-strip .tl-strip{display:none!important}
   // (log and flight-number pages: the page bridge too - FR24's search box there lists what this script knows)
   // (1.4.1: FR24's log pages drawn as they were first - 06-classic - the aircraft's and flight's own work then on them)
   const classicP = (isAircraftPage || isFlightPage || /^\/data\/playback\//i.test(location.pathname)) ? classicBoot().catch(e => { log('classic page', e); return false; }) : Promise.resolve(false);
+  // (1.4.3: a page that is not one - the map, a board - moving to one without loading it: loaded, so it is drawn as it was)
+  classicP.then(drawn => { if (!drawn) store.kvReady.then(() => clRouteWatch()).catch(() => {}); }).catch(() => {});
   if (isAircraftPage) {
     installBridge();
     if (opt.acPages) classicP.then(() => bootAircraftPage()).catch(e => log('aircraft page', e));
@@ -23252,7 +23956,7 @@ html.tl-no-strip .tl-strip{display:none!important}
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true }); else start();
   }
   }
-  try { (pageWindow()).__tweeksLadd = { version: VERSION, oaTest: { buildAirports, oaSet, closestOf, oaPageRef, oaIdNear, learnSite, oaAp, oaCity, apById, fr24Ap }, msgCount, datalinkPlan, planSpent, schedPlan, datalinkRoutes, surgeNow, morphHtml, photoJob, photosOut, monPhotos, routeSearch, onNeedNaRoutes, onTopNeed, naFromTrail, naWanted, fr24Trail, schedOf, trailFor, get shownId() { return shownId; }, posStats, get bridgeV() { return bridgeV; }, hexOfId, currentPos, idHex, engine: ENGINE, live, pending, telemetry, store, routeState, planState, globalList, fr24, todayCache, sweep, resolveTargeted, routeFor, composeRoute, composeRoute0, centralOf, calcWhy, calcGot, calcSent, calcAsk, calcFlush, calcEvidence, calcNow, calcExtra, localView, hexCalcId, altsOf, holdTerminal, termHold, worldScan, refreshLists, quickRouteAll, historyPump, histPumped, learnedStore, regCountry, fr24Sched, pubRouted, pubRecs, privatePlace, loadSites, siteNear, sites, onSched, pubMem: () => pubMem, publishRoute, syncPanel, normalizeReadsb, telemOf, noteCands, csOfRec, warmHist, hostStat, wantWx, wxMap, wantNotams, closedMap, estimateEta, nNumberHex, watchList, pollWatch, accStore, accNote, statsHtml, fleetList, checkHealth, health, exportCsv, predictForHex, verifyAgainstList, strikes, revokedIds, fr24Named, noteFr24Named, loadHistory, loadToday, readTrace, classifyTrace, fetchTrace, netState, NETS, sourcesHtml, logGaps, fetchJetphotos, loadRunways, knownLegs, areaCache, pollView, saveSnapshot, boardNoteLegs, boardNoteFlight, boardNoteSched, boardScrub, boardLoad, boardList, naRouteOf, naEvidenceOf, pbWhere, pbFlight, pbSynId, onPbPage, legRowHtml, pbHashPlay, noteNa, naFeed, matchParked, parkedTick, isProv, adopt, recordFromMatch, matchAgainstList, verifyAll, fillAircraftHeader, ownersOut, identityToMonitor, matchByTraces, boardDrain, boardMem, onNeedBoard, operatorOf, shownOwner, enrich, userConfirm, userDestOf, monGet, monPost, monCheck, noteFr24Blocked, monLive, monUp, MON_DEFAULTS, get monBase() { return monBase; }, liveSources, tatSource: TAT_SOURCE, telOut, noteTelOut, reportTel, pbOut, srvIds, pullSrvIds, srvAdopt, reportToMonitor, srvRoute, srvRec, crowdOf, routesOut, routesSent, noteRouteOut, noteRouteWithdrawn, learnFromLeg, learnOutTake, learnOutBack, get learnOutN() { return learnOut.length; }, get feedHdr() { return feedHdr; }, boardMonFill, natRowOf, fnRows, buildSnapshot, bootHold, firAt, loadFir, onAirAsk, pb, onPbFeed, onPbFollow, onPbHex, pbRouteFor, pbMatch, pbFromMonitor, onNeedRoutes, onNeedAirportData, onNeedAirportPanel, liveBoardRows, runwaysOf, parseRunwayEnds, flightsOfCallsign, bootFlightPage, unlockExports, exportFile, rowWindow, hexOfFid, onNeedSearch, osmPick, wantOsmPlace, osmPlaceAt, learnSite, siteIdAt, siteBk, siteRow, apById, operatorIdOf, airlineIdByName, fr24Cat, onHistElsewhere, get viewBox() { return viewBox; }, get selectedId() { return currentId(); }, opt, setOpt, notify, openUnblockWindow, closeUnblockWindow, ensureBarButton, findBar, checkLatest, installKind, sayHello, helloSt, ubBanners, ubOffer, installId, pb141: { pbFlight, pbInfo, csFlightNumber, pbOperator, pbLegNear, pbLegOfPts, pbRunways, fnOlderRows } }; } catch (_) { /* ignore */ }
+  try { (pageWindow()).__tweeksLadd = { version: VERSION, t143: { pbFr24First, fr24PbParse, fr24TrackSend, fr24TrackSent, pbFr24Whole, onPbRelated, endsCellsNow: typeof endsCellsNow === 'function' ? endsCellsNow : null, fnSchedules, schedOfLeg, wantScheds, legRowHtml, csFnMemo }, oaTest: { buildAirports, oaSet, closestOf, oaPageRef, oaIdNear, learnSite, oaAp, oaCity, apById, fr24Ap }, msgCount, datalinkPlan, planSpent, schedPlan, datalinkRoutes, surgeNow, morphHtml, photoJob, photosOut, monPhotos, routeSearch, onNeedNaRoutes, onTopNeed, naFromTrail, naWanted, fr24Trail, schedOf, trailFor, get shownId() { return shownId; }, posStats, get bridgeV() { return bridgeV; }, hexOfId, currentPos, idHex, engine: ENGINE, live, pending, telemetry, store, routeState, planState, globalList, fr24, todayCache, sweep, resolveTargeted, routeFor, composeRoute, composeRoute0, centralOf, calcWhy, calcGot, calcSent, calcAsk, calcFlush, calcEvidence, calcNow, calcExtra, localView, hexCalcId, altsOf, holdTerminal, termHold, worldScan, refreshLists, quickRouteAll, historyPump, histPumped, learnedStore, regCountry, fr24Sched, pubRouted, pubRecs, privatePlace, loadSites, siteNear, sites, onSched, pubMem: () => pubMem, publishRoute, syncPanel, normalizeReadsb, telemOf, noteCands, csOfRec, warmHist, hostStat, wantWx, wxMap, wantNotams, closedMap, estimateEta, nNumberHex, watchList, pollWatch, accStore, accNote, statsHtml, fleetList, checkHealth, health, exportCsv, predictForHex, verifyAgainstList, strikes, revokedIds, fr24Named, noteFr24Named, loadHistory, loadToday, readTrace, classifyTrace, fetchTrace, netState, NETS, sourcesHtml, logGaps, fetchJetphotos, loadRunways, knownLegs, areaCache, pollView, saveSnapshot, boardNoteLegs, boardNoteFlight, boardNoteSched, boardScrub, boardLoad, boardList, naRouteOf, naEvidenceOf, pbWhere, pbFlight, pbSynId, onPbPage, legRowHtml, pbHashPlay, noteNa, naFeed, matchParked, parkedTick, isProv, adopt, recordFromMatch, matchAgainstList, verifyAll, fillAircraftHeader, ownersOut, identityToMonitor, matchByTraces, boardDrain, boardMem, onNeedBoard, operatorOf, shownOwner, enrich, userConfirm, userDestOf, monGet, monPost, monCheck, noteFr24Blocked, monLive, monUp, MON_DEFAULTS, get monBase() { return monBase; }, liveSources, tatSource: TAT_SOURCE, telOut, noteTelOut, reportTel, pbOut, srvIds, pullSrvIds, srvAdopt, reportToMonitor, srvRoute, srvRec, crowdOf, routesOut, routesSent, noteRouteOut, noteRouteWithdrawn, learnFromLeg, learnOutTake, learnOutBack, get learnOutN() { return learnOut.length; }, get feedHdr() { return feedHdr; }, boardMonFill, natRowOf, fnRows, buildSnapshot, bootHold, firAt, loadFir, onAirAsk, pb, onPbFeed, onPbFollow, onPbHex, pbRouteFor, pbMatch, pbFromMonitor, onNeedRoutes, onNeedAirportData, onNeedAirportPanel, liveBoardRows, runwaysOf, parseRunwayEnds, flightsOfCallsign, bootFlightPage, unlockExports, exportFile, rowWindow, hexOfFid, onNeedSearch, osmPick, wantOsmPlace, osmPlaceAt, learnSite, siteIdAt, siteBk, siteRow, apById, operatorIdOf, airlineIdByName, fr24Cat, onHistElsewhere, get viewBox() { return viewBox; }, get selectedId() { return currentId(); }, opt, setOpt, notify, openUnblockWindow, closeUnblockWindow, ensureBarButton, findBar, checkLatest, installKind, sayHello, helloSt, ubBanners, ubOffer, installId, pb141: { pbFlight, pbInfo, csFlightNumber, pbOperator, pbLegNear, pbLegOfPts, pbRunways, fnOlderRows } }; } catch (_) { /* ignore */ }
   log('loaded v' + VERSION);
 
 })();

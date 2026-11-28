@@ -63,8 +63,10 @@
     const acMob = ac && ac.reg ? `<a class="fbold" href="/data/aircraft/${esc(ac.reg.toLowerCase())}" title="${esc(ac.desc || ac.type || '')}">${esc(ac.reg)}</a>` : '';
     // (1.4.1: an airline's flight by its flight number, as FR24's own rows - FR24's number of that callsign)
     const fn = !ac && cs ? fnKnown(cs) : '', fnDesk = fn ? ` <a class="fbold" href="/data/flights/${esc(fn.toLowerCase())}" title="${esc(cs)} - its flight number as Flightradar24 shows it (LADD unblocker)">${esc(fn)}</a> ` : '';
+    // (1.4.3: FR24's scheduled times of it, kept by the monitor - the leg's own (a flight number's rows), else its number's)
+    const sc = l.std || l.sta ? { std: l.std || 0, sta: l.sta || 0 } : schedOfLeg(l, l.fn || fn);
     return logRowHtml({ t0: l.tStart, tz, tzTo, flight: ac ? acDesk || '—' : fnDesk || (cs ? `(${esc(cs)})` : '—'), flightMob: ac ? acMob || '—' : '', dur: (flown ? (onEst || offEst ? '~' : '') + durStr(flown) : '—') + (l.laps > 1 ? ` · ${l.laps} laps` : ''),
-      stdTs: 0, atdTs: tOff, staTs: 0, color: landed ? 'green' : 'gray', atdEst: offEst, onEst, estTitle: 'reckoned from the nearest position heard (no receiver heard this part)',
+      stdTs: (sc && sc.std) || 0, atdTs: tOff, staTs: (sc && sc.sta) || 0, color: landed ? 'green' : 'gray', atdEst: offEst, onEst, estTitle: 'reckoned from the nearest position heard (no receiver heard this part)',
       statusPrefix: landed && tOn ? (onEst ? 'Landed ~' : 'Landed ') : '', statusTs: tOn || 0, statusText: landed ? (tOn ? `Landed ${onEst ? '~' : ''}${fmtLocal(tOn, tzTo)}` : 'Landed · time unknown') : (l.ended ? 'Landed (airport unknown)' : 'Unknown'),
       from: siteFrom ? SITE_CELLS : apCells(from, l.from && l.from.conf), to: siteTo ? SITE_CELLS : apCells(to, l.to && l.to.conf),
       btn: playCellHtml(l, hex, ac && ac.reg ? ac.reg : reg, flown) });
@@ -115,9 +117,11 @@
     if (pbeAsk.has(fid)) return pbeAsk.get(fid);
     const p = Promise.resolve(store.kvReady).catch(() => null).then(() => {
       const c = pbeMap().get(fid); if (c) return { start: Object.assign({}, c.start), end: Object.assign({}, c.end) };
-      return gmRequest(`https://api.flightradar24.com/common/v1/flight-playback.json?flightId=${encodeURIComponent(fid)}&timestamp=${ts}`, { timeout: 15000 }).then(j => {
+      return fr24PbJson(fid, ts).then(j => {
         const d = j && j.result && j.result.response && j.result.response.data && j.result.response.data.flight, tr = d && d.track;
         if (!Array.isArray(tr) || !tr.length) return null;
+        // (1.4.3: FR24's whole track of it - kept by the monitor for good)
+        try { fr24TrackSend(fid, fr24PbParse(j)); } catch (e) { /* not sent */ }
         const pt = p => ({ lat: p.latitude, lon: p.longitude, alt: p.altitude ? p.altitude.feet : null, gs: p.speed ? p.speed.kts : null, t: p.timestamp });
         const v = { start: pt(tr[0]), end: pt(tr[tr.length - 1]) };
         if (/^[0-9a-f]{1,12}$/.test(fid) && pbeOk(v) && nowS() - v.end.t > 1800) pbeKeep(fid, { start: Object.assign({}, v.start), end: Object.assign({}, v.end) });
@@ -131,25 +135,37 @@
   // there as the page opens: FR24's playback is asked only for a flight the monitor has nothing of
   // (1.4.2: asked for as FR24's page data is read - 06-classic clEarly - and taken from there by the rows)
   const fr24EndsPre = new Map();   // fid -> Promise<{ start, end } | null>
+  const fr24EndsTry = new Map();   // (1.4.3) fid -> asks lost so far
   function fr24EndsEarly(items) {
     const want = (items || []).filter(x => x && x.fid && !fr24EndsPre.has(x.fid)); if (!want.length) return;
-    const p = fr24EndsAsk(want).catch(() => new Map());
-    for (const x of want) fr24EndsPre.set(x.fid, p.then(m => m.get(x.fid) || null));
+    const p = fr24EndsAsk(want).catch(() => Object.assign(new Map(), { failed: true }));
+    // (1.4.3: an ask that failed - not one the monitor answered without it - leaves the row to ask again: undefined)
+    for (const x of want) fr24EndsPre.set(x.fid, p.then(m => m.get(x.fid) || (m.failed ? undefined : null)));
   }
   async function fr24EndsMon(items) {
     const out = new Map(), rest = [];
-    for (const x of items) { const p = fr24EndsPre.get(x.fid); if (p) { const v = await p; if (v) out.set(x.fid, v); } else rest.push(x); }
-    if (rest.length) for (const [k, v] of await fr24EndsAsk(rest)) out.set(k, v);
+    for (const x of items) { const p = fr24EndsPre.get(x.fid); if (p) { const v = await p; if (v) out.set(x.fid, v); else if (v === undefined) { fr24EndsPre.delete(x.fid); rest.push(x); } } else rest.push(x); }
+    if (rest.length) { const m = await fr24EndsAsk(rest); for (const [k, v] of m) out.set(k, v); if (m.failed) out.failed = true; }
     return out;
   }
+  // (1.4.3) A row of FR24's week whose flight the monitor has only its scans' few points of (sp): FR24's whole track of it
+  // read in the background - one every two seconds at most, fifteen a page - and sent to the monitor to keep for good, so
+  // it plays as FR24's own after FR24's week too
+  const fr24KeepAsked = new Set();
+  function fr24KeepLater(fid, t) {
+    if (fr24KeepAsked.has(fid) || fr24KeepAsked.size >= 15 || !(t > 1e9) || nowS() - t > 7.5 * 86400 || nowS() - t < 1800) return;
+    fr24KeepAsked.add(fid);
+    fr24PbJson(fid, t, { bg: true, timeout: 20000 }).then(j => { const tr = fr24PbParse(j); if (tr) fr24TrackSend(fid, tr); }).catch(() => {});
+  }
   async function fr24EndsAsk(items) {
-    const out = new Map(); if (!items.length || !(await monReady())) return out;
+    const out = new Map(); if (!items.length) return out;
+    if (!(await monReady())) { out.failed = true; return out; }
     const pt = a => Array.isArray(a) && fin(a[0]) && fin(a[1]) && fin(a[2]) ? { t: a[0], lat: a[1], lon: a[2], alt: fin(a[3]) ? a[3] : null, gs: fin(a[4]) ? a[4] : null, gnd: a[5] === 1 } : null;
     for (let i = 0; i < items.length; i += 40) {
       try {
         const j = await monGet('/fr24ends?f=' + items.slice(i, i + 40).map(x => x.fid + (x.t > 1e9 ? ':' + Math.round(x.t) : '')).join(','), { timeout: 8000 });
-        for (const [fid, v] of Object.entries((j && j.list) || {})) { const a = pt(v && v.s), b = pt(v && v.e); if (a && b && /^[0-9a-f]{1,12}$/.test(fid)) out.set(fid, { start: a, end: b }); }
-      } catch (e) { /* none kept: FR24's playback, for the rows that need it */ }
+        for (const [fid, v] of Object.entries((j && j.list) || {})) { const a = pt(v && v.s), b = pt(v && v.e); if (a && b && /^[0-9a-f]{1,12}$/.test(fid)) { out.set(fid, { start: a, end: b }); if (v.sp === 1) fr24KeepLater(fid, a.t); } }
+      } catch (e) { out.failed = true; /* (1.4.3: asked again - a phone's slow answer was taken for "none kept") */ }
     }
     return out;
   }
@@ -221,7 +237,8 @@
     if (!/^[0-9a-f]{1,12}$/.test(fid) && !PB_SYN.test(fid)) { postToPage('trackFileGot', { rid, ok: false }); return; }
     let pts = [], cs = '', desc = '';
     if (!PB_SYN.test(fid)) try {
-      const j = await gmRequest(`https://api.flightradar24.com/common/v1/flight-playback.json?flightId=${encodeURIComponent(fid)}&timestamp=${ts || Math.round(now() / 1000)}`, { timeout: 20000 });
+      const j = await fr24PbJson(fid, ts || nowS(), { priority: true, timeout: 20000 });
+      try { fr24TrackSend(fid, fr24PbParse(j)); } catch (e) { /* not sent */ }
       const fl = j && j.result && j.result.response && j.result.response.data && j.result.response.data.flight, tr = fl && fl.track;
       for (const p of Array.isArray(tr) ? tr : []) {
         if (!p || !fin(p.latitude) || !fin(p.longitude) || !fin(p.timestamp)) continue;
@@ -266,9 +283,17 @@
   }
   // (a flight's own track's ends as a row's cells: where it began, where it ended, its landing when it ended down)
   // (src 'mon': the monitor's positions - its scans', a minute or so apart; 'fr24': FR24's own whole track)
+  // (1.4.3: with the lists of places they were named from - airports, fields, heliports: when more come in, named again)
+  const placesSig = () => (ENGINE.airports || []).length + ':' + ENGINE.fieldCount() + ':' + (ENGINE.heliCount ? ENGINE.heliCount() : 0);
   function endsCellsOf(e, src) {
     const end = e && e.end, down = !!end && end.t > 0 && nowS() - end.t > 1200 && (end.alt == null || end.alt < 1500) && (end.gs == null || end.gs < 120);
-    return { from: e && placeCells(e.start), to: e && placeCells(e.end), landT: down ? end.t : 0, s: (e && e.start) || null, e: end || null, src: src || 'fr24' };
+    return { from: e && placeCells(e.start), to: e && placeCells(e.end), landT: down ? end.t : 0, s: (e && e.start) || null, e: end || null, src: src || 'fr24', raw: e || null, sig: placesSig() };
+  }
+  // (a row's ends named before the strips and heliports were in - "Private Site", FR24's guess left, or nothing - named
+  // again now they are: M-SKTO's landings at Truro Aerodrome on 27 Nov, the landing sites' list 12 MB on a phone)
+  function endsCellsNow(fid) {
+    const fe = fid ? fr24EndCells.get(fid) : null; if (!fe || !fe.raw || fe.sig === placesSig()) return fe;
+    const nw = endsCellsOf(fe.raw, fe.src); fr24EndCells.set(fid, nw); return nw;
   }
   // (a point on the ground or nearly - slow, low: the place under it is where the flight began or ended)
   const nearGround = p => !!p && (p.gnd === true || (fin(p.alt) && p.alt < 300)) && (!fin(p.gs) || p.gs < 60);
@@ -307,10 +332,13 @@
       // history day that names the strip can come in after FR24's track was read)
       // (1.4.1: and FR24's own airport, "over", where its own track came down at another field - beatsFr24)
       const rankOf = c => c === SITE_CELLS ? 1 : /tl-inf/.test(c.desk) ? 2 : 3;
-      const putCells = (td, label, cells, key, over) => {
-        if (!cells || !(over || dash(td) || (td.classList.contains('tl-filled') && rankOf(cells) > Number(td.dataset.tlRank || 0)))) return false;
+      const putCells = (td, label, cells, key, over, feSig) => {
+        // (1.4.3: one of the row's own track's ends, named before more places were in: named again - feSig)
+        const again = !!feSig && td.classList.contains('tl-filled') && !!td.dataset.tlFe && td.dataset.tlFe !== feSig && td.innerHTML !== cells.desk;
+        if (!cells || !(over || again || dash(td) || (td.classList.contains('tl-filled') && rankOf(cells) > Number(td.dataset.tlRank || 0)))) return false;
         td.innerHTML = cells.desk; td.classList.add('tl-filled'); td.dataset.tlRank = String(rankOf(cells)); delete td.dataset.tlChain; delete td.dataset.tlChainOf;
-        td.title = over ? `${cells.title} - where FR24's own track of the flight ${key === 'to' ? 'came down' : 'began'}; FR24 gives ${over.name || over.city || ''} (${over.iata || over.icao || ''}), which it never came near (LADD unblocker)` : cells.title;
+        if (feSig) td.dataset.tlFe = feSig; else delete td.dataset.tlFe;
+        td.title = decodeEntities(over ? `${cells.title} - where FR24's own track of the flight ${key === 'to' ? 'came down' : 'began'}; FR24 gives ${over.name || over.city || ''} (${over.iata || over.icao || ''}), which it never came near (LADD unblocker)` : cells.title);
         if (over) td.classList.add('tl-over');
         rec[key] = over ? Object.assign({}, cells, { over: true }) : cells;
         for (const p of mob) { const lb = p.querySelector('label'); if (lb && lb.textContent.trim() === label) { const sp = p.querySelector('span.details'); if (sp) sp.innerHTML = cells.mob; } }
@@ -318,14 +346,16 @@
       };
       // (1.4.1) FR24's own airport of an end its own track never came near - down at another field: that field. The rows'
       // tracks' ends are the monitor's, every row's in one ask (below), there as the page opens
-      const fe = fid ? fr24EndCells.get(fid) : null;
+      const fe = endsCellsNow(fid);
       if (fid && !fe && !fr24EndAsked.has(fid)) { fr24EndAsked.add(fid); endsWanted.push({ fid, t: Number(tr.dataset.timestamp) || atd }); }
       if (fe) {
-        const oF = beatsFr24(fromTd, fe.from, fe.s, pageHeli); if (oF && putCells(fromTd, 'FROM', fe.from, 'from', oF)) n++;
-        const oT = landedRow ? beatsFr24(toTd, fe.to, fe.e, pageHeli) : null; if (oT && putCells(toTd, 'TO', fe.to, 'to', oT)) n++;
+        const oF = beatsFr24(fromTd, fe.from, fe.s, pageHeli); if (oF && putCells(fromTd, 'FROM', fe.from, 'from', oF, fe.sig)) n++;
+        const oT = landedRow ? beatsFr24(toTd, fe.to, fe.e, pageHeli) : null; if (oT && putCells(toTd, 'TO', fe.to, 'to', oT, fe.sig)) n++;
         if (fe.src === 'mon' && ((!oF && farLow(fromTd, fe.s)) || (!oT && landedRow && farLow(toTd, fe.e)))) apiAsk(fid, Number(tr.dataset.timestamp) || atd);
       }
-      if (!dash(fromTd) && !dash(toTd) && !weak(fromTd) && !weak(toTd) && !/^\s*(Scheduled|Unknown)\b/i.test(statusTd.textContent || '')) continue;
+      // (1.4.3: or an end named from its own track before more places were in - named again below)
+      const stale = td => !!fe && !!td.dataset.tlFe && td.dataset.tlFe !== fe.sig;
+      if (!dash(fromTd) && !dash(toTd) && !weak(fromTd) && !weak(toTd) && !stale(fromTd) && !stale(toTd) && !/^\s*(Scheduled|Unknown)\b/i.test(statusTd.textContent || '')) continue;
       let l = null, bd = 900; for (const x of legs) { const d = Math.abs((x.tOff || x.tStart) - atd); if (d < bd) { bd = d; l = x; } }
       // (1.1.2: or one heard only after the take-off - within FR24's take-off and landing: that flight, its start out of
       // coverage; the panel's "Recent flights" the same, 04-routes pageLegsOf)
@@ -368,12 +398,12 @@
       // also its landing: "Landed ~" then)
       // (1.4.1: and the flight in the air now - where its own track began: its TO stays the live one's, its track's end
       // being where it is now)
-      if (fid && (landedRow || unfinished || isLive) && (dash(fromTd) || dash(toTd) || weak(fromTd) || weak(toTd) || unfinished)) {
+      if (fid && (landedRow || unfinished || isLive) && (dash(fromTd) || dash(toTd) || weak(fromTd) || weak(toTd) || stale(fromTd) || stale(toTd) || unfinished)) {
         if (fe) {
-          if (putCells(fromTd, 'FROM', fe.from, 'from')) n++;
+          if (putCells(fromTd, 'FROM', fe.from, 'from', null, fe.sig)) n++;
           // (an unfinished one's TO only where its track ended down: one FR24 calls "Scheduled" while it is still in the
           // air ends where it is now - an airfield it is passing is not where it went)
-          if (putCells(toTd, 'TO', landedRow || (!isLive && fe.landT > atd) ? fe.to : null, 'to')) n++;
+          if (putCells(toTd, 'TO', landedRow || (!isLive && fe.landT > atd) ? fe.to : null, 'to', null, fe.sig)) n++;
           if (unfinished && fe.landT > atd && fe.to && fe.to.a) {
             const tzTo = tzOf(fe.to.a), txt = 'Landed ~' + fmtLocal(fe.landT, tzTo);
             statusTd.dataset.prefix = 'Landed ~'; statusTd.dataset.timestamp = String(fe.landT); statusTd.dataset.offset = String(tzTo); statusTd.textContent = ' ' + txt + ' ';
@@ -403,6 +433,8 @@
       fr24EndsMon(endsWanted).then(async got => {
         // (the monitor not there yet: asked again once it answers its check)
         if (!got.size && !monUp()) monWhenUp(() => { for (const x of endsWanted) { fr24EndAsked.delete(x.fid); fr24EndsPre.delete(x.fid); } if (fr24Refill) fr24Refill(); });
+        // (1.4.3: or there, the ask lost - a phone's slow network: asked again, three times at most, the rows not had yet)
+        else if (got.failed) { const again = endsWanted.filter(x => !got.has(x.fid) && (fr24EndsTry.get(x.fid) || 0) < 3); if (again.length) setTimeout(() => { for (const x of again) { fr24EndsTry.set(x.fid, (fr24EndsTry.get(x.fid) || 0) + 1); fr24EndAsked.delete(x.fid); fr24EndsPre.delete(x.fid); } if (fr24Refill) fr24Refill(); }, 3000); }
         if (got.size) await placesIn();
         for (const x of endsWanted) fr24MonWait.delete(x.fid);
         for (const x of endsWanted) {
@@ -640,7 +672,7 @@
   const fidHex = new Map();
   function hexOfFid(fid, ts, reg) {
     const k = String(fid || '').toLowerCase();
-    if (!fidHex.has(k)) fidHex.set(k, (k ? gmRequest(`https://api.flightradar24.com/common/v1/flight-playback.json?flightId=${encodeURIComponent(k)}&timestamp=${Math.round(ts || nowS())}`, { timeout: 15000 }) : Promise.resolve(null)).then(j => {
+    if (!fidHex.has(k)) fidHex.set(k, (k ? fr24PbJson(k, ts || nowS()) : Promise.resolve(null)).then(j => {
       const f = j && j.result && j.result.response && j.result.response.data && j.result.response.data.flight, idn = f && f.aircraft && f.aircraft.identification;
       const hx = clean(idn && (idn.modes || idn.modeS || idn.hex)).toLowerCase(); if (/^[0-9a-f]{6}$/.test(hx)) return hx;
       const r = clean((idn && idn.registration) || reg).toUpperCase(), h = r && store.byReg(r); return h && h.hex ? h.hex : '';
@@ -910,7 +942,7 @@
           loadToday(hex0, 60000, { priority: true }).catch(() => null).then(() => fill());
           const liveTick = async () => { if (routeChan) routeChan.postMessage({ ask: hex0 }); let own = null; try { own = await pageLiveState(hex0, reg); } catch (e) { own = null; } lv = fromMap0() || own; fill(); };
           liveTick(); setInterval(liveTick, 60000);
-          // FR24 gives a free account a week of the log ("more than 7 days ... with an upgrade"): three months more under
+          // FR24 gives a free account a week of the log ("more than 7 days ... with an upgrade"): a year back (1.4.3) under
           // its rows, rebuilt from public ADS-B in its own markup - FR24's rows keep their own playback, these replay their
           // track on adsb.lol (airplanes.live beyond six weeks). Every day is kept once read, as for the blocked aircraft.
           const oldest = Math.min(...fr24Rows().map(tr => Number(tr.dataset.timestamp) || Infinity));
@@ -922,6 +954,8 @@
             const legs = knownLegs(hex0).filter(l => (l.from || l.to || l.tEnd - l.tStart > 600) && (l.tOff || l.tStart) < cut - 1800 && (l.tOff || l.tStart) > nowS() - days * 86400).sort((a, b) => b.tStart - a.tStart);
             const html = legs.map(l => legRowHtml(l, hex0, reg)).join('');
             olderFn = wantFns(legs, () => renderOlder(null, 1, 1));
+            // (1.4.3: their scheduled times, FR24's, kept by the monitor - once their flight numbers are in)
+            olderFn.then(() => wantScheds(legs, () => renderOlder(null, 1, 1)));
             if (html !== tail.dataset.html) {
               tbody.querySelectorAll('tr.tl-adsb-row').forEach(r => r.remove());
               if (!tail.parentNode) tbody.appendChild(tail);
@@ -1017,6 +1051,7 @@
         const legs = legsOf();
         const shown = liveState ? legs.filter(l => l.ended || l.tEnd < (liveState.departedAt || 0) - 60) : legs;
         run.fnP = wantFns(shown, render);
+        run.fnP.then(() => wantScheds(shown, () => { if (current === run) render(); }));
         const html = (liveState ? liveRowHtml(liveState, hex, reg) : '') + shown.map(l => legRowHtml(l, hex, reg)).join('');
         if (!foot.parentNode) tbody.appendChild(foot);
         (loading.parentNode ? loading : foot).insertAdjacentHTML('beforebegin', html);
@@ -1169,12 +1204,12 @@
     const ap = (c, id) => { const b = fin(id) && id > 0 ? apById(id) : null; if (b) return { id: b.id }; c = clean(c).toUpperCase(); const a = /^[A-Z0-9]{3}$/.test(c) ? airports.byIata.get(c) : null; return a ? { id: a.id } : null; };
     const rows = list.sort((a, b) => b.t0 - a.t0).map(x => {
       const hex = /^[0-9a-f]{6}$/.test(x.hex || '') ? x.hex : '', hx = hex ? store.getHex(hex) || {} : {}, reg = clean(x.reg || hx.reg || '').toUpperCase();
-      const leg = { fid: x.w ? '' : String(x.fid), tStart: x.t0, tEnd: x.t1, tOff: x.t0, tOn: x.t1, tOffEst: true, tOnEst: true, from: ap(x.from, x.fromId), to: ap(x.to, x.toId), ended: true, cs: clean(x.cs || '') };
+      const leg = { fid: x.w ? '' : String(x.fid), tStart: x.t0, tEnd: x.t1, tOff: x.t0, tOn: x.t1, tOffEst: true, tOnEst: true, from: ap(x.from, x.fromId), to: ap(x.to, x.toId), ended: true, cs: clean(x.cs || ''), std: fin(x.std) && x.std > 1e9 ? x.std : 0, sta: fin(x.sta) && x.sta > 1e9 ? x.sta : 0 };
       return legRowHtml(leg, hex, reg, { reg, type: clean(x.type || hx.type || ''), desc: modelName(hx) || clean(x.type || '') }).replace('<tr class=" data-row tl-adsb-row', '<tr class=" data-row tl-adsb-row tl-fn-old');
     });
     const nw = list.filter(x => x.w).length, nf = list.length - nw;
     const said = [nf ? `${nf} as Flightradar24's map showed them` : '', nw ? `${nw} from public ADS-B (adsb.lol) by ${esc(fn)}'s callsigns` : ''].filter(Boolean).join(', ');
-    tbody.insertAdjacentHTML('beforeend', rows.join('') + `<tr class="tl-foot tl-fn-foot"><td colspan="20">${list.length} earlier flight${list.length === 1 ? '' : 's'} of ${esc(fn)}: ${said} - kept by the LADD unblocker's monitor (${Number(j.keep) || 100} days) · times are when they were seen taking off and coming in</td></tr>`);
+    tbody.insertAdjacentHTML('beforeend', rows.join('') + `<tr class="tl-foot tl-fn-foot"><td colspan="20">${list.length} earlier flight${list.length === 1 ? '' : 's'} of ${esc(fn)}: ${said} - kept by the LADD unblocker's monitor (${Number(j.keep) || 365} days) · times are when they were seen taking off and coming in</td></tr>`);
     return list.length;
   }
   async function bootFlightPage() {

@@ -2092,7 +2092,9 @@
     // Nothing of FR24's own is deleted now.)
     var BAE_LOGO = { source: 'https://upload.wikimedia.org/wikipedia/commons/thumb/7/73/BAE_Systems_logo.svg/250px-BAE_Systems_logo.svg.png', dimensions: { width: 250, height: 39 } };
     var LOGO_ADD = { 583: BAE_LOGO, 3046: BAE_LOGO, 582: BAE_LOGO };
-    var LISTS_V = '1';
+    // (1.4.3: '2' - FR24's airport list with no OurAirports airports in it: FR24 had the whole list again once, to drop the
+    // copy it kept with them)
+    var LISTS_V = '2';
     function logoOf(id) { return !id ? '' : LOGO_ADD[id] ? LOGO_ADD[id].source : 'https://cdn.flightradar24.com/assets/airlines/logotypes/' + id + '.png'; }
     function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
     function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* full or blocked */ } }
@@ -2117,7 +2119,7 @@
       return i < 0 ? s : s.slice(0, i).trim() || s.replace(/^[,\s]+|[,\s]+$/g, '').replace(/,\s*/g, ', ');
     }
     var siteRows = (function () { try { var l = JSON.parse(lsGet('tl.sites') || '[]'); return Array.isArray(l) ? l.map(function (r) { return r && typeof r === 'object' ? Object.assign({}, r, { name: placeShort(r.name), city: placeShort(r.city) }) : r; }) : []; } catch (e) { return []; } })();
-    function listSig(kind) { return kind === 'airlines' ? LISTS_V : LISTS_V + ':' + hashStr(JSON.stringify(siteRows)) + ':' + (lsGet('tl.oa.sig') || ''); }
+    function listSig(kind) { return kind === 'airlines' ? LISTS_V : LISTS_V + ':' + hashStr(JSON.stringify(siteRows)); }
     // ---- (1.3) Every OurAirports airport FR24 does not list (closed ones aside): airfields, strips, heliports, seaplane
     // and balloon bases - the monitor's list (oaap.cjs), by the userscript, each with the route engine's own id for it.
     // In FR24's airport list (its panel, boards, routes and search look airports up there), with its code (IATA, else
@@ -3082,10 +3084,15 @@
     // time FR24 makes the tables anew.
     var oaFillT = 0, oaFillAt = null;
     function rawOf(m) { return m && m.__v_raw ? m.__v_raw : m; }
+    // (once FR24's tables are there - its list read - and again whenever it makes them anew)
+    function oaFillSoon() { setTimeout(function () { try { oaFillTables(); } catch (e) { stats.errors++; stats.lastError = String(e); } }, 0); }
+    var oaFilled = null;
     function oaFillTables() {
       if (oaFillT) return;
       var st = pinStore('airports'), byId = st && rawOf(st.airportsById), byIata = st && rawOf(st.airportsByIata);
       if (!byId || typeof byId.set !== 'function' || !(byId.size > 100)) return;
+      // (these very tables given these very rows already: nothing to do)
+      if (oaFilled && oaFilled.byId === byId && oaFilled.rows === oaRows && oaFilled.sites === siteRows) return;
       var todo = (oaRows || []).slice(), sites = siteRows.slice(), i = 0;
       oaFillAt = byId;
       var step = function () {
@@ -3099,7 +3106,7 @@
         }
         if (i < todo.length) { oaFillT = setTimeout(step, 0); return; }
         sites.forEach(function (a) { if (a && a.id > 9000000 && a.id < 1e7 && isFinite(a.lat)) { var o = storeForm(a); byId.set(o.id, o); if (byIata && o.iata && o.iata !== 'PVT' && !byIata.has(o.iata)) byIata.set(o.iata, o); } });
-        stats.oaTables = byId.size;
+        stats.oaTables = byId.size; oaFilled = { byId: byId, rows: oaRows, sites: siteRows };
       };
       oaFillT = setTimeout(step, 0);
     }
@@ -3118,7 +3125,8 @@
         // FR24's own, never added beside it)
         noteFr24Codes(j.rows.filter(function (r) { return r && r.id < 9000000; }));
         siteRows.forEach(function (r) { if (r && r.id && !have[r.id]) j.rows.push(r); });
-        if (oaRows) oaRows.forEach(function (r) { if (Array.isArray(r) && r[0] >= 1e7 && !have[r[0]] && !oaDupe(r)) j.rows.push(oaFr24Row(r, refOf(r[5]))); });
+        // (1.4.3: no OurAirports airport in it - FR24's tables are given them in slices, oaFillTables)
+        oaFillSoon();
       }
       lsSet('tl.list.' + kind, listSig(kind));
       return true;
@@ -3136,7 +3144,8 @@
         var st = pinStore('airports');
         if (!st || typeof st.$onAction !== 'function') return false;
         // (1.3: the OurAirports airports too - but for those in view, put in by oaMap)
-        var strip = function () { var a = st.airports; if (Array.isArray(a) && a.some(function (x) { return isSiteRow(x) || isOaRow(x); })) { oaBase = a.filter(function (x) { return !isSiteRow(x) && !isOaRow(x); }); oaShown = ''; st.airports = oaBase; oaMapSoon(); } else if (Array.isArray(a)) oaBase = a.filter(function (x) { return !isOaRow(x); }); noteFr24Codes(oaBase); oaFillTables(); };
+        // (1.4.3: and FR24's tables made anew: the OurAirports airports put back into them, a slice at a time)
+        var strip = function () { oaFillSoon(); var a = st.airports; if (Array.isArray(a) && a.some(function (x) { return isSiteRow(x) || isOaRow(x); })) { oaBase = a.filter(function (x) { return !isSiteRow(x) && !isOaRow(x); }); oaShown = ''; st.airports = oaBase; oaMapSoon(); } else if (Array.isArray(a)) oaBase = a.filter(function (x) { return !isOaRow(x); }); noteFr24Codes(oaBase); oaFillTables(); };
         st.$onAction(function (c) { if (c.name === 'setAirports') c.after(strip); }); strip();
         return true;
       } catch (e) { return false; }
@@ -3211,9 +3220,11 @@
       var kind = /airlines/.test(url) ? 'airlines' : 'airports', a = [].slice.call(args);
       // (a list FR24 takes to be up to date, while what is added to it is not: the whole list asked for)
       if (lsGet('tl.list.' + kind) !== listSig(kind) && /[?&]version=[1-9]/.test(url)) a[0] = url.replace(/([?&]version=)\d+/, '$10');
-      // (1.3: the OurAirports airports on their way from the userscript - waited for, 4 s at most, so FR24 keeps them in)
-      var ready = kind === 'airports' && !oaRows && lsGet('tl.oa.sig') ? new Promise(function (res) { oaWait.push(res); setTimeout(res, 4000); }) : null;
-      return Promise.resolve(ready).then(function () { return oFetch.apply(self, a); }).then(function (res) {
+      // (1.4.3: FR24's own list as it comes, at once - the OurAirports airports go into FR24's tables beside it, a slice at a
+      // time (oaFillTables). 1.3 to 1.4.2 held the list up to 4 s for them and put all some 63,000 into it: FR24 read and
+      // kept 70,000 airports before its map had a pin or a flight's airports a name - some 20 s on a phone, since 1.4.2
+      // had the OurAirports list in by then every time)
+      return oFetch.apply(self, a).then(function (res) {
         if (!res.ok) return res;
         return res.clone().json().then(function (j) { return patchList(kind, j) ? jsonResponse(res, j) : res; }, function () { return res; });
       });
@@ -5388,10 +5399,25 @@
       rwyUseTake(apId, d, true);
     }
     // (1.2.8) A card drawn before its runways were in: each one written into it as it comes - FR24's own cell, "N/A" till then
+    // (1.4.3) A card's end the airport's own answer has no runway for - its other end's airport above all, whose list was
+    // never asked: both of the flight's runways asked of the monitor by the flight (/rwyof - its id, else its aircraft and
+    // times: the userscript's pbRunways), once per card
+    var cardRwyAsked = new Map(), cardRwyRid = new Map(), cardRwySeq = 0;
+    function cardRwyMore(row, cd) {
+      if (cardRwyAsked.has(row) || !(cd.hex || mxFidHex(cd.fid))) return;
+      cardRwyAsked.set(row, null); if (cardRwyAsked.size > 400) cardRwyAsked.delete(cardRwyAsked.keys().next().value);
+      var rid = 'cr' + (++cardRwySeq); cardRwyRid.set(rid, row);
+      post('cardRwy', { rid: rid, hex: cd.hex || '', fid: mxFidHex(cd.fid) || '', o: cd.o || (cd.kind === 'departures' ? cd.apId : 0) || 0, d: cd.dst || (cd.kind !== 'departures' ? cd.apId : 0) || 0, atd: cd.atd || 0, ata: cd.ata || 0 });
+    }
+    function onCardRwyGot(d) {
+      var row = d && cardRwyRid.get(d.rid); if (!row) return; cardRwyRid.delete(d.rid);
+      cardRwyAsked.set(row, { off: typeof d.off === 'string' ? d.off.slice(0, 8) : '', on: typeof d.on === 'string' ? d.on.slice(0, 8) : '' });
+      cardRwyFill();
+    }
     function cardRwyFill() {
       var cards = document.querySelectorAll('[id^="airport_schedule_"], [data-testid^="airport-panel__schedules__flight__"]'), n = 0;
       for (var i = 0; i < cards.length; i++) {
-        var cd = cardInfo.get(rowIdOf(cards[i])), fid = cd && mxFidHex(cd.fid); if (!cd || (!fid && !cd.hex)) continue;
+        var row = rowIdOf(cards[i]), cd = cardInfo.get(row), fid = cd && mxFidHex(cd.fid); if (!cd || (!fid && !cd.hex)) continue;
         var dls = cards[i].querySelectorAll('dl');
         for (var j = 0; j < dls.length; j++) {
           var dt = dls[j].querySelector('dt'), dd = dls[j].querySelector('dd'), lab = textOf(dt).toLowerCase(); if (!dd) continue;
@@ -5399,7 +5425,9 @@
           // (1.4.0: a blocked flight's - a row of this script's - by its address: its ADS-B track's runway as the monitor
           // logged it, at the board's airport for its own end)
           var endAp = end ? (cd.dst || (cd.kind !== 'departures' ? cd.apId : 0)) : (cd.o || (cd.kind === 'departures' ? cd.apId : 0));
-          var v = (fid && mxRwy.get(fid + ':' + end)) || (cd.hex && mxRwyByHex(endAp, cd.hex, end, end ? cd.ata : cd.atd)), cur = textOf(dd); if (!v || (cur && cur !== 'N/A' && cur !== '–')) continue;
+          var ask = cardRwyAsked.get(row), v = (fid && mxRwy.get(fid + ':' + end)) || (cd.hex && mxRwyByHex(endAp, cd.hex, end, end ? cd.ata : cd.atd)) || (ask && (end ? ask.on : ask.off)) || '', cur = textOf(dd);
+          if (cur && cur !== 'N/A' && cur !== '–') continue;
+          if (!v) { cardRwyMore(row, cd); continue; }
           dd.textContent = ''; var el = document.createElement('div'); el.className = 'text-md font-semibold text-gray-1300'; el.setAttribute('data-testid', 'airport-flight-details__' + (end ? 'arrival' : 'departure') + '-runway'); el.textContent = v; dd.appendChild(el); n++;
         }
       }
@@ -5811,7 +5839,7 @@
         // track, as on FR24's map's playback - patchFlightMsg; its vertical speed from FR24's own altitudes. Padlocked there
         // before: EIN6KR's GPS altitude, airspeeds and vertical speed)
         mxPbFlags(c === 'Data/NewFlightPlayback' || (c === mxPbFrom && Date.now() - mxPbAt < 15000));
-        if (c === 'Data/NewFlightPlayback') { try { mxPbTag(p); } catch (e) { mxFail(e); } try { mxPbEnrich(pg); } catch (e) { mxFail(e); } try { mxPbRunways(pg); } catch (e) { mxFail(e); } if (mxPhoneApp()) { try { mxPbBackLabel(); } catch (e) { mxFail(e); } } }
+        if (c === 'Data/NewFlightPlayback') { try { mxPbTag(p); } catch (e) { mxFail(e); } try { mxPbEnrich(pg); } catch (e) { mxFail(e); } try { mxPbRelated(pg); } catch (e) { mxFail(e); } try { mxPbRunways(pg); } catch (e) { mxFail(e); } if (mxPhoneApp()) { try { mxPbBackLabel(); } catch (e) { mxFail(e); } } }
       } catch (e) { mxFail(e); }
     }
     if (mx.on) setInterval(mxDataTick, 700);
@@ -5944,14 +5972,53 @@
       // (1.4.1: and FR24's own airports, checked once against where its own track began and ended - one it never came
       // near, the track down at another field, replaced: M-SKTO's "Liverpool", its track down in Gillmoss)
       var tr = Array.isArray(p.trailRoute) ? p.trailRoute : [];
-      return { owner: priv, from: from, to: to, fn: mxNA(p.flightNumber) && !mxNA(p.callsign), chk: tr.length > 1 && (!from || !to) };
+      // (1.4.3: and its serial number, which FR24 padlocks)
+      var msnF = Array.isArray(p.facts) ? p.facts.filter(function (f) { return f && f.key === 'serial_number'; })[0] : null;
+      return { owner: priv, from: from, to: to, fn: mxNA(p.flightNumber) && !mxNA(p.callsign), chk: tr.length > 1 && (!from || !to), msn: !!msnF && (msnF.locked === true || mxNA(msnF.value)) };
+    }
+    // (1.4.3) FR24's player's "Related flights" - Previous and Next of the same flight number, call sign and aircraft: for a
+    // flight played here, where FR24 gives none, the userscript's from the monitor (pbRelated); on FR24's own, its
+    // padlocked Previous (a free account) opened - the same flight of ours, else, the aircraft's, the aircraft's flight
+    // at that take-off played here
+    var mxRel = new Map(), mxRelAsked = {}, mxRelSeq = 0, mxRelRid = new Map();
+    function mxPbRelOpen(x) { return !!x && (x.locked === true || x.href == null); }
+    function mxPbRelated(pg) {
+      var p = pg && pg.props; if (!p) return;
+      var pm = location.pathname.match(/^\/data\/playback\/([0-9a-f]{1,16})\/?$/i), id = pm ? pm[1].toLowerCase() : mxPbParam(); if (!id) return;
+      var cur = Array.isArray(p.relatedFlights) ? p.relatedFlights : [];
+      if (cur.length && !cur.some(function (g) { return g && (mxPbRelOpen(g.previous) || mxPbRelOpen(g.next)); })) return;
+      var got = mxRel.get(id); if (got) { mxPbRelPut(p, got); return; }
+      if (mxRelAsked[id]) return; mxRelAsked[id] = Date.now();
+      var ft = p.flightTimes || {}, ac = p.aircraft || {}, syn = MX_PB_SYN.test(id) ? id : '', rid = 'rl' + (++mxRelSeq); mxRelRid.set(rid, id);
+      post('pbRelated', { rid: rid, fid: syn ? '' : id, hex: syn ? id.slice(2, 8) : '', reg: !mxNA(ac.registration) ? String(ac.registration) : mxFact(p, 'registration'),
+        cs: !mxNA(p.callsign) ? String(p.callsign) : '', fn: !mxNA(p.flightNumber) ? String(p.flightNumber) : '', dep: mxSec(ft.actualDeparture) || mxSec(ft.scheduledDeparture) || (syn ? parseInt(id.slice(8), 16) : 0) });
+    }
+    function onPbRelatedGot(d) {
+      var id = d && mxRelRid.get(d.rid); if (!id) return; mxRelRid.delete(d.rid);
+      mxRel.set(id, { groups: Array.isArray(d.groups) ? d.groups : [], hex: isHex(d.hex) ? String(d.hex).toLowerCase() : '' }); if (mxRel.size > 50) mxRel.delete(mxRel.keys().next().value);
+      mxDataTick();
+    }
+    function mxPbRelPut(p, got) {
+      var cur = Array.isArray(p.relatedFlights) ? p.relatedFlights : [], mine = got.groups || [];
+      var out = cur.map(function (g) {
+        var m = mine.filter(function (x) { return x && x.relation === g.relation; })[0];
+        var fix = function (side) {
+          var a = g[side], b = m && m[side]; if (!mxPbRelOpen(a)) return a || (b && !b.locked ? b : a);
+          if (b && !b.locked && (!a || Math.abs((Number(a.departure) || 0) - (Number(b.departure) || 0)) <= 1800)) return Object.assign({}, a || {}, b, { locked: false });
+          if (g.relation === 'aircraft' && got.hex && a && Number(a.departure) > 1e9) return Object.assign({}, a, { href: '/data/flights?tl-pb=' + mxPbSynId(got.hex, Number(a.departure)), locked: false });
+          return a;
+        };
+        return Object.assign({}, g, { previous: fix('previous'), next: fix('next') });
+      });
+      mine.forEach(function (m) { if (m && !cur.some(function (g) { return g && g.relation === m.relation; })) out.push(m); });
+      if (JSON.stringify(out) !== JSON.stringify(cur)) p.relatedFlights = out;
     }
     function mxPbEnrich(pg) {
       var p = pg && pg.props; if (!p || p.trailSource === 'tl') return;
       var pm = location.pathname.match(/^\/data\/playback\/([0-9a-f]{1,12})\/?$/i), fid = pm ? pm[1].toLowerCase() : ''; if (!fid) return;
       // (one FR24 locks or shows empty - made ours whole, mxPbTake: not this)
       if (mxPbTried[fid]) return;
-      var w = mxPbWants(p); if (!w.owner && !w.from && !w.to && !w.fn && !w.chk) return;
+      var w = mxPbWants(p); if (!w.owner && !w.from && !w.to && !w.fn && !w.chk && !w.msn) return;
       var got = mxPbInfo.get(fid); if (got) { mxPbInfoPut(p, got, w); return; }
       if (mxPbInfoAsked[fid]) return; mxPbInfoAsked[fid] = Date.now();
       var ft = p.flightTimes || {}, sec = mxSec;
@@ -5959,7 +6026,7 @@
       var end = function (r, i) { if (!r || !fin(r.lat) || !fin(r.long)) return null; var g = tl[i] && tl[i].timestamp === r.timestamp ? tl[i] : null; return { t: r.timestamp, lat: r.lat, lon: r.long, alt: fin(r.altitude) ? r.altitude : g && fin(g.barometricAltitude) ? g.barometricAltitude : null, gs: g && fin(g.groundSpeed) ? g.groundSpeed : null }; };
       var ac = p.aircraft || {}, reg = !mxNA(ac.registration) ? String(ac.registration) : mxFact(p, 'registration');
       post('pbInfo', { rid: 'pi' + (++mxPbInfoSeq), fid: fid, reg: reg || '', cs: !mxNA(p.callsign) ? String(p.callsign) : '', dep: sec(ft.actualDeparture) || sec(ft.scheduledDeparture), arr: sec(ft.actualArrival),
-        type: mxFact(p, 'type_code') || '', ends: tr.length ? [end(tr[0], 0), end(tr[tr.length - 1], tr.length - 1)] : [], wantOwner: w.owner, wantFrom: w.from, wantTo: w.to, wantFn: w.fn,
+        type: mxFact(p, 'type_code') || '', ends: tr.length ? [end(tr[0], 0), end(tr[tr.length - 1], tr.length - 1)] : [], wantOwner: w.owner, wantFrom: w.from, wantTo: w.to, wantFn: w.fn, wantMsn: w.msn,
         wantCheck: w.chk, fr24From: !w.from && p.origin ? String(p.origin.code || '') : '', fr24To: !w.to && p.destination ? String(p.destination.code || '') : '' });
     }
     function onPbInfoGot(d) {
@@ -5971,6 +6038,7 @@
     // (into FR24's page data - its reactive props: FR24's page draws them anew at once)
     function mxPbInfoPut(p, d, w) {
       var n = 0;
+      if (w.msn && d.msn && Array.isArray(p.facts)) { p.facts = p.facts.map(function (f) { return f && f.key === 'serial_number' ? Object.assign({}, f, { value: String(d.msn), locked: false }) : f; }); n++; }
       if (w.owner && d.operator) { p.airline = Object.assign({}, p.airline || {}, { name: d.operator, logoUrl: (p.airline && p.airline.logoUrl) || mxPbAirline(d.operator, d.alId).logoUrl, logoDimensions: (p.airline && p.airline.logoDimensions) || null }); n++; }
       var ft = p.flightTimes;
       var endName = function (k, a, over) { var e = ft && typeof ft === 'object' ? ft[k] : null; if (e && typeof e === 'object' && (over || mxNA(e.name) || e.name === 'Not available')) ft[k] = Object.assign({}, e, { name: a.name || a.city || a.code, timezone: over ? a.tz || e.timezone || 'UTC' : e.timezone || a.tz || 'UTC' }); };
@@ -6052,7 +6120,8 @@
     // window.open - was never seen as a phone's and played in the old player)
     function mxPhoneApp() { try { return typeof TL_APP === 'object' && !!TL_APP; } catch (e) { return false; } }
     // (its address there: FR24's own id's page; one known only here, FR24's flights page given it - mxPbAway)
-    var mxPbPhoneUrl = function (id) { return MX_PB_SYN.test(String(id)) ? '/data/flights?tl-pb=' + id : '/data/playback/' + id; };
+    // (1.4.3: an FR24 flight older than its week too - FR24's own player page of it sends a free account to its search page)
+    var mxPbPhoneUrl = function (id, dep) { return MX_PB_SYN.test(String(id)) || (Number(dep) > 1e9 && Date.now() / 1000 - Number(dep) > 7 * 86400) ? '/data/flights?tl-pb=' + id : '/data/playback/' + id; };
     // (1.4.0) ... and wherever it is asked for: FR24's own Playback - its search's, the aircraft's panel's, its boards',
     // live flights' too - opens the aircraft's or flight number's log page with the flight in its address, where FR24's
     // page plays it in its old player for a computer. In the phone app that page goes on to FR24's own player page of the
@@ -6095,7 +6164,7 @@
       var id = isHex(w.hex) && w.dep > 0 ? mxPbSynId(w.hex, w.dep) : w.id > 0 ? Number(w.id).toString(16) : isHex(w.hex) ? mxPbSynId(w.hex, 0) : '';
       var go = function (u) { mxTab(u); };
       // (1.3.12: in the phone app, FR24's own player page, in this page)
-      if (id && mxPhoneApp()) { mxNav(mxPbPhoneUrl(id)); return; }
+      if (id && mxPhoneApp()) { mxNav(mxPbPhoneUrl(id, w.dep)); return; }
       if (w.reg && id && !mxPhoneApp()) { go(mxPbLogUrl(w.reg, id)); return; }
       var root = document.documentElement; root.style.cursor = 'progress';
       mxPbAsk({ id: id, hex: w.hex || '', reg: w.reg || '', cs: w.cs || '', dep: w.dep || 0, at: w.at || 0, apId: w.apId || 0, kind: w.kind || '' }).then(function (d) {
@@ -6217,15 +6286,27 @@
       v.innerHTML = '<div style="width:40px;height:40px;border-radius:50%;border:4px solid ' + (dark ? '#3a3a3a' : '#ddd') + ';border-top-color:#f8c023;animation:tlPbSpin .8s linear infinite"></div><div>Loading playback\u2026</div><style>@keyframes tlPbSpin{to{transform:rotate(360deg)}}</style>';
       mxPbVeil = v; (document.body || document.documentElement).appendChild(v);
       if (!document.body) document.addEventListener('DOMContentLoaded', function () { if (mxPbVeil && mxPbVeil.parentNode !== document.body && document.body) document.body.appendChild(mxPbVeil); }, { once: true });
-      oSetTimeout(mxPbVeilOff, 35000);
+      oSetTimeout(function () { if (mxPbVeil === v) mxPbVeilFail(); }, 35000);
     }
     function mxPbVeilOff() { if (mxPbVeil) { try { mxPbVeil.remove(); } catch (e) { /* gone */ } mxPbVeil = null; } }
+    // (1.4.3: nothing of the flight could be found - the veil says so, with the way back, rather than leaving FR24's search
+    // form in its place, which looked as if the playback had sent the user there)
+    function mxPbVeilFail() {
+      var v = mxPbVeil; if (!v) return;
+      v.innerHTML = '';
+      var t = document.createElement('div'); t.textContent = 'No track of this flight could be found.'; t.style.cssText = 'max-width:80vw;text-align:center';
+      var b = document.createElement('button'); b.type = 'button'; b.textContent = 'Back'; b.style.cssText = 'border:0;border-radius:20px;padding:10px 26px;background:#f8c023;color:#1b1b1b;font:600 15px/1 system-ui,sans-serif;cursor:pointer';
+      b.onclick = function () { mxPbVeilOff(); if (history.length > 1) history.back(); else location.href = '/'; };
+      var s = document.createElement('button'); s.type = 'button'; s.textContent = 'Search for flights'; s.style.cssText = 'border:0;background:none;color:inherit;text-decoration:underline;font:500 14px/1 system-ui,sans-serif;cursor:pointer';
+      s.onclick = mxPbVeilOff;
+      v.append(t, b, s);
+    }
     var mxPbAway = function (id) {
       if (mx.pbAway === id) return; mx.pbAway = id;
       if (mxPbParam() === id && /^\/data\/flights\/?$/i.test(location.pathname)) mxPbVeilOn();
       mxPbAsk({ id: id }, 30000).then(function (d) {
-        // (nothing of it: FR24's page as it is - shown again)
-        if (!d) mxPbVeilOff();
+        // (nothing of it: said so - FR24's page as it is behind it, a tap away)
+        if (!d) mxPbVeilFail();
         if (d && d.reg && !mxPhoneApp()) { mxNav(mxPbLogUrl(d.reg, d.hex && d.dep && MX_PB_SYN.test(id) ? mxPbSynId(d.hex, d.dep) : id), true); return; }
         if (!d) return;
         // (1.2.6: an aircraft of no registration anywhere - no log page to play it on: FR24's own player page, given the
@@ -7028,6 +7109,90 @@
     }
     document.addEventListener('click', onPbClick, true);
     document.addEventListener('auxclick', onPbClick, true);
+    // ---- (1.4.3) A board card of a flight of this script's own (a blocked flight, one of the monitor's): FR24 gives it no
+    // "Download CSV/KML" and no "Share" (it has no flight number, or no record of it at all) - both put in, made from the
+    // card's own Playback item so they look as FR24's: Download offers the flight's track as CSV or KML (FR24's own
+    // positions of it as kept, else its public ADS-B track - the userscript's trackFile, as FR24's own download asks it),
+    // Share the address of its playback (the phone's share sheet, else copied)
+    var CARD_DL_ICON = '<svg viewBox="-8 -8 40 40" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v11m0 0l-4-4m4 4l4-4M5 15v4.5h14V15"/><path d="M9 21h6" opacity="0"/></svg>';
+    var CARD_SHARE_ICON = '<svg viewBox="-8 -8 40 40" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V3.5m0 0L8 7.5m4-4l4 4M6 11v9h12v-9"/></svg>';
+    function cardPbItem(card) {
+      var els = card.querySelectorAll('a, button, li, div'), hit = null;
+      for (var i = 0; i < els.length; i++) { var e = els[i]; if (pbText(e) === 'Playback' && (!e.parentElement || pbText(e.parentElement) !== 'Playback')) { hit = e; break; } }
+      return hit;
+    }
+    function cardHas(card, re) { var els = card.querySelectorAll('a, button, li'); for (var i = 0; i < els.length; i++) if (re.test(pbText(els[i]))) return true; return false; }
+    function cardItem(pb, label, icon, cls) {
+      var el = pb.cloneNode(true);
+      el.classList.add(cls); el.removeAttribute('href'); el.removeAttribute('id'); el.removeAttribute('data-testid'); el.setAttribute('role', 'button'); el.setAttribute('tabindex', '0');
+      el.querySelectorAll('[id], [data-testid]').forEach(function (x) { x.removeAttribute('id'); x.removeAttribute('data-testid'); });
+      var svg = el.querySelector('svg'); if (svg) { var tmp = document.createElement('span'); tmp.innerHTML = icon; svg.replaceWith(tmp.firstChild); }
+      var w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT), done = false;
+      for (var t = w.nextNode(); t; t = w.nextNode()) { if (!done && /playback/i.test(t.nodeValue)) { t.nodeValue = t.nodeValue.replace(/playback/i, label); done = true; } }
+      if (!done) el.textContent = label;
+      return el;
+    }
+    function cardFlightRef(w) { return w ? (w.id > 0 ? Number(w.id).toString(16) : isHex(w.hex) && w.dep > 0 ? mxPbSynId(w.hex, w.dep) : '') : ''; }
+    function cardShareUrl(w) {
+      var id = isHex(w.hex) && w.dep > 0 ? mxPbSynId(w.hex, w.dep) : w.id > 0 ? Number(w.id).toString(16) : ''; if (!id) return '';
+      return location.origin + (w.reg ? mxPbLogUrl(w.reg, id) : mxPbPhoneUrl(id));
+    }
+    function cardSave(w, kind) {
+      var fid = cardFlightRef(w); if (!fid) return;
+      var rid = 'tf' + (++mxTfSeq), t = oSetTimeout(function () { mxTfWait.delete(rid); }, 45000);
+      mxTfWait.set(rid, function (d) {
+        oClearTimeout(t); mxTfWait.delete(rid);
+        if (!d || !d.ok || !d.text) { cardNote('No track of this flight could be found.'); return; }
+        var url = URL.createObjectURL(new Blob([d.text], { type: d.type || 'text/plain' })), a = document.createElement('a');
+        a.href = url; a.download = String((w.reg || w.cs || 'flight')).replace(/[^A-Za-z0-9-]/g, '') + '_' + fid + '.' + kind; document.body.appendChild(a); a.click(); a.remove();
+        oSetTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+      });
+      post('trackFile', { rid: rid, fid: fid, file: kind, ts: Number(w.dep) || 0 });
+    }
+    function cardNote(text) {
+      var n = document.createElement('div'); n.textContent = text;
+      n.style.cssText = 'position:fixed;left:50%;bottom:88px;transform:translateX(-50%);z-index:2147483000;background:rgba(32,32,32,.94);color:#fff;font:500 14px/1.35 system-ui,sans-serif;padding:10px 16px;border-radius:18px;max-width:86vw;text-align:center;pointer-events:none';
+      document.body.appendChild(n); oSetTimeout(function () { try { n.remove(); } catch (e) { /* gone */ } }, 3000);
+    }
+    function cardShare(w) {
+      var url = cardShareUrl(w); if (!url) return;
+      var title = (w.reg || w.cs || 'Flight') + ' - playback';
+      if (navigator.share) { navigator.share({ title: title, url: url }).catch(function () { /* closed */ }); return; }
+      try { navigator.clipboard.writeText(url).then(function () { cardNote('Link copied'); }, function () { cardNote(url); }); } catch (e) { cardNote(url); }
+    }
+    function cardExtras() {
+      var cards = document.querySelectorAll('[id^="airport_schedule_"], [data-testid^="airport-panel__schedules__flight__"]');
+      for (var i = 0; i < cards.length; i++) {
+        var card = cards[i], pb = cardPbItem(card); if (!pb) continue;
+        var w = null; try { w = boardWant(card); } catch (e) { w = null; } if (!w) continue;
+        if (!card.querySelector('.tl-card-dl') && !cardHas(card, /^download csv\/kml$/i)) {
+          var dl = cardItem(pb, 'Download CSV/KML', CARD_DL_ICON, 'tl-card-dl'); pb.parentNode.insertBefore(dl, pb);
+          var pick = document.createElement('div'); pick.className = 'tl-card-dlpick'; pick.style.cssText = 'display:none;gap:10px;padding:4px 0 8px 56px';
+          ['CSV', 'KML'].forEach(function (k) { var b = document.createElement('button'); b.type = 'button'; b.textContent = k; b.dataset.tlKind = k.toLowerCase(); b.style.cssText = 'border:1px solid currentColor;border-radius:16px;padding:4px 14px;background:none;color:inherit;font:inherit;cursor:pointer'; pick.appendChild(b); });
+          dl.style.color = getComputedStyle(pb).color; pick.style.color = getComputedStyle(pb).color;
+          pb.parentNode.insertBefore(pick, pb);
+        }
+        if (!card.querySelector('.tl-card-share') && !cardHas(card, /^share$/i)) { var sh = cardItem(pb, 'Share', CARD_SHARE_ICON, 'tl-card-share'); pb.parentNode.insertBefore(sh, pb.nextSibling); }
+      }
+    }
+    document.addEventListener('click', function (ev) {
+      var t = ev.target && ev.target.nodeType === 1 ? ev.target : ev.target && ev.target.parentElement; if (!t || !t.closest) return;
+      var it = t.closest('.tl-card-dl, .tl-card-share, .tl-card-dlpick button'); if (!it) return;
+      var card = it.closest('[id^="airport_schedule_"], [data-testid^="airport-panel__schedules__flight__"]'), w = null; try { w = card ? boardWant(card) : null; } catch (e) { w = null; } if (!w) return;
+      ev.preventDefault(); ev.stopImmediatePropagation();
+      if (it.classList.contains('tl-card-share')) { cardShare(w); return; }
+      if (it.classList.contains('tl-card-dl')) { var pk = it.nextElementSibling; if (pk && pk.classList.contains('tl-card-dlpick')) pk.style.display = pk.style.display === 'none' ? 'flex' : 'none'; return; }
+      cardSave(w, it.dataset.tlKind === 'kml' ? 'kml' : 'csv');
+    }, true);
+    // (a card opened: its runways and its two items at once - not at the board's next answer)
+    var cardObsDue = false;
+    try {
+      new MutationObserver(function () {
+        if (cardObsDue || !document.querySelector('[id^="airport_schedule_"], [data-testid^="airport-panel__schedules__flight__"]')) return;
+        cardObsDue = true;
+        oSetTimeout(function () { cardObsDue = false; try { cardRwyFill(); cardExtras(); } catch (e) { stats.errors++; stats.lastError = String(e); } }, 120);
+      }).observe(document.documentElement, { childList: true, subtree: true });
+    } catch (e) { /* ignore */ }
     // ---- (1.4.2) The old log pages' playback map (06-classic): Google's map, loaded as FR24's own page loads it - by the
     // address the page gives its own scripts (<meta name="google-maps-src">) - and the flight drawn as FR24's map draws a
     // flight it follows: the trail 3 px wide, coloured by height position by position, a dot at each position heard, a
@@ -7035,7 +7200,12 @@
     // aircraft FR24's own picture of its kind (FR24's sprite, the table of its pictures read from FR24's own script on
     // the page), yellow, turned to its track; the flight's airports FR24's old blue pins. The userscript part sends the
     // flight and each moment ('clMap'); 'clMapSt' answers whether the map is up (else it draws its own).
-    var clm = { map: null, host: null, ov: null, cv: null, pv: null, tip: null, pts: [], sp: [], o: null, d: null, route: false, follow: false, pos: null, cover: 0, hover: -1, icon: null, iconFor: '', due: false, gm: null, tbl: null, pin: null };
+    // (1.4.3) As FR24's main map draws a trail (its live page): the line see-through (FR24's colour at 100 of 255), its
+    // dots its own colour (they were black), the dot under the pointer white, and FR24's tooltip - white, rounded, its
+    // tip - only where the main map has "Show trail tooltip" on, in the main map's units. And the map as the main map
+    // has it ('set', 06-classic clMainSet): its style (FR24's own styles of Google's map read from FR24's build, on
+    // FR24's server), its brightness, its day and night line at the moment played
+    var clm = { map: null, host: null, ov: null, cv: null, pv: null, lv: null, dim: null, tip: null, tipBody: null, tipOff: 0, pts: [], cols: [], sp: [], o: null, d: null, route: false, follow: false, pos: null, cover: 0, hover: -1, icon: null, iconFor: '', due: false, gm: null, tbl: null, pin: null, t: 0, type: 'hybrid', set: { style: 'hybrid', brightness: 100, night: false, tip: true, alt: 'ft', spd: 'kt' }, fs: null, fsP: null, col: null, colP: null, srcs: null, gap: 300 };
     function clmGoogle() {
       if (clm.gm) return clm.gm;
       clm.gm = new Promise(function (res) {
@@ -7098,20 +7268,140 @@
         clm.iconFor = key; return clm.icon;
       });
     }
+    // (where FR24's own styles cannot be read: near enough)
     var CLM_GREY = [{ stylers: [{ saturation: -100 }] }];
     var CLM_DARK = [{ elementType: 'geometry', stylers: [{ color: '#212a37' }] }, { elementType: 'labels.text.fill', stylers: [{ color: '#9aa7b8' }] }, { elementType: 'labels.text.stroke', stylers: [{ color: '#1b222c' }] }, { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0f1620' }] }, { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#38414e' }] }, { featureType: 'poi', stylers: [{ visibility: 'off' }] }];
+    var CLM_BASE = { terrain: 'TERRAIN', roadmap: 'ROADMAP', satellite: 'SATELLITE', hybrid: 'HYBRID' };
+    // (FR24's names of its styles in its build, and theirs in its settings)
+    var CLM_FR24_NAMES = { GRAYSCALE: 'simple_style', RADAR_BLUE: 'radar_style', RADAR_DARK: 'radar_style2', AUBERGINE: 'aubergine_style', BLACK_WHITE: 'black_white', ROADMAP: 'roadmap', SATELLITE: 'satellite', HYBRID: 'hybrid', TERRAIN: 'terrain' };
     function clmType(t) {
-      var m = clm.map; if (!m) return; var g = window.google.maps.MapTypeId;
-      m.setOptions(t === 'simple_style' ? { mapTypeId: g.ROADMAP, styles: CLM_GREY } : t === 'radar_style2' ? { mapTypeId: g.ROADMAP, styles: CLM_DARK } : { mapTypeId: t === 'satellite' ? g.SATELLITE : t === 'roadmap' ? g.ROADMAP : t === 'terrain' ? g.TERRAIN : g.HYBRID, styles: null });
+      var m = clm.map; if (!m) return; var gm = window.google.maps, g = gm.MapTypeId;
+      if (!CLM_BASE[t] && !/^(?:simple_style|radar_style2?|aubergine_style|black_white)$/.test(t)) t = 'hybrid';
+      clm.type = t;
+      var fs = clm.fs && clm.fs.styles[t];
+      if (CLM_BASE[t]) m.setOptions({ mapTypeId: g[CLM_BASE[t]], styles: null });
+      // (FR24's own style of it, as FR24's map makes it: a styled map type of that name)
+      else if (fs) { try { if (!m.mapTypes.get(t)) m.mapTypes.set(t, new gm.StyledMapType(fs, { name: clm.fs.names[t] || t })); m.setOptions({ mapTypeId: t, styles: null }); } catch (e) { m.setOptions({ mapTypeId: g.ROADMAP, styles: t === 'simple_style' ? CLM_GREY : CLM_DARK }); } }
+      else m.setOptions({ mapTypeId: g.ROADMAP, styles: t === 'simple_style' ? CLM_GREY : CLM_DARK });
+      clmBright();
     }
-    // (FR24's colours of a trail by height: white on the ground; yellow low, through green, cyan and blue, to violet and red
-    // at the top - drawn here as a smooth scale of the same colours)
+    // (the main map's brightness, as FR24 sets it: its tiles darkened - here a black sheet over them, under the trail, as
+    // FR24's map has it on its newer maps - and the map's colour where no tile is yet the style's own)
+    function clmBright() {
+      var m = clm.map; if (!m) return;
+      var bg = clm.fs && clm.fs.bg[clm.type];
+      if (bg) { try { m.setOptions({ backgroundColor: bg }); } catch (e) { /* kept */ } var f = clm.host && clm.host.firstElementChild; if (f) f.style.backgroundColor = bg; }
+      var b = Number(clm.set.brightness); if (!isFinite(b)) b = 100;
+      if (clm.dim) clm.dim.style.opacity = String(Math.max(0, Math.min(1, 1 - b / 100)));
+    }
+    // (FR24's own build files of its map, by name - found in the list its loader on this page carries, asked of FR24's
+    // server as its own map asks for them)
+    function clmChunk(name) {
+      if (!clm.srcs) {
+        var urls = [];
+        document.querySelectorAll('script[src], link[rel="modulepreload"][href]').forEach(function (e) { var u = e.src || e.href || ''; if (/\/(?:__modulepreload__|app)-[\w-]+\.js(?:[?#]|$)/.test(u) && urls.indexOf(u) < 0) urls.push(u); });
+        clm.srcs = Promise.all(urls.map(function (u) { return oFetch.call(window, u).then(function (r) { return r.ok ? r.text() : ''; }).catch(function () { return ''; }).then(function (t) { return { u: u, t: t }; }); }));
+      }
+      var re = new RegExp('(' + name + '-[\\w-]+\\.js)');
+      return clm.srcs.then(function (list) { for (var i = 0; i < list.length; i++) { var m = re.exec(list[i].t); if (m) try { return new URL(m[1], list[i].u).href; } catch (e) { /* the next */ } } return null; });
+    }
+    // (a literal of FR24's build - an object of plain names, strings, numbers, !0 and !1, its [x.NAME] keys - from its
+    // first brace, as JSON)
+    function clmLitAt(src, i) {
+      var d = 0;
+      for (var j = i; j < src.length; j++) {
+        var c = src[j];
+        if (c === '"' || c === "'" || c === '`') { for (j++; j < src.length && src[j] !== c; j++) if (src[j] === '\\') j++; continue; }
+        if (c === '{' || c === '[') d++;
+        else if (c === '}' || c === ']') { d--; if (!d) return src.slice(i, j + 1); }
+      }
+      return null;
+    }
+    function clmLitJson(lit) {
+      return JSON.parse(lit.split(/("(?:[^"\\]|\\.)*")/).map(function (s, i) {
+        if (i % 2) return s;
+        return s.replace(/\[[A-Za-z_$][\w$]*\.([A-Z_]+)\]\s*:/g, '"$1":').replace(/([{,])\s*([A-Za-z_$][\w$]*)\s*:/g, '$1"$2":').replace(/!0(?![\w.])/g, 'true').replace(/!1(?![\w.])/g, 'false').replace(/(^|[^\w.])(-?)\.(\d)/g, function (x, a, b, c) { return a + b + '0.' + c; });
+      }).join(''));
+    }
+    // (FR24's styles of Google's map - its greyscale, radars, aubergine, black and white - and each style's colour, from
+    // its map's build file)
+    function clmStyles() {
+      if (clm.fsP) return clm.fsP;
+      var none = { styles: {}, bg: {}, names: {} };
+      clm.fsP = clmChunk('googleMapsProvider').then(function (u) { return u ? oFetch.call(window, u).then(function (r) { return r.ok ? r.text() : ''; }) : ''; }).then(function (src) {
+        if (!src) return none;
+        var get = function (re) { var m = re.exec(src); if (!m) return null; var lit = clmLitAt(src, m.index + 1); if (!lit) return null; try { return clmLitJson(lit); } catch (e) { return null; } };
+        var st = get(/=\{\[[A-Za-z_$][\w$]*\.GRAYSCALE\]:\[/), bg = get(/=\{\[[A-Za-z_$][\w$]*\.GRAYSCALE\]:\{name:/), out = { styles: {}, bg: {}, names: {} };
+        Object.keys(CLM_FR24_NAMES).forEach(function (k) {
+          var v = CLM_FR24_NAMES[k];
+          if (st && Array.isArray(st[k])) out.styles[v] = st[k];
+          if (bg && bg[k] && /^#[0-9a-f]{3,8}$/i.test(String(bg[k].backgroundColor || ''))) { out.bg[v] = bg[k].backgroundColor; out.names[v] = String(bg[k].name || ''); }
+        });
+        return out;
+      }).catch(function () { return none; });
+      return clm.fsP;
+    }
+    // (FR24's own colour of a trail at a height - its map's function, from its build file: told by what it gives)
+    function clmColFn() {
+      if (clm.colP) return clm.colP;
+      clm.colP = clmChunk('aircraftLayerHelpers').then(function (u) { return u ? import(u) : null; }).then(function (mod) {
+        var f = null; if (!mod) return null;
+        Object.keys(mod).forEach(function (k) {
+          var v = mod[k]; if (f || typeof v !== 'function' || v.length !== 1) return;
+          var s = ''; try { s = Function.prototype.toString.call(v); } catch (e) { return; }
+          if (s.indexOf('#ffffff') < 0 || s.indexOf('#ff0000') < 0) return;
+          try { if (v(50) === '#ffffff' && v(20000) === '#ff0000' && /^#[0-9a-f]{6}$/i.test(v(3000))) f = v; } catch (e) { /* not it */ }
+        });
+        return f;
+      }).catch(function () { return null; });
+      clm.colP.then(function (f) { if (f) { clm.col = f; clm.cols = clm.pts.map(function (p) { return clmCol(p[3]); }); clmSoon(); } });
+      return clm.colP;
+    }
+    // (FR24's colours of a trail by height, in metres: white on the ground; yellow low, through green, cyan and blue, to
+    // violet and red at the top. FR24's own where its build gives it; else drawn here as a smooth scale of the same)
     var CLM_HUES = [[100, 52], [300, 62], [600, 78], [1000, 105], [1500, 125], [2500, 150], [3500, 175], [4500, 190], [5500, 200], [6500, 210], [7500, 225], [8500, 240], [9500, 255], [10500, 268], [11500, 280], [12500, 300], [13000, 330]];
     function clmCol(ft) {
-      var m = (ft || 0) * 0.3048; if (!(m > 100)) return '#ffffff';
+      var m = (ft || 0) * 0.3048;
+      if (clm.col) { try { var c = clm.col(m); if (typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c)) return c; } catch (e) { /* the scale here */ } }
+      if (!(m > 100)) return '#ffffff';
       var H = CLM_HUES, h = H[H.length - 1][1];
       for (var i = 1; i < H.length; i++) if (m <= H[i][0]) { var f = (m - H[i - 1][0]) / (H[i][0] - H[i - 1][0]); h = H[i - 1][1] + (H[i][1] - H[i - 1][1]) * f; break; }
       return 'hsl(' + Math.round(h) + ',100%,50%)';
+    }
+    // (the sun overhead at a moment - the usual approximation, within a fraction of a degree - and the night about the
+    // point opposite: FR24's line is four rings about it, 72 to 89.4 degrees out, each a shade darker within)
+    function clmSun(ms) {
+      var r = Math.PI / 180, d = ms / 864e5 - 10957.5;
+      var g = (357.529 + 0.98560028 * d) * r, L = (280.459 + 0.98564736 * d + 1.915 * Math.sin(g) + 0.02 * Math.sin(2 * g)) * r, e = (23.439 - 3.6e-7 * d) * r;
+      var ra = Math.atan2(Math.cos(e) * Math.sin(L), Math.cos(L)) / r, dec = Math.asin(Math.sin(e) * Math.sin(L)) / r, lon = ra - (280.46061837 + 360.98564736629 * d);
+      return { lat: dec, lon: ((lon + 180) % 360 + 360) % 360 - 180 };
+    }
+    var CLM_NIGHT = [89.433334, 84, 78, 72], CLM_MERC = 85.051129;
+    // (a ring n degrees about c, as [lon, lat] points: one about a pole closed along the map's top or foot)
+    function clmRing(c, n) {
+      var r = Math.PI / 180, la = c.lat * r, lo = c.lon * r, nr = n * r, P = [];
+      for (var i = 0; i < 360; i++) {
+        var p = 2 * Math.PI * i / 360, S = Math.asin(Math.sin(la) * Math.cos(nr) + Math.cos(la) * Math.sin(nr) * Math.cos(p));
+        P.push([(lo + Math.atan2(Math.sin(p) * Math.sin(nr) * Math.cos(la), Math.cos(nr) - Math.sin(la) * Math.sin(S))) / r, S / r]);
+      }
+      var cl = function (x) { return Math.max(-CLM_MERC, Math.min(CLM_MERC, x)); }, w = function (x) { return ((x + 180) % 360 + 360) % 360 - 180; };
+      var north = 90 - c.lat < n, south = 90 + c.lat < n;
+      if (!north && !south) { var o = [[P[0][0], cl(P[0][1])]]; for (var k = 1; k < P.length; k++) { var dl = w(P[k][0] - P[k - 1][0]); o.push([o[k - 1][0] + dl, cl(P[k][1])]); } return o; }
+      var s = P.map(function (q) { return [w(q[0]), cl(q[1])]; }).sort(function (a, b) { return a[0] - b[0]; }), A = s[0], B = s[s.length - 1];
+      var gl = B[1] + (A[1] - B[1]) * (180 - B[0]) / (A[0] + 360 - B[0]), E = north ? CLM_MERC : -CLM_MERC;
+      return [[-180, gl]].concat(s, [[180, gl], [180, E], [-180, E]]);
+    }
+    function clmNight(g, v) {
+      var ms = (clm.t > 0 ? Math.floor(clm.t / 60) * 60 : Math.floor(Date.now() / 60000) * 60) * 1000, sun = clmSun(ms), c = { lat: -sun.lat, lon: sun.lon + (sun.lon > 0 ? -180 : 180) };
+      g.fillStyle = 'rgba(0,0,0,' + (25 / 255) + ')';
+      CLM_NIGHT.forEach(function (n) {
+        var ring = clmRing(c, n).map(function (q) { return v.px(q[1], q[0]); }), x0 = Infinity, x1 = -Infinity;
+        ring.forEach(function (q) { if (q.x < x0) x0 = q.x; if (q.x > x1) x1 = q.x; });
+        for (var k = -3; k <= 3; k++) {
+          var dx = k * v.ww; if (x1 + dx < 0 || x0 + dx > v.w) continue;
+          g.beginPath(); ring.forEach(function (q, i) { if (i) g.lineTo(q.x + dx, q.y); else g.moveTo(q.x + dx, q.y); }); g.closePath(); g.fill();
+        }
+      });
     }
     function clmSoon() { if (clm.due) return; clm.due = true; requestAnimationFrame(function () { clm.due = false; clmDraw(); }); }
     function clmOverlay() {
@@ -7120,9 +7410,15 @@
       Ov.prototype.onAdd = function () {
         var pane = this.getPanes().overlayLayer, mk = function () { var c = document.createElement('canvas'); c.style.cssText = 'position:absolute;left:0;top:0;pointer-events:none'; pane.appendChild(c); return c; };
         clm.cv = mk(); clm.pv = mk();
+        // (the trail's line drawn whole first, then laid on see-through: no darker spot where its pieces meet)
+        clm.lv = document.createElement('canvas');
+        // (the brightness: a black sheet in the lowest pane - over the map's tiles, under everything drawn on them)
+        clm.dim = document.createElement('div'); clm.dim.style.cssText = 'position:absolute;left:0;top:0;width:0;height:0;background:#000;opacity:0;pointer-events:none;transition:opacity 200ms ease';
+        this.getPanes().mapPane.appendChild(clm.dim);
+        clmBright();
       };
       Ov.prototype.draw = function () { clmDraw(); };
-      Ov.prototype.onRemove = function () { [clm.cv, clm.pv].forEach(function (c) { if (c && c.parentNode) c.parentNode.removeChild(c); }); clm.cv = clm.pv = null; };
+      Ov.prototype.onRemove = function () { [clm.cv, clm.pv, clm.dim].forEach(function (c) { if (c && c.parentNode) c.parentNode.removeChild(c); }); clm.cv = clm.pv = clm.lv = clm.dim = null; };
       clm.ov = new Ov(); clm.ov.setMap(clm.map);
       clm.map.addListener('bounds_changed', clmSoon);
       clm.map.addListener('mousemove', function (e) { var de = e && e.domEvent; if (de && clm.host) { var r = clm.host.getBoundingClientRect(); clmHover(de.clientX - r.left, de.clientY - r.top); } });
@@ -7134,12 +7430,14 @@
       var ov = clm.ov, map = clm.map, proj = ov && ov.getProjection && ov.getProjection(); if (!proj || !clm.cv) return null;
       var w = clm.host.clientWidth, h = clm.host.clientHeight, c = proj.fromLatLngToDivPixel(map.getCenter()), L = c.x - w / 2, T = c.y - h / 2, r = window.devicePixelRatio || 1;
       [clm.cv, clm.pv].forEach(function (x) { x.style.left = L + 'px'; x.style.top = T + 'px'; x.style.width = w + 'px'; x.style.height = h + 'px'; var W = Math.round(w * r), H = Math.round(h * r); if (x.width !== W) x.width = W; if (x.height !== H) x.height = H; });
+      if (clm.lv) { var LW = Math.round(w * r), LH = Math.round(h * r); if (clm.lv.width !== LW) clm.lv.width = LW; if (clm.lv.height !== LH) clm.lv.height = LH; }
+      if (clm.dim) { var ds = clm.dim.style; ds.left = L + 'px'; ds.top = T + 'px'; ds.width = w + 'px'; ds.height = h + 'px'; }
       var ww = proj.getWorldWidth(), gm = window.google.maps;
       // (a flight across the date line: its longitudes run on - the whole track put by the world nearest the view)
       var px = function (lat, lon) { var p = proj.fromLatLngToDivPixel(new gm.LatLng(lat, lon, true)); return { x: p.x - L, y: p.y - T }; };
       var shift = 0;
       if (clm.pts.length) { var mid = clm.pts[Math.floor(clm.pts.length / 2)], q = px(mid[1], mid[2]); shift = Math.round((w / 2 - q.x) / ww) * ww; }
-      return { w: w, h: h, r: r, px: function (lat, lon) { var q = px(lat, lon); q.x += shift; return q; } };
+      return { w: w, h: h, r: r, ww: ww, px: function (lat, lon) { var q = px(lat, lon); q.x += shift; return q; } };
     }
     function clmGc(a, b, f) {
       var r = Math.PI / 180, la1 = a[0] * r, lo1 = a[1] * r, la2 = b[0] * r, lo2 = b[1] * r;
@@ -7152,27 +7450,50 @@
     function clmDraw() {
       var v = clmView(); if (!v) return;
       var g = clm.cv.getContext('2d'); g.setTransform(v.r, 0, 0, v.r, 0, 0); g.clearRect(0, 0, v.w, v.h);
-      var P = clm.pts, sp = clm.sp = P.map(function (p) { return v.px(p[1], p[2]); });
+      var P = clm.pts, cols = clm.cols, sp = clm.sp = P.map(function (p) { return v.px(p[1], p[2]); }), A = 100 / 255;
+      // (the main map's day and night line, at the moment played)
+      if (clm.set.night) { try { clmNight(g, v); } catch (e) { /* no line */ } }
       // (the great circle between its airports, as FR24's map draws a flight's route: a thin dark dashed line)
       if (clm.route && clm.o && clm.d) {
         g.beginPath(); for (var k = 0; k <= 96; k++) { var gc = clmGc(clm.o, clm.d, k / 96), gp = v.px(gc[0], gc[1]); if (k) g.lineTo(gp.x, gp.y); else g.moveTo(gp.x, gp.y); }
-        g.setLineDash([3, 5]); g.lineWidth = 2; g.strokeStyle = 'rgba(0,0,0,.4)'; g.stroke(); g.setLineDash([]);
+        g.setLineDash([3, 5]); g.lineWidth = 2; g.strokeStyle = 'rgba(0,0,0,' + A + ')'; g.stroke(); g.setLineDash([]);
       }
       var inView = function (a, b) { return !((a.x < -20 && b.x < -20) || (a.y < -20 && b.y < -20) || (a.x > v.w + 20 && b.x > v.w + 20) || (a.y > v.h + 20 && b.y > v.h + 20)); };
-      g.lineCap = 'round'; g.lineJoin = 'round';
-      for (var i = 1; i < P.length; i++) {
-        var a = sp[i - 1], b = sp[i]; if (!inView(a, b)) continue;
-        g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(b.x, b.y);
-        // (a hole in the coverage - five minutes and more unheard: FR24's thin dashed line across it)
-        if (P[i][0] - P[i - 1][0] > 300) { g.setLineDash([1, 3]); g.lineWidth = 1; g.strokeStyle = 'rgba(0,0,0,.4)'; g.stroke(); g.setLineDash([]); continue; }
-        var c0 = clmCol(P[i - 1][3]), c1 = clmCol(P[i][3]);
-        if (c0 === c1) g.strokeStyle = c0; else { var gr = g.createLinearGradient(a.x, a.y, b.x, b.y); gr.addColorStop(0, c0); gr.addColorStop(1, c1); g.strokeStyle = gr; }
-        g.lineWidth = 3; g.stroke();
+      // (the trail: 3 px, each piece from one position's colour to the next's, laid on at FR24's 100 of 255)
+      var l = clm.lv && clm.lv.getContext('2d');
+      if (l) {
+        l.setTransform(1, 0, 0, 1, 0, 0); l.clearRect(0, 0, clm.lv.width, clm.lv.height); l.setTransform(v.r, 0, 0, v.r, 0, 0);
+        l.lineCap = 'round'; l.lineJoin = 'round'; l.lineWidth = 3;
+        for (var i = 1; i < P.length; i++) {
+          var a = sp[i - 1], b = sp[i]; if (!inView(a, b) || P[i][0] - P[i - 1][0] >= clm.gap) continue;
+          var c0 = cols[i - 1], c1 = cols[i];
+          l.beginPath(); l.moveTo(a.x, a.y); l.lineTo(b.x, b.y);
+          if (c0 === c1) l.strokeStyle = c0; else { var gr = l.createLinearGradient(a.x, a.y, b.x, b.y); gr.addColorStop(0, c0); gr.addColorStop(1, c1); l.strokeStyle = gr; }
+          l.stroke();
+        }
+        g.save(); g.setTransform(1, 0, 0, 1, 0, 0); g.globalAlpha = A; g.drawImage(clm.lv, 0, 0); g.restore();
       }
-      // (a dot at each position heard - where the trail is drawn close, the next one 3 px on)
-      g.fillStyle = '#000'; var last = null;
-      for (var j = 0; j < sp.length; j++) { var s = sp[j]; if (s.x < -5 || s.y < -5 || s.x > v.w + 5 || s.y > v.h + 5) continue; if (last && Math.abs(s.x - last.x) + Math.abs(s.y - last.y) < 3 && j !== clm.hover) continue; g.beginPath(); g.arc(s.x, s.y, 1.5, 0, 2 * Math.PI); g.fill(); last = s; }
-      if (clm.hover >= 0 && sp[clm.hover]) { var hv = sp[clm.hover]; g.beginPath(); g.arc(hv.x, hv.y, 3, 0, 2 * Math.PI); g.fillStyle = '#fff'; g.fill(); g.lineWidth = 1; g.strokeStyle = 'rgba(0,0,0,.6)'; g.stroke(); }
+      // (a hole in the coverage - FR24's two minutes and more unheard, more where the track is the monitor's sparser one:
+      // FR24's thin dark dotted line, along the great circle)
+      g.setLineDash([1, 3]); g.lineWidth = 1; g.strokeStyle = 'rgba(0,0,0,' + A + ')';
+      var z = clm.map.getZoom() <= 10 ? 25 : 50;
+      for (var h = 1; h < P.length; h++) {
+        var dt = P[h][0] - P[h - 1][0]; if (dt < clm.gap || !inView(sp[h - 1], sp[h])) continue;
+        var nn = Math.floor(z * Math.min(1, dt / 1000)), p0 = [P[h - 1][1], P[h - 1][2]], p1 = [P[h][1], P[h][2]];
+        g.beginPath(); g.moveTo(sp[h - 1].x, sp[h - 1].y);
+        for (var s = 1; s <= nn; s++) { var q = clmGc(p0, p1, s / (nn + 1)), qq = v.px(q[0], q[1]); g.lineTo(qq.x, qq.y); }
+        g.lineTo(sp[h].x, sp[h].y); g.stroke();
+      }
+      g.setLineDash([]);
+      // (a dot at each position heard, 1.5 px, its own colour - one within a pixel of the last drawn not drawn again)
+      var last = null;
+      for (var j = 0; j < sp.length; j++) {
+        var d = sp[j]; if (d.x < -5 || d.y < -5 || d.x > v.w + 5 || d.y > v.h + 5) continue;
+        if (last && Math.abs(d.x - last.x) + Math.abs(d.y - last.y) < 1) continue;
+        g.beginPath(); g.arc(d.x, d.y, 1.5, 0, 2 * Math.PI); g.fillStyle = cols[j]; g.fill(); last = d;
+      }
+      // (the one under the pointer: white)
+      if (clm.hover >= 0 && sp[clm.hover]) { var hv = sp[clm.hover]; g.beginPath(); g.arc(hv.x, hv.y, 1.5, 0, 2 * Math.PI); g.fillStyle = '#fff'; g.fill(); clmTipAt(hv); }
       // (the airports: FR24's old blue pin, its point on the airport)
       if (clm.pin && clm.pin.complete && clm.pin.naturalWidth) [clm.o, clm.d].forEach(function (ap) { if (!ap) return; var q = v.px(ap[0], ap[1]); g.drawImage(clm.pin, q.x - 10, q.y - 20, 20, 20); });
       clmPlane(v);
@@ -7187,17 +7508,45 @@
       g.globalAlpha = 0.35; g.filter = 'brightness(0)'; g.drawImage(ic.c, -s * ic.ax + 3, -s * ic.ay + 3, s, s); g.filter = 'none'; g.globalAlpha = 1;
       g.drawImage(ic.c, -s * ic.ax, -s * ic.ay, s, s);
     }
-    // (the moment under the pointer: FR24's box - "Time: UTC 21:37:43", "Ground speed: 279 kts", "Altitude: 8,150 ft")
+    // (the moment under the pointer: FR24's tooltip - "Time: UTC 21:37:43", "Ground speed: 279 kts", "Altitude: 8,150 ft"
+    // in the main map's units - made as FR24's map makes it: white, rounded, shadowed, its tip under it, 5 px over the dot)
+    var CLM_SPD = { kt: [1, 0, 'kts'], kmh: [1.852, 0, 'km/h'], mph: [1.15077945, 0, 'mph'], mach: [0.0015117811278615, 3, 'Ma'] };
+    function clmNum(v, dp) { var a = v.toFixed(dp).split('.'); return a[0].replace(/\B(?=(?:\d{3})+(?!\d))/g, ',') + (a.length > 1 ? '.' + a[1] : ''); }
+    function clmTipMake(host) {
+      var tip = document.createElement('article'); tip.className = 'tl-cl-tip';
+      tip.style.cssText = 'position:absolute;display:none;z-index:5;left:0;top:0;transform:translate(-50%,-100%);padding:0 0 4px;margin:0;pointer-events:none;box-sizing:border-box';
+      var sec = document.createElement('section');
+      sec.style.cssText = 'display:block;box-sizing:border-box;margin:0 0 4px;padding:8px;border-radius:8px;background:#fff;color:rgb(57,57,57);box-shadow:1px 3px 6px 0 rgba(0,0,0,.2)';
+      var body = document.createElement('div');
+      body.style.cssText = 'white-space:nowrap;font-family:"Open Sans",ui-sans-serif,system-ui,-apple-system,sans-serif;font-size:14px;line-height:20px;font-weight:400;text-align:left;letter-spacing:normal';
+      var arrow = document.createElement('div');
+      arrow.style.cssText = 'position:absolute;bottom:4px;left:50%;width:0;height:0;box-sizing:border-box;transform:translateX(-50%) scale(1.5);border-style:solid;border-width:4px 4px 0 4px;border-color:#fff transparent transparent transparent';
+      sec.appendChild(body); sec.appendChild(arrow); tip.appendChild(sec); host.parentNode.appendChild(tip);
+      clm.tip = tip; clm.tipBody = body;
+    }
+    function clmTipAt(s) { var tip = clm.tip; if (tip && tip.style.display !== 'none' && s) { tip.style.left = s.x + 'px'; tip.style.top = (s.y - 5) + 'px'; } }
+    function clmTipHide(now) {
+      if (clm.tipOff) { oClearTimeout(clm.tipOff); clm.tipOff = 0; }
+      if (now) { if (clm.tip) clm.tip.style.display = 'none'; return; }
+      // (as FR24's: gone a moment after the pointer leaves)
+      clm.tipOff = oSetTimeout(function () { clm.tipOff = 0; if (clm.hover < 0 && clm.tip) clm.tip.style.display = 'none'; }, 200);
+    }
     function clmHover(x, y) {
-      var best = -1, bd = 8 * 8;
+      var best = -1, bd = 9.5 * 9.5;
       for (var i = 0; i < clm.sp.length; i++) { var s = clm.sp[i], dx = s.x - x, dy = s.y - y, dd = dx * dx + dy * dy; if (dd < bd) { bd = dd; best = i; } }
       if (best === clm.hover) return;
       clm.hover = best; clmSoon();
       var tip = clm.tip; if (!tip) return;
-      if (best < 0) { tip.style.display = 'none'; return; }
-      var p = clm.pts[best], s2 = clm.sp[best], t = new Date(p[0] * 1000), z = function (n) { return String(n).padStart(2, '0'); }, n = function (x) { return Math.round(x).toLocaleString('en-GB'); };
-      tip.innerHTML = '<div><b>Time:</b> UTC ' + z(t.getUTCHours()) + ':' + z(t.getUTCMinutes()) + ':' + z(t.getUTCSeconds()) + '</div><div><b>Ground speed:</b> ' + (isFinite(p[4]) && p[4] !== null ? n(p[4]) + ' kts' : 'N/A') + '</div><div><b>Altitude:</b> ' + (isFinite(p[3]) && p[3] !== null ? n(p[3]) + ' ft' : 'N/A') + '</div>';
-      tip.style.display = 'block'; tip.style.left = s2.x + 'px'; tip.style.top = (s2.y - 5) + 'px';
+      if (best < 0) { clmTipHide(false); return; }
+      // (the tooltip only where the main map shows its trail's: "Show trail tooltip" in its settings)
+      if (!clm.set.tip) { clmTipHide(true); return; }
+      if (clm.tipOff) { oClearTimeout(clm.tipOff); clm.tipOff = 0; }
+      var p = clm.pts[best], s2 = clm.sp[best], t = new Date(p[0] * 1000), z = function (n) { return String(n).padStart(2, '0'); };
+      var sp = CLM_SPD[clm.set.spd] || CLM_SPD.kt, has = function (x) { return x !== null && x !== undefined && isFinite(x); };
+      var spd = has(p[4]) ? clmNum(p[4] * sp[0], sp[1]) + ' ' + sp[2] : 'N/A', alt = has(p[3]) ? (clm.set.alt === 'm' ? clmNum(p[3] * 0.3048, 0) + ' m' : clmNum(p[3], 0) + ' ft') : 'N/A';
+      var row = function (k, val) { return '<div><strong style="font-weight:600">' + k + ':</strong> ' + val + '</div>'; };
+      clm.tipBody.innerHTML = row('Time', 'UTC ' + z(t.getUTCHours()) + ':' + z(t.getUTCMinutes()) + ':' + z(t.getUTCSeconds())) + row('Ground speed', spd) + row('Altitude', alt);
+      tip.style.display = 'block'; clmTipAt(s2);
     }
     function clmFit(cover) {
       var map = clm.map, gm = window.google.maps; if (!map || !clm.pts.length) return;
@@ -7212,9 +7561,23 @@
       var w = proj.fromLatLngToPoint(new gm.LatLng(p.lat, p.lon)), sc = Math.pow(2, map.getZoom());
       map.setCenter(proj.fromPointToLatLng(new gm.Point(w.x, w.y + (clm.cover / 2) / sc)));
     }
+    // (the main map's settings, as the userscript part read them: only what is known taken)
+    function clmSet(s) {
+      if (!s || typeof s !== 'object') return;
+      var c = clm.set, b = Number(s.brightness);
+      if (typeof s.style === 'string') c.style = s.style;
+      if (isFinite(b)) c.brightness = Math.max(0, Math.min(100, b));
+      if (typeof s.night === 'boolean') c.night = s.night;
+      if (typeof s.tip === 'boolean') c.tip = s.tip;
+      if (s.alt === 'ft' || s.alt === 'm') c.alt = s.alt;
+      if (CLM_SPD[s.spd]) c.spd = s.spd;
+      if (!c.tip) clmTipHide(true);
+      clmBright();
+    }
     function clmOp(d) {
       var op = d.op;
       if (op === 'init') {
+        clmSet(d.set);
         clmGoogle().then(function (ok) {
           var host = document.getElementById('tl-cl-gmap');
           if (!ok || !host) { post('clMapSt', { ok: false }); return; }
@@ -7223,29 +7586,43 @@
             clm.host = host;
             clm.map = new gm.Map(host, { center: { lat: 50, lng: 0 }, zoom: 4, mapTypeId: gm.MapTypeId.HYBRID, disableDefaultUI: true, gestureHandling: 'greedy', clickableIcons: false, keyboardShortcuts: false, backgroundColor: '#eaeaea' });
             clmOverlay();
-            var tip = document.createElement('div'); tip.className = 'tl-cl-tip'; tip.style.cssText = 'position:absolute;display:none;z-index:5;transform:translate(-50%,-100%);pointer-events:none;background:rgba(0,0,0,.85);color:#fff;font:12px/1.45 "Open Sans",Arial,sans-serif;padding:6px 9px;border-radius:4px;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,.35)';
-            host.parentNode.appendChild(tip); clm.tip = tip;
+            clmTipMake(host);
             clm.pin = new Image(); clm.pin.onload = clmSoon; clm.pin.src = '/static/images/airport_pin_40_blue.png';
+            // (FR24's own styles and trail colours, from its build, as they come)
+            clmStyles().then(function (fs) { clm.fs = fs; if (clm.map) clmType(clm.type); });
+            clmColFn();
           }
-          clmType(d.type || 'hybrid');
+          clmType(d.type || clm.set.style || 'hybrid');
           post('clMapSt', { ok: true });
         });
         return;
       }
       if (!clm.map) return;
       if (op === 'track') {
+        clmSet(d.set);
+        // (the main map's style as it is now - or the toolbar's, chosen on this page)
+        if (typeof d.type === 'string' && d.type && d.type !== clm.type) clmType(d.type);
         clm.pts = Array.isArray(d.pts) ? d.pts : []; clm.o = d.o || null; clm.d = d.d || null; clm.cover = Number(d.cover) || 0; clm.hover = -1; clm.pos = null;
-        if (clm.tip) clm.tip.style.display = 'none';
+        clm.cols = clm.pts.map(function (p) { return clmCol(p[3]); });
+        clm.t = clm.pts.length ? Number(clm.pts[0][0]) || 0 : 0;
+        // (a hole: FR24's two minutes unheard, in a track of a position a minute or closer (FR24's own); five minutes in
+        // one sparser - the monitor's few positions three minutes apart - not drawn as all holes)
+        var gaps = []; for (var i = 1; i < clm.pts.length; i++) gaps.push(clm.pts[i][0] - clm.pts[i - 1][0]);
+        gaps.sort(function (a, b) { return a - b; });
+        clm.gap = (gaps.length ? gaps[gaps.length >> 1] : 0) <= 60 ? 120 : 300;
+        clmTipHide(true);
         clmFit(clm.cover); clmSoon();
         if (d.ac) clmIcon(d.ac).then(function () { clmPlane(); }, function () { /* drawn without */ });
       } else if (op === 'pos') {
         clm.pos = { lat: d.lat, lon: d.lon, trk: d.trk }; clm.cover = Number(d.cover) || clm.cover;
+        // (the day and night line follows the moment played, minute by minute)
+        var t = Number(d.t); if (isFinite(t) && t > 0) { var was = Math.floor(clm.t / 60); clm.t = t; if (clm.set.night && Math.floor(t / 60) !== was) clmSoon(); }
         if (d.follow) { clm.follow = true; clmCentre(clm.pos); } else clm.follow = false;
         clmPlane();
       } else if (op === 'route') { clm.route = !!d.on; clmSoon(); }
       else if (op === 'type') clmType(d.type);
       else if (op === 'zoom') clm.map.setZoom(clm.map.getZoom() + (Number(d.dz) || 0));
-      else if (op === 'clear') { clm.pts = []; clm.sp = []; clm.pos = null; clm.o = clm.d = null; if (clm.tip) clm.tip.style.display = 'none'; clmSoon(); }
+      else if (op === 'clear') { clm.pts = []; clm.cols = []; clm.sp = []; clm.pos = null; clm.o = clm.d = null; clm.hover = -1; clmTipHide(true); clmSoon(); }
     }
 
     window.addEventListener('message', function (ev) {
@@ -7261,6 +7638,8 @@
       else if (d.__tweeksLadd === 'rwyGot') onRwyGot(d);
       else if (d.__tweeksLadd === 'endsGot') onEndsGot(d);
       else if (d.__tweeksLadd === 'rwyApGot') onRwyApGot(d);
+      else if (d.__tweeksLadd === 'cardRwyGot') onCardRwyGot(d);
+      else if (d.__tweeksLadd === 'pbRelatedGot') onPbRelatedGot(d);
       else if (d.__tweeksLadd === 'ogGot') onOgGot(d);
       else if (d.__tweeksLadd === 'rwyUseGot') onRwyUseGot(d);
       else if (d.__tweeksLadd === 'apWxGot') onApWxGot(d);
@@ -7315,6 +7694,14 @@
       else if (d.__tweeksLadd === 'photoReq') { if (d.hex) fetchPhotos(d.hex, d.reg, !!d.pri); }
       // (OpenStreetMap's Overpass answers a browser's own request; the userscript asks it through here)
       else if (d.__tweeksLadd === 'osmReq') { if (d.key && /^https:\/\/overpass-api\.de\/api\/interpreter\?data=/.test(String(d.url || ''))) oFetch.call(window, d.url).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) { post('osmRes', { key: d.key, j: j }); }, function () { post('osmRes', { key: d.key, j: null }); }); }
+      // (1.4.3: FR24's playback of a flight, asked as this page asks it - in the app, FR24 answers its own page, not always the
+      // app's own requests: the userscript asks it through here. That one address of FR24's API only)
+      else if (d.__tweeksLadd === 'fr24ApiReq') {
+        if (d.key && /^https:\/\/api\.flightradar24\.com\/common\/v1\/flight-playback\.json\?flightId=[0-9a-f]{1,12}&timestamp=\d{9,11}$/.test(String(d.url || ''))) {
+          var fr24Got = function (r) { return r && r.ok ? r.text() : null; }, fr24Back = function (t) { post('fr24ApiRes', { key: d.key, text: typeof t === 'string' ? t : null }); };
+          oFetch.call(window, d.url, { credentials: 'include' }).then(fr24Got).catch(function () { return oFetch.call(window, d.url, { credentials: 'omit' }).then(fr24Got); }).then(fr24Back, function () { fr24Back(null); });
+        } else post('fr24ApiRes', { key: d.key, text: null });
+      }
       else if (d.__tweeksLadd === 'photosDone') acceptPhotosDone(d);
       // (what the two networks' trace files answered this browser lately - __tweeksLaddBridge.stats.net in the console)
       else if (d.__tweeksLadd === 'netDiag') { if (d.net && typeof d.net === 'object') stats.net = d.net; }
@@ -7365,6 +7752,6 @@
       return { req: req, resp: resp, stats: function () { return stats; }, v: 1 };
     })();
     window[NS] = { resolved: resolved, routes: routes, naRecs: naRecs, naRoutes: naRoutes, telem: telem, hist: hist, lastPos: lastPos, photoCache: photoCache, psCache: psCache, stats: stats, fetchPhotos: fetchPhotos, hello: function () { post('ready', { oaWant: oaWant, stats: stats, feedReady: !!feedHeaders, v: BRIDGE_V }); }, v: BRIDGE_V };
-    if (window.__tlTestHook) try { window.__tlTestHook({ iconNote: iconNote, iconFor: iconFor, mxPbFlightMsg: mxPbFlightMsg, mxPbTag: mxPbTag, mxPbRunways: mxPbRunways, mxPbBadges: mxPbBadges, noteCard: noteCard, mxPbVeilOn: mxPbVeilOn, mxPbVeilOff: mxPbVeilOff, mxPbLogId: mxPbLogId, mxPbLinkId: mxPbLinkId, mxPbEnrich: mxPbEnrich, mxPbInfo: mxPbInfo, mxPbBackLabel: mxPbBackLabel, mxPbBackTo: mxPbBackTo, mxSec: mxSec, csOf: csOf, patchTopFlights: patchTopFlights, onTopGot: onTopGot, topNames: topNames, fillFlightList: fillFlightList, routeRows: routeRows, liveDestFix: liveDestFix, hist: hist, preloaded: function () { return preloaded; }, parse: parse, photoFits: photoFits, makerOf: makerOf, patchFollow: patchFollow, patchFlightMsg: patchFlightMsg, pushFollow: pushFollow, followSt: function () { return followSt; }, setFollowSt: function (s) { followSt = s; }, shownPhotos: shownPhotos, photoCache: photoCache, FOLLOW: FOLLOW, DETAILS: DETAILS, fLen: fLen, fStr: fStr, fVar: fVar, patchFlight: patchFlight, patchLiveFeed: patchLiveFeed, fr24Named: fr24Named, psState: function () { return { q: psQ.length, busy: psBusy, last: psLast, blockedFor: Math.max(0, psBlockedUntil - Date.now()), pri: Array.from(psPri), jobs: photoJobs.size, head: psQ.slice(0, 3).map(function (j) { return j.hex; }) }; }, acceptPubTel: acceptPubTel, pubTelFor: pubTelFor, fillNativeCard: fillNativeCard, regsOfCallsign: regsOfCallsign, categoryOf: categoryOf, placeShort: placeShort, nativeFill: nativeFill, natInfo: natInfo, addArch: addArch, acceptBoardArch: acceptBoardArch, telem: telem, b64Encode: b64Encode, b64DecodeInto: b64DecodeInto, frameHeader: frameHeader, concat: concat, varintInt32: varintInt32, PLAYBACK: PLAYBACK, patchPlayback: patchPlayback, patchPlaybackRequest: patchPlaybackRequest, pbRoutes: pbRoutes, pbTelAt: pbTelAt, setPbTrace: function (t) { pbTrace = t; }, patchList: patchList, acceptSites: acceptSites, listSig: listSig, mergeRoutes: mergeRoutes, applyRoutes: applyRoutes, routesAdd: routesAdd, applyAirport: applyAirport, applyBoardPage: applyBoardPage, applyStats: applyStats, mergeFlights: mergeFlights, apData: apData, telAt: telAt, noteTelem: noteTelem, pbTraceOf: function () { return pbTrace; }, logoOf: logoOf, archDetail: archDetail, tsOf: tsOf, noteAirportJson: noteAirportJson, rwyOf: rwyOf, rwyPanel: rwyPanel, panelTick: panelTick, panelData: panelData, promoSlots: promoSlots, acceptAirportPanel: acceptAirportPanel, unlockRunways: unlockRunways, mvRows: mvRows, mvKept: mvKept, dayOf: dayOf, pbPanelTick: pbPanelTick, logoFix: logoFix, liveEntries: liveEntries, pbPos: pbPos, unlockFeed: unlockFeed, derivedVs: derivedVs, altHist: altHist, acceptAir: acceptAir, airCache: airCache, flushAir: flushAir, airWant: function () { return airWant; }, lastPos: lastPos, resolved: resolved, stats: stats, pbFind: pbFind, inBar: inBar, pbBlk: pbBlk, cardInfo: cardInfo, boardRowsSeen: boardRowsSeen, archById: archById, placeBoard: placeBoard, stopBoardHold: stopBoardHold, needBoardArch: needBoardArch, mx: mx, mxPatchCore: mxPatchCore, mxAuth: mxAuth, mxNatList: mxNatList, mxTrackOk: mxTrackOk, stripRestriction: stripRestriction, mxBmMerge: mxBmMerge, mxBmItem: mxBmItem, mxMonTile: mxMonTile, mxMonOr: mxMonOr, mxPinVer: mxPinVer, mxAirportHistory: mxAirportHistory, mxHistItems: mxHistItems, mxTrackFile: mxTrackFile, mxDataTick: mxDataTick, mxPbProps: mxPbProps, mxPbShow: mxPbShow, mxPbStandIn: mxPbStandIn, mxPbReadAt: mxPbReadAt, mxPbStand: mxPbStand, mxBoardRwy: mxBoardRwy, reqIdOf: reqIdOf, mxPbOpen: mxPbOpen, mxPbTake: mxPbTake, setNav: function (f) { mxNav = f; }, mxPbAway: mxPbAway, mxLegacyPbJson: mxLegacyPbJson, mxLegacyPb: mxLegacyPb, mxPbFlags: mxPbFlags, mxPbSynId: mxPbSynId, mxPbParam: mxPbParam, setPbWanted: function (v) { mxPbWanted = v; }, mxPlans: function () { return mxPlans; }, mxLiveRunways: mxLiveRunways, mxRwy: mxRwy, mxSetApply: mxSetApply, mxSetNote: mxSetNote, mxSetKept: mxSetKept, mxLastClicked: mxLastClicked, mxLcList: mxLcList, onLcClick: onLcClick, mxLcFill: mxLcFill, cardRwy: cardRwy, naEndsFill: naEndsFill, onEndsGot: onEndsGot, naEnds: naEnds, boardWant: boardWant, mxLegacyImages: mxLegacyImages, rwyInUse: rwyInUse, windOfText: windOfText, mxRwyAirport: mxRwyAirport, mxRwyByHex: mxRwyByHex, mxRowHex: mxRowHex, mxDataEnds: mxDataEnds, rwyUsePanel: rwyUsePanel, apWxPanel: apWxPanel, apWxData: apWxData, apWxOf: apWxOf, mxApWxAdd: mxApWxAdd, vsNoLock: vsNoLock, statsUsage: statsUsage, statsMoves: statsMoves, apDataOf: apDataOf, acceptOa: acceptOa, oaAirportJson: oaAirportJson, oaMap: oaMap, oaRefs: fr24Refs, setOaBase: function (b) { oaBase = b; oaShown = 'x'; }, oaStoreRow: oaStoreRow, setViewBox: function (b) { viewBox = b; }, oaView: oaView, sunTimes: sunTimes, tzText: tzText, panelCodeFields: panelCodeFields, oaLinkPressed: oaLinkPressed, oaRefHref: oaRefHref, acceptOaOne: acceptOaOne, oaLost: function () { return oaLost; }, acceptOaFrom: acceptOaFrom, oaCodeLine: oaCodeLine, noteFr24Codes: noteFr24Codes, oaDupe: oaDupe, dirTick: dirTick, acceptOaDir: acceptOaDir, searchMerge: searchMerge, apSearchMerge: apSearchMerge, oaMatchRows: oaMatchRows, oaOneGet: oaOneGet, oaFillTables: oaFillTables, refOf: refOf, fieldShortName: fieldShortName, closestMerge: closestMerge, heliText: heliText, oaFast: function () { return oaFast; }, setOaNav: function (f) { oaNav = f; }, oaWantNow: function () { return oaWant; }, oaApi: oaApi, oaPageReq: oaPageReq, oaPageOf: oaPageOf, acMerge: acMerge, acStrip: acStrip, acMergeAdd: acMergeAdd, acSig: acSig, acDirFastPage: acDirFastPage, dirFastPage: dirFastPage, dirApply: dirApply, dirKeyOf: dirKeyOf, veilOn: veilOn, veilOff: veilOff, mxBmOaWx: mxBmOaWx, apWxFr24: apWxFr24, bmCodesTick: bmCodesTick, oaIataMode: oaIataMode, acPageReq: acPageReq, acPageOf: acPageOf, acPaginator: acPaginator, acTick: acTick, acceptAcDir: acceptAcDir, acceptAcPage: acceptAcPage, acAskPage: acAskPage, acLinkPressed: acLinkPressed, acceptAcFrom: acceptAcFrom, setAcNav: function (f) { acNav = f; }, acAddGet: acAddGet, acRefGet: acRefGet, statsUnlock: statsUnlock, onApWxGot: onApWxGot, mxStat: function () { return mx; }, mxTracksPac: mxTracksPac, mxPacParse: mxPacParse, mxPacots: mxPacots, acLegDir: acLegDir, acLegPage: acLegPage, acLegTick: acLegTick, acMaker: acMaker, acMakers: acMakers, patchListFor: patchList, listRowsFor: listRowsFor, listApCompact: listApCompact, listUnknown: listUnknown, setPac: function (o) { mxPac = { at: Date.now(), o: o }; }, rwyUseData: rwyUseData, rwyUseWant: rwyUseWant, cardRwyFill: cardRwyFill, rwyUseKept: rwyUseKept, mxLcTick: mxLcTick, mxBmMax: mxBmMax, mxNatParse: mxNatParse, mxAirsigList: mxAirsigList, mxStations: mxStations, mxLightning: mxLightning, mxLx: mxLx, mxFetch: mxFetch, mxWxText: mxWxText, mxWxKind: mxWxKind, mxCsv: mxCsv, patchLiveFeedRequest: patchLiveFeedRequest, mxCats: mxCats, mxOp: mxOp, mxLevels: mxLevels, mxNearest: mxNearest, MX_ICE: MX_ICE, MX_TURB: MX_TURB, mxWafsUrl: mxWafsUrl, routes: routes, setCurFollow: function (id) { curFollowId = id; } }); } catch (e) { /* ignore */ }
+    if (window.__tlTestHook) try { window.__tlTestHook({ clm: clm, clmOp: clmOp, clmSet: clmSet, clmLitAt: clmLitAt, clmLitJson: clmLitJson, clmSun: clmSun, clmRing: clmRing, clmNum: clmNum, clmCol: clmCol, clmStyles: clmStyles, clmColFn: clmColFn, clmChunk: clmChunk, mxPbRelPut: mxPbRelPut, mxPbVeilFail: mxPbVeilFail, cardItem: cardItem, cardPbItem: cardPbItem, mxPbPhoneUrl: mxPbPhoneUrl, iconNote: iconNote, iconFor: iconFor, mxPbFlightMsg: mxPbFlightMsg, mxPbTag: mxPbTag, mxPbRunways: mxPbRunways, mxPbBadges: mxPbBadges, noteCard: noteCard, mxPbVeilOn: mxPbVeilOn, mxPbVeilOff: mxPbVeilOff, mxPbLogId: mxPbLogId, mxPbLinkId: mxPbLinkId, mxPbEnrich: mxPbEnrich, mxPbInfo: mxPbInfo, mxPbBackLabel: mxPbBackLabel, mxPbBackTo: mxPbBackTo, mxSec: mxSec, csOf: csOf, patchTopFlights: patchTopFlights, onTopGot: onTopGot, topNames: topNames, fillFlightList: fillFlightList, routeRows: routeRows, liveDestFix: liveDestFix, hist: hist, preloaded: function () { return preloaded; }, parse: parse, photoFits: photoFits, makerOf: makerOf, patchFollow: patchFollow, patchFlightMsg: patchFlightMsg, pushFollow: pushFollow, followSt: function () { return followSt; }, setFollowSt: function (s) { followSt = s; }, shownPhotos: shownPhotos, photoCache: photoCache, FOLLOW: FOLLOW, DETAILS: DETAILS, fLen: fLen, fStr: fStr, fVar: fVar, patchFlight: patchFlight, patchLiveFeed: patchLiveFeed, fr24Named: fr24Named, psState: function () { return { q: psQ.length, busy: psBusy, last: psLast, blockedFor: Math.max(0, psBlockedUntil - Date.now()), pri: Array.from(psPri), jobs: photoJobs.size, head: psQ.slice(0, 3).map(function (j) { return j.hex; }) }; }, acceptPubTel: acceptPubTel, pubTelFor: pubTelFor, fillNativeCard: fillNativeCard, regsOfCallsign: regsOfCallsign, categoryOf: categoryOf, placeShort: placeShort, nativeFill: nativeFill, natInfo: natInfo, addArch: addArch, acceptBoardArch: acceptBoardArch, telem: telem, b64Encode: b64Encode, b64DecodeInto: b64DecodeInto, frameHeader: frameHeader, concat: concat, varintInt32: varintInt32, PLAYBACK: PLAYBACK, patchPlayback: patchPlayback, patchPlaybackRequest: patchPlaybackRequest, pbRoutes: pbRoutes, pbTelAt: pbTelAt, setPbTrace: function (t) { pbTrace = t; }, patchList: patchList, acceptSites: acceptSites, listSig: listSig, mergeRoutes: mergeRoutes, applyRoutes: applyRoutes, routesAdd: routesAdd, applyAirport: applyAirport, applyBoardPage: applyBoardPage, applyStats: applyStats, mergeFlights: mergeFlights, apData: apData, telAt: telAt, noteTelem: noteTelem, pbTraceOf: function () { return pbTrace; }, logoOf: logoOf, archDetail: archDetail, tsOf: tsOf, noteAirportJson: noteAirportJson, rwyOf: rwyOf, rwyPanel: rwyPanel, panelTick: panelTick, panelData: panelData, promoSlots: promoSlots, acceptAirportPanel: acceptAirportPanel, unlockRunways: unlockRunways, mvRows: mvRows, mvKept: mvKept, dayOf: dayOf, pbPanelTick: pbPanelTick, logoFix: logoFix, liveEntries: liveEntries, pbPos: pbPos, unlockFeed: unlockFeed, derivedVs: derivedVs, altHist: altHist, acceptAir: acceptAir, airCache: airCache, flushAir: flushAir, airWant: function () { return airWant; }, lastPos: lastPos, resolved: resolved, stats: stats, pbFind: pbFind, inBar: inBar, pbBlk: pbBlk, cardInfo: cardInfo, boardRowsSeen: boardRowsSeen, archById: archById, placeBoard: placeBoard, stopBoardHold: stopBoardHold, needBoardArch: needBoardArch, mx: mx, mxPatchCore: mxPatchCore, mxAuth: mxAuth, mxNatList: mxNatList, mxTrackOk: mxTrackOk, stripRestriction: stripRestriction, mxBmMerge: mxBmMerge, mxBmItem: mxBmItem, mxMonTile: mxMonTile, mxMonOr: mxMonOr, mxPinVer: mxPinVer, mxAirportHistory: mxAirportHistory, mxHistItems: mxHistItems, mxTrackFile: mxTrackFile, mxDataTick: mxDataTick, mxPbProps: mxPbProps, mxPbShow: mxPbShow, mxPbStandIn: mxPbStandIn, mxPbReadAt: mxPbReadAt, mxPbStand: mxPbStand, mxBoardRwy: mxBoardRwy, reqIdOf: reqIdOf, mxPbOpen: mxPbOpen, mxPbTake: mxPbTake, setNav: function (f) { mxNav = f; }, mxPbAway: mxPbAway, mxLegacyPbJson: mxLegacyPbJson, mxLegacyPb: mxLegacyPb, mxPbFlags: mxPbFlags, mxPbSynId: mxPbSynId, mxPbParam: mxPbParam, setPbWanted: function (v) { mxPbWanted = v; }, mxPlans: function () { return mxPlans; }, mxLiveRunways: mxLiveRunways, mxRwy: mxRwy, mxSetApply: mxSetApply, mxSetNote: mxSetNote, mxSetKept: mxSetKept, mxLastClicked: mxLastClicked, mxLcList: mxLcList, onLcClick: onLcClick, mxLcFill: mxLcFill, cardRwy: cardRwy, naEndsFill: naEndsFill, onEndsGot: onEndsGot, naEnds: naEnds, boardWant: boardWant, mxLegacyImages: mxLegacyImages, rwyInUse: rwyInUse, windOfText: windOfText, mxRwyAirport: mxRwyAirport, mxRwyByHex: mxRwyByHex, mxRowHex: mxRowHex, mxDataEnds: mxDataEnds, rwyUsePanel: rwyUsePanel, apWxPanel: apWxPanel, apWxData: apWxData, apWxOf: apWxOf, mxApWxAdd: mxApWxAdd, vsNoLock: vsNoLock, statsUsage: statsUsage, statsMoves: statsMoves, apDataOf: apDataOf, acceptOa: acceptOa, oaAirportJson: oaAirportJson, oaMap: oaMap, oaRefs: fr24Refs, setOaBase: function (b) { oaBase = b; oaShown = 'x'; }, oaStoreRow: oaStoreRow, setViewBox: function (b) { viewBox = b; }, oaView: oaView, sunTimes: sunTimes, tzText: tzText, panelCodeFields: panelCodeFields, oaLinkPressed: oaLinkPressed, oaRefHref: oaRefHref, acceptOaOne: acceptOaOne, oaLost: function () { return oaLost; }, acceptOaFrom: acceptOaFrom, oaCodeLine: oaCodeLine, noteFr24Codes: noteFr24Codes, oaDupe: oaDupe, dirTick: dirTick, acceptOaDir: acceptOaDir, searchMerge: searchMerge, apSearchMerge: apSearchMerge, oaMatchRows: oaMatchRows, oaOneGet: oaOneGet, oaFillTables: oaFillTables, refOf: refOf, fieldShortName: fieldShortName, closestMerge: closestMerge, heliText: heliText, oaFast: function () { return oaFast; }, setOaNav: function (f) { oaNav = f; }, oaWantNow: function () { return oaWant; }, oaApi: oaApi, oaPageReq: oaPageReq, oaPageOf: oaPageOf, acMerge: acMerge, acStrip: acStrip, acMergeAdd: acMergeAdd, acSig: acSig, acDirFastPage: acDirFastPage, dirFastPage: dirFastPage, dirApply: dirApply, dirKeyOf: dirKeyOf, veilOn: veilOn, veilOff: veilOff, mxBmOaWx: mxBmOaWx, apWxFr24: apWxFr24, bmCodesTick: bmCodesTick, oaIataMode: oaIataMode, acPageReq: acPageReq, acPageOf: acPageOf, acPaginator: acPaginator, acTick: acTick, acceptAcDir: acceptAcDir, acceptAcPage: acceptAcPage, acAskPage: acAskPage, acLinkPressed: acLinkPressed, acceptAcFrom: acceptAcFrom, setAcNav: function (f) { acNav = f; }, acAddGet: acAddGet, acRefGet: acRefGet, statsUnlock: statsUnlock, onApWxGot: onApWxGot, mxStat: function () { return mx; }, mxTracksPac: mxTracksPac, mxPacParse: mxPacParse, mxPacots: mxPacots, acLegDir: acLegDir, acLegPage: acLegPage, acLegTick: acLegTick, acMaker: acMaker, acMakers: acMakers, patchListFor: patchList, listRowsFor: listRowsFor, listApCompact: listApCompact, listUnknown: listUnknown, setPac: function (o) { mxPac = { at: Date.now(), o: o }; }, rwyUseData: rwyUseData, rwyUseWant: rwyUseWant, cardRwyFill: cardRwyFill, rwyUseKept: rwyUseKept, mxLcTick: mxLcTick, mxBmMax: mxBmMax, mxNatParse: mxNatParse, mxAirsigList: mxAirsigList, mxStations: mxStations, mxLightning: mxLightning, mxLx: mxLx, mxFetch: mxFetch, mxWxText: mxWxText, mxWxKind: mxWxKind, mxCsv: mxCsv, patchLiveFeedRequest: patchLiveFeedRequest, mxCats: mxCats, mxOp: mxOp, mxLevels: mxLevels, mxNearest: mxNearest, MX_ICE: MX_ICE, MX_TURB: MX_TURB, mxWafsUrl: mxWafsUrl, routes: routes, setCurFollow: function (id) { curFollowId = id; } }); } catch (e) { /* ignore */ }
     post('ready', { oaWant: oaWant, stats: stats, feedReady: false, v: BRIDGE_V });
   }

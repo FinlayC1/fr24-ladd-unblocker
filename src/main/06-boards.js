@@ -374,7 +374,8 @@
       if (pts.length < 2) {
         try {
           const ts = fin(x.t) && x.t > 1e9 ? Math.round(x.t) : Math.round(now() / 1000);
-          const j = await gmRequest(`https://api.flightradar24.com/common/v1/flight-playback.json?flightId=${encodeURIComponent(x.fid)}&timestamp=${ts}`, { timeout: 15000 });
+          const j = await fr24PbJson(x.fid, ts);
+          try { fr24TrackSend(x.fid, fr24PbParse(j)); } catch (e) { /* not sent */ }
           const tr = j && j.result && j.result.response && j.result.response.data && j.result.response.data.flight && j.result.response.data.flight.track;
           pts = (Array.isArray(tr) ? tr : []).map(p => ({ t: p && p.timestamp, lat: p && p.latitude, lon: p && p.longitude, alt: p && p.altitude && fin(p.altitude.feet) ? p.altitude.feet : null, gnd: !!(p && p.altitude && p.altitude.feet === 0) })).filter(p => fin(p.t) && fin(p.lat) && fin(p.lon));
         } catch (e) { /* none */ }
@@ -403,7 +404,7 @@
     for (const e of d.rows || []) {
       if (!e || !e.flight || !e.flight.id) continue;
       const t = Number(e.estimatedTime) || Number(e.scheduledTime) || 0;
-      boardPut(apId, kind, { nat: Object.fromEntries(Object.entries(e).filter(([key]) => !/^__tl/.test(key))), k: 'f' + e.flight.id, src: 'fr24', id: Number(e.id) || 0, fid: String(e.flight.id), cs: clean(e.flight.callsign), num: clean(e.flight.number), t, sch: Number(e.scheduledTime) || 0, est: Number(e.estimatedTime) || 0, st: clean(e.status && e.status.name), col: clean(e.status && e.status.color), ap: Number(e.airportId) || 0, al: clean(e.airline), alId: Number(e.airlineId) || 0, ty: clean(e.aircraftType) });
+      boardPut(apId, kind, { nat: Object.fromEntries(Object.entries(e).filter(([key]) => !/^__tl/.test(key))), k: 'f' + e.flight.id, src: 'fr24', id: Number(e.id) || 0, fid: String(e.flight.id), cs: clean(e.flight.callsign), num: clean(e.flight.number), t, sch: Number(e.scheduledTime) || 0, sx: Number(e.scheduledTime) > 0 ? 1 : 0, est: Number(e.estimatedTime) || 0, st: clean(e.status && e.status.name), col: clean(e.status && e.status.color), ap: Number(e.airportId) || 0, al: clean(e.airline), alId: Number(e.airlineId) || 0, ty: clean(e.aircraftType) });
     }
   }
   const boardWho = (hex, rec) => { const hx = Object.assign({}, hex ? store.getHex(hex) : null, rec || {}); return { reg: hx.reg || '', hex: hex || hx.hex || '', ty: hx.type || '', dsc: modelName(hx), al: shownOwner(hx, hx.cs) || (hx.mil ? 'Military' : 'Private owner'), alId: operatorIdOf(hx, hx.cs) }; };
@@ -526,8 +527,8 @@
       const icao = clean(x.airline && x.airline.code && x.airline.code.icao).toUpperCase(), alId = (icao && fr24.byIcao.get(icao)) || (info && info.alId) || (ref && ref.icao && fr24.byIcao.get(ref.icao)) || 0;
       const base = { src: 'sched', fid, id: Number(idn.row) || 0, cs, num, al: clean(x.airline && x.airline.name) || (info && info.al) || '', alId, alIcao: icao || (ref && ref.icao) || '', ty: clean(x.aircraft && x.aircraft.model && x.aircraft.model.code) || (info && info.ty) || '', reg: clean(x.aircraft && x.aircraft.registration), hex: clean(x.aircraft && x.aircraft.hex).toLowerCase() };
       const dep = re.departure || es.departure || sc.departure, arr = re.arrival || es.arrival || sc.arrival;
-      if (o && dep) boardPut(o, 'departures', Object.assign({ nat: natRowOf(x, 'departures', ref), k, t: dep, sch: sc.departure || dep, est: dep, st: cx ? 'canceled' : re.departure ? 'departed' : 'scheduled', col: cx ? 'red' : re.departure ? 'green' : 'gray', ap: d }, base));
-      if (d && arr) boardPut(d, 'arrivals', Object.assign({ nat: natRowOf(x, 'arrivals', ref), k, t: arr, sch: sc.arrival || arr, est: arr, st: cx ? 'canceled' : dv ? 'diverted' : re.arrival ? 'landed' : es.arrival ? 'estimated' : 'scheduled', col: cx || dv ? 'red' : re.arrival || es.arrival ? 'green' : 'gray', ap: o }, base));
+      if (o && dep) boardPut(o, 'departures', Object.assign({ nat: natRowOf(x, 'departures', ref), k, t: dep, sch: sc.departure || dep, sx: sc.departure ? 1 : 0, est: dep, st: cx ? 'canceled' : re.departure ? 'departed' : 'scheduled', col: cx ? 'red' : re.departure ? 'green' : 'gray', ap: d }, base));
+      if (d && arr) boardPut(d, 'arrivals', Object.assign({ nat: natRowOf(x, 'arrivals', ref), k, t: arr, sch: sc.arrival || arr, sx: sc.arrival ? 1 : 0, est: arr, st: cx ? 'canceled' : dv ? 'diverted' : re.arrival ? 'landed' : es.arrival ? 'estimated' : 'scheduled', col: cx || dv ? 'red' : re.arrival || es.arrival ? 'green' : 'gray', ap: o }, base));
     }
   }
   // (two at a time: an airport like Manchester has some 600 numbers - its three days in about five minutes)
@@ -714,9 +715,9 @@
         if (was && was !== ap && boardOk(was) && t) boardPut(was, kind, { k: 'f' + fid, src: 'sched', t, drop: true });
         if (boardOk(ap)) { schedAt.set(key, ap); schedDirty = true; }
       }
-      if (boardOk(r.o) && (r.atd || r.std)) boardPut(r.o, 'departures', Object.assign({ k: 'f' + fid, src: 'sched', fid, cs, num, t: r.atd || r.std, sch: r.std || r.atd, est: r.atd || r.std, st: r.atd ? 'departed' : 'scheduled', col: r.atd ? 'green' : 'gray', ap: boardOk(r.d) ? r.d : 0 }, who));
+      if (boardOk(r.o) && (r.atd || r.std)) boardPut(r.o, 'departures', Object.assign({ k: 'f' + fid, src: 'sched', fid, cs, num, t: r.atd || r.std, sch: r.std || r.atd, sx: r.std ? 1 : 0, est: r.atd || r.std, st: r.atd ? 'departed' : 'scheduled', col: r.atd ? 'green' : 'gray', ap: boardOk(r.d) ? r.d : 0 }, who));
       const arr = r.ata || r.eta || r.sta;
-      if (boardOk(r.d) && arr) boardPut(r.d, 'arrivals', Object.assign({ k: 'f' + fid, src: 'sched', fid, cs, num, t: arr, sch: r.sta || arr, est: r.ata || r.eta || r.sta, st: r.ata ? 'landed' : r.eta ? 'estimated' : 'scheduled', col: r.ata || r.eta ? 'green' : 'gray', ap: boardOk(r.o) ? r.o : 0 }, who));
+      if (boardOk(r.d) && arr) boardPut(r.d, 'arrivals', Object.assign({ k: 'f' + fid, src: 'sched', fid, cs, num, t: arr, sch: r.sta || arr, sx: r.sta ? 1 : 0, est: r.ata || r.eta || r.sta, st: r.ata ? 'landed' : r.eta ? 'estimated' : 'scheduled', col: r.ata || r.eta ? 'green' : 'gray', ap: boardOk(r.o) ? r.o : 0 }, who));
     }
   }
   // ---- FR24's airport data pages (/data/airports/<code>: general, arrivals, departures, routes, statistics) -------------

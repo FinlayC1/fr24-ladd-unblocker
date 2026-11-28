@@ -329,10 +329,12 @@ function createRouteEngine() {
     for (const f of fulls || []) { const full = String(f == null ? '' : f).trim(); if (!full || out.has(full)) continue; const sh = placeShort(full), set = by.get(sh.toLowerCase()); out.set(full, set && set.size > 1 ? full : sh); }
     return out;
   }
-  function setFields(rows) {
-    fieldRows = rows || null;
-    for (const f of FL) { if (byId.get(f.id) === f) byId.delete(f.id); if (byIcao.get(f.icao) === f) byIcao.delete(f.icao); }
-    FL = []; fgrid = new Map();
+  // (1.4.3: opts.append - these rows added to those set before, a slice at a time: a browser builds its 40,000 fields so,
+  // its page not held up; opts.later - the airports' usage applied by the last slice only)
+  function setFields(rows, opts) {
+    const append = !!(opts && opts.append);
+    fieldRows = append && fieldRows ? fieldRows.concat(rows || []) : rows || null;
+    if (!append) { for (const f of FL) { if (byId.get(f.id) === f) byId.delete(f.id); if (byIcao.get(f.icao) === f) byIcao.delete(f.icao); } FL = []; fgrid = new Map(); }
     for (const r of rows || []) {
       if (!r || !fin(r.lat) || !fin(r.lon) || !r.ident) continue;
       const ident = String(r.ident).toUpperCase();
@@ -349,7 +351,7 @@ function createRouteEngine() {
       FL.push(a); byId.set(id, a); byIcao.set(ident, a);
       const k = cellKey(a.lat, a.lon); (fgrid.get(k) || fgrid.set(k, []).get(k)).push(a);
     }
-    applyUsage();
+    if (!(opts && opts.later)) applyUsage();
     return FL.length;
   }
   // (1.3.6) The OurAirports heliports FR24 does not list - where a helicopter that comes down there has landed: M-SKTO
@@ -357,8 +359,10 @@ function createRouteEngine() {
   // fixed-wing flight is predicted for, nor taken for one of them elsewhere (heliById, not byId). Each by the id the
   // OurAirports list gives it - fieldId of its ident - so the browser names it and opens its page as that list's.
   let HL = [], hgrid = new Map(), HB = new Map(), heliRows = null;
-  function setHeliports(rows) {
-    heliRows = rows || null; HL = []; hgrid = new Map(); HB = new Map();
+  function setHeliports(rows, opts) {
+    const append = !!(opts && opts.append);
+    heliRows = append && heliRows ? heliRows.concat(rows || []) : rows || null;
+    if (!append) { HL = []; hgrid = new Map(); HB = new Map(); }
     for (const r of rows || []) {
       if (!r || !fin(r.lat) || !fin(r.lon) || !r.ident) continue;
       const ident = String(r.ident).toUpperCase(), own = byIcao.get(ident);
@@ -2698,7 +2702,7 @@ function createRouteEngine() {
     return res;
   }
 
-  return { typeFamily, bizKin, isBizType, typeDoubt, regOfCs, surgeOf, setTables2, get T2() { return T2; }, trackState, offTrack, fieldShortName, fieldId, placeShort, setHeliports, heliportAt, heliById: id => HB.get(id) || null, placeLabels, setApproach, approachCell, approachPath, apprGroup, apprKey, trackAgree, heatNear, heatMatch, reckon, trackErr, remotePath, flowKeysOf, pgrpOf, grp6, sunElev, airData, gsAlong, minutesTo, flowAt, pathOf, pathDev, ownerKey, parseRunwayLengths, setRunwayLengths, csvLine, SQ_NOINFO, tripBin, regionOf, learnLeg, learnRow, learnCollector, addLearnedOp, odAdd: (x, y, w) => { const k = odKey(String(x).toUpperCase(), String(y).toUpperCase()), v = (OD.get(k) || 0) + w; if (v > 1e-9) OD.set(k, v); else OD.delete(k); }, odWeight: (x, y) => OD.get(odKey(String(x).toUpperCase(), String(y).toUpperCase())) || 0, odCount: () => OD.size, setAirports, setUsage, addUsage, setRunways, parseRunwaysCsv, runwayFit, setWeights, setTables, setLogit, calibrated, mergePoints, finalTo, longFinal, typeRangeKm, FEAT, groupOf, W, classify, isStepClimb, rangeKm, parseTrace, legsFromPoints, summarizeLeg, stitchLegs, chainLegs, histStats, inferOrigin, predict, privateSite, rwyImpossible, typeDesc, heliSpots, heliAirportAt, landedSum, localFlew, climbedOut, approachTo, downAndUp, landingInGap, gapEnds, slowGap, idleHole, currentLeg, circuits, mergeCircuits, setFields, fieldAt, placeAt, isField, nearbyFields, fieldCount: () => FL.length, airportAt, departureFromClimb, arrivalFromDescent, nearby, dist, brg, xtat, destPoint, angDiff, get airports() { return AP; }, byId: id => byId.get(id), byIcao: c => byIcao.get(String(c || '').toUpperCase()) };
+  return { typeFamily, bizKin, isBizType, typeDoubt, regOfCs, surgeOf, setTables2, get T2() { return T2; }, trackState, offTrack, fieldShortName, fieldId, placeShort, setHeliports, heliportAt, heliById: id => HB.get(id) || null, placeLabels, setApproach, approachCell, approachPath, apprGroup, apprKey, trackAgree, heatNear, heatMatch, reckon, trackErr, remotePath, flowKeysOf, pgrpOf, grp6, sunElev, airData, gsAlong, minutesTo, flowAt, pathOf, pathDev, ownerKey, parseRunwayLengths, setRunwayLengths, csvLine, SQ_NOINFO, tripBin, regionOf, learnLeg, learnRow, learnCollector, addLearnedOp, odAdd: (x, y, w) => { const k = odKey(String(x).toUpperCase(), String(y).toUpperCase()), v = (OD.get(k) || 0) + w; if (v > 1e-9) OD.set(k, v); else OD.delete(k); }, odWeight: (x, y) => OD.get(odKey(String(x).toUpperCase(), String(y).toUpperCase())) || 0, odCount: () => OD.size, setAirports, setUsage, addUsage, setRunways, parseRunwaysCsv, runwayFit, setWeights, setTables, setLogit, calibrated, mergePoints, finalTo, longFinal, typeRangeKm, FEAT, groupOf, W, classify, isStepClimb, rangeKm, parseTrace, legsFromPoints, summarizeLeg, stitchLegs, chainLegs, histStats, inferOrigin, predict, privateSite, rwyImpossible, typeDesc, heliSpots, heliAirportAt, landedSum, localFlew, climbedOut, approachTo, downAndUp, landingInGap, gapEnds, slowGap, idleHole, currentLeg, circuits, mergeCircuits, setFields, fieldAt, placeAt, isField, nearbyFields, fieldCount: () => FL.length, heliCount: () => HL.length, airportAt, departureFromClimb, arrivalFromDescent, nearby, dist, brg, xtat, destPoint, angDiff, get airports() { return AP; }, byId: id => byId.get(id), byIcao: c => byIcao.get(String(c || '').toUpperCase()) };
 }
 /* ==/ENGINE== */
 if (typeof module !== 'undefined') module.exports = { createRouteEngine };

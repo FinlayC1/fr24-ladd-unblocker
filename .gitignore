@@ -21,6 +21,8 @@ dist/app/
 # (the iPhone app: the script copied in, the generated Xcode project, the build and its .ipa - ios/build.sh)
 ios/Web/app.js
 ios/Web/hosts.txt
+ios/Web/update-cert.pem
+ios/Web/shell-id.txt
 ios/LADDUnblocker.xcodeproj/
 ios/build/
 ios/Payload/

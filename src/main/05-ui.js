@@ -561,7 +561,26 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     for (const w of clean(row.textContent).toUpperCase().split(/[^A-Z0-9-]+/)) { const k = w.replace(/[^A-Z0-9]/g, ''); if (k.length >= 3 && regIdx.has(k)) return regIdx.get(k); }
     return null;
   }
+  // (1.4.3) FR24's note under its search results - "You can visit our blog for a complete guide to using search." - taken
+  // away wherever the search box is (the map, the data pages, the player, the app): the box around it, its text and
+  // nothing else
+  const SEARCH_BLOG = /visit\s+our\s+blog\b[\s\S]{0,80}\bguide\s+to\s+using\s+search/i;
+  function hideSearchBlog(scope) {
+    if (!opt.on || !scope) return 0;
+    let n = 0;
+    for (const a of scope.querySelectorAll('a[href*="blog"]')) {
+      let el = a.parentElement; if (!el || !SEARCH_BLOG.test(el.textContent || '')) continue;
+      // (up to the note's own box: the one whose text is the note's alone - its one link, no results, nothing else)
+      const own = x => !!x && x !== scope && x !== document.body && SEARCH_BLOG.test(x.textContent || '') && (x.textContent || '').trim().length < 160 && x.querySelectorAll('a').length === 1 && !x.querySelector('[data-testid^="search__result"], input, button');
+      for (let i = 0; i < 5 && own(el.parentElement); i++) el = el.parentElement;
+      if (el.dataset.tlSearchBlog) continue;
+      el.dataset.tlSearchBlog = '1'; el.style.setProperty('display', 'none', 'important'); n++;
+    }
+    return n;
+  }
   function tagSearchResults() {
+    // (the note sits beside the results, not in them - and is there with none: the whole page looked at)
+    try { hideSearchBlog(document.body); } catch (e) { log('search note', e); }
     const box = document.querySelector('[data-testid="search__results"]'); if (!box) return;
     for (const row of box.querySelectorAll('[data-testid="search__result-row"]')) {
       if (row.querySelector('.tl-ladd-chip')) continue;

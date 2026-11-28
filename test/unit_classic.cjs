@@ -40,9 +40,11 @@ function makeWin(url, page, answerX, opts) {
   win.fetch = input => { let u = typeof input === 'string' ? input : input.url; if (u.startsWith('/')) u = 'https://www.flightradar24.com' + u; const a = answer(u); return new Promise(r => setTimeout(() => r(new Response(a[2] || '', { status: a[1] })), a[0])); };
   win.GM_xmlhttpRequest = o => { const a = answer(o.url, o.data); setTimeout(() => { o.onload && o.onload({ status: a[1], responseText: a[2], response: a[2] }); }, a[0] || 1); return { abort() {} }; };
   win.unsafeWindow = win; win.GM_notification = () => {};
-  win.postMessage = data => { setTimeout(() => win.dispatchEvent(new win.MessageEvent('message', { data, origin: 'https://www.flightradar24.com', source: win })), 0); };
+  win.__posted = [];
+  win.postMessage = data => { win.__posted.push(data); setTimeout(() => win.dispatchEvent(new win.MessageEvent('message', { data, origin: 'https://www.flightradar24.com', source: win })), 0); };
   win.__logs = []; win.console.debug = (...a) => win.__logs.push(a.map(x => typeof x === 'object' ? JSON.stringify(x) : String(x)).join(' ')); win.console.log = () => {}; win.console.error = (...a) => win.__logs.push('ERROR ' + a.join(' '));
   if (opts && opts.opts) win.localStorage.setItem('tweeks.fr24.ladd.opts1', JSON.stringify(opts.opts));
+  if (opts && opts.ls) for (const k of Object.keys(opts.ls)) win.localStorage.setItem(k, opts.ls[k]);
   win.eval(SRC);
   win.__asked = asked;
   return win;
@@ -129,6 +131,47 @@ function playback() {
     check('closed: the panel hidden, the title bar back, the map away, the address as it was', d.getElementById('cnt-playback').classList.contains('hidden') && !d.querySelector('.section-header').classList.contains('hidden') && d.getElementById('cnt-data-map').style.display === 'none' && !w.location.hash && !r3.classList.contains('active'));
     const errs = w.__logs.filter(l => /^ERROR|TypeError|ReferenceError|classic page/.test(l));
     check('no script errors', !errs.length, errs.slice(0, 5));
+    w.close();
+  }
+  // ======== (1.4.3) the playback map as FR24's main map has it ===========================================================
+  // (the page's settings - a Basic account's, the trail tooltip off; signed out, FR24's own kept ones over them (its style
+  // Terrain); this script's kept ones over all (the trail tooltip back on))
+  for (const signedIn of [false, true]) {
+    const page = JSON.parse(JSON.stringify(AC_PAGE));
+    page.props.dispatcher = { accessToken: signedIn ? 'x' : null, settings: { map: { style: 'radar_style', brightness: 70, dayNightLine: true }, misc: { showTrailTooltip: false, hideAircraftAirportPhoto: false }, units: { altitude: 'm', aircraftSpeed: 'kmh' } } };
+    const ls = { settings: JSON.stringify({ map: { style: 'terrain' }, units: { altitude: 'ft' } }), 'tl.mx.settings': JSON.stringify({ misc: { showTrailTooltip: true } }) };
+    const w = makeWin('https://www.flightradar24.com/data/aircraft/ei-dcy', page, u => /flight-playback\.json\?flightId=42a444ba/.test(u) ? [10, 200, playback()] : null, { ls });
+    const d = w.document;
+    await until(() => d.querySelector('#content[data-tl-classic] #tbl-datatable tbody tr'), 20000);
+    const label = (d.querySelector('#fr24_mapType button') || {}).textContent || '';
+    d.getElementById('btn-playback-42a444ba').click();
+    await until(() => /RYR70PX/.test(d.getElementById('txt-playback-header').textContent) && d.querySelector('#cnt-data-map .tl-cl-tiles img'), 20000);
+    const init = w.__posted.find(m => m && m.__tweeksLadd === 'clMap' && m.op === 'init');
+    const want = signedIn ? { style: 'radar_style', brightness: 70, night: true, tip: true, alt: 'm', spd: 'kmh' } : { style: 'terrain', brightness: 70, night: true, tip: true, alt: 'ft', spd: 'kmh' };
+    const who = signedIn ? 'signed in (FR24 keeps its settings on its server: its page\'s)' : 'signed out (FR24\'s own kept ones over the page\'s)';
+    check(`the playback map, ${who}: the main map's style, brightness, day and night line, units - this script's kept trail tooltip over FR24's - sent to the map`, !!init && JSON.stringify(init.set) === JSON.stringify(want) && init.type === want.style, init && init.set);
+    check('... the toolbar\'s style the main map\'s', label.trim() === (signedIn ? 'Radar (blue)' : 'Terrain'), label);
+    // (Google's map not to be had here: the map drawn here, as the main map has it)
+    const tiles = [...d.querySelectorAll('#cnt-data-map .tl-cl-tiles img')].map(i => i.src), tl = d.querySelector('#cnt-data-map .tl-cl-tiles');
+    check('... the map drawn here: the nearest picture of that style, the main map\'s brightness on its tiles', tiles.length > 0 && tiles.every(s => signedIn ? /World_Dark_Gray/.test(s) : /World_Topo_Map/.test(s)) && tl.style.filter === 'brightness(70%)', [tiles[0], tl.style.filter]);
+    if (!signedIn) {
+      // (the trail as FR24's: the line see-through as one, its dots their own colour - none black)
+      const g = d.querySelector('#cnt-data-map .tl-cl-over g[opacity]'), dots = [...d.querySelectorAll('#cnt-data-map .tl-cl-over circle')];
+      check('... the trail as FR24\'s: its line laid on at 100 of 255 as one, a dot at each position its own colour - none black', !!g && Math.abs(Number(g.getAttribute('opacity')) - 100 / 255) < 0.001 && g.querySelectorAll('line').length > 20 && dots.length > 20 && dots.every(c => c.getAttribute('r') === '1.5' && c.getAttribute('fill') !== '#000' && !/^#000/.test(c.getAttribute('fill'))), { lines: g && g.querySelectorAll('line').length, dots: dots.length, fill: dots[30] && dots[30].getAttribute('fill') });
+      // (the main map's style changed meanwhile - in another tab -: read again at the next Play)
+      w.localStorage.setItem('settings', JSON.stringify({ map: { style: 'roadmap', brightness: 90 } }));
+      d.getElementById('btn-playback-42a444ba').click();
+      await until(() => [...d.querySelectorAll('#cnt-data-map .tl-cl-tiles img')].some(i => /World_Street_Map/.test(i.src)), 15000);
+      const tiles1 = [...d.querySelectorAll('#cnt-data-map .tl-cl-tiles img')].map(i => i.src);
+      check('... the settings read again at the next Play (the main map\'s style changed: its picture, its brightness)', tiles1.length > 0 && tiles1.every(s => /World_Street_Map/.test(s)) && tl.style.filter === 'brightness(90%)', [tiles1[0], tl.style.filter]);
+      // (the toolbar's style: for this page only - FR24's main map not changed, nothing kept)
+      d.querySelector('#fr24_mapType a[data-value="satellite"]').dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+      await sleep(50);
+      const tiles2 = [...d.querySelectorAll('#cnt-data-map .tl-cl-tiles img')].map(i => i.src);
+      check('... the toolbar\'s style taken for this page (the map\'s pictures), nothing kept', tiles2.length > 0 && tiles2.every(s => /World_Imagery/.test(s)) && w.localStorage.getItem('tl.classic.maptype') === null && JSON.parse(w.localStorage.getItem('settings')).map.style === 'roadmap', tiles2[0]);
+    }
+    const errs = w.__logs.filter(l => /^ERROR|TypeError|ReferenceError|classic page/.test(l));
+    check('... no script errors', !errs.length, errs.slice(0, 5));
     w.close();
   }
   // ======== a flight number's page =======================================================================================

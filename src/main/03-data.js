@@ -259,18 +259,23 @@
   function buildSites(rows) { const g = new Map(); for (const r of rows) { const k = Math.floor(r[0] * 20) * 10000 + Math.floor(r[1] * 20); let c = g.get(k); if (!c) g.set(k, c = []); c.push(r); } sites.grid = g; sites.n = rows.length;
     // the airfields FR24 does not list, for the route engine: where light aircraft land and take off, fly circuits - and
     // where they may be going (Borkenberge, Slany, a farm strip)
-    try { ENGINE.setFields(rows.filter(r => r[2] === 'S' || r[2] === 'M').map(r => ({ lat: r[0], lon: r[1], alt: r[6], ident: r[4], name: r[3], city: r[5] }))); } catch (e) { log('airfields', e); }
+    // (1.4.3: a browser's in slices - sites.setFields, set outside this block - its page and FR24's own not held up; the
+    // monitor's at once)
+    let p = null;
+    try { const list = rows.filter(r => r[2] === 'S' || r[2] === 'M').map(r => ({ lat: r[0], lon: r[1], alt: r[6], ident: r[4], name: r[3], city: r[5] })); if (typeof sites.setFields === 'function') p = sites.setFields(list); else ENGINE.setFields(list); } catch (e) { log('airfields', e); }
     // (1.4.1: the page's flight on screen worked out again with them - set outside this block; the monitor sets none)
-    if (typeof sites.onBuilt === 'function') sites.onBuilt();
+    const built = () => { if (typeof sites.onBuilt === 'function') sites.onBuilt(); };
+    if (p && typeof p.then === 'function') return p.then(built, built);
+    built(); return null;
   }
   function loadSites() {
     if (sites.grid) return Promise.resolve(true);
     if (sites.loading) return sites.loading;
     sites.loading = (async () => {
       const c = await store.getHist('b:sites1');
-      if (c && Array.isArray(c.rows) && c.rows.length > 10000) { buildSites(c.rows); if (now() - (c.at || 0) < 90 * 864e5) return true; }
+      if (c && Array.isArray(c.rows) && c.rows.length > 10000) { await buildSites(c.rows); if (now() - (c.at || 0) < 90 * 864e5) return true; }
       const rows = await parseSitesCsv(await gmRequest(SITES_URL, { timeout: 90000, json: false, accept: 'text/csv,text/plain', bg: true }));
-      if (rows.length > 10000) { store.setHist('b:sites1', { at: now(), rows }); buildSites(rows); log('landing sites', rows.length); }
+      if (rows.length > 10000) { store.setHist('b:sites1', { at: now(), rows }); await buildSites(rows); log('landing sites', rows.length); }
       return !!sites.grid;
     })().catch(e => { log('landing sites', String(e.message || e)); sites.loading = null; return false; });
     return sites.loading;
@@ -289,6 +294,10 @@
   const heliportNear = (lat, lon, km) => { const n = siteNear(lat, lon, km, 'H'); return n ? { lat: n.row[0], lon: n.row[1], dist: n.dist, name: n.row[3] } : null; };
   // ==/ROUTE-SITES==
   sites.onBuilt = () => placesArrived();
+  // (1.4.3) The 40,000 fields and 21,000 heliports given to the route engine 2,000 at a time, the page let run between -
+  // in one go they held a phone's page several seconds as it opened, FR24's own map and panel with it
+  const engineSlices = async (rows, put) => { for (let i = 0; i < rows.length; i += 2000) { put(rows.slice(i, i + 2000), i === 0, i + 2000 >= rows.length); await sleep(0); } if (!rows.length) put([], true, true); };
+  sites.setFields = list => engineSlices(list, (part, first, last) => ENGINE.setFields(part, { append: !first, later: !last }));
   // ---- places OurAirports does not have, from OpenStreetMap (Overpass): hospital helipads and offshore platforms ------
   // A helicopter down at Southmead Hospital was "a private site near Bristol" - the pad is in OpenStreetMap, not in
   // OurAirports. One small query per spot (0.001°), asked in the background and kept on disk; answers: a named helipad
@@ -304,6 +313,54 @@
     });
   }
   function onOsmRes(d) { const f = d && osmPending.get(d.key); if (f) f(d.j || null); }
+  // ---- (1.4.3) FR24's own track of a flight: its playback (FR24's week - what its free player plays) -----------------------
+  // In the app, asked through FR24's own page - FR24 answers the web view as it answers its own site; the app's own
+  // requests (another network stack) it may turn away - else, and everywhere else, as before. Its requests kept to FR24's
+  // own pace (the lane gmRequest uses: three at a time, the background's one every two seconds).
+  const fr24PbPend = new Map(); let fr24PbSeq = 0;
+  const FR24_PB_URL = (fid, ts) => `https://api.flightradar24.com/common/v1/flight-playback.json?flightId=${encodeURIComponent(fid)}&timestamp=${Math.round(ts)}`;
+  function fr24PbJson(fid, ts, o) {
+    o = o || {}; fid = String(fid || '').toLowerCase();
+    if (!/^[0-9a-f]{1,12}$/.test(fid)) return Promise.reject(new Error('not an FR24 id'));
+    const url = FR24_PB_URL(fid, ts > 1e9 ? ts : nowS()), opts = { timeout: o.timeout || 15000, bg: !!o.bg, priority: !!o.priority };
+    if (!(typeof TL_APP === 'object' && TL_APP)) return gmRequest(url, opts);
+    const lane = opts.bg && !opts.priority ? 'api.flightradar24.com#bg' : 'api.flightradar24.com';
+    return acquire(lane, opts.priority, opts.bg && !opts.priority).then(release => new Promise((res, rej) => {
+      const key = 'p' + (++fr24PbSeq);
+      const direct = () => { release(); gmRequest(url, Object.assign({}, opts, { priority: true })).then(res, rej); };
+      const timer = setTimeout(() => { fr24PbPend.delete(key); direct(); }, Math.min(opts.timeout, 12000));
+      fr24PbPend.set(key, t => { clearTimeout(timer); fr24PbPend.delete(key); let j = null; try { j = t ? JSON.parse(t) : null; } catch (e) { j = null; } if (j && typeof j === 'object') { release(); res(j); } else direct(); });
+      postToPage('fr24ApiReq', { key, url });
+    }));
+  }
+  function onFr24ApiRes(d) { const key = d && typeof d.key === 'string' && /^p\d{1,9}$/.test(d.key) ? d.key : '', f = key ? fr24PbPend.get(key) : null; if (typeof f === 'function') f(typeof d.text === 'string' ? d.text : null); }
+  // (its points - { t, lat, lon, alt, gs, trk, vr, sq, gnd } in time order - and what FR24 says of the flight)
+  function fr24PbParse(j) {
+    const fl = j && j.result && j.result.response && j.result.response.data && j.result.response.data.flight, tr = fl && fl.track;
+    if (!Array.isArray(tr) || !tr.length) return null;
+    const pts = [];
+    for (const p of tr) {
+      if (!p || !fin(p.latitude) || !fin(p.longitude) || !fin(p.timestamp)) continue;
+      const alt = p.altitude && fin(p.altitude.feet) ? p.altitude.feet : null, gs = p.speed && fin(p.speed.kts) ? p.speed.kts : null;
+      pts.push({ t: p.timestamp, lat: p.latitude, lon: p.longitude, alt, gs, trk: fin(p.heading) ? p.heading : null, vr: p.verticalSpeed && fin(p.verticalSpeed.fpm) ? p.verticalSpeed.fpm : null, sq: typeof p.squawk === 'string' && /^[0-7]{4}$/.test(p.squawk) ? p.squawk : '', gnd: alt === 0 && !(gs > 50) });
+    }
+    pts.sort((a, b) => a.t - b.t);
+    return pts.length ? { pts, fl } : null;
+  }
+  // (1.4.3) ... and sent to the monitor, which keeps FR24's whole track of it for good - past FR24's week, as FR24's own
+  // player would have it - when its own copy is the scans' few points (sparse) or none. Once per flight; a flight ended
+  // twenty minutes ago and more (its whole track). The monitor takes it only where it agrees with its own positions.
+  const fr24TrackSent = new Set();
+  function fr24TrackSend(fid, tr) {
+    fid = String(fid || '').toLowerCase();
+    if (!tr || !tr.pts || tr.pts.length < 2 || fr24TrackSent.has(fid) || !/^[0-9a-f]{1,12}$/.test(fid) || nowS() - tr.pts[tr.pts.length - 1].t < 1200 || !monUp()) return;
+    fr24TrackSent.add(fid); if (fr24TrackSent.size > 3000) fr24TrackSent.delete(fr24TrackSent.values().next().value);
+    const fl = tr.fl || {}, idn = fl.identification || {}, ac = fl.aircraft || {}, ap = fl.airport || {}, code = x => clean((x && x.code && (x.code.iata || x.code.icao)) || '');
+    const m = { cs: clean(idn.callsign || ''), fn: clean((idn.number && idn.number.default) || ''), reg: clean((ac.identification && ac.identification.registration) || ''), hex: clean((ac.identification && ac.identification.modes) || '').toLowerCase(), type: clean((ac.model && ac.model.code) || ''), from: code(ap.origin), to: code(ap.destination) };
+    for (const k of Object.keys(m)) if (!/^[A-Za-z0-9-]{1,16}$/.test(m[k])) delete m[k];
+    const p = tr.pts.slice(0, 20000).map(x => [x.t, Math.round(x.lat * 1e5) / 1e5, Math.round(x.lon * 1e5) / 1e5, fin(x.alt) ? x.alt : null, fin(x.gs) ? x.gs : null, fin(x.trk) ? x.trk : null, x.gnd ? 1 : 0]);
+    monPost('/fr24track', { v: 1, fid, m, p }).catch(() => { fr24TrackSent.delete(fid); });
+  }
   let osmCache = null, osmSaveT = 0; const osmWaiters = new Map();
   const osmKey = (lat, lon) => lat.toFixed(3) + ',' + lon.toFixed(3);
   function osmStore() { if (!osmCache) { const kv = store.kvGet('osm2') || {}; osmCache = new Map(Object.entries(kv)); } return osmCache; }
@@ -446,8 +503,10 @@
     }
     // (1.3.6) its heliports for the route engine: a helicopter down on one has landed there (engine.js setHeliports) -
     // M-SKTO's landings at Axis Business Park's helipad were "-" in its log and playback
-    try { ENGINE.setHeliports(c.rows.filter(r => Array.isArray(r) && r[9] === 'H').map(r => ({ id: r[0], ident: r[2], code: r[1], name: r[3], city: r[4], lat: r[6], lon: r[7], alt: r[8] }))); } catch (e) { log('heliports', String(e && e.message || e)); }
-    placesArrived();
+    // (1.4.3: in slices - oa.heliReady when all are in)
+    const hl = c.rows.filter(r => Array.isArray(r) && r[9] === 'H').map(r => ({ id: r[0], ident: r[2], code: r[1], name: r[3], city: r[4], lat: r[6], lon: r[7], alt: r[8] }));
+    oa.heliReady = engineSlices(hl, (part, first) => ENGINE.setHeliports(part, { append: !first })).catch(e => log('heliports', String(e && e.message || e))).then(() => placesArrived());
+    return oa.heliReady;
   }
   // (1.4.1) heliports or strips just in: the flight on screen worked out again at once - its "N/A" end, an OurAirports
   // field or pad it took off from, filled now, not at the next round a quarter of a minute later
@@ -502,6 +561,8 @@
       const c = await store.getHist('b:oaap1').catch(() => null);
       if (oaGood(c)) {
         oaSet(c); oa.at = c.at || 0; oa.got = c.got || 0;
+        // (1.4.3: its heliports in the engine - in slices - before the list is called in)
+        await oa.heliReady;
         // (the list kept is used at once - the pins are not kept waiting for the monitor; whether it is still the one is
         // asked meanwhile, and a newer one put in its place when it comes)
         if (now() - oa.got < 7 * 864e5) { if (now() - oa.got >= OA_CHECK) oaCheck().then(ch => { if (ch) pushOa(); }); return true; }
@@ -509,7 +570,7 @@
         if (oa.got && now() - oa.got < 7 * 864e5) return true;
       }
       const j = await monGet('/oaap', { timeout: 90000, bg: true }).catch(() => null);
-      if (oaGood(j)) { oaKeep(j); log('OurAirports airports', j.rows.length); }
+      if (oaGood(j)) { oaKeep(j); await oa.heliReady; log('OurAirports airports', j.rows.length); }
       return !!oa.rows;
     })().catch(e => { log('OurAirports airports', String(e && e.message || e)); return false; }).finally(() => { oa.loading = null; });
     return oa.loading;

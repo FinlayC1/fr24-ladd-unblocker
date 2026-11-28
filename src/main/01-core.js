@@ -1,7 +1,7 @@
   // ------------------------------------------------------------------------------------------------------------
   // PART 2 â€” RESOLVER, ROUTE ENGINE, ENRICHMENT, PANEL (runs in the userscript context)
   // ------------------------------------------------------------------------------------------------------------
-  const VERSION = '1.4.2';
+  const VERSION = '1.4.3';
   // The switches of the LADD Unblock window (FR24's bottom bar): in localStorage, so both this script and the page-world
   // part read them synchronously at document start; the page part is told of a change at once ('opts')
   const OPT_KEY = 'tweeks.fr24.ladd.opts1';
@@ -16,12 +16,13 @@
   const PENDING_TTL_MS = 90000;         // forget feed flights not seen for this long
   const ID_TTL_MS = 48 * 3600e3;        // cache lifetime for flight-id -> aircraft resolutions (longer than any flight)
   const HEX_TTL_MS = 45 * 864e5;        // cache lifetime for hex -> registration/type/photo data
-  const HISTORY_DAYS = 220;             // how far back the aircraft's own flight log is rebuilt (7 months)
+  const HISTORY_DAYS = 365;             // how far back the aircraft's own flight log is rebuilt (a year; 220 days before 1.4.3)
   // adsb.lol keeps each aircraft's daily traces for about six weeks (30 Sep 2026: back to 19 Aug); older days come from
   // airplanes.live's history (a year of it) - only for the aircraft being looked at, never for background logs
   const LOL_DAYS = 40;
   // an aircraft FR24 lists itself shows a free account one week of its log: this much more is rebuilt under FR24's rows
-  const OLDER_DAYS = 90;
+  // (a year, as a blocked aircraft's whole log; 90 days before 1.4.3)
+  const OLDER_DAYS = 365;
   // the part of the log the destination engine reasons over (22.10: all of it - its history evidence counts older flights
   // for less, so a long log sharpens the picture without its old routine outweighing what the aircraft does now)
   const ENGINE_HIST_DAYS = 220;

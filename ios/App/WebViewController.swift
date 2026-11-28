@@ -35,12 +35,12 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKUIDeleg
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = WebViewController.bg
-        guard let script = WebViewController.resource("app", "js"), let hostsTxt = WebViewController.resource("hosts", "txt") else {
+        // (1.4.3: the app's own script, or a newer release's it updated itself to - ScriptStore)
+        guard let script = ScriptStore.current() else {
             show("The app's files are incomplete. Install it again.")
             return
         }
-        let connect = hostsTxt.split(whereSeparator: { $0 == "\n" || $0 == "\r" }).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-        net = AppNet(connect: connect, granted: { UserDefaults.standard.stringArray(forKey: "hosts") ?? [] })
+        net = AppNet(connect: script.hosts, granted: { UserDefaults.standard.stringArray(forKey: "hosts") ?? [] })
 
         let cfg = WKWebViewConfiguration()
         cfg.websiteDataStore = .default()
@@ -50,7 +50,7 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKUIDeleg
         cfg.preferences.javaScriptCanOpenWindowsAutomatically = true
         let ucc = WKUserContentController()
         ucc.addUserScript(WKUserScript(source: prelude(), injectionTime: .atDocumentStart, forMainFrameOnly: true))
-        ucc.addUserScript(WKUserScript(source: script, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        ucc.addUserScript(WKUserScript(source: script.source, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         ucc.add(WeakHandler(self), name: "TLNative")
         cfg.userContentController = ucc
 
@@ -74,8 +74,21 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKUIDeleg
         w.load(URLRequest(url: WebViewController.home))
 
         NotificationCenter.default.addObserver(self, selector: #selector(noteTapped(_:)), name: .tlNoteTapped, object: nil)
-        updater = Updater(host: self)
+        updater = Updater(host: self, running: script.version) { [weak self] in self?.useUpdate() }
         updater?.check(asked: false)
+    }
+
+    // (1.4.3) the update just kept (Update pressed), in use now: the page's scripts and the hosts its requests may go to replaced, and FR24
+    // loaded again with them
+    private func useUpdate() {
+        guard let w = web, let script = ScriptStore.current() else { return }
+        net = AppNet(connect: script.hosts, granted: { UserDefaults.standard.stringArray(forKey: "hosts") ?? [] })
+        let ucc = w.configuration.userContentController
+        ucc.removeAllUserScripts()
+        ucc.addUserScript(WKUserScript(source: prelude(), injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        ucc.addUserScript(WKUserScript(source: script.source, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        updater?.running = script.version
+        if let u = w.url, Policy.scriptOrigin((u.scheme ?? "") + "://" + (u.host ?? "")) { w.reload() } else { w.load(URLRequest(url: WebViewController.home)) }
     }
 
     // (the bridge in the page, before the script: TLNative as the script takes it - its messages to the app, the app's
@@ -93,11 +106,6 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKUIDeleg
           } catch (e) {}
         })();
         """
-    }
-
-    private static func resource(_ name: String, _ ext: String) -> String? {
-        guard let u = Bundle.main.url(forResource: name, withExtension: ext, subdirectory: "Web") else { return nil }
-        return try? String(contentsOf: u, encoding: .utf8)
     }
 
     // ---- the bridge: what the script asks of the app (src/app/shim.js) --------------------------------------------------

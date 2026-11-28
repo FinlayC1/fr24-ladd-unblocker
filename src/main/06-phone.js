@@ -154,8 +154,11 @@ html.tl-pv-play #tl-pv .tl-pv-backpill{display:flex}
           // FR24's old one for a computer. A flight of FR24's own by its id; one known only here by the aircraft and its
           // take-off, on FR24's flights page, which the page part turns into the player - page.js mxPbAway)
           const pid = /btn-playback/.test(a.className) ? String(a.dataset.flightHex || (/^btn-playback-([0-9a-f]+)$/.exec(a.id) || [])[1] || '').toLowerCase() : '';
+          // (1.4.3: one of FR24's own older than its week: FR24's player page of it sends a free account to its search page -
+          // its flights page given it, as a flight known only here, played from FR24's positions the monitor kept)
+          const rowT = Number(tr.dataset.timestamp) || 0, old = rowT > 1e9 && Date.now() / 1000 - rowT > 7 * 86400;
           b.onclick = () => {
-            if (/^[0-9a-f]{1,8}$/.test(pid)) location.href = '/data/playback/' + pid;
+            if (/^[0-9a-f]{1,8}$/.test(pid)) location.href = old ? '/data/flights?tl-pb=' + pid : '/data/playback/' + pid;
             else if (PB_SYN.test(pid)) location.href = '/data/flights?tl-pb=' + pid;
             else a.click();
           };

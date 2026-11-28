@@ -236,7 +236,7 @@ const rep = (hex, o) => Object.assign({ hex, lat: 53.4, lon: -2.3, alt_baro: 120
     M.histQ.length = 0; M.fillAsked.clear();
     M.answer(new URL('http://x/hist?hex=a6a436'), Date.now() / 1000);
     const q1 = M.histQ.filter(j => j.hex === 'a6a436');
-    check('/hist: the aircraft\'s finished days of the last 220 - its whole log - with no answer queued to be built here (asked of both networks)', q1.length >= 215 && q1.length <= 220 && q1.every(j => j.fill && j.day <= M.closed), [q1.length, M.closed]);
+    check('/hist: the aircraft\'s finished days of the last 365 (a year, 1.4.3; 220 before) - its whole log - with no answer queued to be built here (asked of both networks)', q1.length >= 360 && q1.length <= 365 && q1.every(j => j.fill && j.day <= M.closed), [q1.length, M.closed]);
     M.answer(new URL('http://x/hist?hex=a6a436'), Date.now() / 1000);
     check('... once: asked again at once, nothing more queued', M.histQ.filter(j => j.hex === 'a6a436').length === q1.length);
     M.histQ.length = 0; for (const j of q1) M.histPend.delete(j.hex + '|' + j.day); M.closed = was; }
