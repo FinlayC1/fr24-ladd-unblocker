@@ -124,8 +124,9 @@
   // padlocked ones as the free pages had them, filled at once from public ADS-B - fillPlaybackData)
   const CL_PANEL = `<div class="row hidden" id="cnt-playback"> <div><div class="row"><div class="col-sm-9 playback-header"><div class="row"><div class="col-xs-12"><h1 id="txt-playback-header">Playback of flight</h1></div></div><div class="row playback-player"><div class="col-xs-3"><div class="row p-t-20"><div class="col-xs-12"><label>GREAT CIRCLE DISTANCE</label> <span class="text-open-1" id="txt-great-circle-distance">-</span></div></div><div class="row p-t-10"><div class="col-xs-12"><label>AVERAGE FLIGHT TIME</label> <span class="text-open-1" id="txt-flight-time-average">-</span></div></div><div class="row p-t-10"><div class="col-xs-12"><label>ACTUAL FLIGHT TIME</label> <span class="text-open-1" id="txt-flight-time-actual">-</span></div></div><div class="row p-t-10"><div class="col-xs-12"><label>AVERAGE ARRIVAL DELAY</label> <span class="text-open-1" id="txt-flight-delay-average">-</span></div></div><div class="row p-t-10"><div class="col-xs-12"><svg class="fr-logo-payoff"><use xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="#fr-logo-payoff"></use></svg></div></div></div><div class="col-xs-9 playback-control"><div class="row airport-container p-t-20 pos-rel"><div class="airport-block n-p"><label>FROM</label> <label class="airport-city" id="txt-airport-origin">-</label></div><div class="airport-block airport-arrow text-center"><svg id="icon-arrow"><use xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="#icon-arrow-origin-dest"></use></svg></div><div class="airport-block n-p m-r-35"><label>TO</label> <label class="airport-city" id="txt-airport-dest">-</label></div></div><div class="row pos-rel"><button id="btn-control-playback" title="Start playback"></button><div id="cnt-fight-progress-slider"><div class="track" title="Click to change flight playback progress"></div><div class="progress" style="width: 0px;"></div><div class="thumb" title="Drag to change flight playback progress" data-max="0" data-value="0" style="left: 0px;"></div></div></div><div class="row"><div class="col-xs-3" style="padding-left:0"><div class="row"><label>TIME</label> <span class="text-open-2" id="txt-track-timestamp" data-suffix=" <small>UTC</small>" data-timestamp="">-</span></div><div class="row"><div id="btn-group-features" class="btn-group" role="group" aria-label="..."><button id="btn-toggle-follow" type="button" class="btn" title="Follow aircraft during playback">${clUse('icon-fr24-follow', 'icon icon-fr24-follow')}</button> <button id="btn-toggle-route" type="button" class="btn" title="Show great circle route">${clUse('icon-fr24-route', 'icon icon-fr24-route')}</button> <button id="btn-toggle-chart" type="button" class="btn" title="Show flight data chart"><i class="fa fa-area-chart"></i></button></div></div></div><div class="col-xs-3" style="padding-left:0"><div class="row"><label class="text-uppercase">Barometric altitude</label> <span class="text-open-2" id="txt-altitude" data-unit="unit_alt">-</span></div><div class="row"><label>GPS ALTITUDE</label> ${clLock(161)}</div></div><div class="col-xs-2" style="padding-left:0"><div class="row"><label>GROUND SPEED</label> <span class="text-open-2" id="txt-speed" data-unit="unit_speed">-</span></div><div class="row"><label>TRUE AIRSPEED</label> ${clLock(162)}</div></div><div class="col-xs-3" style="padding-left:0"><div class="row"><label>VERTICAL SPEED</label> ${clLock(163)}</div><div class="row"><label>INDICATED AIRSPEED</label> ${clLock(164)}</div></div><div class="col-xs-1" style="padding-left:0"><div class="row"><label>TRACK</label> <span class="text-open-2" id="txt-track-heading">-</span></div><div class="row"><label>SQUAWK</label> ${clLock(165)}</div></div></div></div></div></div><div class="col-sm-3 playback-image n-p"><div class="row pos-rel"><div class="pos-rel"><span class="label" id="txt-aircraft-image-copyright"></span> <a id="txt-aircraft-image-url" target="_blank"><img alt="" id="img-aircraft-img" class="img-responsive"></a></div><button class="pos-abs" id="btn-playback-control-close" title="Close this panel">${clUse('icon-fr24-close', 'icon-fr24-close')}</button></div><div class="row"><div class="col-xs-12 p-t-10"><label>AIRCRAFT</label> <span class="text-open-1" id="txt-aircraft-model">-</span></div></div><div class="row"><div class="col-xs-12 p-t-10"><label>REGISTRATION</label> <span class="text-open-1" id="txt-aircraft-reg">-</span></div></div><div class="row"><div class="col-xs-12" style="padding-top:8px"><label>SERIAL NUMBER (MSN)</label> <span class="text-open-1" id="txt-aircraft-serial">-</span></div></div></div></div><div id="cnt-chart" class="row hidden"></div></div> </div>`;
   // (the map's toolbar on the page's right edge, as the old pages had it: settings - the map's style -, full screen, zoom)
-  const CL_MAPTYPES = [['terrain', 'Terrain'], ['roadmap', 'Roadmap'], ['simple_style', 'Greyscale'], ['radar_style2', 'Radar (dark)'], ['satellite', 'Satellite'], ['hybrid', 'Hybrid']];
-  const CL_TOOLBAR = () => `<div class="bootstrap map-components-wrapper"><div id="fr24_ViewsToolbar" class="smooth-tab attach-right dark hidden-in-3d"><ul><li id="fr24_SettingsMenu" class="dropdown map-side" data-content="Settings"><a data-toggle="dropdown" class="dropdown-toggle">${clUse('icon-fr24-gear')}</a><ul id="fr24_SettingsDropdown" class="dropdown-menu settings noclose"><li><ul class="smooth-tab-group"><li class="active"><a class="smooth-tab attach-bottom" data-toggle="tab" data-target="#mapsettings"><div class="tab-sweep toleft"></div><div class="tab-content">Map</div><div class="tab-sweep toright"></div></a></li></ul></li><li><div class="tab-content"><div id="mapsettings" class="tab-pane active clearfix"><div class="scroll-wrap"><h5 class="pull-left short-label">Map style</h5><div id="fr24_mapType" class="btn-group pull-right"><button type="button" class="btn btn-default dropdown-toggle pull-right" data-toggle="dropdown" value="${esc(clMapType())}" data-source="map_type">${esc((CL_MAPTYPES.find(x => x[0] === clMapType()) || CL_MAPTYPES[5])[1])} <span class="caret"></span></button><ul class="dropdown-menu" role="menu">${CL_MAPTYPES.map(([v, t]) => `<li><a data-value="${v}">${esc(t)}</a></li>`).join('')}</ul></div><div class="clearfix"></div></div></div></div></li></ul></li><li id="fr24_Fullscreen" class="dropdown map-side" data-content="Fullscreen"><a data-toggle="dropdown" class="dropdown-toggle" href="javascript: void(0);">${clUse('icon-fr24-fullscreen', 'icon-fr24-fullscreen')}</a></li><li id="fr24_ZoomIn" class="dropdown" data-content="ZoomIn"><a class="dropdown-toggle">${clUse('icon-fr24-plus', 'nav-icon plus')}</a></li><li id="fr24_ZoomOut" class="dropdown" data-content="ZoomOut"><a class="dropdown-toggle">${clUse('icon-fr24-minus', 'nav-icon minus')}</a></li></ul></div></div>`;
+  // (1.4.3: and the styles FR24's main map has since - any of them the main map's own)
+  const CL_MAPTYPES = [['terrain', 'Terrain'], ['roadmap', 'Roadmap'], ['simple_style', 'Greyscale'], ['radar_style2', 'Radar (dark)'], ['radar_style', 'Radar (blue)'], ['aubergine_style', 'Aubergine'], ['black_white', 'Black/White'], ['satellite', 'Satellite'], ['hybrid', 'Hybrid']];
+  const CL_TOOLBAR = () => `<div class="bootstrap map-components-wrapper"><div id="fr24_ViewsToolbar" class="smooth-tab attach-right dark hidden-in-3d"><ul><li id="fr24_SettingsMenu" class="dropdown map-side" data-content="Settings"><a data-toggle="dropdown" class="dropdown-toggle">${clUse('icon-fr24-gear')}</a><ul id="fr24_SettingsDropdown" class="dropdown-menu settings noclose"><li><ul class="smooth-tab-group"><li class="active"><a class="smooth-tab attach-bottom" data-toggle="tab" data-target="#mapsettings"><div class="tab-sweep toleft"></div><div class="tab-content">Map</div><div class="tab-sweep toright"></div></a></li></ul></li><li><div class="tab-content"><div id="mapsettings" class="tab-pane active clearfix"><div class="scroll-wrap"><h5 class="pull-left short-label">Map style</h5><div id="fr24_mapType" class="btn-group pull-right"><button type="button" class="btn btn-default dropdown-toggle pull-right" data-toggle="dropdown" value="${esc(clMapType())}" data-source="map_type">${esc((CL_MAPTYPES.find(x => x[0] === clMapType()) || CL_MAPTYPES[CL_MAPTYPES.length - 1])[1])} <span class="caret"></span></button><ul class="dropdown-menu" role="menu">${CL_MAPTYPES.map(([v, t]) => `<li><a data-value="${v}">${esc(t)}</a></li>`).join('')}</ul></div><div class="clearfix"></div></div></div></div></li></ul></li><li id="fr24_Fullscreen" class="dropdown map-side" data-content="Fullscreen"><a data-toggle="dropdown" class="dropdown-toggle" href="javascript: void(0);">${clUse('icon-fr24-fullscreen', 'icon-fr24-fullscreen')}</a></li><li id="fr24_ZoomIn" class="dropdown" data-content="ZoomIn"><a class="dropdown-toggle">${clUse('icon-fr24-plus', 'nav-icon plus')}</a></li><li id="fr24_ZoomOut" class="dropdown" data-content="ZoomOut"><a class="dropdown-toggle">${clUse('icon-fr24-minus', 'nav-icon minus')}</a></li></ul></div></div>`;
   const CL_FOOT = () => `<footer class="pb-4"><p>© ${new Date().getUTCFullYear()} Flightradar24 AB</p><ul><li><a href="${CL_FR}/contact-us">Contact us</a></li><li><a href="${CL_FR}/faq">FAQ</a></li><li><a href="${CL_FR}/careers">Careers</a></li><li><a href="${CL_FR}/privacy-policy">Privacy</a></li><li><a href="${CL_FR}/terms-of-service">Terms</a></li></ul></footer>`;
   const clCrumbs = list => `<div class="mx-4"><nav class="breadcrumbs pt-2 border-b border-gray-700 border-solid" data-component="breadcrumbs"><ol class="flex flex-wrap justify-start m-auto text-sm list-none breadcrumbs__list" data-testid="breadcrumbs" itemscope itemtype="https://schema.org/BreadcrumbList">${list.map(([name, href], i) => (i ? '<span class="px-2 text-gray-1300">&gt;</span>' : '') + `<li class="pb-2 font-base font-regular" itemprop="itemListElement" itemscope itemtype="https://schema.org/ListItem">${href ? `<a class="breadcrumbs__list-item breadcrumbs__list-item--url text-blue-500 hover:text-blue-500" itemprop="item" itemtype="https://schema.org/WebPage" href="${esc(href)}"><div class="flex breadcrumbs__list-item-name" itemprop="name">${esc(name)}</div></a>` : `<div class="text-gray-1300 font-semibold"><div class="breadcrumbs__list-item-name" itemprop="name">${esc(name)}</div></div>`}<meta itemprop="position" content="${i + 1}"></li>`).join('')}</ol></nav></div>`;
 
@@ -310,8 +311,31 @@
     simple_style: [CL_ESRI('Canvas/World_Light_Gray_Base'), CL_ESRI('Canvas/World_Light_Gray_Reference')],
     radar_style2: [CL_ESRI('Canvas/World_Dark_Gray_Base'), CL_ESRI('Canvas/World_Dark_Gray_Reference')]
   };
-  const CL_MAP_KEY = 'tl.classic.maptype';
-  function clMapType() { let v = ''; try { v = localStorage.getItem(CL_MAP_KEY) || ''; } catch (e) { v = ''; } return CL_LAYERS[v] ? v : 'hybrid'; }
+  CL_LAYERS.radar_style = CL_LAYERS.aubergine_style = CL_LAYERS.black_white = CL_LAYERS.radar_style2;
+  // ---- (1.4.3) The map as FR24's main map has it: its settings as FR24 reads them on opening - the page's (the account's
+  // own, else FR24's), a browser not signed in its own over them (FR24's "settings" in this site's storage), and over
+  // all those this script keeps of the ones FR24 locks (page.js mxSetKept). The map's style, its brightness, its day and
+  // night line, the trail's tooltip, the units it tells in. Read again at each Play; the toolbar's choice of style holds
+  // for this page only
+  const CL_SPEEDS = ['kt', 'kmh', 'mph', 'mach'];
+  function clMainSet() {
+    const d = (clPage && clPage.props && clPage.props.dispatcher) || {};
+    let s = {}; try { s = JSON.parse(JSON.stringify(d.settings || {})) || {}; } catch (e) { s = {}; }
+    const over = o => {
+      if (!o || typeof o !== 'object') return;
+      for (const sec of Object.keys(o)) { const a = s[sec], b = o[sec]; if (!a || typeof a !== 'object' || !b || typeof b !== 'object') continue; for (const k of Object.keys(b)) if (k in a) a[k] = b[k]; }
+    };
+    const kept = k => { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { return null; } };
+    if (d.accessToken == null) over(kept('settings'));
+    over(kept('tl.mx.settings'));
+    const map = s.map || {}, misc = s.misc || {}, u = s.units || {}, b = Number(map.brightness);
+    return {
+      style: CL_LAYERS[map.style] ? map.style : 'hybrid', brightness: Number.isFinite(b) ? Math.max(0, Math.min(100, b)) : 100,
+      night: map.dayNightLine === true, tip: misc.showTrailTooltip !== false,
+      alt: u.altitude === 'm' ? 'm' : 'ft', spd: CL_SPEEDS.includes(u.aircraftSpeed) ? u.aircraftSpeed : 'kt'
+    };
+  }
+  function clMapType() { return pl.type && CL_LAYERS[pl.type] ? pl.type : clMainSet().style; }
   const clWX = (lon, z) => (lon + 180) / 360 * 256 * Math.pow(2, z);
   const clWY = (lat, z) => { const s = Math.sin(Math.max(-85, Math.min(85, lat)) * Math.PI / 180); return (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * 256 * Math.pow(2, z); };
   const clLon = (x, z) => x / (256 * Math.pow(2, z)) * 360 - 180;
@@ -338,7 +362,10 @@
       svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
       if (m.draw) m.draw();
     };
-    m.setType = t => { if (!CL_LAYERS[t]) return; m.type = t; try { localStorage.setItem(CL_MAP_KEY, t); } catch (e) { /* this visit only */ } m.render(); };
+    m.setType = t => { if (!CL_LAYERS[t]) return; m.type = t; m.render(); };
+    // (the main map's brightness, as FR24 sets it on its map's tiles)
+    m.bright = b => { tiles.style.filter = Number.isFinite(b) && b < 100 ? `brightness(${Math.max(0, b)}%)` : ''; };
+    m.bright(clMainSet().brightness);
     // (the track fitted to the part of the map the panel leaves: the old panel covers its foot)
     m.fit = pts => {
       if (!pts.length) return; let a = Infinity, b = -Infinity, c = Infinity, d = -Infinity;
@@ -366,8 +393,16 @@
   }
   // (how much of the map's foot the panel covers: the map's height less where the page's content begins)
   function clCover() { const map = document.getElementById('cnt-data-map'), c = document.getElementById('cnt-data-content'); if (!map || !c) return 0; const mr = map.getBoundingClientRect(), cr = c.getBoundingClientRect(); return Math.max(0, Math.min(mr.height, mr.bottom - cr.top)); }
-  // (a track's colour by its height, as FR24 colours its trails: ground yellow, through green and blue, to purple)
-  const clAltCol = alt => `hsl(${Math.round(55 + Math.min(1, Math.max(0, (alt || 0) / 40000)) * 230)},95%,${alt > 0 ? 50 : 55}%)`;
+  // (a track's colour by its height, as FR24 colours its trails - by metres: white on the ground, yellow low, through
+  // green, cyan and blue, to violet and red at the top; the same scale as Google's map here draws where FR24's own is
+  // not to be had, page.js clmCol)
+  const CL_HUES = [[100, 52], [300, 62], [600, 78], [1000, 105], [1500, 125], [2500, 150], [3500, 175], [4500, 190], [5500, 200], [6500, 210], [7500, 225], [8500, 240], [9500, 255], [10500, 268], [11500, 280], [12500, 300], [13000, 330]];
+  const clAltCol = alt => {
+    const m = (alt || 0) * 0.3048; if (!(m > 100)) return '#ffffff';
+    let h = CL_HUES[CL_HUES.length - 1][1];
+    for (let i = 1; i < CL_HUES.length; i++) if (m <= CL_HUES[i][0]) { const a = CL_HUES[i - 1], b = CL_HUES[i]; h = a[1] + (b[1] - a[1]) * (m - a[0]) / (b[0] - a[0]); break; }
+    return `hsl(${Math.round(h)},100%,50%)`;
+  };
   // (the toolbar: settings - the map's style -, full screen, zoom in and out)
   // (FR24's stylesheet leaves the buttons' links to the pointer of their items - the old page script listened there)
   function clToolbarBind(wrap) {
@@ -378,7 +413,7 @@
     mt.querySelectorAll('a[data-value]').forEach(a => a.addEventListener('click', ev => {
       ev.preventDefault(); const v = a.dataset.value; mt.classList.remove('open');
       const b = mt.querySelector('button'); b.value = v; b.innerHTML = `${esc(a.textContent)} <span class="caret"></span>`;
-      try { localStorage.setItem(CL_MAP_KEY, v); } catch (e) { /* this visit only */ }
+      pl.type = v;
       if (pl.gm) clGm('type', { type: v }); else if (pl.map) pl.map.setType(v);
     }));
     document.addEventListener('click', ev => { if (!set.contains(ev.target)) { set.classList.remove('open'); mt.classList.remove('open'); } });
@@ -393,7 +428,7 @@
 
   // ---- the player: a row's Play, as FR24's old panel played it - the map over the page, the flight drawn, the aircraft
   // moved along it, its figures each moment (and those FR24 padlocked, from public ADS-B - fillPlaybackData)
-  const pl = { map: null, pts: [], t: 0, t0: 0, t1: 0, playing: false, raf: 0, last: 0, seq: 0, follow: false, route: false, chart: false, fid: '', o: null, d: null, on: false };
+  const pl = { map: null, pts: [], t: 0, t0: 0, t1: 0, playing: false, raf: 0, last: 0, seq: 0, follow: false, route: false, chart: false, fid: '', o: null, d: null, on: false, type: '' };
   // ---- (1.4.2) the map as the old pages had it: Google's, FR24's own - drawn in the page by its part there (page.js
   // clmOp), the flight on it as FR24's map draws one. Asked once; the map drawn here (Esri's) only where Google's cannot be
   let clGmWait = null;
@@ -406,7 +441,7 @@
     if (pl.gmP) return pl.gmP;
     pl.gmP = new Promise(res => {
       const done = ok => { pl.gm = !!ok; res(pl.gm); };
-      clGmWait = done; postToPage('clMap', { op: 'init', type: clMapType() });
+      clGmWait = done; postToPage('clMap', { op: 'init', type: clMapType(), set: clMainSet() });
       // (Google's map not up in 18 s: the one drawn here)
       setTimeout(() => { if (clGmWait === done) { clGmWait = null; done(false); } }, 18000);
     });
@@ -456,7 +491,7 @@
   function clFollow(on) {
     pl.follow = !!on; const b = document.getElementById('btn-toggle-follow'); if (b) b.classList.toggle('active', pl.follow);
     const c = pl.pts.length ? clAt(pl.t) : null; if (!c) return;
-    if (pl.gm) clGm('pos', { lat: c.lat, lon: c.lon, trk: fin(c.trk) ? c.trk : 0, follow: pl.follow, cover: clCover() });
+    if (pl.gm) clGm('pos', { lat: c.lat, lon: c.lon, trk: fin(c.trk) ? c.trk : 0, follow: pl.follow, cover: clCover(), t: Math.round(pl.t) });
     else if (pl.follow && pl.map) clCentre(c);
   }
   // (the aircraft in the middle of the part of the map the panel leaves)
@@ -506,6 +541,8 @@
       mapEl.querySelector('#tl-cl-gmap').style.display = gm ? '' : 'none';
       for (const el of mapEl.querySelectorAll('.tl-cl-tiles, .tl-cl-over, .tl-cl-attr')) el.style.display = gm ? 'none' : '';
       if (!gm && !pl.map) pl.map = clMap(mapEl);
+      // (the main map's style and brightness, as they are now)
+      if (!gm && pl.map) { const ms = clMainSet(); pl.map.bright(ms.brightness); if (!pl.type && pl.map.type !== ms.style) pl.map.setType(ms.style); }
       return gm;
     });
     // (the panel at once, from the row: its airports, its flight, the aircraft)
@@ -549,7 +586,7 @@
       const ac = { hex: pl.hex || (clPage.kind === 'aircraft' ? clPage.hex : '') || '', type: tk.type || (clPage.kind === 'aircraft' ? clean((clPage.props.aircraft || {}).typeCode || '') : '') || '' };
       ac.cls = ENGINE.classify({ hex: ac.hex, type: ac.type });
       const r5 = v => Math.round(v * 1e5) / 1e5, ends = a => a && fin(a.lat) && fin(a.lon) ? [r5(a.lat), r5(a.lon)] : null;
-      clGm('track', { pts: pts.map(q => [q.t, r5(q.lat), r5(q.lon), fin(q.alt) ? Math.round(q.alt) : null, fin(q.gs) ? Math.round(q.gs) : null, fin(q.trk) ? Math.round(q.trk) : null]), o: ends(pl.o), d: ends(pl.d), cover: clCover(), ac });
+      clGm('track', { pts: pts.map(q => [q.t, r5(q.lat), r5(q.lon), fin(q.alt) ? Math.round(q.alt) : null, fin(q.gs) ? Math.round(q.gs) : null, fin(q.trk) ? Math.round(q.trk) : null]), o: ends(pl.o), d: ends(pl.d), cover: clCover(), ac, set: clMainSet(), type: clMapType() });
       clGm('route', { on: pl.route });
     } else { pl.map.draw = clDrawTrack; pl.map.fit(pts.concat([pl.o, pl.d].filter(x => x && fin(x.lat) && fin(x.lon)))); }
     clSeek(pl.t0);
@@ -597,18 +634,22 @@
   function clDrawTrack() {
     const m = pl.map, svg = m.el.querySelector('.tl-cl-over'), P = pl.pts; if (!P.length) { svg.innerHTML = ''; return; }
     let html = '';
-    // (the great circle between its airports)
+    // (the great circle between its airports: FR24's thin dark dashed line)
     if (pl.route && pl.o && pl.d && fin(pl.o.lat) && fin(pl.d.lat)) {
       let d = ''; for (let i = 0; i <= 64; i++) { const g = clGc(pl.o, pl.d, i / 64), q = m.px(g.lat, g.lon); d += (i ? 'L' : 'M') + q.x.toFixed(1) + ' ' + q.y.toFixed(1); }
-      html += `<path d="${d}" fill="none" stroke="#fff" stroke-width="2" stroke-opacity=".85"/>`;
+      html += `<path d="${d}" fill="none" stroke="#000" stroke-opacity="${(100 / 255).toFixed(3)}" stroke-width="2" stroke-dasharray="3 5"/>`;
     }
-    // (the track: its pieces by height, each its colour)
-    let prev = m.px(P[0].lat, P[0].lon);
+    // (1.4.3: the track as FR24's map draws a trail - 3 px, by height, laid on see-through as one (FR24's 100 of 255); a
+    // dot at each position, its own colour)
+    const xy = P.map(p => m.px(p.lat, p.lon)), f1 = v => v.toFixed(1);
+    let line = '', dots = '', last = null;
     for (let i = 1; i < P.length; i++) {
-      const q = m.px(P[i].lat, P[i].lon); if (Math.abs(q.x - prev.x) + Math.abs(q.y - prev.y) < 0.6 && i < P.length - 1) continue;
-      html += `<line x1="${prev.x.toFixed(1)}" y1="${prev.y.toFixed(1)}" x2="${q.x.toFixed(1)}" y2="${q.y.toFixed(1)}" stroke="${clAltCol(P[i].alt)}" stroke-width="3" stroke-linecap="round"/>`;
-      prev = q;
+      const a = xy[i - 1], q = xy[i]; if (Math.abs(q.x - a.x) + Math.abs(q.y - a.y) < 0.6 && i < P.length - 1) continue;
+      if (P[i].t - P[i - 1].t >= 300) { html += `<line x1="${f1(a.x)}" y1="${f1(a.y)}" x2="${f1(q.x)}" y2="${f1(q.y)}" stroke="#000" stroke-opacity="${(100 / 255).toFixed(3)}" stroke-width="1" stroke-dasharray="1 3"/>`; continue; }
+      line += `<line x1="${f1(a.x)}" y1="${f1(a.y)}" x2="${f1(q.x)}" y2="${f1(q.y)}" stroke="${clAltCol(P[i].alt)}" stroke-width="3" stroke-linecap="round"/>`;
     }
+    for (let i = 0; i < P.length; i++) { const q = xy[i]; if (last && Math.abs(q.x - last.x) + Math.abs(q.y - last.y) < 1) continue; dots += `<circle cx="${f1(q.x)}" cy="${f1(q.y)}" r="1.5" fill="${clAltCol(P[i].alt)}"/>`; last = q; }
+    html += `<g opacity="${(100 / 255).toFixed(3)}">${line}</g>${dots}`;
     for (const ap of [pl.o, pl.d]) if (ap && fin(ap.lat)) { const q = m.px(ap.lat, ap.lon); html += `<image href="${CL_PIN}" x="${(q.x - 10).toFixed(1)}" y="${(q.y - 20).toFixed(1)}" width="20" height="20"/>`; }
     const c = clAt(pl.t);
     if (c) { const q = m.px(c.lat, c.lon); html += `<g transform="translate(${q.x.toFixed(1)} ${q.y.toFixed(1)}) rotate(${Math.round(c.trk || 0)})"><path d="${CL_PLANE}" fill="#fcc419" stroke="#3b3b3b" stroke-width="1.1" stroke-linejoin="round"/></g>`; }
@@ -640,7 +681,7 @@
   function clSeek(t) {
     pl.t = Math.max(pl.t0, Math.min(pl.t1, t)); const c = clAt(pl.t); if (!c) return;
     clSlider(); clFigures(c);
-    if (pl.gm) clGm('pos', { lat: c.lat, lon: c.lon, trk: fin(c.trk) ? c.trk : 0, follow: pl.follow, cover: clCover() });
+    if (pl.gm) clGm('pos', { lat: c.lat, lon: c.lon, trk: fin(c.trk) ? c.trk : 0, follow: pl.follow, cover: clCover(), t: Math.round(pl.t) });
     else if (pl.map) { if (pl.follow) clCentre(c); else clDrawTrack(); }
     if (pl.chart) clChartMark();
     // (the moment's padlocked figures - GPS altitude, airspeeds, vertical speed, squawk - from public ADS-B, as on FR24's

@@ -117,6 +117,12 @@ jobs:
           export CHROMIUM="$(node -e "console.log(require(process.env.PLAYWRIGHT_PATH).chromium.executablePath())")"
           node test/unit_panelphoto.cjs > out.txt 2>&1 || { cat out.txt; exit 1; }
           cat out.txt; grep -q '^(skipped' out.txt && exit 1; grep -q '^FAIL' out.txt && exit 1; true
+      - name: The old pages' playback map - FR24's trail, tooltip and main map settings (Chromium)
+        run: |
+          export PLAYWRIGHT_PATH="$RUNNER_TEMP/pw/node_modules/playwright"
+          export CHROMIUM="$(node -e "console.log(require(process.env.PLAYWRIGHT_PATH).chromium.executablePath())")"
+          node test/unit_trailmap.cjs > out.txt 2>&1 || { cat out.txt; exit 1; }
+          cat out.txt; grep -q '^(skipped' out.txt && exit 1; grep -q '^FAIL' out.txt && exit 1; true
   # Android (android/): the app (FR24's site with the script in it) and the LSPosed module for FR24's own app - their own
   # tests, and both APKs built (kept with the run). FR24's app itself is never here: its code is checked against the
   # module locally, android/tools/fr24check.sh

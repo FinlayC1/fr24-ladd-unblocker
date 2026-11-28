@@ -7343,7 +7343,12 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     // aircraft FR24's own picture of its kind (FR24's sprite, the table of its pictures read from FR24's own script on
     // the page), yellow, turned to its track; the flight's airports FR24's old blue pins. The userscript part sends the
     // flight and each moment ('clMap'); 'clMapSt' answers whether the map is up (else it draws its own).
-    var clm = { map: null, host: null, ov: null, cv: null, pv: null, tip: null, pts: [], sp: [], o: null, d: null, route: false, follow: false, pos: null, cover: 0, hover: -1, icon: null, iconFor: '', due: false, gm: null, tbl: null, pin: null };
+    // (1.4.3) As FR24's main map draws a trail (its live page): the line see-through (FR24's colour at 100 of 255), its
+    // dots its own colour (they were black), the dot under the pointer white, and FR24's tooltip - white, rounded, its
+    // tip - only where the main map has "Show trail tooltip" on, in the main map's units. And the map as the main map
+    // has it ('set', 06-classic clMainSet): its style (FR24's own styles of Google's map read from FR24's build, on
+    // FR24's server), its brightness, its day and night line at the moment played
+    var clm = { map: null, host: null, ov: null, cv: null, pv: null, lv: null, dim: null, tip: null, tipBody: null, tipOff: 0, pts: [], cols: [], sp: [], o: null, d: null, route: false, follow: false, pos: null, cover: 0, hover: -1, icon: null, iconFor: '', due: false, gm: null, tbl: null, pin: null, t: 0, type: 'hybrid', set: { style: 'hybrid', brightness: 100, night: false, tip: true, alt: 'ft', spd: 'kt' }, fs: null, fsP: null, col: null, colP: null, srcs: null, gap: 300 };
     function clmGoogle() {
       if (clm.gm) return clm.gm;
       clm.gm = new Promise(function (res) {
@@ -7406,20 +7411,140 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
         clm.iconFor = key; return clm.icon;
       });
     }
+    // (where FR24's own styles cannot be read: near enough)
     var CLM_GREY = [{ stylers: [{ saturation: -100 }] }];
     var CLM_DARK = [{ elementType: 'geometry', stylers: [{ color: '#212a37' }] }, { elementType: 'labels.text.fill', stylers: [{ color: '#9aa7b8' }] }, { elementType: 'labels.text.stroke', stylers: [{ color: '#1b222c' }] }, { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0f1620' }] }, { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#38414e' }] }, { featureType: 'poi', stylers: [{ visibility: 'off' }] }];
+    var CLM_BASE = { terrain: 'TERRAIN', roadmap: 'ROADMAP', satellite: 'SATELLITE', hybrid: 'HYBRID' };
+    // (FR24's names of its styles in its build, and theirs in its settings)
+    var CLM_FR24_NAMES = { GRAYSCALE: 'simple_style', RADAR_BLUE: 'radar_style', RADAR_DARK: 'radar_style2', AUBERGINE: 'aubergine_style', BLACK_WHITE: 'black_white', ROADMAP: 'roadmap', SATELLITE: 'satellite', HYBRID: 'hybrid', TERRAIN: 'terrain' };
     function clmType(t) {
-      var m = clm.map; if (!m) return; var g = window.google.maps.MapTypeId;
-      m.setOptions(t === 'simple_style' ? { mapTypeId: g.ROADMAP, styles: CLM_GREY } : t === 'radar_style2' ? { mapTypeId: g.ROADMAP, styles: CLM_DARK } : { mapTypeId: t === 'satellite' ? g.SATELLITE : t === 'roadmap' ? g.ROADMAP : t === 'terrain' ? g.TERRAIN : g.HYBRID, styles: null });
+      var m = clm.map; if (!m) return; var gm = window.google.maps, g = gm.MapTypeId;
+      if (!CLM_BASE[t] && !/^(?:simple_style|radar_style2?|aubergine_style|black_white)$/.test(t)) t = 'hybrid';
+      clm.type = t;
+      var fs = clm.fs && clm.fs.styles[t];
+      if (CLM_BASE[t]) m.setOptions({ mapTypeId: g[CLM_BASE[t]], styles: null });
+      // (FR24's own style of it, as FR24's map makes it: a styled map type of that name)
+      else if (fs) { try { if (!m.mapTypes.get(t)) m.mapTypes.set(t, new gm.StyledMapType(fs, { name: clm.fs.names[t] || t })); m.setOptions({ mapTypeId: t, styles: null }); } catch (e) { m.setOptions({ mapTypeId: g.ROADMAP, styles: t === 'simple_style' ? CLM_GREY : CLM_DARK }); } }
+      else m.setOptions({ mapTypeId: g.ROADMAP, styles: t === 'simple_style' ? CLM_GREY : CLM_DARK });
+      clmBright();
     }
-    // (FR24's colours of a trail by height: white on the ground; yellow low, through green, cyan and blue, to violet and red
-    // at the top - drawn here as a smooth scale of the same colours)
+    // (the main map's brightness, as FR24 sets it: its tiles darkened - here a black sheet over them, under the trail, as
+    // FR24's map has it on its newer maps - and the map's colour where no tile is yet the style's own)
+    function clmBright() {
+      var m = clm.map; if (!m) return;
+      var bg = clm.fs && clm.fs.bg[clm.type];
+      if (bg) { try { m.setOptions({ backgroundColor: bg }); } catch (e) { /* kept */ } var f = clm.host && clm.host.firstElementChild; if (f) f.style.backgroundColor = bg; }
+      var b = Number(clm.set.brightness); if (!isFinite(b)) b = 100;
+      if (clm.dim) clm.dim.style.opacity = String(Math.max(0, Math.min(1, 1 - b / 100)));
+    }
+    // (FR24's own build files of its map, by name - found in the list its loader on this page carries, asked of FR24's
+    // server as its own map asks for them)
+    function clmChunk(name) {
+      if (!clm.srcs) {
+        var urls = [];
+        document.querySelectorAll('script[src], link[rel="modulepreload"][href]').forEach(function (e) { var u = e.src || e.href || ''; if (/\/(?:__modulepreload__|app)-[\w-]+\.js(?:[?#]|$)/.test(u) && urls.indexOf(u) < 0) urls.push(u); });
+        clm.srcs = Promise.all(urls.map(function (u) { return oFetch.call(window, u).then(function (r) { return r.ok ? r.text() : ''; }).catch(function () { return ''; }).then(function (t) { return { u: u, t: t }; }); }));
+      }
+      var re = new RegExp('(' + name + '-[\\w-]+\\.js)');
+      return clm.srcs.then(function (list) { for (var i = 0; i < list.length; i++) { var m = re.exec(list[i].t); if (m) try { return new URL(m[1], list[i].u).href; } catch (e) { /* the next */ } } return null; });
+    }
+    // (a literal of FR24's build - an object of plain names, strings, numbers, !0 and !1, its [x.NAME] keys - from its
+    // first brace, as JSON)
+    function clmLitAt(src, i) {
+      var d = 0;
+      for (var j = i; j < src.length; j++) {
+        var c = src[j];
+        if (c === '"' || c === "'" || c === '`') { for (j++; j < src.length && src[j] !== c; j++) if (src[j] === '\\') j++; continue; }
+        if (c === '{' || c === '[') d++;
+        else if (c === '}' || c === ']') { d--; if (!d) return src.slice(i, j + 1); }
+      }
+      return null;
+    }
+    function clmLitJson(lit) {
+      return JSON.parse(lit.split(/("(?:[^"\\]|\\.)*")/).map(function (s, i) {
+        if (i % 2) return s;
+        return s.replace(/\[[A-Za-z_$][\w$]*\.([A-Z_]+)\]\s*:/g, '"$1":').replace(/([{,])\s*([A-Za-z_$][\w$]*)\s*:/g, '$1"$2":').replace(/!0(?![\w.])/g, 'true').replace(/!1(?![\w.])/g, 'false').replace(/(^|[^\w.])(-?)\.(\d)/g, function (x, a, b, c) { return a + b + '0.' + c; });
+      }).join(''));
+    }
+    // (FR24's styles of Google's map - its greyscale, radars, aubergine, black and white - and each style's colour, from
+    // its map's build file)
+    function clmStyles() {
+      if (clm.fsP) return clm.fsP;
+      var none = { styles: {}, bg: {}, names: {} };
+      clm.fsP = clmChunk('googleMapsProvider').then(function (u) { return u ? oFetch.call(window, u).then(function (r) { return r.ok ? r.text() : ''; }) : ''; }).then(function (src) {
+        if (!src) return none;
+        var get = function (re) { var m = re.exec(src); if (!m) return null; var lit = clmLitAt(src, m.index + 1); if (!lit) return null; try { return clmLitJson(lit); } catch (e) { return null; } };
+        var st = get(/=\{\[[A-Za-z_$][\w$]*\.GRAYSCALE\]:\[/), bg = get(/=\{\[[A-Za-z_$][\w$]*\.GRAYSCALE\]:\{name:/), out = { styles: {}, bg: {}, names: {} };
+        Object.keys(CLM_FR24_NAMES).forEach(function (k) {
+          var v = CLM_FR24_NAMES[k];
+          if (st && Array.isArray(st[k])) out.styles[v] = st[k];
+          if (bg && bg[k] && /^#[0-9a-f]{3,8}$/i.test(String(bg[k].backgroundColor || ''))) { out.bg[v] = bg[k].backgroundColor; out.names[v] = String(bg[k].name || ''); }
+        });
+        return out;
+      }).catch(function () { return none; });
+      return clm.fsP;
+    }
+    // (FR24's own colour of a trail at a height - its map's function, from its build file: told by what it gives)
+    function clmColFn() {
+      if (clm.colP) return clm.colP;
+      clm.colP = clmChunk('aircraftLayerHelpers').then(function (u) { return u ? import(u) : null; }).then(function (mod) {
+        var f = null; if (!mod) return null;
+        Object.keys(mod).forEach(function (k) {
+          var v = mod[k]; if (f || typeof v !== 'function' || v.length !== 1) return;
+          var s = ''; try { s = Function.prototype.toString.call(v); } catch (e) { return; }
+          if (s.indexOf('#ffffff') < 0 || s.indexOf('#ff0000') < 0) return;
+          try { if (v(50) === '#ffffff' && v(20000) === '#ff0000' && /^#[0-9a-f]{6}$/i.test(v(3000))) f = v; } catch (e) { /* not it */ }
+        });
+        return f;
+      }).catch(function () { return null; });
+      clm.colP.then(function (f) { if (f) { clm.col = f; clm.cols = clm.pts.map(function (p) { return clmCol(p[3]); }); clmSoon(); } });
+      return clm.colP;
+    }
+    // (FR24's colours of a trail by height, in metres: white on the ground; yellow low, through green, cyan and blue, to
+    // violet and red at the top. FR24's own where its build gives it; else drawn here as a smooth scale of the same)
     var CLM_HUES = [[100, 52], [300, 62], [600, 78], [1000, 105], [1500, 125], [2500, 150], [3500, 175], [4500, 190], [5500, 200], [6500, 210], [7500, 225], [8500, 240], [9500, 255], [10500, 268], [11500, 280], [12500, 300], [13000, 330]];
     function clmCol(ft) {
-      var m = (ft || 0) * 0.3048; if (!(m > 100)) return '#ffffff';
+      var m = (ft || 0) * 0.3048;
+      if (clm.col) { try { var c = clm.col(m); if (typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c)) return c; } catch (e) { /* the scale here */ } }
+      if (!(m > 100)) return '#ffffff';
       var H = CLM_HUES, h = H[H.length - 1][1];
       for (var i = 1; i < H.length; i++) if (m <= H[i][0]) { var f = (m - H[i - 1][0]) / (H[i][0] - H[i - 1][0]); h = H[i - 1][1] + (H[i][1] - H[i - 1][1]) * f; break; }
       return 'hsl(' + Math.round(h) + ',100%,50%)';
+    }
+    // (the sun overhead at a moment - the usual approximation, within a fraction of a degree - and the night about the
+    // point opposite: FR24's line is four rings about it, 72 to 89.4 degrees out, each a shade darker within)
+    function clmSun(ms) {
+      var r = Math.PI / 180, d = ms / 864e5 - 10957.5;
+      var g = (357.529 + 0.98560028 * d) * r, L = (280.459 + 0.98564736 * d + 1.915 * Math.sin(g) + 0.02 * Math.sin(2 * g)) * r, e = (23.439 - 3.6e-7 * d) * r;
+      var ra = Math.atan2(Math.cos(e) * Math.sin(L), Math.cos(L)) / r, dec = Math.asin(Math.sin(e) * Math.sin(L)) / r, lon = ra - (280.46061837 + 360.98564736629 * d);
+      return { lat: dec, lon: ((lon + 180) % 360 + 360) % 360 - 180 };
+    }
+    var CLM_NIGHT = [89.433334, 84, 78, 72], CLM_MERC = 85.051129;
+    // (a ring n degrees about c, as [lon, lat] points: one about a pole closed along the map's top or foot)
+    function clmRing(c, n) {
+      var r = Math.PI / 180, la = c.lat * r, lo = c.lon * r, nr = n * r, P = [];
+      for (var i = 0; i < 360; i++) {
+        var p = 2 * Math.PI * i / 360, S = Math.asin(Math.sin(la) * Math.cos(nr) + Math.cos(la) * Math.sin(nr) * Math.cos(p));
+        P.push([(lo + Math.atan2(Math.sin(p) * Math.sin(nr) * Math.cos(la), Math.cos(nr) - Math.sin(la) * Math.sin(S))) / r, S / r]);
+      }
+      var cl = function (x) { return Math.max(-CLM_MERC, Math.min(CLM_MERC, x)); }, w = function (x) { return ((x + 180) % 360 + 360) % 360 - 180; };
+      var north = 90 - c.lat < n, south = 90 + c.lat < n;
+      if (!north && !south) { var o = [[P[0][0], cl(P[0][1])]]; for (var k = 1; k < P.length; k++) { var dl = w(P[k][0] - P[k - 1][0]); o.push([o[k - 1][0] + dl, cl(P[k][1])]); } return o; }
+      var s = P.map(function (q) { return [w(q[0]), cl(q[1])]; }).sort(function (a, b) { return a[0] - b[0]; }), A = s[0], B = s[s.length - 1];
+      var gl = B[1] + (A[1] - B[1]) * (180 - B[0]) / (A[0] + 360 - B[0]), E = north ? CLM_MERC : -CLM_MERC;
+      return [[-180, gl]].concat(s, [[180, gl], [180, E], [-180, E]]);
+    }
+    function clmNight(g, v) {
+      var ms = (clm.t > 0 ? Math.floor(clm.t / 60) * 60 : Math.floor(Date.now() / 60000) * 60) * 1000, sun = clmSun(ms), c = { lat: -sun.lat, lon: sun.lon + (sun.lon > 0 ? -180 : 180) };
+      g.fillStyle = 'rgba(0,0,0,' + (25 / 255) + ')';
+      CLM_NIGHT.forEach(function (n) {
+        var ring = clmRing(c, n).map(function (q) { return v.px(q[1], q[0]); }), x0 = Infinity, x1 = -Infinity;
+        ring.forEach(function (q) { if (q.x < x0) x0 = q.x; if (q.x > x1) x1 = q.x; });
+        for (var k = -3; k <= 3; k++) {
+          var dx = k * v.ww; if (x1 + dx < 0 || x0 + dx > v.w) continue;
+          g.beginPath(); ring.forEach(function (q, i) { if (i) g.lineTo(q.x + dx, q.y); else g.moveTo(q.x + dx, q.y); }); g.closePath(); g.fill();
+        }
+      });
     }
     function clmSoon() { if (clm.due) return; clm.due = true; requestAnimationFrame(function () { clm.due = false; clmDraw(); }); }
     function clmOverlay() {
@@ -7428,9 +7553,15 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       Ov.prototype.onAdd = function () {
         var pane = this.getPanes().overlayLayer, mk = function () { var c = document.createElement('canvas'); c.style.cssText = 'position:absolute;left:0;top:0;pointer-events:none'; pane.appendChild(c); return c; };
         clm.cv = mk(); clm.pv = mk();
+        // (the trail's line drawn whole first, then laid on see-through: no darker spot where its pieces meet)
+        clm.lv = document.createElement('canvas');
+        // (the brightness: a black sheet in the lowest pane - over the map's tiles, under everything drawn on them)
+        clm.dim = document.createElement('div'); clm.dim.style.cssText = 'position:absolute;left:0;top:0;width:0;height:0;background:#000;opacity:0;pointer-events:none;transition:opacity 200ms ease';
+        this.getPanes().mapPane.appendChild(clm.dim);
+        clmBright();
       };
       Ov.prototype.draw = function () { clmDraw(); };
-      Ov.prototype.onRemove = function () { [clm.cv, clm.pv].forEach(function (c) { if (c && c.parentNode) c.parentNode.removeChild(c); }); clm.cv = clm.pv = null; };
+      Ov.prototype.onRemove = function () { [clm.cv, clm.pv, clm.dim].forEach(function (c) { if (c && c.parentNode) c.parentNode.removeChild(c); }); clm.cv = clm.pv = clm.lv = clm.dim = null; };
       clm.ov = new Ov(); clm.ov.setMap(clm.map);
       clm.map.addListener('bounds_changed', clmSoon);
       clm.map.addListener('mousemove', function (e) { var de = e && e.domEvent; if (de && clm.host) { var r = clm.host.getBoundingClientRect(); clmHover(de.clientX - r.left, de.clientY - r.top); } });
@@ -7442,12 +7573,14 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       var ov = clm.ov, map = clm.map, proj = ov && ov.getProjection && ov.getProjection(); if (!proj || !clm.cv) return null;
       var w = clm.host.clientWidth, h = clm.host.clientHeight, c = proj.fromLatLngToDivPixel(map.getCenter()), L = c.x - w / 2, T = c.y - h / 2, r = window.devicePixelRatio || 1;
       [clm.cv, clm.pv].forEach(function (x) { x.style.left = L + 'px'; x.style.top = T + 'px'; x.style.width = w + 'px'; x.style.height = h + 'px'; var W = Math.round(w * r), H = Math.round(h * r); if (x.width !== W) x.width = W; if (x.height !== H) x.height = H; });
+      if (clm.lv) { var LW = Math.round(w * r), LH = Math.round(h * r); if (clm.lv.width !== LW) clm.lv.width = LW; if (clm.lv.height !== LH) clm.lv.height = LH; }
+      if (clm.dim) { var ds = clm.dim.style; ds.left = L + 'px'; ds.top = T + 'px'; ds.width = w + 'px'; ds.height = h + 'px'; }
       var ww = proj.getWorldWidth(), gm = window.google.maps;
       // (a flight across the date line: its longitudes run on - the whole track put by the world nearest the view)
       var px = function (lat, lon) { var p = proj.fromLatLngToDivPixel(new gm.LatLng(lat, lon, true)); return { x: p.x - L, y: p.y - T }; };
       var shift = 0;
       if (clm.pts.length) { var mid = clm.pts[Math.floor(clm.pts.length / 2)], q = px(mid[1], mid[2]); shift = Math.round((w / 2 - q.x) / ww) * ww; }
-      return { w: w, h: h, r: r, px: function (lat, lon) { var q = px(lat, lon); q.x += shift; return q; } };
+      return { w: w, h: h, r: r, ww: ww, px: function (lat, lon) { var q = px(lat, lon); q.x += shift; return q; } };
     }
     function clmGc(a, b, f) {
       var r = Math.PI / 180, la1 = a[0] * r, lo1 = a[1] * r, la2 = b[0] * r, lo2 = b[1] * r;
@@ -7460,27 +7593,50 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
     function clmDraw() {
       var v = clmView(); if (!v) return;
       var g = clm.cv.getContext('2d'); g.setTransform(v.r, 0, 0, v.r, 0, 0); g.clearRect(0, 0, v.w, v.h);
-      var P = clm.pts, sp = clm.sp = P.map(function (p) { return v.px(p[1], p[2]); });
+      var P = clm.pts, cols = clm.cols, sp = clm.sp = P.map(function (p) { return v.px(p[1], p[2]); }), A = 100 / 255;
+      // (the main map's day and night line, at the moment played)
+      if (clm.set.night) { try { clmNight(g, v); } catch (e) { /* no line */ } }
       // (the great circle between its airports, as FR24's map draws a flight's route: a thin dark dashed line)
       if (clm.route && clm.o && clm.d) {
         g.beginPath(); for (var k = 0; k <= 96; k++) { var gc = clmGc(clm.o, clm.d, k / 96), gp = v.px(gc[0], gc[1]); if (k) g.lineTo(gp.x, gp.y); else g.moveTo(gp.x, gp.y); }
-        g.setLineDash([3, 5]); g.lineWidth = 2; g.strokeStyle = 'rgba(0,0,0,.4)'; g.stroke(); g.setLineDash([]);
+        g.setLineDash([3, 5]); g.lineWidth = 2; g.strokeStyle = 'rgba(0,0,0,' + A + ')'; g.stroke(); g.setLineDash([]);
       }
       var inView = function (a, b) { return !((a.x < -20 && b.x < -20) || (a.y < -20 && b.y < -20) || (a.x > v.w + 20 && b.x > v.w + 20) || (a.y > v.h + 20 && b.y > v.h + 20)); };
-      g.lineCap = 'round'; g.lineJoin = 'round';
-      for (var i = 1; i < P.length; i++) {
-        var a = sp[i - 1], b = sp[i]; if (!inView(a, b)) continue;
-        g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(b.x, b.y);
-        // (a hole in the coverage - five minutes and more unheard: FR24's thin dashed line across it)
-        if (P[i][0] - P[i - 1][0] > 300) { g.setLineDash([1, 3]); g.lineWidth = 1; g.strokeStyle = 'rgba(0,0,0,.4)'; g.stroke(); g.setLineDash([]); continue; }
-        var c0 = clmCol(P[i - 1][3]), c1 = clmCol(P[i][3]);
-        if (c0 === c1) g.strokeStyle = c0; else { var gr = g.createLinearGradient(a.x, a.y, b.x, b.y); gr.addColorStop(0, c0); gr.addColorStop(1, c1); g.strokeStyle = gr; }
-        g.lineWidth = 3; g.stroke();
+      // (the trail: 3 px, each piece from one position's colour to the next's, laid on at FR24's 100 of 255)
+      var l = clm.lv && clm.lv.getContext('2d');
+      if (l) {
+        l.setTransform(1, 0, 0, 1, 0, 0); l.clearRect(0, 0, clm.lv.width, clm.lv.height); l.setTransform(v.r, 0, 0, v.r, 0, 0);
+        l.lineCap = 'round'; l.lineJoin = 'round'; l.lineWidth = 3;
+        for (var i = 1; i < P.length; i++) {
+          var a = sp[i - 1], b = sp[i]; if (!inView(a, b) || P[i][0] - P[i - 1][0] >= clm.gap) continue;
+          var c0 = cols[i - 1], c1 = cols[i];
+          l.beginPath(); l.moveTo(a.x, a.y); l.lineTo(b.x, b.y);
+          if (c0 === c1) l.strokeStyle = c0; else { var gr = l.createLinearGradient(a.x, a.y, b.x, b.y); gr.addColorStop(0, c0); gr.addColorStop(1, c1); l.strokeStyle = gr; }
+          l.stroke();
+        }
+        g.save(); g.setTransform(1, 0, 0, 1, 0, 0); g.globalAlpha = A; g.drawImage(clm.lv, 0, 0); g.restore();
       }
-      // (a dot at each position heard - where the trail is drawn close, the next one 3 px on)
-      g.fillStyle = '#000'; var last = null;
-      for (var j = 0; j < sp.length; j++) { var s = sp[j]; if (s.x < -5 || s.y < -5 || s.x > v.w + 5 || s.y > v.h + 5) continue; if (last && Math.abs(s.x - last.x) + Math.abs(s.y - last.y) < 3 && j !== clm.hover) continue; g.beginPath(); g.arc(s.x, s.y, 1.5, 0, 2 * Math.PI); g.fill(); last = s; }
-      if (clm.hover >= 0 && sp[clm.hover]) { var hv = sp[clm.hover]; g.beginPath(); g.arc(hv.x, hv.y, 3, 0, 2 * Math.PI); g.fillStyle = '#fff'; g.fill(); g.lineWidth = 1; g.strokeStyle = 'rgba(0,0,0,.6)'; g.stroke(); }
+      // (a hole in the coverage - FR24's two minutes and more unheard, more where the track is the monitor's sparser one:
+      // FR24's thin dark dotted line, along the great circle)
+      g.setLineDash([1, 3]); g.lineWidth = 1; g.strokeStyle = 'rgba(0,0,0,' + A + ')';
+      var z = clm.map.getZoom() <= 10 ? 25 : 50;
+      for (var h = 1; h < P.length; h++) {
+        var dt = P[h][0] - P[h - 1][0]; if (dt < clm.gap || !inView(sp[h - 1], sp[h])) continue;
+        var nn = Math.floor(z * Math.min(1, dt / 1000)), p0 = [P[h - 1][1], P[h - 1][2]], p1 = [P[h][1], P[h][2]];
+        g.beginPath(); g.moveTo(sp[h - 1].x, sp[h - 1].y);
+        for (var s = 1; s <= nn; s++) { var q = clmGc(p0, p1, s / (nn + 1)), qq = v.px(q[0], q[1]); g.lineTo(qq.x, qq.y); }
+        g.lineTo(sp[h].x, sp[h].y); g.stroke();
+      }
+      g.setLineDash([]);
+      // (a dot at each position heard, 1.5 px, its own colour - one within a pixel of the last drawn not drawn again)
+      var last = null;
+      for (var j = 0; j < sp.length; j++) {
+        var d = sp[j]; if (d.x < -5 || d.y < -5 || d.x > v.w + 5 || d.y > v.h + 5) continue;
+        if (last && Math.abs(d.x - last.x) + Math.abs(d.y - last.y) < 1) continue;
+        g.beginPath(); g.arc(d.x, d.y, 1.5, 0, 2 * Math.PI); g.fillStyle = cols[j]; g.fill(); last = d;
+      }
+      // (the one under the pointer: white)
+      if (clm.hover >= 0 && sp[clm.hover]) { var hv = sp[clm.hover]; g.beginPath(); g.arc(hv.x, hv.y, 1.5, 0, 2 * Math.PI); g.fillStyle = '#fff'; g.fill(); clmTipAt(hv); }
       // (the airports: FR24's old blue pin, its point on the airport)
       if (clm.pin && clm.pin.complete && clm.pin.naturalWidth) [clm.o, clm.d].forEach(function (ap) { if (!ap) return; var q = v.px(ap[0], ap[1]); g.drawImage(clm.pin, q.x - 10, q.y - 20, 20, 20); });
       clmPlane(v);
@@ -7495,17 +7651,45 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       g.globalAlpha = 0.35; g.filter = 'brightness(0)'; g.drawImage(ic.c, -s * ic.ax + 3, -s * ic.ay + 3, s, s); g.filter = 'none'; g.globalAlpha = 1;
       g.drawImage(ic.c, -s * ic.ax, -s * ic.ay, s, s);
     }
-    // (the moment under the pointer: FR24's box - "Time: UTC 21:37:43", "Ground speed: 279 kts", "Altitude: 8,150 ft")
+    // (the moment under the pointer: FR24's tooltip - "Time: UTC 21:37:43", "Ground speed: 279 kts", "Altitude: 8,150 ft"
+    // in the main map's units - made as FR24's map makes it: white, rounded, shadowed, its tip under it, 5 px over the dot)
+    var CLM_SPD = { kt: [1, 0, 'kts'], kmh: [1.852, 0, 'km/h'], mph: [1.15077945, 0, 'mph'], mach: [0.0015117811278615, 3, 'Ma'] };
+    function clmNum(v, dp) { var a = v.toFixed(dp).split('.'); return a[0].replace(/\B(?=(?:\d{3})+(?!\d))/g, ',') + (a.length > 1 ? '.' + a[1] : ''); }
+    function clmTipMake(host) {
+      var tip = document.createElement('article'); tip.className = 'tl-cl-tip';
+      tip.style.cssText = 'position:absolute;display:none;z-index:5;left:0;top:0;transform:translate(-50%,-100%);padding:0 0 4px;margin:0;pointer-events:none;box-sizing:border-box';
+      var sec = document.createElement('section');
+      sec.style.cssText = 'display:block;box-sizing:border-box;margin:0 0 4px;padding:8px;border-radius:8px;background:#fff;color:rgb(57,57,57);box-shadow:1px 3px 6px 0 rgba(0,0,0,.2)';
+      var body = document.createElement('div');
+      body.style.cssText = 'white-space:nowrap;font-family:"Open Sans",ui-sans-serif,system-ui,-apple-system,sans-serif;font-size:14px;line-height:20px;font-weight:400;text-align:left;letter-spacing:normal';
+      var arrow = document.createElement('div');
+      arrow.style.cssText = 'position:absolute;bottom:4px;left:50%;width:0;height:0;box-sizing:border-box;transform:translateX(-50%) scale(1.5);border-style:solid;border-width:4px 4px 0 4px;border-color:#fff transparent transparent transparent';
+      sec.appendChild(body); sec.appendChild(arrow); tip.appendChild(sec); host.parentNode.appendChild(tip);
+      clm.tip = tip; clm.tipBody = body;
+    }
+    function clmTipAt(s) { var tip = clm.tip; if (tip && tip.style.display !== 'none' && s) { tip.style.left = s.x + 'px'; tip.style.top = (s.y - 5) + 'px'; } }
+    function clmTipHide(now) {
+      if (clm.tipOff) { oClearTimeout(clm.tipOff); clm.tipOff = 0; }
+      if (now) { if (clm.tip) clm.tip.style.display = 'none'; return; }
+      // (as FR24's: gone a moment after the pointer leaves)
+      clm.tipOff = oSetTimeout(function () { clm.tipOff = 0; if (clm.hover < 0 && clm.tip) clm.tip.style.display = 'none'; }, 200);
+    }
     function clmHover(x, y) {
-      var best = -1, bd = 8 * 8;
+      var best = -1, bd = 9.5 * 9.5;
       for (var i = 0; i < clm.sp.length; i++) { var s = clm.sp[i], dx = s.x - x, dy = s.y - y, dd = dx * dx + dy * dy; if (dd < bd) { bd = dd; best = i; } }
       if (best === clm.hover) return;
       clm.hover = best; clmSoon();
       var tip = clm.tip; if (!tip) return;
-      if (best < 0) { tip.style.display = 'none'; return; }
-      var p = clm.pts[best], s2 = clm.sp[best], t = new Date(p[0] * 1000), z = function (n) { return String(n).padStart(2, '0'); }, n = function (x) { return Math.round(x).toLocaleString('en-GB'); };
-      tip.innerHTML = '<div><b>Time:</b> UTC ' + z(t.getUTCHours()) + ':' + z(t.getUTCMinutes()) + ':' + z(t.getUTCSeconds()) + '</div><div><b>Ground speed:</b> ' + (isFinite(p[4]) && p[4] !== null ? n(p[4]) + ' kts' : 'N/A') + '</div><div><b>Altitude:</b> ' + (isFinite(p[3]) && p[3] !== null ? n(p[3]) + ' ft' : 'N/A') + '</div>';
-      tip.style.display = 'block'; tip.style.left = s2.x + 'px'; tip.style.top = (s2.y - 5) + 'px';
+      if (best < 0) { clmTipHide(false); return; }
+      // (the tooltip only where the main map shows its trail's: "Show trail tooltip" in its settings)
+      if (!clm.set.tip) { clmTipHide(true); return; }
+      if (clm.tipOff) { oClearTimeout(clm.tipOff); clm.tipOff = 0; }
+      var p = clm.pts[best], s2 = clm.sp[best], t = new Date(p[0] * 1000), z = function (n) { return String(n).padStart(2, '0'); };
+      var sp = CLM_SPD[clm.set.spd] || CLM_SPD.kt, has = function (x) { return x !== null && x !== undefined && isFinite(x); };
+      var spd = has(p[4]) ? clmNum(p[4] * sp[0], sp[1]) + ' ' + sp[2] : 'N/A', alt = has(p[3]) ? (clm.set.alt === 'm' ? clmNum(p[3] * 0.3048, 0) + ' m' : clmNum(p[3], 0) + ' ft') : 'N/A';
+      var row = function (k, val) { return '<div><strong style="font-weight:600">' + k + ':</strong> ' + val + '</div>'; };
+      clm.tipBody.innerHTML = row('Time', 'UTC ' + z(t.getUTCHours()) + ':' + z(t.getUTCMinutes()) + ':' + z(t.getUTCSeconds())) + row('Ground speed', spd) + row('Altitude', alt);
+      tip.style.display = 'block'; clmTipAt(s2);
     }
     function clmFit(cover) {
       var map = clm.map, gm = window.google.maps; if (!map || !clm.pts.length) return;
@@ -7520,9 +7704,23 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       var w = proj.fromLatLngToPoint(new gm.LatLng(p.lat, p.lon)), sc = Math.pow(2, map.getZoom());
       map.setCenter(proj.fromPointToLatLng(new gm.Point(w.x, w.y + (clm.cover / 2) / sc)));
     }
+    // (the main map's settings, as the userscript part read them: only what is known taken)
+    function clmSet(s) {
+      if (!s || typeof s !== 'object') return;
+      var c = clm.set, b = Number(s.brightness);
+      if (typeof s.style === 'string') c.style = s.style;
+      if (isFinite(b)) c.brightness = Math.max(0, Math.min(100, b));
+      if (typeof s.night === 'boolean') c.night = s.night;
+      if (typeof s.tip === 'boolean') c.tip = s.tip;
+      if (s.alt === 'ft' || s.alt === 'm') c.alt = s.alt;
+      if (CLM_SPD[s.spd]) c.spd = s.spd;
+      if (!c.tip) clmTipHide(true);
+      clmBright();
+    }
     function clmOp(d) {
       var op = d.op;
       if (op === 'init') {
+        clmSet(d.set);
         clmGoogle().then(function (ok) {
           var host = document.getElementById('tl-cl-gmap');
           if (!ok || !host) { post('clMapSt', { ok: false }); return; }
@@ -7531,29 +7729,43 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
             clm.host = host;
             clm.map = new gm.Map(host, { center: { lat: 50, lng: 0 }, zoom: 4, mapTypeId: gm.MapTypeId.HYBRID, disableDefaultUI: true, gestureHandling: 'greedy', clickableIcons: false, keyboardShortcuts: false, backgroundColor: '#eaeaea' });
             clmOverlay();
-            var tip = document.createElement('div'); tip.className = 'tl-cl-tip'; tip.style.cssText = 'position:absolute;display:none;z-index:5;transform:translate(-50%,-100%);pointer-events:none;background:rgba(0,0,0,.85);color:#fff;font:12px/1.45 "Open Sans",Arial,sans-serif;padding:6px 9px;border-radius:4px;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,.35)';
-            host.parentNode.appendChild(tip); clm.tip = tip;
+            clmTipMake(host);
             clm.pin = new Image(); clm.pin.onload = clmSoon; clm.pin.src = '/static/images/airport_pin_40_blue.png';
+            // (FR24's own styles and trail colours, from its build, as they come)
+            clmStyles().then(function (fs) { clm.fs = fs; if (clm.map) clmType(clm.type); });
+            clmColFn();
           }
-          clmType(d.type || 'hybrid');
+          clmType(d.type || clm.set.style || 'hybrid');
           post('clMapSt', { ok: true });
         });
         return;
       }
       if (!clm.map) return;
       if (op === 'track') {
+        clmSet(d.set);
+        // (the main map's style as it is now - or the toolbar's, chosen on this page)
+        if (typeof d.type === 'string' && d.type && d.type !== clm.type) clmType(d.type);
         clm.pts = Array.isArray(d.pts) ? d.pts : []; clm.o = d.o || null; clm.d = d.d || null; clm.cover = Number(d.cover) || 0; clm.hover = -1; clm.pos = null;
-        if (clm.tip) clm.tip.style.display = 'none';
+        clm.cols = clm.pts.map(function (p) { return clmCol(p[3]); });
+        clm.t = clm.pts.length ? Number(clm.pts[0][0]) || 0 : 0;
+        // (a hole: FR24's two minutes unheard, in a track of a position a minute or closer (FR24's own); five minutes in
+        // one sparser - the monitor's few positions three minutes apart - not drawn as all holes)
+        var gaps = []; for (var i = 1; i < clm.pts.length; i++) gaps.push(clm.pts[i][0] - clm.pts[i - 1][0]);
+        gaps.sort(function (a, b) { return a - b; });
+        clm.gap = (gaps.length ? gaps[gaps.length >> 1] : 0) <= 60 ? 120 : 300;
+        clmTipHide(true);
         clmFit(clm.cover); clmSoon();
         if (d.ac) clmIcon(d.ac).then(function () { clmPlane(); }, function () { /* drawn without */ });
       } else if (op === 'pos') {
         clm.pos = { lat: d.lat, lon: d.lon, trk: d.trk }; clm.cover = Number(d.cover) || clm.cover;
+        // (the day and night line follows the moment played, minute by minute)
+        var t = Number(d.t); if (isFinite(t) && t > 0) { var was = Math.floor(clm.t / 60); clm.t = t; if (clm.set.night && Math.floor(t / 60) !== was) clmSoon(); }
         if (d.follow) { clm.follow = true; clmCentre(clm.pos); } else clm.follow = false;
         clmPlane();
       } else if (op === 'route') { clm.route = !!d.on; clmSoon(); }
       else if (op === 'type') clmType(d.type);
       else if (op === 'zoom') clm.map.setZoom(clm.map.getZoom() + (Number(d.dz) || 0));
-      else if (op === 'clear') { clm.pts = []; clm.sp = []; clm.pos = null; clm.o = clm.d = null; if (clm.tip) clm.tip.style.display = 'none'; clmSoon(); }
+      else if (op === 'clear') { clm.pts = []; clm.cols = []; clm.sp = []; clm.pos = null; clm.o = clm.d = null; clm.hover = -1; clmTipHide(true); clmSoon(); }
     }
 
     window.addEventListener('message', function (ev) {
@@ -7683,7 +7895,7 @@ const TL_DATA_CONSENT = ask => new Promise(res => { try { chrome.runtime.sendMes
       return { req: req, resp: resp, stats: function () { return stats; }, v: 1 };
     })();
     window[NS] = { resolved: resolved, routes: routes, naRecs: naRecs, naRoutes: naRoutes, telem: telem, hist: hist, lastPos: lastPos, photoCache: photoCache, psCache: psCache, stats: stats, fetchPhotos: fetchPhotos, hello: function () { post('ready', { oaWant: oaWant, stats: stats, feedReady: !!feedHeaders, v: BRIDGE_V }); }, v: BRIDGE_V };
-    if (window.__tlTestHook) try { window.__tlTestHook({ mxPbRelPut: mxPbRelPut, mxPbVeilFail: mxPbVeilFail, cardItem: cardItem, cardPbItem: cardPbItem, mxPbPhoneUrl: mxPbPhoneUrl, iconNote: iconNote, iconFor: iconFor, mxPbFlightMsg: mxPbFlightMsg, mxPbTag: mxPbTag, mxPbRunways: mxPbRunways, mxPbBadges: mxPbBadges, noteCard: noteCard, mxPbVeilOn: mxPbVeilOn, mxPbVeilOff: mxPbVeilOff, mxPbLogId: mxPbLogId, mxPbLinkId: mxPbLinkId, mxPbEnrich: mxPbEnrich, mxPbInfo: mxPbInfo, mxPbBackLabel: mxPbBackLabel, mxPbBackTo: mxPbBackTo, mxSec: mxSec, csOf: csOf, patchTopFlights: patchTopFlights, onTopGot: onTopGot, topNames: topNames, fillFlightList: fillFlightList, routeRows: routeRows, liveDestFix: liveDestFix, hist: hist, preloaded: function () { return preloaded; }, parse: parse, photoFits: photoFits, makerOf: makerOf, patchFollow: patchFollow, patchFlightMsg: patchFlightMsg, pushFollow: pushFollow, followSt: function () { return followSt; }, setFollowSt: function (s) { followSt = s; }, shownPhotos: shownPhotos, photoCache: photoCache, FOLLOW: FOLLOW, DETAILS: DETAILS, fLen: fLen, fStr: fStr, fVar: fVar, patchFlight: patchFlight, patchLiveFeed: patchLiveFeed, fr24Named: fr24Named, psState: function () { return { q: psQ.length, busy: psBusy, last: psLast, blockedFor: Math.max(0, psBlockedUntil - Date.now()), pri: Array.from(psPri), jobs: photoJobs.size, head: psQ.slice(0, 3).map(function (j) { return j.hex; }) }; }, acceptPubTel: acceptPubTel, pubTelFor: pubTelFor, fillNativeCard: fillNativeCard, regsOfCallsign: regsOfCallsign, categoryOf: categoryOf, placeShort: placeShort, nativeFill: nativeFill, natInfo: natInfo, addArch: addArch, acceptBoardArch: acceptBoardArch, telem: telem, b64Encode: b64Encode, b64DecodeInto: b64DecodeInto, frameHeader: frameHeader, concat: concat, varintInt32: varintInt32, PLAYBACK: PLAYBACK, patchPlayback: patchPlayback, patchPlaybackRequest: patchPlaybackRequest, pbRoutes: pbRoutes, pbTelAt: pbTelAt, setPbTrace: function (t) { pbTrace = t; }, patchList: patchList, acceptSites: acceptSites, listSig: listSig, mergeRoutes: mergeRoutes, applyRoutes: applyRoutes, routesAdd: routesAdd, applyAirport: applyAirport, applyBoardPage: applyBoardPage, applyStats: applyStats, mergeFlights: mergeFlights, apData: apData, telAt: telAt, noteTelem: noteTelem, pbTraceOf: function () { return pbTrace; }, logoOf: logoOf, archDetail: archDetail, tsOf: tsOf, noteAirportJson: noteAirportJson, rwyOf: rwyOf, rwyPanel: rwyPanel, panelTick: panelTick, panelData: panelData, promoSlots: promoSlots, acceptAirportPanel: acceptAirportPanel, unlockRunways: unlockRunways, mvRows: mvRows, mvKept: mvKept, dayOf: dayOf, pbPanelTick: pbPanelTick, logoFix: logoFix, liveEntries: liveEntries, pbPos: pbPos, unlockFeed: unlockFeed, derivedVs: derivedVs, altHist: altHist, acceptAir: acceptAir, airCache: airCache, flushAir: flushAir, airWant: function () { return airWant; }, lastPos: lastPos, resolved: resolved, stats: stats, pbFind: pbFind, inBar: inBar, pbBlk: pbBlk, cardInfo: cardInfo, boardRowsSeen: boardRowsSeen, archById: archById, placeBoard: placeBoard, stopBoardHold: stopBoardHold, needBoardArch: needBoardArch, mx: mx, mxPatchCore: mxPatchCore, mxAuth: mxAuth, mxNatList: mxNatList, mxTrackOk: mxTrackOk, stripRestriction: stripRestriction, mxBmMerge: mxBmMerge, mxBmItem: mxBmItem, mxMonTile: mxMonTile, mxMonOr: mxMonOr, mxPinVer: mxPinVer, mxAirportHistory: mxAirportHistory, mxHistItems: mxHistItems, mxTrackFile: mxTrackFile, mxDataTick: mxDataTick, mxPbProps: mxPbProps, mxPbShow: mxPbShow, mxPbStandIn: mxPbStandIn, mxPbReadAt: mxPbReadAt, mxPbStand: mxPbStand, mxBoardRwy: mxBoardRwy, reqIdOf: reqIdOf, mxPbOpen: mxPbOpen, mxPbTake: mxPbTake, setNav: function (f) { mxNav = f; }, mxPbAway: mxPbAway, mxLegacyPbJson: mxLegacyPbJson, mxLegacyPb: mxLegacyPb, mxPbFlags: mxPbFlags, mxPbSynId: mxPbSynId, mxPbParam: mxPbParam, setPbWanted: function (v) { mxPbWanted = v; }, mxPlans: function () { return mxPlans; }, mxLiveRunways: mxLiveRunways, mxRwy: mxRwy, mxSetApply: mxSetApply, mxSetNote: mxSetNote, mxSetKept: mxSetKept, mxLastClicked: mxLastClicked, mxLcList: mxLcList, onLcClick: onLcClick, mxLcFill: mxLcFill, cardRwy: cardRwy, naEndsFill: naEndsFill, onEndsGot: onEndsGot, naEnds: naEnds, boardWant: boardWant, mxLegacyImages: mxLegacyImages, rwyInUse: rwyInUse, windOfText: windOfText, mxRwyAirport: mxRwyAirport, mxRwyByHex: mxRwyByHex, mxRowHex: mxRowHex, mxDataEnds: mxDataEnds, rwyUsePanel: rwyUsePanel, apWxPanel: apWxPanel, apWxData: apWxData, apWxOf: apWxOf, mxApWxAdd: mxApWxAdd, vsNoLock: vsNoLock, statsUsage: statsUsage, statsMoves: statsMoves, apDataOf: apDataOf, acceptOa: acceptOa, oaAirportJson: oaAirportJson, oaMap: oaMap, oaRefs: fr24Refs, setOaBase: function (b) { oaBase = b; oaShown = 'x'; }, oaStoreRow: oaStoreRow, setViewBox: function (b) { viewBox = b; }, oaView: oaView, sunTimes: sunTimes, tzText: tzText, panelCodeFields: panelCodeFields, oaLinkPressed: oaLinkPressed, oaRefHref: oaRefHref, acceptOaOne: acceptOaOne, oaLost: function () { return oaLost; }, acceptOaFrom: acceptOaFrom, oaCodeLine: oaCodeLine, noteFr24Codes: noteFr24Codes, oaDupe: oaDupe, dirTick: dirTick, acceptOaDir: acceptOaDir, searchMerge: searchMerge, apSearchMerge: apSearchMerge, oaMatchRows: oaMatchRows, oaOneGet: oaOneGet, oaFillTables: oaFillTables, refOf: refOf, fieldShortName: fieldShortName, closestMerge: closestMerge, heliText: heliText, oaFast: function () { return oaFast; }, setOaNav: function (f) { oaNav = f; }, oaWantNow: function () { return oaWant; }, oaApi: oaApi, oaPageReq: oaPageReq, oaPageOf: oaPageOf, acMerge: acMerge, acStrip: acStrip, acMergeAdd: acMergeAdd, acSig: acSig, acDirFastPage: acDirFastPage, dirFastPage: dirFastPage, dirApply: dirApply, dirKeyOf: dirKeyOf, veilOn: veilOn, veilOff: veilOff, mxBmOaWx: mxBmOaWx, apWxFr24: apWxFr24, bmCodesTick: bmCodesTick, oaIataMode: oaIataMode, acPageReq: acPageReq, acPageOf: acPageOf, acPaginator: acPaginator, acTick: acTick, acceptAcDir: acceptAcDir, acceptAcPage: acceptAcPage, acAskPage: acAskPage, acLinkPressed: acLinkPressed, acceptAcFrom: acceptAcFrom, setAcNav: function (f) { acNav = f; }, acAddGet: acAddGet, acRefGet: acRefGet, statsUnlock: statsUnlock, onApWxGot: onApWxGot, mxStat: function () { return mx; }, mxTracksPac: mxTracksPac, mxPacParse: mxPacParse, mxPacots: mxPacots, acLegDir: acLegDir, acLegPage: acLegPage, acLegTick: acLegTick, acMaker: acMaker, acMakers: acMakers, patchListFor: patchList, listRowsFor: listRowsFor, listApCompact: listApCompact, listUnknown: listUnknown, setPac: function (o) { mxPac = { at: Date.now(), o: o }; }, rwyUseData: rwyUseData, rwyUseWant: rwyUseWant, cardRwyFill: cardRwyFill, rwyUseKept: rwyUseKept, mxLcTick: mxLcTick, mxBmMax: mxBmMax, mxNatParse: mxNatParse, mxAirsigList: mxAirsigList, mxStations: mxStations, mxLightning: mxLightning, mxLx: mxLx, mxFetch: mxFetch, mxWxText: mxWxText, mxWxKind: mxWxKind, mxCsv: mxCsv, patchLiveFeedRequest: patchLiveFeedRequest, mxCats: mxCats, mxOp: mxOp, mxLevels: mxLevels, mxNearest: mxNearest, MX_ICE: MX_ICE, MX_TURB: MX_TURB, mxWafsUrl: mxWafsUrl, routes: routes, setCurFollow: function (id) { curFollowId = id; } }); } catch (e) { /* ignore */ }
+    if (window.__tlTestHook) try { window.__tlTestHook({ clm: clm, clmOp: clmOp, clmSet: clmSet, clmLitAt: clmLitAt, clmLitJson: clmLitJson, clmSun: clmSun, clmRing: clmRing, clmNum: clmNum, clmCol: clmCol, clmStyles: clmStyles, clmColFn: clmColFn, clmChunk: clmChunk, mxPbRelPut: mxPbRelPut, mxPbVeilFail: mxPbVeilFail, cardItem: cardItem, cardPbItem: cardPbItem, mxPbPhoneUrl: mxPbPhoneUrl, iconNote: iconNote, iconFor: iconFor, mxPbFlightMsg: mxPbFlightMsg, mxPbTag: mxPbTag, mxPbRunways: mxPbRunways, mxPbBadges: mxPbBadges, noteCard: noteCard, mxPbVeilOn: mxPbVeilOn, mxPbVeilOff: mxPbVeilOff, mxPbLogId: mxPbLogId, mxPbLinkId: mxPbLinkId, mxPbEnrich: mxPbEnrich, mxPbInfo: mxPbInfo, mxPbBackLabel: mxPbBackLabel, mxPbBackTo: mxPbBackTo, mxSec: mxSec, csOf: csOf, patchTopFlights: patchTopFlights, onTopGot: onTopGot, topNames: topNames, fillFlightList: fillFlightList, routeRows: routeRows, liveDestFix: liveDestFix, hist: hist, preloaded: function () { return preloaded; }, parse: parse, photoFits: photoFits, makerOf: makerOf, patchFollow: patchFollow, patchFlightMsg: patchFlightMsg, pushFollow: pushFollow, followSt: function () { return followSt; }, setFollowSt: function (s) { followSt = s; }, shownPhotos: shownPhotos, photoCache: photoCache, FOLLOW: FOLLOW, DETAILS: DETAILS, fLen: fLen, fStr: fStr, fVar: fVar, patchFlight: patchFlight, patchLiveFeed: patchLiveFeed, fr24Named: fr24Named, psState: function () { return { q: psQ.length, busy: psBusy, last: psLast, blockedFor: Math.max(0, psBlockedUntil - Date.now()), pri: Array.from(psPri), jobs: photoJobs.size, head: psQ.slice(0, 3).map(function (j) { return j.hex; }) }; }, acceptPubTel: acceptPubTel, pubTelFor: pubTelFor, fillNativeCard: fillNativeCard, regsOfCallsign: regsOfCallsign, categoryOf: categoryOf, placeShort: placeShort, nativeFill: nativeFill, natInfo: natInfo, addArch: addArch, acceptBoardArch: acceptBoardArch, telem: telem, b64Encode: b64Encode, b64DecodeInto: b64DecodeInto, frameHeader: frameHeader, concat: concat, varintInt32: varintInt32, PLAYBACK: PLAYBACK, patchPlayback: patchPlayback, patchPlaybackRequest: patchPlaybackRequest, pbRoutes: pbRoutes, pbTelAt: pbTelAt, setPbTrace: function (t) { pbTrace = t; }, patchList: patchList, acceptSites: acceptSites, listSig: listSig, mergeRoutes: mergeRoutes, applyRoutes: applyRoutes, routesAdd: routesAdd, applyAirport: applyAirport, applyBoardPage: applyBoardPage, applyStats: applyStats, mergeFlights: mergeFlights, apData: apData, telAt: telAt, noteTelem: noteTelem, pbTraceOf: function () { return pbTrace; }, logoOf: logoOf, archDetail: archDetail, tsOf: tsOf, noteAirportJson: noteAirportJson, rwyOf: rwyOf, rwyPanel: rwyPanel, panelTick: panelTick, panelData: panelData, promoSlots: promoSlots, acceptAirportPanel: acceptAirportPanel, unlockRunways: unlockRunways, mvRows: mvRows, mvKept: mvKept, dayOf: dayOf, pbPanelTick: pbPanelTick, logoFix: logoFix, liveEntries: liveEntries, pbPos: pbPos, unlockFeed: unlockFeed, derivedVs: derivedVs, altHist: altHist, acceptAir: acceptAir, airCache: airCache, flushAir: flushAir, airWant: function () { return airWant; }, lastPos: lastPos, resolved: resolved, stats: stats, pbFind: pbFind, inBar: inBar, pbBlk: pbBlk, cardInfo: cardInfo, boardRowsSeen: boardRowsSeen, archById: archById, placeBoard: placeBoard, stopBoardHold: stopBoardHold, needBoardArch: needBoardArch, mx: mx, mxPatchCore: mxPatchCore, mxAuth: mxAuth, mxNatList: mxNatList, mxTrackOk: mxTrackOk, stripRestriction: stripRestriction, mxBmMerge: mxBmMerge, mxBmItem: mxBmItem, mxMonTile: mxMonTile, mxMonOr: mxMonOr, mxPinVer: mxPinVer, mxAirportHistory: mxAirportHistory, mxHistItems: mxHistItems, mxTrackFile: mxTrackFile, mxDataTick: mxDataTick, mxPbProps: mxPbProps, mxPbShow: mxPbShow, mxPbStandIn: mxPbStandIn, mxPbReadAt: mxPbReadAt, mxPbStand: mxPbStand, mxBoardRwy: mxBoardRwy, reqIdOf: reqIdOf, mxPbOpen: mxPbOpen, mxPbTake: mxPbTake, setNav: function (f) { mxNav = f; }, mxPbAway: mxPbAway, mxLegacyPbJson: mxLegacyPbJson, mxLegacyPb: mxLegacyPb, mxPbFlags: mxPbFlags, mxPbSynId: mxPbSynId, mxPbParam: mxPbParam, setPbWanted: function (v) { mxPbWanted = v; }, mxPlans: function () { return mxPlans; }, mxLiveRunways: mxLiveRunways, mxRwy: mxRwy, mxSetApply: mxSetApply, mxSetNote: mxSetNote, mxSetKept: mxSetKept, mxLastClicked: mxLastClicked, mxLcList: mxLcList, onLcClick: onLcClick, mxLcFill: mxLcFill, cardRwy: cardRwy, naEndsFill: naEndsFill, onEndsGot: onEndsGot, naEnds: naEnds, boardWant: boardWant, mxLegacyImages: mxLegacyImages, rwyInUse: rwyInUse, windOfText: windOfText, mxRwyAirport: mxRwyAirport, mxRwyByHex: mxRwyByHex, mxRowHex: mxRowHex, mxDataEnds: mxDataEnds, rwyUsePanel: rwyUsePanel, apWxPanel: apWxPanel, apWxData: apWxData, apWxOf: apWxOf, mxApWxAdd: mxApWxAdd, vsNoLock: vsNoLock, statsUsage: statsUsage, statsMoves: statsMoves, apDataOf: apDataOf, acceptOa: acceptOa, oaAirportJson: oaAirportJson, oaMap: oaMap, oaRefs: fr24Refs, setOaBase: function (b) { oaBase = b; oaShown = 'x'; }, oaStoreRow: oaStoreRow, setViewBox: function (b) { viewBox = b; }, oaView: oaView, sunTimes: sunTimes, tzText: tzText, panelCodeFields: panelCodeFields, oaLinkPressed: oaLinkPressed, oaRefHref: oaRefHref, acceptOaOne: acceptOaOne, oaLost: function () { return oaLost; }, acceptOaFrom: acceptOaFrom, oaCodeLine: oaCodeLine, noteFr24Codes: noteFr24Codes, oaDupe: oaDupe, dirTick: dirTick, acceptOaDir: acceptOaDir, searchMerge: searchMerge, apSearchMerge: apSearchMerge, oaMatchRows: oaMatchRows, oaOneGet: oaOneGet, oaFillTables: oaFillTables, refOf: refOf, fieldShortName: fieldShortName, closestMerge: closestMerge, heliText: heliText, oaFast: function () { return oaFast; }, setOaNav: function (f) { oaNav = f; }, oaWantNow: function () { return oaWant; }, oaApi: oaApi, oaPageReq: oaPageReq, oaPageOf: oaPageOf, acMerge: acMerge, acStrip: acStrip, acMergeAdd: acMergeAdd, acSig: acSig, acDirFastPage: acDirFastPage, dirFastPage: dirFastPage, dirApply: dirApply, dirKeyOf: dirKeyOf, veilOn: veilOn, veilOff: veilOff, mxBmOaWx: mxBmOaWx, apWxFr24: apWxFr24, bmCodesTick: bmCodesTick, oaIataMode: oaIataMode, acPageReq: acPageReq, acPageOf: acPageOf, acPaginator: acPaginator, acTick: acTick, acceptAcDir: acceptAcDir, acceptAcPage: acceptAcPage, acAskPage: acAskPage, acLinkPressed: acLinkPressed, acceptAcFrom: acceptAcFrom, setAcNav: function (f) { acNav = f; }, acAddGet: acAddGet, acRefGet: acRefGet, statsUnlock: statsUnlock, onApWxGot: onApWxGot, mxStat: function () { return mx; }, mxTracksPac: mxTracksPac, mxPacParse: mxPacParse, mxPacots: mxPacots, acLegDir: acLegDir, acLegPage: acLegPage, acLegTick: acLegTick, acMaker: acMaker, acMakers: acMakers, patchListFor: patchList, listRowsFor: listRowsFor, listApCompact: listApCompact, listUnknown: listUnknown, setPac: function (o) { mxPac = { at: Date.now(), o: o }; }, rwyUseData: rwyUseData, rwyUseWant: rwyUseWant, cardRwyFill: cardRwyFill, rwyUseKept: rwyUseKept, mxLcTick: mxLcTick, mxBmMax: mxBmMax, mxNatParse: mxNatParse, mxAirsigList: mxAirsigList, mxStations: mxStations, mxLightning: mxLightning, mxLx: mxLx, mxFetch: mxFetch, mxWxText: mxWxText, mxWxKind: mxWxKind, mxCsv: mxCsv, patchLiveFeedRequest: patchLiveFeedRequest, mxCats: mxCats, mxOp: mxOp, mxLevels: mxLevels, mxNearest: mxNearest, MX_ICE: MX_ICE, MX_TURB: MX_TURB, mxWafsUrl: mxWafsUrl, routes: routes, setCurFollow: function (id) { curFollowId = id; } }); } catch (e) { /* ignore */ }
     post('ready', { oaWant: oaWant, stats: stats, feedReady: false, v: BRIDGE_V });
   }
 
@@ -19652,8 +19864,9 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   // padlocked ones as the free pages had them, filled at once from public ADS-B - fillPlaybackData)
   const CL_PANEL = `<div class="row hidden" id="cnt-playback"> <div><div class="row"><div class="col-sm-9 playback-header"><div class="row"><div class="col-xs-12"><h1 id="txt-playback-header">Playback of flight</h1></div></div><div class="row playback-player"><div class="col-xs-3"><div class="row p-t-20"><div class="col-xs-12"><label>GREAT CIRCLE DISTANCE</label> <span class="text-open-1" id="txt-great-circle-distance">-</span></div></div><div class="row p-t-10"><div class="col-xs-12"><label>AVERAGE FLIGHT TIME</label> <span class="text-open-1" id="txt-flight-time-average">-</span></div></div><div class="row p-t-10"><div class="col-xs-12"><label>ACTUAL FLIGHT TIME</label> <span class="text-open-1" id="txt-flight-time-actual">-</span></div></div><div class="row p-t-10"><div class="col-xs-12"><label>AVERAGE ARRIVAL DELAY</label> <span class="text-open-1" id="txt-flight-delay-average">-</span></div></div><div class="row p-t-10"><div class="col-xs-12"><svg class="fr-logo-payoff"><use xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="#fr-logo-payoff"></use></svg></div></div></div><div class="col-xs-9 playback-control"><div class="row airport-container p-t-20 pos-rel"><div class="airport-block n-p"><label>FROM</label> <label class="airport-city" id="txt-airport-origin">-</label></div><div class="airport-block airport-arrow text-center"><svg id="icon-arrow"><use xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="#icon-arrow-origin-dest"></use></svg></div><div class="airport-block n-p m-r-35"><label>TO</label> <label class="airport-city" id="txt-airport-dest">-</label></div></div><div class="row pos-rel"><button id="btn-control-playback" title="Start playback"></button><div id="cnt-fight-progress-slider"><div class="track" title="Click to change flight playback progress"></div><div class="progress" style="width: 0px;"></div><div class="thumb" title="Drag to change flight playback progress" data-max="0" data-value="0" style="left: 0px;"></div></div></div><div class="row"><div class="col-xs-3" style="padding-left:0"><div class="row"><label>TIME</label> <span class="text-open-2" id="txt-track-timestamp" data-suffix=" <small>UTC</small>" data-timestamp="">-</span></div><div class="row"><div id="btn-group-features" class="btn-group" role="group" aria-label="..."><button id="btn-toggle-follow" type="button" class="btn" title="Follow aircraft during playback">${clUse('icon-fr24-follow', 'icon icon-fr24-follow')}</button> <button id="btn-toggle-route" type="button" class="btn" title="Show great circle route">${clUse('icon-fr24-route', 'icon icon-fr24-route')}</button> <button id="btn-toggle-chart" type="button" class="btn" title="Show flight data chart"><i class="fa fa-area-chart"></i></button></div></div></div><div class="col-xs-3" style="padding-left:0"><div class="row"><label class="text-uppercase">Barometric altitude</label> <span class="text-open-2" id="txt-altitude" data-unit="unit_alt">-</span></div><div class="row"><label>GPS ALTITUDE</label> ${clLock(161)}</div></div><div class="col-xs-2" style="padding-left:0"><div class="row"><label>GROUND SPEED</label> <span class="text-open-2" id="txt-speed" data-unit="unit_speed">-</span></div><div class="row"><label>TRUE AIRSPEED</label> ${clLock(162)}</div></div><div class="col-xs-3" style="padding-left:0"><div class="row"><label>VERTICAL SPEED</label> ${clLock(163)}</div><div class="row"><label>INDICATED AIRSPEED</label> ${clLock(164)}</div></div><div class="col-xs-1" style="padding-left:0"><div class="row"><label>TRACK</label> <span class="text-open-2" id="txt-track-heading">-</span></div><div class="row"><label>SQUAWK</label> ${clLock(165)}</div></div></div></div></div></div><div class="col-sm-3 playback-image n-p"><div class="row pos-rel"><div class="pos-rel"><span class="label" id="txt-aircraft-image-copyright"></span> <a id="txt-aircraft-image-url" target="_blank"><img alt="" id="img-aircraft-img" class="img-responsive"></a></div><button class="pos-abs" id="btn-playback-control-close" title="Close this panel">${clUse('icon-fr24-close', 'icon-fr24-close')}</button></div><div class="row"><div class="col-xs-12 p-t-10"><label>AIRCRAFT</label> <span class="text-open-1" id="txt-aircraft-model">-</span></div></div><div class="row"><div class="col-xs-12 p-t-10"><label>REGISTRATION</label> <span class="text-open-1" id="txt-aircraft-reg">-</span></div></div><div class="row"><div class="col-xs-12" style="padding-top:8px"><label>SERIAL NUMBER (MSN)</label> <span class="text-open-1" id="txt-aircraft-serial">-</span></div></div></div></div><div id="cnt-chart" class="row hidden"></div></div> </div>`;
   // (the map's toolbar on the page's right edge, as the old pages had it: settings - the map's style -, full screen, zoom)
-  const CL_MAPTYPES = [['terrain', 'Terrain'], ['roadmap', 'Roadmap'], ['simple_style', 'Greyscale'], ['radar_style2', 'Radar (dark)'], ['satellite', 'Satellite'], ['hybrid', 'Hybrid']];
-  const CL_TOOLBAR = () => `<div class="bootstrap map-components-wrapper"><div id="fr24_ViewsToolbar" class="smooth-tab attach-right dark hidden-in-3d"><ul><li id="fr24_SettingsMenu" class="dropdown map-side" data-content="Settings"><a data-toggle="dropdown" class="dropdown-toggle">${clUse('icon-fr24-gear')}</a><ul id="fr24_SettingsDropdown" class="dropdown-menu settings noclose"><li><ul class="smooth-tab-group"><li class="active"><a class="smooth-tab attach-bottom" data-toggle="tab" data-target="#mapsettings"><div class="tab-sweep toleft"></div><div class="tab-content">Map</div><div class="tab-sweep toright"></div></a></li></ul></li><li><div class="tab-content"><div id="mapsettings" class="tab-pane active clearfix"><div class="scroll-wrap"><h5 class="pull-left short-label">Map style</h5><div id="fr24_mapType" class="btn-group pull-right"><button type="button" class="btn btn-default dropdown-toggle pull-right" data-toggle="dropdown" value="${esc(clMapType())}" data-source="map_type">${esc((CL_MAPTYPES.find(x => x[0] === clMapType()) || CL_MAPTYPES[5])[1])} <span class="caret"></span></button><ul class="dropdown-menu" role="menu">${CL_MAPTYPES.map(([v, t]) => `<li><a data-value="${v}">${esc(t)}</a></li>`).join('')}</ul></div><div class="clearfix"></div></div></div></div></li></ul></li><li id="fr24_Fullscreen" class="dropdown map-side" data-content="Fullscreen"><a data-toggle="dropdown" class="dropdown-toggle" href="javascript: void(0);">${clUse('icon-fr24-fullscreen', 'icon-fr24-fullscreen')}</a></li><li id="fr24_ZoomIn" class="dropdown" data-content="ZoomIn"><a class="dropdown-toggle">${clUse('icon-fr24-plus', 'nav-icon plus')}</a></li><li id="fr24_ZoomOut" class="dropdown" data-content="ZoomOut"><a class="dropdown-toggle">${clUse('icon-fr24-minus', 'nav-icon minus')}</a></li></ul></div></div>`;
+  // (1.4.3: and the styles FR24's main map has since - any of them the main map's own)
+  const CL_MAPTYPES = [['terrain', 'Terrain'], ['roadmap', 'Roadmap'], ['simple_style', 'Greyscale'], ['radar_style2', 'Radar (dark)'], ['radar_style', 'Radar (blue)'], ['aubergine_style', 'Aubergine'], ['black_white', 'Black/White'], ['satellite', 'Satellite'], ['hybrid', 'Hybrid']];
+  const CL_TOOLBAR = () => `<div class="bootstrap map-components-wrapper"><div id="fr24_ViewsToolbar" class="smooth-tab attach-right dark hidden-in-3d"><ul><li id="fr24_SettingsMenu" class="dropdown map-side" data-content="Settings"><a data-toggle="dropdown" class="dropdown-toggle">${clUse('icon-fr24-gear')}</a><ul id="fr24_SettingsDropdown" class="dropdown-menu settings noclose"><li><ul class="smooth-tab-group"><li class="active"><a class="smooth-tab attach-bottom" data-toggle="tab" data-target="#mapsettings"><div class="tab-sweep toleft"></div><div class="tab-content">Map</div><div class="tab-sweep toright"></div></a></li></ul></li><li><div class="tab-content"><div id="mapsettings" class="tab-pane active clearfix"><div class="scroll-wrap"><h5 class="pull-left short-label">Map style</h5><div id="fr24_mapType" class="btn-group pull-right"><button type="button" class="btn btn-default dropdown-toggle pull-right" data-toggle="dropdown" value="${esc(clMapType())}" data-source="map_type">${esc((CL_MAPTYPES.find(x => x[0] === clMapType()) || CL_MAPTYPES[CL_MAPTYPES.length - 1])[1])} <span class="caret"></span></button><ul class="dropdown-menu" role="menu">${CL_MAPTYPES.map(([v, t]) => `<li><a data-value="${v}">${esc(t)}</a></li>`).join('')}</ul></div><div class="clearfix"></div></div></div></div></li></ul></li><li id="fr24_Fullscreen" class="dropdown map-side" data-content="Fullscreen"><a data-toggle="dropdown" class="dropdown-toggle" href="javascript: void(0);">${clUse('icon-fr24-fullscreen', 'icon-fr24-fullscreen')}</a></li><li id="fr24_ZoomIn" class="dropdown" data-content="ZoomIn"><a class="dropdown-toggle">${clUse('icon-fr24-plus', 'nav-icon plus')}</a></li><li id="fr24_ZoomOut" class="dropdown" data-content="ZoomOut"><a class="dropdown-toggle">${clUse('icon-fr24-minus', 'nav-icon minus')}</a></li></ul></div></div>`;
   const CL_FOOT = () => `<footer class="pb-4"><p>© ${new Date().getUTCFullYear()} Flightradar24 AB</p><ul><li><a href="${CL_FR}/contact-us">Contact us</a></li><li><a href="${CL_FR}/faq">FAQ</a></li><li><a href="${CL_FR}/careers">Careers</a></li><li><a href="${CL_FR}/privacy-policy">Privacy</a></li><li><a href="${CL_FR}/terms-of-service">Terms</a></li></ul></footer>`;
   const clCrumbs = list => `<div class="mx-4"><nav class="breadcrumbs pt-2 border-b border-gray-700 border-solid" data-component="breadcrumbs"><ol class="flex flex-wrap justify-start m-auto text-sm list-none breadcrumbs__list" data-testid="breadcrumbs" itemscope itemtype="https://schema.org/BreadcrumbList">${list.map(([name, href], i) => (i ? '<span class="px-2 text-gray-1300">&gt;</span>' : '') + `<li class="pb-2 font-base font-regular" itemprop="itemListElement" itemscope itemtype="https://schema.org/ListItem">${href ? `<a class="breadcrumbs__list-item breadcrumbs__list-item--url text-blue-500 hover:text-blue-500" itemprop="item" itemtype="https://schema.org/WebPage" href="${esc(href)}"><div class="flex breadcrumbs__list-item-name" itemprop="name">${esc(name)}</div></a>` : `<div class="text-gray-1300 font-semibold"><div class="breadcrumbs__list-item-name" itemprop="name">${esc(name)}</div></div>`}<meta itemprop="position" content="${i + 1}"></li>`).join('')}</ol></nav></div>`;
 
@@ -19838,8 +20051,31 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     simple_style: [CL_ESRI('Canvas/World_Light_Gray_Base'), CL_ESRI('Canvas/World_Light_Gray_Reference')],
     radar_style2: [CL_ESRI('Canvas/World_Dark_Gray_Base'), CL_ESRI('Canvas/World_Dark_Gray_Reference')]
   };
-  const CL_MAP_KEY = 'tl.classic.maptype';
-  function clMapType() { let v = ''; try { v = localStorage.getItem(CL_MAP_KEY) || ''; } catch (e) { v = ''; } return CL_LAYERS[v] ? v : 'hybrid'; }
+  CL_LAYERS.radar_style = CL_LAYERS.aubergine_style = CL_LAYERS.black_white = CL_LAYERS.radar_style2;
+  // ---- (1.4.3) The map as FR24's main map has it: its settings as FR24 reads them on opening - the page's (the account's
+  // own, else FR24's), a browser not signed in its own over them (FR24's "settings" in this site's storage), and over
+  // all those this script keeps of the ones FR24 locks (page.js mxSetKept). The map's style, its brightness, its day and
+  // night line, the trail's tooltip, the units it tells in. Read again at each Play; the toolbar's choice of style holds
+  // for this page only
+  const CL_SPEEDS = ['kt', 'kmh', 'mph', 'mach'];
+  function clMainSet() {
+    const d = (clPage && clPage.props && clPage.props.dispatcher) || {};
+    let s = {}; try { s = JSON.parse(JSON.stringify(d.settings || {})) || {}; } catch (e) { s = {}; }
+    const over = o => {
+      if (!o || typeof o !== 'object') return;
+      for (const sec of Object.keys(o)) { const a = s[sec], b = o[sec]; if (!a || typeof a !== 'object' || !b || typeof b !== 'object') continue; for (const k of Object.keys(b)) if (k in a) a[k] = b[k]; }
+    };
+    const kept = k => { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { return null; } };
+    if (d.accessToken == null) over(kept('settings'));
+    over(kept('tl.mx.settings'));
+    const map = s.map || {}, misc = s.misc || {}, u = s.units || {}, b = Number(map.brightness);
+    return {
+      style: CL_LAYERS[map.style] ? map.style : 'hybrid', brightness: Number.isFinite(b) ? Math.max(0, Math.min(100, b)) : 100,
+      night: map.dayNightLine === true, tip: misc.showTrailTooltip !== false,
+      alt: u.altitude === 'm' ? 'm' : 'ft', spd: CL_SPEEDS.includes(u.aircraftSpeed) ? u.aircraftSpeed : 'kt'
+    };
+  }
+  function clMapType() { return pl.type && CL_LAYERS[pl.type] ? pl.type : clMainSet().style; }
   const clWX = (lon, z) => (lon + 180) / 360 * 256 * Math.pow(2, z);
   const clWY = (lat, z) => { const s = Math.sin(Math.max(-85, Math.min(85, lat)) * Math.PI / 180); return (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * 256 * Math.pow(2, z); };
   const clLon = (x, z) => x / (256 * Math.pow(2, z)) * 360 - 180;
@@ -19866,7 +20102,10 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
       if (m.draw) m.draw();
     };
-    m.setType = t => { if (!CL_LAYERS[t]) return; m.type = t; try { localStorage.setItem(CL_MAP_KEY, t); } catch (e) { /* this visit only */ } m.render(); };
+    m.setType = t => { if (!CL_LAYERS[t]) return; m.type = t; m.render(); };
+    // (the main map's brightness, as FR24 sets it on its map's tiles)
+    m.bright = b => { tiles.style.filter = Number.isFinite(b) && b < 100 ? `brightness(${Math.max(0, b)}%)` : ''; };
+    m.bright(clMainSet().brightness);
     // (the track fitted to the part of the map the panel leaves: the old panel covers its foot)
     m.fit = pts => {
       if (!pts.length) return; let a = Infinity, b = -Infinity, c = Infinity, d = -Infinity;
@@ -19894,8 +20133,16 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   }
   // (how much of the map's foot the panel covers: the map's height less where the page's content begins)
   function clCover() { const map = document.getElementById('cnt-data-map'), c = document.getElementById('cnt-data-content'); if (!map || !c) return 0; const mr = map.getBoundingClientRect(), cr = c.getBoundingClientRect(); return Math.max(0, Math.min(mr.height, mr.bottom - cr.top)); }
-  // (a track's colour by its height, as FR24 colours its trails: ground yellow, through green and blue, to purple)
-  const clAltCol = alt => `hsl(${Math.round(55 + Math.min(1, Math.max(0, (alt || 0) / 40000)) * 230)},95%,${alt > 0 ? 50 : 55}%)`;
+  // (a track's colour by its height, as FR24 colours its trails - by metres: white on the ground, yellow low, through
+  // green, cyan and blue, to violet and red at the top; the same scale as Google's map here draws where FR24's own is
+  // not to be had, page.js clmCol)
+  const CL_HUES = [[100, 52], [300, 62], [600, 78], [1000, 105], [1500, 125], [2500, 150], [3500, 175], [4500, 190], [5500, 200], [6500, 210], [7500, 225], [8500, 240], [9500, 255], [10500, 268], [11500, 280], [12500, 300], [13000, 330]];
+  const clAltCol = alt => {
+    const m = (alt || 0) * 0.3048; if (!(m > 100)) return '#ffffff';
+    let h = CL_HUES[CL_HUES.length - 1][1];
+    for (let i = 1; i < CL_HUES.length; i++) if (m <= CL_HUES[i][0]) { const a = CL_HUES[i - 1], b = CL_HUES[i]; h = a[1] + (b[1] - a[1]) * (m - a[0]) / (b[0] - a[0]); break; }
+    return `hsl(${Math.round(h)},100%,50%)`;
+  };
   // (the toolbar: settings - the map's style -, full screen, zoom in and out)
   // (FR24's stylesheet leaves the buttons' links to the pointer of their items - the old page script listened there)
   function clToolbarBind(wrap) {
@@ -19906,7 +20153,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     mt.querySelectorAll('a[data-value]').forEach(a => a.addEventListener('click', ev => {
       ev.preventDefault(); const v = a.dataset.value; mt.classList.remove('open');
       const b = mt.querySelector('button'); b.value = v; b.innerHTML = `${esc(a.textContent)} <span class="caret"></span>`;
-      try { localStorage.setItem(CL_MAP_KEY, v); } catch (e) { /* this visit only */ }
+      pl.type = v;
       if (pl.gm) clGm('type', { type: v }); else if (pl.map) pl.map.setType(v);
     }));
     document.addEventListener('click', ev => { if (!set.contains(ev.target)) { set.classList.remove('open'); mt.classList.remove('open'); } });
@@ -19921,7 +20168,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
 
   // ---- the player: a row's Play, as FR24's old panel played it - the map over the page, the flight drawn, the aircraft
   // moved along it, its figures each moment (and those FR24 padlocked, from public ADS-B - fillPlaybackData)
-  const pl = { map: null, pts: [], t: 0, t0: 0, t1: 0, playing: false, raf: 0, last: 0, seq: 0, follow: false, route: false, chart: false, fid: '', o: null, d: null, on: false };
+  const pl = { map: null, pts: [], t: 0, t0: 0, t1: 0, playing: false, raf: 0, last: 0, seq: 0, follow: false, route: false, chart: false, fid: '', o: null, d: null, on: false, type: '' };
   // ---- (1.4.2) the map as the old pages had it: Google's, FR24's own - drawn in the page by its part there (page.js
   // clmOp), the flight on it as FR24's map draws one. Asked once; the map drawn here (Esri's) only where Google's cannot be
   let clGmWait = null;
@@ -19934,7 +20181,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     if (pl.gmP) return pl.gmP;
     pl.gmP = new Promise(res => {
       const done = ok => { pl.gm = !!ok; res(pl.gm); };
-      clGmWait = done; postToPage('clMap', { op: 'init', type: clMapType() });
+      clGmWait = done; postToPage('clMap', { op: 'init', type: clMapType(), set: clMainSet() });
       // (Google's map not up in 18 s: the one drawn here)
       setTimeout(() => { if (clGmWait === done) { clGmWait = null; done(false); } }, 18000);
     });
@@ -19984,7 +20231,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   function clFollow(on) {
     pl.follow = !!on; const b = document.getElementById('btn-toggle-follow'); if (b) b.classList.toggle('active', pl.follow);
     const c = pl.pts.length ? clAt(pl.t) : null; if (!c) return;
-    if (pl.gm) clGm('pos', { lat: c.lat, lon: c.lon, trk: fin(c.trk) ? c.trk : 0, follow: pl.follow, cover: clCover() });
+    if (pl.gm) clGm('pos', { lat: c.lat, lon: c.lon, trk: fin(c.trk) ? c.trk : 0, follow: pl.follow, cover: clCover(), t: Math.round(pl.t) });
     else if (pl.follow && pl.map) clCentre(c);
   }
   // (the aircraft in the middle of the part of the map the panel leaves)
@@ -20034,6 +20281,8 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       mapEl.querySelector('#tl-cl-gmap').style.display = gm ? '' : 'none';
       for (const el of mapEl.querySelectorAll('.tl-cl-tiles, .tl-cl-over, .tl-cl-attr')) el.style.display = gm ? 'none' : '';
       if (!gm && !pl.map) pl.map = clMap(mapEl);
+      // (the main map's style and brightness, as they are now)
+      if (!gm && pl.map) { const ms = clMainSet(); pl.map.bright(ms.brightness); if (!pl.type && pl.map.type !== ms.style) pl.map.setType(ms.style); }
       return gm;
     });
     // (the panel at once, from the row: its airports, its flight, the aircraft)
@@ -20077,7 +20326,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
       const ac = { hex: pl.hex || (clPage.kind === 'aircraft' ? clPage.hex : '') || '', type: tk.type || (clPage.kind === 'aircraft' ? clean((clPage.props.aircraft || {}).typeCode || '') : '') || '' };
       ac.cls = ENGINE.classify({ hex: ac.hex, type: ac.type });
       const r5 = v => Math.round(v * 1e5) / 1e5, ends = a => a && fin(a.lat) && fin(a.lon) ? [r5(a.lat), r5(a.lon)] : null;
-      clGm('track', { pts: pts.map(q => [q.t, r5(q.lat), r5(q.lon), fin(q.alt) ? Math.round(q.alt) : null, fin(q.gs) ? Math.round(q.gs) : null, fin(q.trk) ? Math.round(q.trk) : null]), o: ends(pl.o), d: ends(pl.d), cover: clCover(), ac });
+      clGm('track', { pts: pts.map(q => [q.t, r5(q.lat), r5(q.lon), fin(q.alt) ? Math.round(q.alt) : null, fin(q.gs) ? Math.round(q.gs) : null, fin(q.trk) ? Math.round(q.trk) : null]), o: ends(pl.o), d: ends(pl.d), cover: clCover(), ac, set: clMainSet(), type: clMapType() });
       clGm('route', { on: pl.route });
     } else { pl.map.draw = clDrawTrack; pl.map.fit(pts.concat([pl.o, pl.d].filter(x => x && fin(x.lat) && fin(x.lon)))); }
     clSeek(pl.t0);
@@ -20125,18 +20374,22 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   function clDrawTrack() {
     const m = pl.map, svg = m.el.querySelector('.tl-cl-over'), P = pl.pts; if (!P.length) { svg.innerHTML = ''; return; }
     let html = '';
-    // (the great circle between its airports)
+    // (the great circle between its airports: FR24's thin dark dashed line)
     if (pl.route && pl.o && pl.d && fin(pl.o.lat) && fin(pl.d.lat)) {
       let d = ''; for (let i = 0; i <= 64; i++) { const g = clGc(pl.o, pl.d, i / 64), q = m.px(g.lat, g.lon); d += (i ? 'L' : 'M') + q.x.toFixed(1) + ' ' + q.y.toFixed(1); }
-      html += `<path d="${d}" fill="none" stroke="#fff" stroke-width="2" stroke-opacity=".85"/>`;
+      html += `<path d="${d}" fill="none" stroke="#000" stroke-opacity="${(100 / 255).toFixed(3)}" stroke-width="2" stroke-dasharray="3 5"/>`;
     }
-    // (the track: its pieces by height, each its colour)
-    let prev = m.px(P[0].lat, P[0].lon);
+    // (1.4.3: the track as FR24's map draws a trail - 3 px, by height, laid on see-through as one (FR24's 100 of 255); a
+    // dot at each position, its own colour)
+    const xy = P.map(p => m.px(p.lat, p.lon)), f1 = v => v.toFixed(1);
+    let line = '', dots = '', last = null;
     for (let i = 1; i < P.length; i++) {
-      const q = m.px(P[i].lat, P[i].lon); if (Math.abs(q.x - prev.x) + Math.abs(q.y - prev.y) < 0.6 && i < P.length - 1) continue;
-      html += `<line x1="${prev.x.toFixed(1)}" y1="${prev.y.toFixed(1)}" x2="${q.x.toFixed(1)}" y2="${q.y.toFixed(1)}" stroke="${clAltCol(P[i].alt)}" stroke-width="3" stroke-linecap="round"/>`;
-      prev = q;
+      const a = xy[i - 1], q = xy[i]; if (Math.abs(q.x - a.x) + Math.abs(q.y - a.y) < 0.6 && i < P.length - 1) continue;
+      if (P[i].t - P[i - 1].t >= 300) { html += `<line x1="${f1(a.x)}" y1="${f1(a.y)}" x2="${f1(q.x)}" y2="${f1(q.y)}" stroke="#000" stroke-opacity="${(100 / 255).toFixed(3)}" stroke-width="1" stroke-dasharray="1 3"/>`; continue; }
+      line += `<line x1="${f1(a.x)}" y1="${f1(a.y)}" x2="${f1(q.x)}" y2="${f1(q.y)}" stroke="${clAltCol(P[i].alt)}" stroke-width="3" stroke-linecap="round"/>`;
     }
+    for (let i = 0; i < P.length; i++) { const q = xy[i]; if (last && Math.abs(q.x - last.x) + Math.abs(q.y - last.y) < 1) continue; dots += `<circle cx="${f1(q.x)}" cy="${f1(q.y)}" r="1.5" fill="${clAltCol(P[i].alt)}"/>`; last = q; }
+    html += `<g opacity="${(100 / 255).toFixed(3)}">${line}</g>${dots}`;
     for (const ap of [pl.o, pl.d]) if (ap && fin(ap.lat)) { const q = m.px(ap.lat, ap.lon); html += `<image href="${CL_PIN}" x="${(q.x - 10).toFixed(1)}" y="${(q.y - 20).toFixed(1)}" width="20" height="20"/>`; }
     const c = clAt(pl.t);
     if (c) { const q = m.px(c.lat, c.lon); html += `<g transform="translate(${q.x.toFixed(1)} ${q.y.toFixed(1)}) rotate(${Math.round(c.trk || 0)})"><path d="${CL_PLANE}" fill="#fcc419" stroke="#3b3b3b" stroke-width="1.1" stroke-linejoin="round"/></g>`; }
@@ -20168,7 +20421,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
   function clSeek(t) {
     pl.t = Math.max(pl.t0, Math.min(pl.t1, t)); const c = clAt(pl.t); if (!c) return;
     clSlider(); clFigures(c);
-    if (pl.gm) clGm('pos', { lat: c.lat, lon: c.lon, trk: fin(c.trk) ? c.trk : 0, follow: pl.follow, cover: clCover() });
+    if (pl.gm) clGm('pos', { lat: c.lat, lon: c.lon, trk: fin(c.trk) ? c.trk : 0, follow: pl.follow, cover: clCover(), t: Math.round(pl.t) });
     else if (pl.map) { if (pl.follow) clCentre(c); else clDrawTrack(); }
     if (pl.chart) clChartMark();
     // (the moment's padlocked figures - GPS altitude, airspeeds, vertical speed, squawk - from public ADS-B, as on FR24's
