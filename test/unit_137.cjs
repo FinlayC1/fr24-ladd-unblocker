@@ -100,7 +100,8 @@ const until = async (f, ms) => { const t = Date.now(); while (Date.now() - t < m
     const P = page('https://www.flightradar24.com/53.4,-2.9/9', null, w => { w.fetch = input => { const u = String(typeof input === 'string' ? input : input.url); if (/\/api\/v2\/airports(\?|$)/.test(u)) return Promise.resolve(json({ version: 7, rows: FR })); return Promise.reject(new Error('offline')); }; });
     const H = P.H(); H.acceptOa({ rows: OA, refs: { 900: 'egow' } });
     const j = await (await P.w.fetch('https://www.flightradar24.com/api/v2/airports')).json(), ids = j.rows.map(r => r.id);
-    check('FR24\'s list of airports at its new address (/api/v2/airports): theirs in it - never one FR24 now lists itself by its code (its ICAO-only airports are in its list now: EGOW)', ids.includes(10000001) && !ids.includes(10000002) && ids.includes(900) && j.version === 7, ids.slice(-3));
+    // (1.4.3: no OurAirports airport put into FR24's list any more - FR24's tables are given them, oaFillTables, unit_13)
+    check('FR24\'s list of airports at its new address (/api/v2/airports): as FR24 sent it, at once - none of theirs put in (FR24 read 70,000 airports before a pin)', !ids.includes(10000001) && !ids.includes(10000002) && ids.includes(900) && ids.length === FR.length && j.version === 7, ids.slice(-3));
     // (FR24's lookup, as its build makes it: its methods on an object of its own, the module's a copy of them - its lookup
     // by code or id asks its own object's byId, not the module's)
     const db = FR.map(a => ({ id: a.id, iata: a.iata, icao: a.icao, name: a.name, latitude: a.lat, longitude: a.lon }));

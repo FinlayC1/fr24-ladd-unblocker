@@ -190,9 +190,13 @@ const rd = d => { try { return JSON.parse(fs.readFileSync(path.join(STORE, 'legs
       // (FR24's store as it keeps airports: each list row turned into its own form - latitude / longitude - and an index of
       // them by id; its map draws the airports array)
       const fr24Form = a => ({ id: a.id, iata: a.iata, icao: a.icao, name: a.name, latitude: a.lat, longitude: a.lon, altitude: a.alt, city: a.city, country: a.country, countryId: a.countryId, size: a.size, timezoneName: a.timezone.name, timezoneCode: a.timezone.abbr, timezoneDST: a.timezone.isDst, timezoneOffset: a.timezone.offset, timezoneOffsetHours: a.timezone.offsetHours, videoStream: null });
-      const all = list.rows.map(fr24Form), own1 = all.find(a => a.id === 17000001), byId = new Map(all.filter(a => a.id !== 17000002).map(a => [a.id, a]));
+      // (1.4.3: FR24's list as it came - no OurAirports airport in it; its tables given them a slice at a time, oaFillTables;
+      // one of them taken out again, as a table FR24 made anew before the fill reached it)
+      const all = list.rows.map(fr24Form), byId = new Map(all.map(a => [a.id, a]));
       const store = { airports: all.filter(a => a.id < 1e7), airportsById: byId };
       P.w.document.getElementById('app').__vue_app__ = { config: { globalProperties: { $pinia: { _s: new Map([['airports', store]]) } } } };
+      H.oaFillTables(); await sleep(60);
+      const own1 = byId.get(17000001); byId.delete(17000002);
       H.setOaBase(store.airports.slice()); H.oaMap();
       const pins = store.airports.filter(a => a.id >= 1e7);
       check('FR24\'s map, zoomed in at Barrow: the OurAirports airports in view as FR24 keeps airports - latitude and longitude (1.3 put lat / lon there: no pin was ever drawn)', pins.length === 3 && pins.every(a => isFinite(a.latitude) && isFinite(a.longitude) && a.timezoneName === 'Europe/London' && typeof a.iata === 'string'), pins.map(a => [a.id, a.latitude, a.longitude]));

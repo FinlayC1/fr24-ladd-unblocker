@@ -416,6 +416,9 @@
     };
     const out = { ok: true, fid };
     const jobs = [];
+    // (1.4.3: the aircraft's serial number - FR24's player padlocks it for a free account: the registers' and picture sites'
+    // as the log page has it, publicIdentity)
+    if (d.wantMsn) jobs.push((async () => { const raw = await rawOf(), x = ids(raw.m || {}); if (!x.hex) return; const hx = await identityEarly(x.hex, x.reg).catch(() => null); const msn = clean((hx && hx.msn) || (store.getHex(x.hex) || {}).msn || ''); if (msn && /^[A-Za-z0-9 ./-]{1,24}$/.test(msn)) out.msn = msn; })());
     if (d.wantOwner) jobs.push(rawOf().then(raw => { const x = ids(raw.m || {}); return pbOperator(x.hex, x.reg, x.cs); }).then(op => { if (op.name) { out.operator = op.name; out.alId = op.alId || 0; } }));
     if (d.wantFn) jobs.push((async () => { const raw = await rawOf(), x = ids(raw.m || {}); if (!x.cs) return; const fn = clean((raw.m || {}).fn || '').toUpperCase() || await csFlightNumber(x.cs); if (fn && fn !== x.cs) out.flightNumber = fn; })());
     if (d.wantFrom || d.wantTo || d.wantCheck) jobs.push((async () => {

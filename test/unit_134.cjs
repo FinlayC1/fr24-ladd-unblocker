@@ -76,7 +76,7 @@ const until = async (f, ms) => { const t = Date.now(); while (Date.now() - t < m
     w.eval(SRC);
     await until(() => w.__tweeksLadd && w.__tweeksLadd.oaTest, 8000);
     const T = w.__tweeksLadd.oaTest;
-    T.buildAirports(AIRPORTS); T.oaSet({ rows: OAROWS, n: OAROWS.length, at: 1 });
+    T.buildAirports(AIRPORTS); await T.oaSet({ rows: OAROWS, n: OAROWS.length, at: 1 });
     const row = c => OAROWS.find(r => r[2] === c || r[1] === c), wood = row('EGOW'), axis = row('GB-1368'), big = id => (AIRPORTS.find(a => a.id === id) || {});
     const ref = T.oaPageRef(wood[5]), refAp = AIRPORTS.find(a => String(a.iata || a.icao).toLowerCase() === ref);
     check('RAF Woodvale\'s pages made from a big FR24 airport of its country - not its nearest, Blackpool, which FR24\'s server has no page of ("More" ended on its airport search)', big(wood[5]).iata === 'BLK' && ref !== 'blk' && refAp && refAp.size >= 10000 && refAp.countryId === big(wood[5]).countryId, { nearest: big(wood[5]).iata, ref, size: refAp && refAp.size });

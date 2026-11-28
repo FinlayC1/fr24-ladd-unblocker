@@ -2188,7 +2188,9 @@
     // Nothing of FR24's own is deleted now.)
     var BAE_LOGO = { source: 'https://upload.wikimedia.org/wikipedia/commons/thumb/7/73/BAE_Systems_logo.svg/250px-BAE_Systems_logo.svg.png', dimensions: { width: 250, height: 39 } };
     var LOGO_ADD = { 583: BAE_LOGO, 3046: BAE_LOGO, 582: BAE_LOGO };
-    var LISTS_V = '1';
+    // (1.4.3: '2' - FR24's airport list with no OurAirports airports in it: FR24 had the whole list again once, to drop the
+    // copy it kept with them)
+    var LISTS_V = '2';
     function logoOf(id) { return !id ? '' : LOGO_ADD[id] ? LOGO_ADD[id].source : 'https://cdn.flightradar24.com/assets/airlines/logotypes/' + id + '.png'; }
     function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
     function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* full or blocked */ } }
@@ -2213,7 +2215,7 @@
       return i < 0 ? s : s.slice(0, i).trim() || s.replace(/^[,\s]+|[,\s]+$/g, '').replace(/,\s*/g, ', ');
     }
     var siteRows = (function () { try { var l = JSON.parse(lsGet('tl.sites') || '[]'); return Array.isArray(l) ? l.map(function (r) { return r && typeof r === 'object' ? Object.assign({}, r, { name: placeShort(r.name), city: placeShort(r.city) }) : r; }) : []; } catch (e) { return []; } })();
-    function listSig(kind) { return kind === 'airlines' ? LISTS_V : LISTS_V + ':' + hashStr(JSON.stringify(siteRows)) + ':' + (lsGet('tl.oa.sig') || ''); }
+    function listSig(kind) { return kind === 'airlines' ? LISTS_V : LISTS_V + ':' + hashStr(JSON.stringify(siteRows)); }
     // ---- (1.3) Every OurAirports airport FR24 does not list (closed ones aside): airfields, strips, heliports, seaplane
     // and balloon bases - the monitor's list (oaap.cjs), by the userscript, each with the route engine's own id for it.
     // In FR24's airport list (its panel, boards, routes and search look airports up there), with its code (IATA, else
@@ -3178,10 +3180,15 @@
     // time FR24 makes the tables anew.
     var oaFillT = 0, oaFillAt = null;
     function rawOf(m) { return m && m.__v_raw ? m.__v_raw : m; }
+    // (once FR24's tables are there - its list read - and again whenever it makes them anew)
+    function oaFillSoon() { setTimeout(function () { try { oaFillTables(); } catch (e) { stats.errors++; stats.lastError = String(e); } }, 0); }
+    var oaFilled = null;
     function oaFillTables() {
       if (oaFillT) return;
       var st = pinStore('airports'), byId = st && rawOf(st.airportsById), byIata = st && rawOf(st.airportsByIata);
       if (!byId || typeof byId.set !== 'function' || !(byId.size > 100)) return;
+      // (these very tables given these very rows already: nothing to do)
+      if (oaFilled && oaFilled.byId === byId && oaFilled.rows === oaRows && oaFilled.sites === siteRows) return;
       var todo = (oaRows || []).slice(), sites = siteRows.slice(), i = 0;
       oaFillAt = byId;
       var step = function () {
@@ -3195,7 +3202,7 @@
         }
         if (i < todo.length) { oaFillT = setTimeout(step, 0); return; }
         sites.forEach(function (a) { if (a && a.id > 9000000 && a.id < 1e7 && isFinite(a.lat)) { var o = storeForm(a); byId.set(o.id, o); if (byIata && o.iata && o.iata !== 'PVT' && !byIata.has(o.iata)) byIata.set(o.iata, o); } });
-        stats.oaTables = byId.size;
+        stats.oaTables = byId.size; oaFilled = { byId: byId, rows: oaRows, sites: siteRows };
       };
       oaFillT = setTimeout(step, 0);
     }
@@ -3214,7 +3221,8 @@
         // FR24's own, never added beside it)
         noteFr24Codes(j.rows.filter(function (r) { return r && r.id < 9000000; }));
         siteRows.forEach(function (r) { if (r && r.id && !have[r.id]) j.rows.push(r); });
-        if (oaRows) oaRows.forEach(function (r) { if (Array.isArray(r) && r[0] >= 1e7 && !have[r[0]] && !oaDupe(r)) j.rows.push(oaFr24Row(r, refOf(r[5]))); });
+        // (1.4.3: no OurAirports airport in it - FR24's tables are given them in slices, oaFillTables)
+        oaFillSoon();
       }
       lsSet('tl.list.' + kind, listSig(kind));
       return true;
@@ -3232,7 +3240,8 @@
         var st = pinStore('airports');
         if (!st || typeof st.$onAction !== 'function') return false;
         // (1.3: the OurAirports airports too - but for those in view, put in by oaMap)
-        var strip = function () { var a = st.airports; if (Array.isArray(a) && a.some(function (x) { return isSiteRow(x) || isOaRow(x); })) { oaBase = a.filter(function (x) { return !isSiteRow(x) && !isOaRow(x); }); oaShown = ''; st.airports = oaBase; oaMapSoon(); } else if (Array.isArray(a)) oaBase = a.filter(function (x) { return !isOaRow(x); }); noteFr24Codes(oaBase); oaFillTables(); };
+        // (1.4.3: and FR24's tables made anew: the OurAirports airports put back into them, a slice at a time)
+        var strip = function () { oaFillSoon(); var a = st.airports; if (Array.isArray(a) && a.some(function (x) { return isSiteRow(x) || isOaRow(x); })) { oaBase = a.filter(function (x) { return !isSiteRow(x) && !isOaRow(x); }); oaShown = ''; st.airports = oaBase; oaMapSoon(); } else if (Array.isArray(a)) oaBase = a.filter(function (x) { return !isOaRow(x); }); noteFr24Codes(oaBase); oaFillTables(); };
         st.$onAction(function (c) { if (c.name === 'setAirports') c.after(strip); }); strip();
         return true;
       } catch (e) { return false; }
@@ -3307,9 +3316,11 @@
       var kind = /airlines/.test(url) ? 'airlines' : 'airports', a = [].slice.call(args);
       // (a list FR24 takes to be up to date, while what is added to it is not: the whole list asked for)
       if (lsGet('tl.list.' + kind) !== listSig(kind) && /[?&]version=[1-9]/.test(url)) a[0] = url.replace(/([?&]version=)\d+/, '$10');
-      // (1.3: the OurAirports airports on their way from the userscript - waited for, 4 s at most, so FR24 keeps them in)
-      var ready = kind === 'airports' && !oaRows && lsGet('tl.oa.sig') ? new Promise(function (res) { oaWait.push(res); setTimeout(res, 4000); }) : null;
-      return Promise.resolve(ready).then(function () { return oFetch.apply(self, a); }).then(function (res) {
+      // (1.4.3: FR24's own list as it comes, at once - the OurAirports airports go into FR24's tables beside it, a slice at a
+      // time (oaFillTables). 1.3 to 1.4.2 held the list up to 4 s for them and put all some 63,000 into it: FR24 read and
+      // kept 70,000 airports before its map had a pin or a flight's airports a name - some 20 s on a phone, since 1.4.2
+      // had the OurAirports list in by then every time)
+      return oFetch.apply(self, a).then(function (res) {
         if (!res.ok) return res;
         return res.clone().json().then(function (j) { return patchList(kind, j) ? jsonResponse(res, j) : res; }, function () { return res; });
       });
@@ -6057,7 +6068,9 @@
       // (1.4.1: and FR24's own airports, checked once against where its own track began and ended - one it never came
       // near, the track down at another field, replaced: M-SKTO's "Liverpool", its track down in Gillmoss)
       var tr = Array.isArray(p.trailRoute) ? p.trailRoute : [];
-      return { owner: priv, from: from, to: to, fn: mxNA(p.flightNumber) && !mxNA(p.callsign), chk: tr.length > 1 && (!from || !to) };
+      // (1.4.3: and its serial number, which FR24 padlocks)
+      var msnF = Array.isArray(p.facts) ? p.facts.filter(function (f) { return f && f.key === 'serial_number'; })[0] : null;
+      return { owner: priv, from: from, to: to, fn: mxNA(p.flightNumber) && !mxNA(p.callsign), chk: tr.length > 1 && (!from || !to), msn: !!msnF && (msnF.locked === true || mxNA(msnF.value)) };
     }
     // (1.4.3) FR24's player's "Related flights" - Previous and Next of the same flight number, call sign and aircraft: for a
     // flight played here, where FR24 gives none, the userscript's from the monitor (pbRelated); on FR24's own, its
@@ -6101,7 +6114,7 @@
       var pm = location.pathname.match(/^\/data\/playback\/([0-9a-f]{1,12})\/?$/i), fid = pm ? pm[1].toLowerCase() : ''; if (!fid) return;
       // (one FR24 locks or shows empty - made ours whole, mxPbTake: not this)
       if (mxPbTried[fid]) return;
-      var w = mxPbWants(p); if (!w.owner && !w.from && !w.to && !w.fn && !w.chk) return;
+      var w = mxPbWants(p); if (!w.owner && !w.from && !w.to && !w.fn && !w.chk && !w.msn) return;
       var got = mxPbInfo.get(fid); if (got) { mxPbInfoPut(p, got, w); return; }
       if (mxPbInfoAsked[fid]) return; mxPbInfoAsked[fid] = Date.now();
       var ft = p.flightTimes || {}, sec = mxSec;
@@ -6109,7 +6122,7 @@
       var end = function (r, i) { if (!r || !fin(r.lat) || !fin(r.long)) return null; var g = tl[i] && tl[i].timestamp === r.timestamp ? tl[i] : null; return { t: r.timestamp, lat: r.lat, lon: r.long, alt: fin(r.altitude) ? r.altitude : g && fin(g.barometricAltitude) ? g.barometricAltitude : null, gs: g && fin(g.groundSpeed) ? g.groundSpeed : null }; };
       var ac = p.aircraft || {}, reg = !mxNA(ac.registration) ? String(ac.registration) : mxFact(p, 'registration');
       post('pbInfo', { rid: 'pi' + (++mxPbInfoSeq), fid: fid, reg: reg || '', cs: !mxNA(p.callsign) ? String(p.callsign) : '', dep: sec(ft.actualDeparture) || sec(ft.scheduledDeparture), arr: sec(ft.actualArrival),
-        type: mxFact(p, 'type_code') || '', ends: tr.length ? [end(tr[0], 0), end(tr[tr.length - 1], tr.length - 1)] : [], wantOwner: w.owner, wantFrom: w.from, wantTo: w.to, wantFn: w.fn,
+        type: mxFact(p, 'type_code') || '', ends: tr.length ? [end(tr[0], 0), end(tr[tr.length - 1], tr.length - 1)] : [], wantOwner: w.owner, wantFrom: w.from, wantTo: w.to, wantFn: w.fn, wantMsn: w.msn,
         wantCheck: w.chk, fr24From: !w.from && p.origin ? String(p.origin.code || '') : '', fr24To: !w.to && p.destination ? String(p.destination.code || '') : '' });
     }
     function onPbInfoGot(d) {
@@ -6121,6 +6134,7 @@
     // (into FR24's page data - its reactive props: FR24's page draws them anew at once)
     function mxPbInfoPut(p, d, w) {
       var n = 0;
+      if (w.msn && d.msn && Array.isArray(p.facts)) { p.facts = p.facts.map(function (f) { return f && f.key === 'serial_number' ? Object.assign({}, f, { value: String(d.msn), locked: false }) : f; }); n++; }
       if (w.owner && d.operator) { p.airline = Object.assign({}, p.airline || {}, { name: d.operator, logoUrl: (p.airline && p.airline.logoUrl) || mxPbAirline(d.operator, d.alId).logoUrl, logoDimensions: (p.airline && p.airline.logoDimensions) || null }); n++; }
       var ft = p.flightTimes;
       var endName = function (k, a, over) { var e = ft && typeof ft === 'object' ? ft[k] : null; if (e && typeof e === 'object' && (over || mxNA(e.name) || e.name === 'Not available')) ft[k] = Object.assign({}, e, { name: a.name || a.city || a.code, timezone: over ? a.tz || e.timezone || 'UTC' : e.timezone || a.tz || 'UTC' }); };
@@ -7958,10 +7972,12 @@
       for (const f of fulls || []) { const full = String(f == null ? '' : f).trim(); if (!full || out.has(full)) continue; const sh = placeShort(full), set = by.get(sh.toLowerCase()); out.set(full, set && set.size > 1 ? full : sh); }
       return out;
     }
-    function setFields(rows) {
-      fieldRows = rows || null;
-      for (const f of FL) { if (byId.get(f.id) === f) byId.delete(f.id); if (byIcao.get(f.icao) === f) byIcao.delete(f.icao); }
-      FL = []; fgrid = new Map();
+    // (1.4.3: opts.append - these rows added to those set before, a slice at a time: a browser builds its 40,000 fields so,
+    // its page not held up; opts.later - the airports' usage applied by the last slice only)
+    function setFields(rows, opts) {
+      const append = !!(opts && opts.append);
+      fieldRows = append && fieldRows ? fieldRows.concat(rows || []) : rows || null;
+      if (!append) { for (const f of FL) { if (byId.get(f.id) === f) byId.delete(f.id); if (byIcao.get(f.icao) === f) byIcao.delete(f.icao); } FL = []; fgrid = new Map(); }
       for (const r of rows || []) {
         if (!r || !fin(r.lat) || !fin(r.lon) || !r.ident) continue;
         const ident = String(r.ident).toUpperCase();
@@ -7978,7 +7994,7 @@
         FL.push(a); byId.set(id, a); byIcao.set(ident, a);
         const k = cellKey(a.lat, a.lon); (fgrid.get(k) || fgrid.set(k, []).get(k)).push(a);
       }
-      applyUsage();
+      if (!(opts && opts.later)) applyUsage();
       return FL.length;
     }
     // (1.3.6) The OurAirports heliports FR24 does not list - where a helicopter that comes down there has landed: M-SKTO
@@ -7986,8 +8002,10 @@
     // fixed-wing flight is predicted for, nor taken for one of them elsewhere (heliById, not byId). Each by the id the
     // OurAirports list gives it - fieldId of its ident - so the browser names it and opens its page as that list's.
     let HL = [], hgrid = new Map(), HB = new Map(), heliRows = null;
-    function setHeliports(rows) {
-      heliRows = rows || null; HL = []; hgrid = new Map(); HB = new Map();
+    function setHeliports(rows, opts) {
+      const append = !!(opts && opts.append);
+      heliRows = append && heliRows ? heliRows.concat(rows || []) : rows || null;
+      if (!append) { HL = []; hgrid = new Map(); HB = new Map(); }
       for (const r of rows || []) {
         if (!r || !fin(r.lat) || !fin(r.lon) || !r.ident) continue;
         const ident = String(r.ident).toUpperCase(), own = byIcao.get(ident);
@@ -12657,18 +12675,23 @@
   function buildSites(rows) { const g = new Map(); for (const r of rows) { const k = Math.floor(r[0] * 20) * 10000 + Math.floor(r[1] * 20); let c = g.get(k); if (!c) g.set(k, c = []); c.push(r); } sites.grid = g; sites.n = rows.length;
     // the airfields FR24 does not list, for the route engine: where light aircraft land and take off, fly circuits - and
     // where they may be going (Borkenberge, Slany, a farm strip)
-    try { ENGINE.setFields(rows.filter(r => r[2] === 'S' || r[2] === 'M').map(r => ({ lat: r[0], lon: r[1], alt: r[6], ident: r[4], name: r[3], city: r[5] }))); } catch (e) { log('airfields', e); }
+    // (1.4.3: a browser's in slices - sites.setFields, set outside this block - its page and FR24's own not held up; the
+    // monitor's at once)
+    let p = null;
+    try { const list = rows.filter(r => r[2] === 'S' || r[2] === 'M').map(r => ({ lat: r[0], lon: r[1], alt: r[6], ident: r[4], name: r[3], city: r[5] })); if (typeof sites.setFields === 'function') p = sites.setFields(list); else ENGINE.setFields(list); } catch (e) { log('airfields', e); }
     // (1.4.1: the page's flight on screen worked out again with them - set outside this block; the monitor sets none)
-    if (typeof sites.onBuilt === 'function') sites.onBuilt();
+    const built = () => { if (typeof sites.onBuilt === 'function') sites.onBuilt(); };
+    if (p && typeof p.then === 'function') return p.then(built, built);
+    built(); return null;
   }
   function loadSites() {
     if (sites.grid) return Promise.resolve(true);
     if (sites.loading) return sites.loading;
     sites.loading = (async () => {
       const c = await store.getHist('b:sites1');
-      if (c && Array.isArray(c.rows) && c.rows.length > 10000) { buildSites(c.rows); if (now() - (c.at || 0) < 90 * 864e5) return true; }
+      if (c && Array.isArray(c.rows) && c.rows.length > 10000) { await buildSites(c.rows); if (now() - (c.at || 0) < 90 * 864e5) return true; }
       const rows = await parseSitesCsv(await gmRequest(SITES_URL, { timeout: 90000, json: false, accept: 'text/csv,text/plain', bg: true }));
-      if (rows.length > 10000) { store.setHist('b:sites1', { at: now(), rows }); buildSites(rows); log('landing sites', rows.length); }
+      if (rows.length > 10000) { store.setHist('b:sites1', { at: now(), rows }); await buildSites(rows); log('landing sites', rows.length); }
       return !!sites.grid;
     })().catch(e => { log('landing sites', String(e.message || e)); sites.loading = null; return false; });
     return sites.loading;
@@ -12687,6 +12710,10 @@
   const heliportNear = (lat, lon, km) => { const n = siteNear(lat, lon, km, 'H'); return n ? { lat: n.row[0], lon: n.row[1], dist: n.dist, name: n.row[3] } : null; };
   // ==/ROUTE-SITES==
   sites.onBuilt = () => placesArrived();
+  // (1.4.3) The 40,000 fields and 21,000 heliports given to the route engine 2,000 at a time, the page let run between -
+  // in one go they held a phone's page several seconds as it opened, FR24's own map and panel with it
+  const engineSlices = async (rows, put) => { for (let i = 0; i < rows.length; i += 2000) { put(rows.slice(i, i + 2000), i === 0, i + 2000 >= rows.length); await sleep(0); } if (!rows.length) put([], true, true); };
+  sites.setFields = list => engineSlices(list, (part, first, last) => ENGINE.setFields(part, { append: !first, later: !last }));
   // ---- places OurAirports does not have, from OpenStreetMap (Overpass): hospital helipads and offshore platforms ------
   // A helicopter down at Southmead Hospital was "a private site near Bristol" - the pad is in OpenStreetMap, not in
   // OurAirports. One small query per spot (0.001°), asked in the background and kept on disk; answers: a named helipad
@@ -12892,8 +12919,10 @@
     }
     // (1.3.6) its heliports for the route engine: a helicopter down on one has landed there (engine.js setHeliports) -
     // M-SKTO's landings at Axis Business Park's helipad were "-" in its log and playback
-    try { ENGINE.setHeliports(c.rows.filter(r => Array.isArray(r) && r[9] === 'H').map(r => ({ id: r[0], ident: r[2], code: r[1], name: r[3], city: r[4], lat: r[6], lon: r[7], alt: r[8] }))); } catch (e) { log('heliports', String(e && e.message || e)); }
-    placesArrived();
+    // (1.4.3: in slices - oa.heliReady when all are in)
+    const hl = c.rows.filter(r => Array.isArray(r) && r[9] === 'H').map(r => ({ id: r[0], ident: r[2], code: r[1], name: r[3], city: r[4], lat: r[6], lon: r[7], alt: r[8] }));
+    oa.heliReady = engineSlices(hl, (part, first) => ENGINE.setHeliports(part, { append: !first })).catch(e => log('heliports', String(e && e.message || e))).then(() => placesArrived());
+    return oa.heliReady;
   }
   // (1.4.1) heliports or strips just in: the flight on screen worked out again at once - its "N/A" end, an OurAirports
   // field or pad it took off from, filled now, not at the next round a quarter of a minute later
@@ -12948,6 +12977,8 @@
       const c = await store.getHist('b:oaap1').catch(() => null);
       if (oaGood(c)) {
         oaSet(c); oa.at = c.at || 0; oa.got = c.got || 0;
+        // (1.4.3: its heliports in the engine - in slices - before the list is called in)
+        await oa.heliReady;
         // (the list kept is used at once - the pins are not kept waiting for the monitor; whether it is still the one is
         // asked meanwhile, and a newer one put in its place when it comes)
         if (now() - oa.got < 7 * 864e5) { if (now() - oa.got >= OA_CHECK) oaCheck().then(ch => { if (ch) pushOa(); }); return true; }
@@ -12955,7 +12986,7 @@
         if (oa.got && now() - oa.got < 7 * 864e5) return true;
       }
       const j = await monGet('/oaap', { timeout: 90000, bg: true }).catch(() => null);
-      if (oaGood(j)) { oaKeep(j); log('OurAirports airports', j.rows.length); }
+      if (oaGood(j)) { oaKeep(j); await oa.heliReady; log('OurAirports airports', j.rows.length); }
       return !!oa.rows;
     })().catch(e => { log('OurAirports airports', String(e && e.message || e)); return false; }).finally(() => { oa.loading = null; });
     return oa.loading;
@@ -20793,6 +20824,9 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     };
     const out = { ok: true, fid };
     const jobs = [];
+    // (1.4.3: the aircraft's serial number - FR24's player padlocks it for a free account: the registers' and picture sites'
+    // as the log page has it, publicIdentity)
+    if (d.wantMsn) jobs.push((async () => { const raw = await rawOf(), x = ids(raw.m || {}); if (!x.hex) return; const hx = await identityEarly(x.hex, x.reg).catch(() => null); const msn = clean((hx && hx.msn) || (store.getHex(x.hex) || {}).msn || ''); if (msn && /^[A-Za-z0-9 ./-]{1,24}$/.test(msn)) out.msn = msn; })());
     if (d.wantOwner) jobs.push(rawOf().then(raw => { const x = ids(raw.m || {}); return pbOperator(x.hex, x.reg, x.cs); }).then(op => { if (op.name) { out.operator = op.name; out.alId = op.alId || 0; } }));
     if (d.wantFn) jobs.push((async () => { const raw = await rawOf(), x = ids(raw.m || {}); if (!x.cs) return; const fn = clean((raw.m || {}).fn || '').toUpperCase() || await csFlightNumber(x.cs); if (fn && fn !== x.cs) out.flightNumber = fn; })());
     if (d.wantFrom || d.wantTo || d.wantCheck) jobs.push((async () => {
@@ -21925,7 +21959,7 @@ html.tl-pv-play #tl-pv .tl-pv-backpill{display:flex}
   // (the version whose "what's new" was put away, and the one whose dot on the button the window was opened for)
   const UB_SEEN_KEY = 'tweeks.fr24.ladd.seenver', UB_DOT_KEY = 'tweeks.fr24.ladd.dotver';
   // (the newest CHANGELOG section's headlines, written in by build.mjs: { v, items })
-  const UB_WHATS_NEW = {"v":"1.4.3","items":["**The iPhone and iPad app updates itself.** A new version is offered as the Android app offers it: \"Update available. Version x of LADD Unblocker is out (this phone has y). Update now?\" when the app opens, and from the page's Update button. Update downloads it, checks it and loads FR24 again with it. Nothing to reinstall. Install 1.4.3 by hand once; it updates itself from then on.","**Playback uses FR24's own track.** The player draws FR24's own positions of a flight, as FR24's player does. Public ADS-B is used only where FR24 has nothing of the flight: before FR24 picked it up, after it lost it, and in a gap of ten minutes or more. Before, ADS-B filled every gap of a minute, and the monitor keeps an airliner's position only every three minutes, so most of a playback was ADS-B.","**Flights older than FR24's week play in the app.** FR24's own player sends a free account to its \"Search for flights\" page for those. They now open in this script's player. A flight that cannot be found says so, with a Back button, instead of leaving the search page.","**Old-style log pages after FR24's own links.** An aircraft or flight-number page opened from FR24's search box, a board or the map, without a page load, was FR24's new page. It is now loaded and drawn as the old one.","**Related flights in the player.** Flights played here list the aircraft's, flight number's and callsign's previous and next flights, as FR24's own do. FR24's padlocked \"Previous\" on its own flights now opens.","**The player names a flight's ends as the log does.** Where its track begins or ends low and slow: FR24's airports, OurAirports' fields and heliports. M-PORT's flight of 27 Nov played \"N/A - N/A\". A flight still in the air shows where the map's route of it goes, when that is sure."]};
+  const UB_WHATS_NEW = {"v":"1.4.3","items":["**The iPhone and iPad app updates itself.** A new version is offered as the Android app offers it: \"Update available. Version x of LADD Unblocker is out (this phone has y). Update now?\" when the app opens, and from the page's Update button. Update downloads it, checks it and loads FR24 again with it. Nothing to reinstall. Install 1.4.3 by hand once; it updates itself from then on.","**FR24's map and panels load at their own speed again.** Since 1.4.2 FR24's airport pins (its own and the OurAirports ones) and flights' airports showed nothing, or \"N/A\", for up to 20 seconds on a phone. The script was putting all of OurAirports' 63,000 airfields into FR24's own airport list, which FR24 then had to read before drawing anything; until 1.4.2 that list usually was not ready in time. FR24's list is now left as it comes, and the airfields are added to FR24's tables a slice at a time, as before for those it already had. The landing-site and heliport lists are also built in slices, so the page keeps responding while they load.","**FR24's padlocked serial number (MSN) in its player is filled**, from the same registers and picture sites as the log pages.","**Playback uses FR24's own track.** The player draws FR24's own positions of a flight, as FR24's player does. Public ADS-B is used only where FR24 has nothing of the flight: before FR24 picked it up, after it lost it, and in a gap of ten minutes or more. Before, ADS-B filled every gap of a minute, and the monitor keeps an airliner's position only every three minutes, so most of a playback was ADS-B.","**Flights older than FR24's week play in the app.** FR24's own player sends a free account to its \"Search for flights\" page for those. They now open in this script's player. A flight that cannot be found says so, with a Back button, instead of leaving the search page.","**Old-style log pages after FR24's own links.** An aircraft or flight-number page opened from FR24's search box, a board or the map, without a page load, was FR24's new page. It is now loaded and drawn as the old one."]};
   // (an aircraft with an open padlock: FR24's outline style - 24 grid, 1.5 stroke in the text colour)
   const UB_ICON = '<svg data-tl-ub-icon="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path transform="translate(-1.6 -1.4) scale(.9)" d="M12 2.5c.8 0 1.4.9 1.4 2v4.6l6.6 4v1.8l-6.6-2v4.3l2 1.5v1.5L12 19.3l-3.4.9v-1.5l2-1.5v-4.3l-6.6 2v-1.8l6.6-4V4.5c0-1.1.6-2 1.4-2z"/><rect x="14.75" y="16.25" width="7.5" height="5.75" rx="1.2"/><path d="M16.6 16.25v-1.8a1.9 1.9 0 0 1 3.6-.85"/></svg>';
   const UB_X = '<svg viewBox="0 0 14 14" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5l11 11M12.5 1.5l-11 11"/></svg>';

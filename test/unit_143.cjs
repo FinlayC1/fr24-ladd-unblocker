@@ -238,6 +238,23 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     check('a board card\'s Download CSV/KML and Share: made from its own Playback item - its look, its own words and icon, no link of FR24\'s', pb && pb.classList.contains('pb') && dl.textContent === 'Download CSV/KML' && dl.classList.contains('tl-card-dl') && !dl.hasAttribute('href') && dl.querySelector('svg#dl') && !dl.querySelector('svg.size-10'), dl.outerHTML);
     w.close();
   }
+  // ======== the route engine's fields and heliports in slices: the same as in one go =====================================
+  {
+    const { createRouteEngine } = require('../src/engine.js');
+    const aps = JSON.parse(fs.readFileSync(path.join(DATA, 'airports.json'), 'utf8')).rows;
+    const fields = [], helis = [];
+    for (let i = 0; i < 5000; i++) fields.push({ lat: 50 + (i % 70) * 0.11, lon: -6 + Math.floor(i / 70) * 0.13, alt: 100, ident: 'ZF' + i, name: 'Strip ' + i, city: 'Town ' + i });
+    for (let i = 0; i < 3000; i++) helis.push({ id: 30000000 + i, ident: 'ZH' + i, code: 'ZH' + i, name: 'Pad ' + i, city: '', lat: 51 + (i % 50) * 0.07, lon: -4 + Math.floor(i / 50) * 0.09, alt: 50 });
+    const one = createRouteEngine(), cut = createRouteEngine(); one.setAirports(aps); cut.setAirports(aps);
+    one.setFields(fields); one.setHeliports(helis);
+    for (let i = 0; i < fields.length; i += 2000) cut.setFields(fields.slice(i, i + 2000), { append: i > 0, later: i + 2000 < fields.length });
+    for (let i = 0; i < helis.length; i += 2000) cut.setHeliports(helis.slice(i, i + 2000), { append: i > 0 });
+    const probe = (E, la, lo) => { const f = E.fieldAt(la, lo, 3), h = E.heliportAt(la, lo, 3); return (f ? f.airport.icao : '-') + '/' + (h ? h.airport.icao : '-'); };
+    const pts = [[50.55, -5.35], [52.1, -2.2], [53.3, -1.1], [51.7, -3.0], [54.9, 0.3]];
+    check('the route engine\'s fields and heliports given 2,000 at a time: the same as in one go (a browser\'s page no longer held while they are built)', one.fieldCount() === cut.fieldCount() && one.heliCount() === cut.heliCount() && pts.every(([a, b]) => probe(one, a, b) === probe(cut, a, b)), [one.fieldCount(), cut.fieldCount(), one.heliCount(), cut.heliCount()]);
+    const again = createRouteEngine(); again.setAirports(aps); again.setFields(fields.slice(0, 100)); again.setFields(fields.slice(100, 200));
+    check('... a list set anew (no append): the one before replaced', again.fieldCount() <= 100);
+  }
   // ======== the code: what the tests above do not reach ==================================================================
   {
     const read = f => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');

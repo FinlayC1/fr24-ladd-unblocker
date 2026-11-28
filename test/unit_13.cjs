@@ -285,7 +285,18 @@ const BOARD = { data: [{ id: 1, flight: { id: '3c4a5b70', callsign: 'EZY12AB', n
     const list = { rows: [ref].concat(Array.from({ length: 120 }, (_, i) => ({ id: 1000 + i, iata: 'A' + i, icao: '', name: 'X', lat: 0, lon: 0 }))) };
     H.patchList('airports', list);
     const got = list.rows.filter(r => r.id >= 1e7), wa = got.find(r => r.id === 17000001);
-    check('FR24\'s airport list: every OurAirports airport put in, in FR24\'s form - Barrow\'s country and time zone', got.length === 3 && wa.iata === 'EGXX' && wa.icao === 'EGXX' && wa.name === 'Walney Strip' && wa.country === 'United Kingdom' && wa.timezone.name === 'Europe/London' && wa.city === 'Walney', wa);
+    // (1.4.3: FR24's list left as it came - its tables given them instead, a slice at a time: FR24 read and kept 70,000
+    // airports before a pin or a flight's airport name, some 20 s on a phone)
+    check('FR24\'s airport list: left as FR24 sent it - no OurAirports airport put in it', got.length === 0 && list.rows.length === 121, got.length);
+    { const byId = new Map(list.rows.map(r => [r.id, r])), byIata = new Map(), st0 = { airports: [], airportsById: byId, airportsByIata: byIata };
+      const app0 = doc.getElementById('app'), had = app0.__vue_app__;
+      app0.__vue_app__ = { config: { globalProperties: { $pinia: { _s: new Map([['airports', st0]]) } } } };
+      H.oaFillTables(); await sleep(60);
+      const wa = byId.get(17000001);
+      check('... FR24\'s tables given them instead, in its store\'s form - Barrow\'s country and time zone', !!wa && wa.iata === 'EGXX' && wa.name === 'Walney Strip' && wa.country === 'United Kingdom' && wa.timezoneName === 'Europe/London' && byId.has(17000002) && byId.has(17000003) && byIata.get('EGXX') === wa, wa);
+      const n0 = byId.size; byId.delete(17000003); H.oaFillTables(); await sleep(60);
+      check('... the same tables not filled twice', !byId.has(17000003) && byId.size === n0 - 1);
+      app0.__vue_app__ = had; }
     const aj = H.oaAirportJson('https://api.flightradar24.com/common/v1/airport.json?code=egxx&plugin[]=details&plugin[]=runways');
     const det = aj && aj.result.response.airport.pluginData.details;
     check('... FR24\'s airport answer for one made here: its name, code, place and zone', !!det && det.name === 'Walney Strip' && det.code.iata === 'EGXX' && det.position.latitude === 54.2 && det.timezone.name === 'Europe/London' && Array.isArray(aj.result.response.airport.pluginData.runways));
