@@ -10,6 +10,18 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
 - **The iPhone and iPad app updates itself.** A new version is offered as the Android app offers it: "Update available. Version x of LADD Unblocker is out (this phone has y). Update now?" when the app opens, and from the page's Update button. Update downloads it, checks it and loads FR24 again with it. Nothing to reinstall. Install 1.4.3 by hand once; it updates itself from then on.
   - It only takes a script signed with the project's own key (the one the Android app is signed with) and made for that very app.
   - iOS does not let an app install its own `.ipa`. A release that changes the app itself, which is rare, still opens its release page, and the new `.ipa` is installed the same way as before.
+- **Playback uses FR24's own track.** The player draws FR24's own positions of a flight, as FR24's player does. Public ADS-B is used only where FR24 has nothing of the flight: before FR24 picked it up, after it lost it, and in a gap of ten minutes or more. Before, ADS-B filled every gap of a minute, and the monitor keeps an airliner's position only every three minutes, so most of a playback was ADS-B.
+  - **The monitor now keeps FR24's whole track of flights**, so they still play as FR24's own after FR24's week. It asks FR24 for each flight's track as the flight comes down, as many a minute as FR24 allows: flights someone asked about first, then light aircraft, helicopters, business jets and flights in the monitor's area, then the rest. It also asks FR24's playback of flights someone opened whose kept positions are few.
+  - **Every browser adds the flights it shows.** A log row or a played flight of FR24's week whose track the monitor has only a few points of is read from FR24 and sent to the monitor. The monitor keeps it only where it agrees with its own positions of that flight.
+  - In the app, FR24's playback is asked through FR24's own page, as FR24's site asks it. FR24 may refuse the app's own requests.
+- **Flights older than FR24's week play in the app.** FR24's own player sends a free account to its "Search for flights" page for those. They now open in this script's player. A flight that cannot be found says so, with a Back button, instead of leaving the search page.
+- **Old-style log pages after FR24's own links.** An aircraft or flight-number page opened from FR24's search box, a board or the map, without a page load, was FR24's new page. It is now loaded and drawn as the old one.
+- **Related flights in the player.** Flights played here list the aircraft's, flight number's and callsign's previous and next flights, as FR24's own do. FR24's padlocked "Previous" on its own flights now opens.
+- **The player names a flight's ends as the log does.** Where its track begins or ends low and slow: FR24's airports, OurAirports' fields and heliports. M-PORT's flight of 27 Nov played "N/A - N/A". A flight still in the air shows where the map's route of it goes, when that is sure.
+- **Log pages name OurAirports fields even when the lists arrive late.** M-SKTO's flights of 27 Nov landed at Truro Aerodrome. The phone showed "Perranporth?" and blanks, because the landing-site list (12 MB) came in after the rows were filled and they were never named again. They are now. A monitor answer lost on a slow connection is asked for again.
+- **Board cards of this script's flights:** "Download CSV/KML" (FR24's own positions as kept, else the public ADS-B track) and "Share" (the phone's share sheet, else the link copied), in FR24's style. The runways are filled as soon as a card opens, and the runway at the other end is asked for by the flight.
+- **FR24's "visit our blog" note under search results is gone**, everywhere the search box is.
+- **The app's aircraft pages show FR24's three pictures**, one after another, as FR24's own pages for a phone do.
 
 ### Added
 - **The iPhone app's script update** (`ios/App/ScriptStore.swift`, `Updater.swift`, `Policy.swift` `updateFiles`): a release's `fr24-ladd-unblocker-ios-update-<id>.json` (`ios/update-manifest.cjs`: the script, its hosts, the version and the id of the app's native part, `ios/shell-id.cjs`, which names the file) and its `.sig` are downloaded when Update is pressed, checked and kept in the app's own files.
@@ -20,10 +32,21 @@ All notable changes to the FR24 LADD Unblocker. Versions follow `MAJOR.MINOR.PAT
   - Once kept, the new script and its hosts are put into the page and FR24 is loaded again with them. A download or check that fails offers the release page.
 - **The release signs it** (`ios/sign-update.sh`) with the keystore the Android app is signed with, checks the signature with the app's certificate before publishing, and attaches both files. Without the key, or with a signature that does not match, it is left out with a warning.
 
+- **FR24's whole tracks on the monitor** (`monitor/fr24keep.cjs`, `CFG.fr24Keep`): FR24's trail of each flight as it comes down (FollowFlight, once down; `perMin`, 10 - some 14,000 flights a day), FR24's playback of flights asked about with only the scans' points (`pbPerMin`, 3; an hour's pause when FR24 refuses), and `POST /fr24track` - browsers' copies, kept only where at least two of the monitor's own positions of the flight lie within 3 km of the track (four in five), 120 an hour from one address. All into `fr24scan` (its disk guard). `/fr24ends` gives each flight's `n` and `sp` (only the scans' points); `/fr24raw` asks FR24's playback of such a flight.
+- **The browser's FR24 track** (`03-data.js` `fr24PbJson`, `fr24PbParse`, `fr24TrackSend`): every FR24 playback asked through one helper - in the app through FR24's page (`page.js` `fr24ApiReq`, that one address, credentials included, else omitted), else as before; FR24's whole track sent to the monitor once per flight. `06-pbpage.js` `pbFr24Whole`: the player's flight from FR24 within its week when the monitor has only the scans' points. `06-acpage.js` `fr24KeepLater`: log rows with `sp` read in the background (one every two seconds, fifteen a page).
+- **Related flights** (`06-pbpage.js` `onPbRelated`; `page.js` `mxPbRelated`, `mxPbRelPut`): from the monitor's `/fr24of`, the aircraft's log, `/fr24fn` and `/flights`; FR24's padlocked Previous opened with the same flight of ours (within half an hour), else the aircraft's flight at that take-off.
+- **Board card items** (`page.js` `cardExtras`, `cardRwyMore`; `06-pbpage.js` `onCardRwy`).
+
 ### Changed
 - The app's own update texts (LADD Unblock window) say how the iPhone app updates itself.
+- `pbFr24First`: public ADS-B only outside FR24's positions and in their holes of ten minutes or more (it filled every gap of a minute).
+- Log rows' ends from their own tracks are named again when more places come in (`endsCellsNow`, `placesSig`; an end named before is replaced), and a lost `/fr24ends` answer is asked for again (three times). Their hover text is plain text.
+- The player's ends (`pbFlight`): the field where the track begins or ends low and slow (`placeAt`, `heliAirportAt`), a leg's unknown end no longer hiding the track's; a flight in the air: the map's sure route.
+- In the app, a play of an FR24 flight older than FR24's week goes to this script's player (`06-phone.js`, `page.js` `mxPbPhoneUrl`). `06-classic.js` `clRouteWatch`: a move by FR24's router to an aircraft or flight-number page loads it. `page.js` `mxPbVeilFail`: a flight not found says so.
+- `05-ui.js` `hideSearchBlog`; `06-classic.js`: the third picture in the app.
 
 ### Tests
+- `test/unit_143.cjs` (new): the monitor's whole tracks, the player's track, M-SKTO's log of 27 Nov with late lists and a lost answer, the search note, three pictures, related flights, the player that cannot be found, board card items.
 - `test/unit_iosupdate.cjs` (new): the native part's id; the update's contents; signing with JKS and PKCS12 keystores as the release's, checked as the app checks it; one byte changed refused; a key that is not the app's never published; the certificate pinned; the app, its build and the release using the same names and checks.
 
 ## [1.4.2] - 2026-11-20

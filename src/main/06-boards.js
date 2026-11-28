@@ -374,7 +374,8 @@
       if (pts.length < 2) {
         try {
           const ts = fin(x.t) && x.t > 1e9 ? Math.round(x.t) : Math.round(now() / 1000);
-          const j = await gmRequest(`https://api.flightradar24.com/common/v1/flight-playback.json?flightId=${encodeURIComponent(x.fid)}&timestamp=${ts}`, { timeout: 15000 });
+          const j = await fr24PbJson(x.fid, ts);
+          try { fr24TrackSend(x.fid, fr24PbParse(j)); } catch (e) { /* not sent */ }
           const tr = j && j.result && j.result.response && j.result.response.data && j.result.response.data.flight && j.result.response.data.flight.track;
           pts = (Array.isArray(tr) ? tr : []).map(p => ({ t: p && p.timestamp, lat: p && p.latitude, lon: p && p.longitude, alt: p && p.altitude && fin(p.altitude.feet) ? p.altitude.feet : null, gnd: !!(p && p.altitude && p.altitude.feet === 0) })).filter(p => fin(p.t) && fin(p.lat) && fin(p.lon));
         } catch (e) { /* none */ }

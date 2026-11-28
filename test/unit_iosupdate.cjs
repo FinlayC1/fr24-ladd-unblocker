@@ -43,7 +43,7 @@ else {
   const m = JSON.parse(manifest(ROOT)), pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
   const hosts = fs.readFileSync(path.join(ROOT, 'dist/app/hosts.txt'), 'utf8').split(/\r?\n/).filter(Boolean);
   check('the update: v 1, the release\'s version, the app\'s native part, the script and its hosts as built', m.v === 1 && m.version === pkg.version && m.shell === id0 && m.script === fs.readFileSync(path.join(ROOT, 'dist/app/app.js'), 'utf8') && JSON.stringify(m.hosts) === JSON.stringify(hosts) && Object.keys(m).sort().join() === 'hosts,script,shell,v,version', { version: m.version, shell: m.shell, hosts: m.hosts.length });
-  check('... the script it carries is this version\'s', new RegExp("VERSION = '" + pkg.version.replace(/\./g, '\\.') + "'").test(m.script));
+  check('... the script it carries is this version\'s', m.script.includes("VERSION = '" + pkg.version + "'"));
 }
 
 // ---- signed as the release signs it -----------------------------------------------------------------------------------

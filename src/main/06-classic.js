@@ -116,7 +116,9 @@
   const clCodes = al => al ? [al.iata, al.icao].filter(Boolean).join(' / ') : '';
   function clPhotosHtml(photos, reg, model, alName) {
     const alt = `A picture of ${String(reg || '').replace(/-/g, '')} - ${String(model || '').replace(/-/g, '')}${alName ? ' - ' + alName : ''}`;
-    return (photos || []).slice(0, 2).map(p => `<div class="col-xs-6 n-p cnt-picture"><span class="label">© ${esc(p.copyright || '')} | Jetphotos</span><a href="${esc(p.link || p.url || '#')}" target="_blank"><img alt="${esc(alt)}" class="img-responsive" src="${esc(p.url || '')}" title="Open this aircraft picture in new window"></a></div>`).join('');
+    // (1.4.3: in the app, a third - FR24's own pages for a phone show three, one after another: the phone layout's
+    // (06-phone) pictures; the old page's own two side by side, the third not shown there)
+    return (photos || []).slice(0, clInApp() ? 3 : 2).map((p, i) => `<div class="col-xs-6 n-p cnt-picture${i > 1 ? ' tl-pic3" style="display:none' : ''}"><span class="label">© ${esc(p.copyright || '')} | Jetphotos</span><a href="${esc(p.link || p.url || '#')}" target="_blank"><img alt="${esc(alt)}" class="img-responsive" src="${esc(p.url || '')}" title="Open this aircraft picture in new window"></a></div>`).join('');
   }
   // (the old playback panel - its ids, labels and rows as FR24's: this script's figures go where they went; the
   // padlocked ones as the free pages had them, filled at once from public ADS-B - fillPlaybackData)
@@ -259,6 +261,22 @@
     // (a flight named in the address - #<FR24 id>, as FR24's map and its playback page open one: played)
     const h = (location.hash || '').replace(/^#/, '').toLowerCase();
     if (/^[0-9a-f]{6,16}$/.test(h)) setTimeout(() => { const b = document.getElementById('btn-playback-' + h); if (b && !b.classList.contains('active')) clPlay(b); }, 300);
+  }
+  // (1.4.3) Any other page of FR24's new app - the map, a board, its player - moving to an aircraft's or a flight number's
+  // page without loading it (its search box, a board's "Aircraft info"): that page loaded, so it is drawn as it was
+  // too. FR4032's page, opened from the map's search in the app, was FR24's new one - and its flights before FR24's week
+  // no player of their own. Never twice for one page within half a minute
+  function clRouteWatch() {
+    if (!classicOn() || clRouteWatch.on) return; clRouteWatch.on = true;
+    const norm = s => decodeURIComponent(String(s || '')).toLowerCase().replace(/\/+$/, ''); let path = norm(location.pathname);
+    setInterval(() => {
+      const now1 = norm(location.pathname); if (now1 === path) return; path = now1;
+      if (!classicOn() || !CL_PATH.test(now1)) return;
+      let last = null; try { last = JSON.parse(sessionStorage.getItem('tl.classic.reload') || 'null'); } catch (e) { last = null; }
+      if (last && last.p === now1 && Date.now() - last.t < 30000) return;
+      try { sessionStorage.setItem('tl.classic.reload', JSON.stringify({ p: now1, t: Date.now() })); } catch (e) { /* once anyway */ }
+      location.reload();
+    }, 400);
   }
   // (FR24's new app moves to another of its pages without loading it - its header's search: that page loaded, so it is
   // drawn as it was too)
@@ -448,7 +466,8 @@
   async function clTrack(id, ts) {
     if (PB_SYN.test(id) || !/^[0-9a-f]{1,12}$/.test(id)) { const f = await pbFlight({ id, dep: ts }); return f && f.ok ? { pts: f.pts, cs: f.cs || '', fn: f.flightNumber || '', o: f.origin, d: f.destination, fr24: false, hex: clean(f.hex || '').toLowerCase(), type: clean(f.type || '') } : null; }
     try {
-      const j = await gmRequest(`https://api.flightradar24.com/common/v1/flight-playback.json?flightId=${encodeURIComponent(id)}&timestamp=${ts || nowS()}`, { timeout: 20000 });
+      const j = await fr24PbJson(id, ts || nowS(), { priority: true, timeout: 20000 });
+      try { fr24TrackSend(id, fr24PbParse(j)); } catch (e) { /* not sent */ }
       const fl = j && j.result && j.result.response && j.result.response.data && j.result.response.data.flight, tr = fl && fl.track;
       if (Array.isArray(tr) && tr.length > 1) {
         const pts = tr.filter(p => p && fin(p.latitude) && fin(p.longitude) && fin(p.timestamp)).map(p => ({ t: p.timestamp, lat: p.latitude, lon: p.longitude, alt: p.altitude && fin(p.altitude.feet) ? p.altitude.feet : null, gs: p.speed && fin(p.speed.kts) ? p.speed.kts : null, trk: fin(p.heading) ? p.heading : null, vr: p.verticalSpeed && fin(p.verticalSpeed.fpm) ? p.verticalSpeed.fpm : null })).sort((a, b) => a.t - b.t);

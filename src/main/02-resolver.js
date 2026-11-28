@@ -166,7 +166,7 @@
   }
   async function fr24Playback(id) {
     try {
-      const j = await gmRequest(`https://api.flightradar24.com/common/v1/flight-playback.json?flightId=${id.toString(16)}&timestamp=${Math.round(nowS())}`, { timeout: 15000, bg: true });
+      const j = await fr24PbJson(id.toString(16), nowS(), { bg: true });
       const tr = j && j.result && j.result.response && j.result.response.data && j.result.response.data.flight && j.result.response.data.flight.track;
       return Array.isArray(tr) && tr.length > 10 ? tr.map(p => ({ t: p.timestamp, lat: p.latitude, lon: p.longitude, alt: p.altitude ? p.altitude.feet : null })).filter(p => fin(p.lat) && fin(p.t)).sort((a, b) => a.t - b.t) : null;
     } catch (e) { return null; }
