@@ -10745,12 +10745,13 @@
   const PENDING_TTL_MS = 90000;         // forget feed flights not seen for this long
   const ID_TTL_MS = 48 * 3600e3;        // cache lifetime for flight-id -> aircraft resolutions (longer than any flight)
   const HEX_TTL_MS = 45 * 864e5;        // cache lifetime for hex -> registration/type/photo data
-  const HISTORY_DAYS = 220;             // how far back the aircraft's own flight log is rebuilt (7 months)
+  const HISTORY_DAYS = 365;             // how far back the aircraft's own flight log is rebuilt (a year; 220 days before 1.4.3)
   // adsb.lol keeps each aircraft's daily traces for about six weeks (30 Sep 2026: back to 19 Aug); older days come from
   // airplanes.live's history (a year of it) - only for the aircraft being looked at, never for background logs
   const LOL_DAYS = 40;
   // an aircraft FR24 lists itself shows a free account one week of its log: this much more is rebuilt under FR24's rows
-  const OLDER_DAYS = 90;
+  // (a year, as a blocked aircraft's whole log; 90 days before 1.4.3)
+  const OLDER_DAYS = 365;
   // the part of the log the destination engine reasons over (22.10: all of it - its history evidence counts older flights
   // for less, so a long log sharpens the picture without its old routine outweighing what the aircraft does now)
   const ENGINE_HIST_DAYS = 220;
@@ -12961,7 +12962,7 @@
       postToPage('fr24ApiReq', { key, url });
     }));
   }
-  function onFr24ApiRes(d) { const f = d && fr24PbPend.get(d.key); if (f) f(typeof d.text === 'string' ? d.text : null); }
+  function onFr24ApiRes(d) { const key = d && typeof d.key === 'string' && /^p\d{1,9}$/.test(d.key) ? d.key : '', f = key ? fr24PbPend.get(key) : null; if (typeof f === 'function') f(typeof d.text === 'string' ? d.text : null); }
   // (its points - { t, lat, lon, alt, gs, trk, vr, sq, gnd } in time order - and what FR24 says of the flight)
   function fr24PbParse(j) {
     const fl = j && j.result && j.result.response && j.result.response.data && j.result.response.data.flight, tr = fl && fl.track;
@@ -18475,7 +18476,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
           loadToday(hex0, 60000, { priority: true }).catch(() => null).then(() => fill());
           const liveTick = async () => { if (routeChan) routeChan.postMessage({ ask: hex0 }); let own = null; try { own = await pageLiveState(hex0, reg); } catch (e) { own = null; } lv = fromMap0() || own; fill(); };
           liveTick(); setInterval(liveTick, 60000);
-          // FR24 gives a free account a week of the log ("more than 7 days ... with an upgrade"): three months more under
+          // FR24 gives a free account a week of the log ("more than 7 days ... with an upgrade"): a year back (1.4.3) under
           // its rows, rebuilt from public ADS-B in its own markup - FR24's rows keep their own playback, these replay their
           // track on adsb.lol (airplanes.live beyond six weeks). Every day is kept once read, as for the blocked aircraft.
           const oldest = Math.min(...fr24Rows().map(tr => Number(tr.dataset.timestamp) || Infinity));
@@ -18739,7 +18740,7 @@ div:has(>[data-testid="floating-button-wrapper__upgrade"]:only-child){display:no
     });
     const nw = list.filter(x => x.w).length, nf = list.length - nw;
     const said = [nf ? `${nf} as Flightradar24's map showed them` : '', nw ? `${nw} from public ADS-B (adsb.lol) by ${esc(fn)}'s callsigns` : ''].filter(Boolean).join(', ');
-    tbody.insertAdjacentHTML('beforeend', rows.join('') + `<tr class="tl-foot tl-fn-foot"><td colspan="20">${list.length} earlier flight${list.length === 1 ? '' : 's'} of ${esc(fn)}: ${said} - kept by the LADD unblocker's monitor (${Number(j.keep) || 100} days) · times are when they were seen taking off and coming in</td></tr>`);
+    tbody.insertAdjacentHTML('beforeend', rows.join('') + `<tr class="tl-foot tl-fn-foot"><td colspan="20">${list.length} earlier flight${list.length === 1 ? '' : 's'} of ${esc(fn)}: ${said} - kept by the LADD unblocker's monitor (${Number(j.keep) || 365} days) · times are when they were seen taking off and coming in</td></tr>`);
     return list.length;
   }
   async function bootFlightPage() {

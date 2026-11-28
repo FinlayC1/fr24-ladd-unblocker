@@ -143,13 +143,14 @@ const io = {
   const q = M.histQ.find(j => j.hex === 'c0ffee');
   check('yesterday, its archive not out yet: the job waits for it (an hour) - nothing asked', M.archiveState(Y, nowS()) === 'wait' && asked.length === 0 && !!q && q.at > Date.now() + 3500e3 && M.histPend.has('c0ffee|' + Y), { state: M.archiveState(Y, nowS()), asked, q });
   M.histQ.length = 0; M.histPend.clear();
-  // ---- every day of the 220 the archives cover: read in the end, newest first; nothing asked of the sites for them -------
-  { const D30 = dayOf(nowS() - 30 * 86400), D219 = dayOf(nowS() - 219 * 86400), D300 = dayOf(nowS() - 300 * 86400);
-    check('a day of 30 or 219 days ago not read yet: to come ("wait") - one of 300 days ago: not covered ("off")', M.CFG.archiveDays === 220 && M.archiveState(D30, nowS()) === 'wait' && M.archiveState(D219, nowS()) === 'wait' && M.archiveState(D300, nowS()) === 'off', [M.archiveState(D30, nowS()), M.archiveState(D219, nowS()), M.archiveState(D300, nowS())]);
+  // ---- every day of the 365 the archives cover (a year, 1.4.3; 220 before): read in the end, newest first; nothing asked of
+  // the sites for them -----------------------------------------------------------------------------------------------------
+  { const D30 = dayOf(nowS() - 30 * 86400), D300 = dayOf(nowS() - 300 * 86400), D364 = dayOf(nowS() - 364 * 86400), D400 = dayOf(nowS() - 400 * 86400);
+    check('a day of 30, 300 or 364 days ago not read yet: to come ("wait") - one of 400 days ago: not covered ("off")', M.CFG.archiveDays === 365 && M.archiveState(D30, nowS()) === 'wait' && M.archiveState(D300, nowS()) === 'wait' && M.archiveState(D364, nowS()) === 'wait' && M.archiveState(D400, nowS()) === 'off', [M.archiveState(D30, nowS()), M.archiveState(D300, nowS()), M.archiveState(D364, nowS()), M.archiveState(D400, nowS())]);
     M.markBlocked('c0ffe4', null, nowS() - 400 * 86400); M.fillAsked.clear(); M.histQ.length = 0; M.histPend.clear();
     const was = M.closed; M.closed = dayOf(nowS() - 2 * 86400);
     M.fillHist('c0ffe4', nowS());
-    check('filling an aircraft\'s log: no day the archives cover queued to be asked of adsb.lol\'s site (all 220)', M.histQ.filter(j => j.hex === 'c0ffe4').length === 0, M.histQ.length);
+    check('filling an aircraft\'s log: no day the archives cover queued to be asked of adsb.lol\'s site (all 365)', M.histQ.filter(j => j.hex === 'c0ffe4').length === 0, M.histQ.length);
     M.closed = was; M.histQ.length = 0; M.histPend.clear(); }
   // ---- two days read at once ------------------------------------------------------------------------------------------
   { const mk = day => { const E2 = entries.map(e => e[0] === 'file' && /trace_full_c0ffee/.test(e[1]) ? ['file', e[1], gz(Object.assign({}, ARNZ, { icao: 'c0ffee', dbFlags: 0, timestamp: dayS(day) }))] : e).filter(e => !(e[0] === 'file' && /trace_full_(a9ca9d|ae1234)/.test(e[1])));

@@ -33,7 +33,7 @@ const tidy = (s, n) => String(s || '').replace(/[\t\r\n]/g, ' ').trim().slice(0,
 function createFnIndex(env) {
   const log = env.log || (() => {});
   const dir = env.store ? path.join(env.store, env.dir || 'fr24fn') : '';
-  const keepDays = env.keepDays || 100, closeS = env.closeS || 45 * 60, csKeepS = 365 * 86400;
+  const keepDays = env.keepDays || 365, closeS = env.closeS || 45 * 60, csKeepS = 365 * 86400;
   const open = new Map();     // fid -> { fid, fn, cs, hex, reg, type, from, to, t0, t1 }
   const done = [];            // finished, not written yet
   const cs = new Map();       // callsign -> { fn, at }
@@ -84,7 +84,7 @@ function createFnIndex(env) {
     stats.written += n; return n;
   }
   // A flight number's flights from `from` to `to` (seconds): the months' files, the ones not written yet and those still
-  // being followed - each FR24 id once, newest first, 400 at most
+  // being followed - each FR24 id once, newest first, 1000 at most (a year of a number flown twice a day; 1.4.3)
   async function query(fnIn, from, to) {
     const fn = normFn(fnIn); stats.queries++; if (!fn || !FN_RE.test(fn)) return [];
     const nowS = Date.now() / 1000; to = fin(to) && to > 0 ? Math.min(to, nowS + 86400) : nowS; from = fin(from) && from > 0 ? from : to - keepDays * 86400;
@@ -102,7 +102,7 @@ function createFnIndex(env) {
     }
     for (const x of done) take(x);
     for (const x of open.values()) take(x);
-    return [...by.values()].sort((a, b) => b.t0 - a.t0).slice(0, 400);
+    return [...by.values()].sort((a, b) => b.t0 - a.t0).slice(0, 1000);
   }
   function noteCs(c0, fn0, t, weak) {
     const fn = normFn(fn0), c = String(c0 || '').toUpperCase().trim(), nowS = Date.now() / 1000;

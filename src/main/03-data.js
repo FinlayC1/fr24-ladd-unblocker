@@ -333,7 +333,7 @@
       postToPage('fr24ApiReq', { key, url });
     }));
   }
-  function onFr24ApiRes(d) { const f = d && fr24PbPend.get(d.key); if (f) f(typeof d.text === 'string' ? d.text : null); }
+  function onFr24ApiRes(d) { const key = d && typeof d.key === 'string' && /^p\d{1,9}$/.test(d.key) ? d.key : '', f = key ? fr24PbPend.get(key) : null; if (typeof f === 'function') f(typeof d.text === 'string' ? d.text : null); }
   // (its points - { t, lat, lon, alt, gs, trk, vr, sq, gnd } in time order - and what FR24 says of the flight)
   function fr24PbParse(j) {
     const fl = j && j.result && j.result.response && j.result.response.data && j.result.response.data.flight, tr = fl && fl.track;

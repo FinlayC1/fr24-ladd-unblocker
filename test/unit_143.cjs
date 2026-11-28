@@ -213,7 +213,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     const w = dom.window, doc = w.document; let H = null; w.__tlTestHook = h => { H = h; };
     w.postMessage = () => {}; w.unsafeWindow = w; w.GM_xmlhttpRequest = () => {}; w.fetch = () => Promise.reject(new Error('offline')); w.Response = Response; w.Headers = Headers;
     const m = SRC.match(/function pageInterceptor\(\) \{[\s\S]*?\n {2}\}\n/);
-    w.eval('(' + m[0].replace(/^function pageInterceptor/, 'function pageInterceptor') + ')()');
+    w.eval('(' + m[0] + ')()');
     await sleep(50);
     check('the page part loaded with its test hook', !!H && typeof H.mxPbRelPut === 'function');
     // (FR24's own: its Previous padlocked)
@@ -264,6 +264,28 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     check('FR24\'s app moving to an aircraft\'s or flight number\'s page without loading it: loaded, drawn as it was', /function clRouteWatch\(\)/.test(cls) && /clRouteWatch\(\)/.test(boot) && /location\.reload\(\)/.test(cls));
     check('board cards: runways filled when a card opens, and both ends asked of the monitor where the board\'s answer has none; Download and Share put in', /function cardRwyMore\(/.test(page) && /post\('cardRwy'/.test(page) && /case 'cardRwy'/.test(boot) && /async function onCardRwy\(/.test(pb) && /cardRwyFill\(\); cardExtras\(\);/.test(page));
     check('the player\'s ends named as the log names them (OurAirports\' fields and heliports, low and slow - not only on the ground at an FR24 airport)', /ENGINE\.placeAt\(p\.lat, p\.lon, p\.gnd \? 4 : 6, 2\)/.test(pb) && /ENGINE\.heliAirportAt\(p\.lat, p\.lon\)/.test(pb));
+  }
+  // ======== every log a year back ===========================================================================================
+  {
+    const read = f => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
+    const core = read('src/main/01-core.js'), mon = read('monitor/monitor.cjs'), fnSrc = read('monitor/fr24fn.cjs'), ac = read('src/main/06-acpage.js');
+    check('a year of every aircraft\'s log: a blocked aircraft\'s and the rows under FR24\'s own week (365 days, were 220 and 90)', /const HISTORY_DAYS = 365;/.test(core) && /const OLDER_DAYS = 365;/.test(core));
+    check('... the monitor\'s days of adsb.lol\'s archives a year, and its log filling a year', /archiveDays: 365,/.test(mon) && /const FILL_DAYS = 365,/.test(mon));
+    check('a year of every flight number\'s log: kept, asked for and said (365 days, were 100)', /keepDays = env\.keepDays \|\| 365,/.test(fnSrc) && (mon.match(/\+CFG\.fnDays \|\| 365/g) || []).length === 3 && !/fnDays \|\| 100/.test(mon) && /Number\(j\.keep\) \|\| 365/.test(ac));
+    const { createFnIndex } = require('../monitor/fr24fn.cjs');
+    const os = require('os'), store = fs.mkdtempSync(path.join(os.tmpdir(), 'fn365-'));
+    try {
+      const IX = createFnIndex({ store }), T = Date.now() / 1000;
+      const rec = (id, ts) => ({ id, fn: 'FR4031', cs: 'RYR4031', hex: '4ca24d', reg: 'EI-DCY', type: 'B738', from: 'LPL', to: 'FAO', ts, alt: 30000, gnd: false, spd: 440 });
+      // (a flight 300 days ago: kept and asked for; one 400 days ago: not)
+      for (const [id, d] of [[0x3d000001, 300], [0x3d000002, 400]]) { const t = T - d * 86400; IX.observe([rec(id, t)], t); IX.observe([rec(id, t + 3600)], t + 3600); IX.observe([], t + 3 * 3600); IX.flush(); }
+      // (a number flown twice a day for a year: all of it given)
+      for (let k = 0; k < 720; k++) { const t = T - 2 * 86400 - k * 43200; IX.observe([rec(0x3e000000 + k, t)], t); IX.observe([rec(0x3e000000 + k, t + 3600)], t + 3600); IX.observe([], t + 3 * 3600); }
+      IX.flush();
+      const q = await IX.query('FR4031');
+      check('... a flight number\'s flight of 300 days ago kept and given; one of 400 days ago not; a number flown twice a day for a year all of it', q.some(x => x.fid === '3d000001') && !q.some(x => x.fid === '3d000002') && q.filter(x => /^3e/.test(x.fid)).length === 720, [q.length, q.filter(x => /^3e/.test(x.fid)).length]);
+    } catch (e) { check('... a flight number\'s flights of a year (fr24fn.cjs)', false, String(e && e.stack || e).slice(0, 300)); }
+    finally { fs.rmSync(store, { recursive: true, force: true }); }
   }
   console.log(fails ? `\n${fails} failed` : '\nall passed');
   process.exit(fails ? 1 : 0);

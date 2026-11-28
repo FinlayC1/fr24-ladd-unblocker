@@ -940,7 +940,7 @@
           loadToday(hex0, 60000, { priority: true }).catch(() => null).then(() => fill());
           const liveTick = async () => { if (routeChan) routeChan.postMessage({ ask: hex0 }); let own = null; try { own = await pageLiveState(hex0, reg); } catch (e) { own = null; } lv = fromMap0() || own; fill(); };
           liveTick(); setInterval(liveTick, 60000);
-          // FR24 gives a free account a week of the log ("more than 7 days ... with an upgrade"): three months more under
+          // FR24 gives a free account a week of the log ("more than 7 days ... with an upgrade"): a year back (1.4.3) under
           // its rows, rebuilt from public ADS-B in its own markup - FR24's rows keep their own playback, these replay their
           // track on adsb.lol (airplanes.live beyond six weeks). Every day is kept once read, as for the blocked aircraft.
           const oldest = Math.min(...fr24Rows().map(tr => Number(tr.dataset.timestamp) || Infinity));
@@ -1204,7 +1204,7 @@
     });
     const nw = list.filter(x => x.w).length, nf = list.length - nw;
     const said = [nf ? `${nf} as Flightradar24's map showed them` : '', nw ? `${nw} from public ADS-B (adsb.lol) by ${esc(fn)}'s callsigns` : ''].filter(Boolean).join(', ');
-    tbody.insertAdjacentHTML('beforeend', rows.join('') + `<tr class="tl-foot tl-fn-foot"><td colspan="20">${list.length} earlier flight${list.length === 1 ? '' : 's'} of ${esc(fn)}: ${said} - kept by the LADD unblocker's monitor (${Number(j.keep) || 100} days) · times are when they were seen taking off and coming in</td></tr>`);
+    tbody.insertAdjacentHTML('beforeend', rows.join('') + `<tr class="tl-foot tl-fn-foot"><td colspan="20">${list.length} earlier flight${list.length === 1 ? '' : 's'} of ${esc(fn)}: ${said} - kept by the LADD unblocker's monitor (${Number(j.keep) || 365} days) · times are when they were seen taking off and coming in</td></tr>`);
     return list.length;
   }
   async function bootFlightPage() {
