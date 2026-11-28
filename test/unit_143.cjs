@@ -51,6 +51,26 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     check('... kept once: not asked again', !K.queue.some(x => x.id === 101));
     followErr = new Error('paused (FR24 pushed back)'); await K.followOne(T);
     check('... FR24 pushing back: put back in the queue, asked later', K.queue.some(x => x.id === 104) && K.S.pausedUntil > T);
+    // (1.4.3: one FR24 lost before it was seen low - a helicopter under its coverage: asked for three minutes after; one only
+    // missed by the scans (its trail runs on to now, up high) asked again as it comes down)
+    {
+      let T2 = 1795900000e3; const asked2 = [], put2 = []; let flying = false;
+      const K2 = createFr24Keep({ now: () => T2, cfg: {}, put: (id, m, p) => put2.push(id), own: () => null, meta: () => ({}), prio: () => 0,
+        follow: async id => { asked2.push(id); const t0 = T2 / 1000 - 1200; return Array.from({ length: 40 }, (_, i) => ({ t: t0 + i * 30, lat: 53.48, lon: -2.99, alt: flying && i === 39 ? 9000 : 1400, gs: 70 })); } });
+      K2.watch([{ id: 201, alt: 1400, spd: 70, type: 'R44' }], T2); T2 += 60000; K2.watch([{ id: 201, alt: 1350, spd: 68, type: 'R44' }], T2);
+      T2 += 120000; K2.watch([], T2);
+      const early = K2.queue.length;
+      T2 += 61000; K2.watch([], T2);
+      const q2 = K2.queue.slice(); await K2.followOne(T2);
+      check('a flight FR24 lost up high (a helicopter at 1,400 ft, gone from the scans three minutes): its trail asked for then, not before', early === 0 && q2.length === 1 && q2[0].id === 201 && q2[0].lost === true && asked2[0] === 201 && put2[0] === 201, { early, q: q2.map(x => x.id) });
+      // (FR24's trail of a lost flight may run on to a minute ago, up high: still asked once only while it stays gone)
+      flying = true; for (let k = 0; k < 5; k++) { T2 += 60000; K2.watch([], T2); await K2.followOne(T2); }
+      check('... once only, however long it stays gone (its trail running on to a minute ago up high or not)', asked2.filter(x => x === 201).length === 1 && !K2.queue.length, asked2);
+      K2.watch([{ id: 202, alt: 9000, spd: 300 }], T2); T2 += 181000; K2.watch([], T2); T2 += 60000; K2.watch([], T2);
+      await K2.followOne(T2);
+      K2.watch([{ id: 202, alt: 600, spd: 140 }], T2); T2 += 1000; K2.watch([{ id: 202, alt: 300, spd: 120 }], T2);
+      check('... one only missed by the scans (seen again): what FR24 had kept, and asked again as it comes down', asked2.filter(x => x === 202).length === 1 && put2.includes(202) && K2.queue.some(x => x.id === 202 && !x.lost) && K2.S.lostBack === 1, K2.queue.map(x => [x.id, !!x.lost]));
+    }
     // (sparse: the scans' few points)
     const pts = (n, gap) => ({ p: Array.from({ length: n }, (_, i) => [1795700000 + i * gap, 50, -5]) });
     check('a flight\'s kept points: few (under 30) or a minute and more apart halfway through - the scans\' only; FR24\'s whole track: not', K.sparse(pts(10, 5)) && K.sparse(pts(100, 180)) && !K.sparse(pts(100, 10)));
@@ -325,6 +345,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     } catch (e) { check('FR24\'s scheduled times (fr24fn.cjs, boards.cjs)', false, String(e && e.stack || e).slice(0, 400)); }
     finally { fs.rmSync(store, { recursive: true, force: true }); }
     const mon = fs.readFileSync(path.join(__dirname, '../monitor/monitor.cjs'), 'utf8'), bds = fs.readFileSync(path.join(__dirname, '../src/main/06-boards.js'), 'utf8');
+    check('the keeper: the flights FR24 hides (named here as blocked, or being named) first, with those browsers asked about; 15 trails a minute', /function keepPrio\(f\) \{[\s\S]{0,400}if \(f && \(ident\.ids\.has\(f\.id\) \|\| ident\.flights\.has\(f\.id\)\)\) return 0;/.test(mon) && /perMin: 15,/.test(fs.readFileSync(path.join(__dirname, '../monitor/fr24keep.cjs'), 'utf8')));
     check('the monitor: boards\' rows noted (with their airport and kind), those kept gone through once, /fnsched, /fr24fn\'s flights given theirs', /onRow: \(r, ap, kind\) => \{[^}]*FN\.noteSched\(r, ap, kind\)/.test(mon) && /BD\.eachRow\(\(r, ap, kind\) => FN\.noteSched\(r, ap, kind\)\)/.test(mon) && /p === '\/fnsched'/.test(mon) && /FN\.schedFor\(all,/.test(mon));
     check('browsers: their boards\' rows marked where the time is FR24\'s schedule (its map boards, its schedules, its log rows)', (bds.match(/sx: /g) || []).length === 5);
   }

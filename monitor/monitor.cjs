@@ -1873,6 +1873,9 @@ const KEEP = createFr24Keep({
 // (light aircraft, helicopters, business jets and every flight in the monitor's areas first: those the log pages and
 // boards here are about)
 function keepPrio(f) {
+  // (1.4.3: a flight FR24 hides - named here as a blocked aircraft's, or one still being named - first, with those
+  // browsers asked about: their logs are what this is for, and FR24 keeps no track of them a browser could read)
+  if (f && (ident.ids.has(f.id) || ident.flights.has(f.id))) return 0;
   let cls = ''; try { cls = E.classify({ type: f.type || '' }); } catch (e) { cls = ''; }
   if (/^(heli|piston|glider|turboprop|bizjet|heavybiz)$/.test(cls)) return 1;
   for (const a of CFG.areas || []) if (Array.isArray(a) && Number.isFinite(f.lat) && Number.isFinite(f.lon) && E.dist(a[0], a[1], f.lat, f.lon) <= (a[2] || 250)) return 1;
@@ -2382,7 +2385,7 @@ async function identLoop() { for (;;) { await sleep(30000); try { await identRou
 // pausing them with the scans)
 async function keepLoop() {
   await sleep(120000);
-  const every = () => Math.max(3, 60 / Math.max(0.1, +((CFG.fr24Keep || {}).perMin) || 10)) * 1000;
+  const every = () => Math.max(3, 60 / Math.max(0.1, +((CFG.fr24Keep || {}).perMin) || 15)) * 1000;
   for (;;) { const t0 = Date.now(); if (CFG.fr24Scan && (CFG.fr24Keep || {}).on !== false && Date.now() >= fr24.st.pauseUntil) { try { await KEEP.followOne(); } catch (e) { log('fr24keep', String(e && e.stack || e)); } } await sleep(Math.max(1000, every() * pace() - (Date.now() - t0))); }
 }
 async function keepPbLoop() {

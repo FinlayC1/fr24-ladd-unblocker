@@ -16,10 +16,10 @@
 const fin = v => typeof v === 'number' && isFinite(v);
 
 function createFr24Keep(env) {
-  const C = Object.assign({ perMin: 10, pbPerMin: 3, queueMax: 6000, pbQueueMax: 3000, crowdPerHour: 120, dueS: 150, pbDays: 7 }, env.cfg || {});
+  const C = Object.assign({ perMin: 15, pbPerMin: 3, queueMax: 6000, pbQueueMax: 3000, crowdPerHour: 120, dueS: 150, pbDays: 7 }, env.cfg || {});
   const now = () => (env.now ? env.now() : Date.now());
   const log = env.log || (() => {});
-  const S = { followed: 0, followEmpty: 0, followFail: 0, kept: 0, points: 0, pb: 0, pbFail: 0, pbKept: 0, crowd: 0, crowdBad: 0, crowdNoOwn: 0, crowdLimited: 0, queued: 0, dropped: 0, pausedUntil: 0, pbPausedUntil: 0, err: '' };
+  const S = { followed: 0, followEmpty: 0, followFail: 0, kept: 0, points: 0, pb: 0, pbFail: 0, pbKept: 0, crowd: 0, crowdBad: 0, crowdNoOwn: 0, crowdLimited: 0, queued: 0, dropped: 0, pausedUntil: 0, pbPausedUntil: 0, lost: 0, lostKept: 0, lostBack: 0, err: '' };
   const seen = new Map();                 // FR24 id -> { air, at, queued, meta, prio }
   const q = [];                           // { id, due, prio, meta }
   const pbq = new Map();                  // fid hex -> { t, at }
@@ -36,7 +36,9 @@ function createFr24Keep(env) {
       if (!f || !(f.id > 0) || f.src === 4) continue;
       let s = seen.get(f.id);
       if (!s) { if (seen.size > 120000) continue; s = { air: false, at: nowMs, queued: false }; seen.set(f.id, s); }
-      s.at = nowMs;
+      s.at = nowMs; s.f = f;
+      // (one taken for lost seen again - only missed by the scans: free to be asked for as it comes down)
+      if (s.lost) { s.lost = false; s.queued = false; S.lostBack++; }
       const prev = s.alt; s.alt = f.gnd ? 0 : fin(f.alt) ? f.alt : prev;
       if (!f.gnd && ((fin(f.alt) && f.alt > 1500) || (fin(f.spd) && f.spd > 120) || (fin(f.alt) && f.alt > 700 && fin(f.spd) && f.spd > 50))) s.air = true;
       if (!s.air || s.queued || doneIds.has(f.id)) continue;
@@ -44,6 +46,17 @@ function createFr24Keep(env) {
       if (!low) continue;
       s.queued = true;
       add({ id: f.id, due: nowMs + C.dueS * 1000, prio: env.prio ? env.prio(f) : 2, meta: env.meta ? env.meta(f) : {} });
+    }
+    // (one FR24 lost before it was seen low - a helicopter or light aircraft under its coverage, as most of them end: gone
+    // from the scans three minutes, fifteen at most: its trail asked for while FR24 may still have it, once. Not done for
+    // good: one only missed by the scans - seen again - is asked again as it comes down)
+    if (nowMs - (watch.swept || 0) >= 60000) {
+      watch.swept = nowMs;
+      for (const [id, s] of seen) {
+        if (!s.air || s.queued || !s.f || doneIds.has(id) || nowMs - s.at < 180000 || nowMs - s.at > 15 * 60000) continue;
+        s.queued = true; s.lost = true; S.lost++;
+        add({ id, due: nowMs, lost: true, prio: env.prio ? env.prio(s.f) : 2, meta: env.meta ? env.meta(s.f) : {} });
+      }
     }
     if (nowMs - (watch.pruned || 0) > 600000) { watch.pruned = nowMs; for (const [id, s] of seen) if (nowMs - s.at > 45 * 60000) seen.delete(id); for (const [id, t] of doneIds) if (nowMs - t > 86400e3) doneIds.delete(id); for (const [k, t] of wanted) if (nowMs - t > 86400e3) wanted.delete(k); }
   }
@@ -74,7 +87,9 @@ function createFr24Keep(env) {
     const good = (pts || []).filter(p => p && fin(p.t) && fin(p.lat) && fin(p.lon));
     if (good.length < 2) { S.followEmpty++; return 0; }
     env.put(x.id, x.meta || {}, good.map(p => ({ t: p.t, lat: p.lat, lon: p.lon, alt: fin(p.alt) ? p.alt : null, gs: fin(p.gs) ? p.gs : null, trk: fin(p.trk) ? p.trk : null, gnd: !(p.alt > 0) && !(p.gs > 50) })));
-    doneIds.set(x.id, nowMs); S.kept++; S.points += good.length;
+    S.kept++; S.points += good.length;
+    // (one taken for lost: what FR24 had of it kept - not done for good, should the scans see it again)
+    if (x.lost) S.lostKept++; else doneIds.set(x.id, nowMs);
     return good.length;
   }
 
