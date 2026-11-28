@@ -121,7 +121,12 @@ const str = f => f && f.b ? Buffer.from(f.b).toString() : '';
   const q = posted.filter(p => p && p.__tweeksLadd === 'pbPage').pop();
   w.dispatchEvent(new w.MessageEvent('message', { data: { __tweeksLadd: 'pbPageGot', rid: q && q.rid, ok: false }, source: w }));
   await sleep(20);
-  check('... nothing came of it: FR24\'s page shown again', !doc.getElementById('tl-pb-veil'));
+  // (1.4.3: said so, with the way back - FR24's search form left in its place looked as if the playback had sent the user
+  // there; "Search for flights" uncovers it)
+  const vf = doc.getElementById('tl-pb-veil'), vb = vf ? [...vf.querySelectorAll('button')] : [];
+  check('... nothing came of it: said so over FR24\'s page, with the way back - and FR24\'s search form a tap away', !!vf && /No track of this flight could be found/.test(vf.textContent) && vb.map(b => b.textContent).join() === 'Back,Search for flights', vf && vf.textContent);
+  if (vb[1]) vb[1].click();
+  check('... "Search for flights": FR24\'s page shown', !doc.getElementById('tl-pb-veil'));
   H.mxPbVeilOn(); gp.$page = { component: 'Data/NewFlightPlayback', url: '/data/playback/' + SID, props: Object.assign({}, SHARED, { trailSource: 'tl', callsign: 'MPORT', download: { flightId: SID } }) };
   H.mxDataTick();
   check('... FR24\'s player in: uncovered', !doc.getElementById('tl-pb-veil'));

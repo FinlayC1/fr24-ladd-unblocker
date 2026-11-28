@@ -27,7 +27,8 @@
     if (!(dep > 1e9) || !(await monReady())) { postToPage('pbRelatedGot', { rid, groups: out }); return; }
     // (the aircraft: the page's own, else by its registration here, else FR24's record of the flight)
     if (!/^[0-9a-f]{6}$/.test(hex) && reg) hex = clean((store.byReg(reg) || {}).hex).toLowerCase();
-    if (!/^[0-9a-f]{6}$/.test(hex) && /^[0-9a-f]{1,12}$/.test(fid)) hex = clean(await hexOfFid(fid, dep, reg).catch(() => '')).toLowerCase();
+    // (the monitor's record of the flight - never FR24's API: FR24's own player page asks nothing more of FR24)
+    if (!/^[0-9a-f]{6}$/.test(hex) && /^[0-9a-f]{1,12}$/.test(fid)) hex = clean(((await pbRaw(fid, dep).catch(() => ({ m: {} }))).m || {}).hex).toLowerCase();
     const href = x => { const fid = /^[0-9a-f]{1,12}$/.test(x.fid || '') ? x.fid : ''; if (fid) return nowS() - x.t > 7 * 86400 ? '/data/flights?tl-pb=' + fid : '/data/playback/' + fid; return /^[0-9a-f]{6}$/.test(x.hex || '') && x.t > 1e9 ? '/data/flights?tl-pb=' + pbSynId(x.hex, x.t) : ''; };
     const item = x => { if (!x) return null; const h = href(x); return { departure: Math.round(x.t), timezone: x.tz || null, flightNumber: x.fn || null, href: h || null, locked: !h }; };
     // (the one before - over five minutes before - and the one after)

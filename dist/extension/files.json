@@ -3,7 +3,7 @@
   "files": {
     "manifest.json": "9644aa03d8bb8fef31d0af2824f6498af9a83e7dda613345e0b8e14acd5f897c",
     "page.js": "e8a7330316fa73acc40fe070a0513086f4163f25c1c57f44b6dfd10a8b200e48",
-    "content.js": "d4c811dcdc166b02f140b5180e810f152bd79f00fc298978e1f93517ca328d5c",
+    "content.js": "bb8c5c71f45c5705bbd1e3a8192f3cdc1ca3191a7f638a92a8eb195da00cbdab",
     "background.js": "bf2688ffbf79ea04d81639a014c8b3debd2effaddd8935567c7a5d4609e06eeb",
     "grant.html": "d3b38c4e3f4c14b39695b6e27c080628166a70bd0a42a9d9073f9d39155e674e",
     "grant.js": "7d89bc80209c01630890f4b004c33be7f33380d3ec756f957fb1684116e687bd",
